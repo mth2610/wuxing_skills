@@ -124,7 +124,7 @@ void main()
         cloudVis = mix(Environment_CloudVisibility(u_cloudNoise, fragPosition), 0.92, cloudDistFade);
     }
     shadowVis *= cloudVis;
-    float petalShadow = mix(0.34, 1.0, shadowVis);
+    float petalShadow = mix(0.68, 1.0, shadowVis);
 
     float rawNdotL = dot(N, L);
     float wrapDiffuse = max(0.0, (rawNdotL + 0.38) / 1.38);
@@ -145,7 +145,7 @@ void main()
     vec3 groundBounce = vec3(0.14, 0.24, 0.09) * u_ambientColor * (1.0 - v_ao);
 
     vec3 directLight = albedo * u_lightColor * wrapDiffuse * petalShadow;
-    vec3 sssLight = sssTint * u_lightColor * sssFactor * mix(0.42, 1.0, shadowVis);
+    vec3 sssLight = sssTint * u_lightColor * sssFactor * mix(0.65, 1.0, shadowVis);
     vec3 rimLight = mix(albedo, vec3(1.0, 0.97, 0.90), 0.5) * u_lightColor * (fresnel * 0.32 * u_sssParams.z * petalShadow);
     vec3 specLight = u_lightColor * (spec * petalShadow);
     vec3 ambientLight = (albedo * skyTint + groundBounce) * v_ao;

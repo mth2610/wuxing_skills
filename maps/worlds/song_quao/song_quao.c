@@ -91,14 +91,21 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
     // while leaving organic sandy coves near stepping stones
     float surfaceY = MapDem_SampleWaterHeight(&s_dem, x, z);
     float waterClearance = pos.y - surfaceY;
-    float coveNoise = sinf(x * 0.14f + z * 0.11f) * 0.55f
-                    + cosf(z * 0.23f - x * 0.19f + 0.8f) * 0.45f;
-    float minClearance = (coveNoise > 0.20f) ? 0.012f : (0.042f - coveNoise * 0.025f);
-    if (waterClearance < minClearance)
+    if (waterClearance < 0.075f)
         return 0.0f;
-    float shoreFade = MapMath_SmoothStep01(minClearance, minClearance + 0.095f, waterClearance);
 
     Color splat = MapDem_SampleSplat(&s_dem, x, z);
+    // Keep river sand beaches and alluvial gravel beds clean of grass
+    if (splat.a > 115 && waterClearance < 0.32f)
+        return 0.0f;
+
+    float coveNoise = sinf(x * 0.14f + z * 0.11f) * 0.55f
+                    + cosf(z * 0.23f - x * 0.19f + 0.8f) * 0.45f;
+    float minClearance = (coveNoise > 0.20f) ? 0.075f : (0.095f - coveNoise * 0.020f);
+    if (waterClearance < minClearance)
+        return 0.0f;
+    float shoreFade = MapMath_SmoothStep01(minClearance, minClearance + 0.11f, waterClearance);
+
     // Gate rockScree by actual geometric slope (1.0 - normal.y), matching ground_splat.fs wCliff
     float geomSlope = 1.0f - normal.y;
     float rockScree = ((float)splat.g / 255.0f) * MapMath_SmoothStep01(0.25f, 0.50f, geomSlope);

@@ -56,7 +56,7 @@ float FoliageShadowVisibility(vec4 lightSpace, vec4 staticLightSpace,
             if (edgeFade > 0.0) {
                 float bias = clamp(0.0028 + slope * 0.0035, 0.0025, 0.0065);
                 float sampleDyn;
-                if (u_shadowFilterQuality >= 1.5 && distToCam < 16.0) {
+                if (u_shadowFilterQuality >= 1.5 && distToCam < 9.0) {
                     sampleDyn = MapShadowFilteredVisibilityTier(shadowMap, projected.xy, projected.z - bias, u_shadowTexel, 1.35, 0.18, u_shadowFilterQuality);
                 } else if (distToCam < 24.0) {
                     sampleDyn = MapShadowCompareBilinear(shadowMap, projected.xy, projected.z - bias, u_shadowTexel);
@@ -386,14 +386,14 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     lit += waxSheen * rootAO;
 
     float shadow = FoliageShadowVisibility(lightSpace, staticLightSpace, n, lightDir, worldPosition, distToCam);
-    lit *= mix(0.68, 1.0, shadow);
+    lit *= mix(0.88, 1.0, shadow);
     if (shadow > 0.001) {
         float cloudVis = 0.92;
         if (distSq < 900.0) {
             float cloudDistFade = FastRamp(576.0, 900.0, distSq);
             cloudVis = mix(Environment_CloudVisibility(u_cloudNoise, worldPosition), 0.92, cloudDistFade);
         }
-        float sunVis = shadow * cloudVis;
+        float sunVis = mix(0.40, 1.0, shadow) * cloudVis;
         if (sunVis > 0.001) {
             vec3 effectiveLightColor = u_lightColor * (1.0 / (1.0 + max(lightDir.y - 0.32, 0.0) * 1.18));
             float horizonEnvelope = smoothstep(0.02, 0.38, max(lightDir.y, 0.0)) * 0.66 + 0.34;

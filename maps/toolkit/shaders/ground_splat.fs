@@ -704,11 +704,11 @@ void main()
     // Soft, grounded shadows for flowers, props, and rocks without muddy black splotches
     float turfShadowVis = rawShadow * mix(rawShadow, 1.0, 0.45);
     float resolvedShadow = mix(rawShadow, turfShadowVis, wGrass);
-    float shadowFloor = mix(0.32, 0.52, wGrass);
+    float shadowFloor = mix(0.48, 0.62, wGrass);
     float shadow = mix(shadowFloor, 1.0, resolvedShadow);
     float sunVisibility = (shadow > 0.001) ? shadow * Environment_CloudVisibility(u_cloudNoise, fragWorldPos) : 0.0;
 
-    float ambientShadowMod = mix(mix(0.80, 0.86, wGrass), 1.0, resolvedShadow);
+    float ambientShadowMod = mix(mix(0.88, 0.94, wGrass), 1.0, resolvedShadow);
     vec3 ambient = Environment_HemisphereIrradiance(normal, actualAmbient) * (cavityAO * ambientShadowMod);
 
     vec3 totalLight = ambient + actualLight * effectiveNdotL * sunVisibility;

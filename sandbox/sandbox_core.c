@@ -1052,12 +1052,12 @@ void DrawSandbox3D(const PlayerEntity* player, const EnemyEntity* enemy, Vector3
         Color pCol = (i == 0) ? GetColor(0xDAA520FF) : GetColor(0x3B3B42FF);
         Color pLineCol = (i == 0) ? YELLOW : GetColor(0x73737CFF);
 
-        if (!shadowPass) Environment_DrawSmartShadow(pillars[i].position, ENV_SHAPE_CYLINDER, pillars[i].radius, pillarHeight);
+        if (!shadowPass && !EnvShadow_IsEnabled()) Environment_DrawSmartShadow(pillars[i].position, ENV_SHAPE_CYLINDER, pillars[i].radius, pillarHeight);
         DrawCylinder(center, pillars[i].radius, pillars[i].radius, pillarHeight, 16, pCol);
         if (!shadowPass) DrawCylinderWires(center, pillars[i].radius, pillars[i].radius, pillarHeight, 16, pLineCol);
     }
 
-    if (!shadowPass) Environment_DrawSmartShadow(enemy->position, ENV_SHAPE_SPHERE, 0.3f, 0.3f);
+    if (!shadowPass && !EnvShadow_IsEnabled()) Environment_DrawSmartShadow(enemy->position, ENV_SHAPE_SPHERE, 0.3f, 0.3f);
     {
         Color enemyClothes = IsEnemySlowed() ? GetColor(0x1B4F72FF) : (IsEnemyBurning() ? RED : GetColor(0x8B2500FF));
         Color enemyOutline = IsEnemySlowed() ? SKYBLUE : (IsEnemyBurning() ? YELLOW : GetColor(0xFF5500FF));
@@ -1076,7 +1076,7 @@ void DrawSandbox3D(const PlayerEntity* player, const EnemyEntity* enemy, Vector3
         DrawCharacter3D(enemy->position, 0.3f, GetColor(0xFFC0CBFF), enemyClothes, enemyOutline, false, (Vector3){0});
     }
 
-    if (!shadowPass) Environment_DrawSmartShadow(player->position, ENV_SHAPE_SPHERE, 0.25f, 0.25f);
+    if (!shadowPass && !EnvShadow_IsEnabled()) Environment_DrawSmartShadow(player->position, ENV_SHAPE_SPHERE, 0.25f, 0.25f);
     if (CharacterModel_IsLoaded()) {
         // Facing = hướng di chuyển (g_playerModelYaw, cập nhật trong
         // UpdateSandbox), KHÔNG theo con trỏ chuột — model thật chạy hướng
@@ -1108,7 +1108,7 @@ void DrawSandbox3D(const PlayerEntity* player, const EnemyEntity* enemy, Vector3
         } else if (dummy->pullTimer > 0.0f) {
             dummyClothes = SKYBLUE;
         }
-        if (!shadowPass) Environment_DrawSmartShadow(dummy->position, ENV_SHAPE_SPHERE, 0.3f, 0.3f);
+        if (!shadowPass && !EnvShadow_IsEnabled()) Environment_DrawSmartShadow(dummy->position, ENV_SHAPE_SPHERE, 0.3f, 0.3f);
         DrawCharacter3D(dummy->position, 0.3f, GetColor(0xE0E0E0FF), dummyClothes, WHITE, false, (Vector3){ 0 });
         if (!shadowPass) DrawAgentHealthBar3D(dummy->position, 0.5f, trainingDummyAgentId, ORANGE);
     }
