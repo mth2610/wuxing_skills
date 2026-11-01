@@ -180,6 +180,7 @@ Texture2D SceneTargets_GetRawDepthTexture(void);
  * The texture is 1/16 on each axis and carries luma in all three channels.
  * Sample it with the fragment's screen UV. id 0 until the first capture. */
 void SceneTargets_CaptureBackgroundLuma(void);
+bool SceneTargets_NeedsBackgroundLuma(void);
 Texture2D SceneTargets_GetBackgroundLuma(void);
 
 /* AUTO EXPOSURE (§7.5) — one scalar, on the GPU, never read back.

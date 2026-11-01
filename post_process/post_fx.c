@@ -505,7 +505,7 @@ static void PostFX_ApplyQualityTier(PostFXConfig *c)
 static int PostFX_GetActiveBloomLevels(void)
 {
   GfxQuality q = GfxQuality_Get();
-  int maxLv = (q >= GFX_ULTRA) ? 4 : 3;
+  int maxLv = (q >= GFX_ULTRA) ? 3 : 2;
   return (s_dfLevels < maxLv) ? s_dfLevels : maxLv;
 }
 

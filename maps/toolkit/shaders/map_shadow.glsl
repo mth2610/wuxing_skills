@@ -150,7 +150,7 @@ float MapShadowFilteredVisibilityTier(highp sampler2D mapTexture, vec2 uv,
     float earlySum = cSum + (downLeft + upRight) * 4.0;
     if (earlySum <= 0.001)
         return 0.0;
-    if (earlySum >= 11.999 && thinFeatureBoost < 0.01)
+    if (earlySum >= 11.999)
         return 1.0;
 
     float center = mix(mix(sc.w, sc.z, fraction.x),
@@ -175,7 +175,7 @@ float MapShadowFilteredVisibilityTier(highp sampler2D mapTexture, vec2 uv,
     float crossSum = s10 + s01 + s11 + s21 + s12;
     if (crossSum <= 0.001)
         return 0.0;
-    if (crossSum >= 4.999 && thinFeatureBoost < 0.01)
+    if (crossSum >= 4.999)
         return 1.0;
 
     // Penumbra edge pixel: fetch the 4 diagonal corners to complete the exact 3x3 resolve

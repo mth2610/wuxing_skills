@@ -217,44 +217,52 @@ void main()
         }
     }
 
-    if (distToPath < PATH_INFLUENCE) {
-        float pathMeander = sin(fragWorldPos.x * 0.85 + fragWorldPos.z * 1.15) * 0.22
-                          + sin(fragWorldPos.x * 2.30 - fragWorldPos.z * 1.70) * 0.11;
-        distToPath += pathMeander;
-        if (u_ecologyEnabled != 0)
-            distToPath += (dirtDetail.r - 0.5) * 0.18;
-    }
+    float wPath = 0.0;
+    float wWetSoil = 0.0;
+    float wCliff = 0.0;
+    float wDrySoil = 0.0;
+    float wGrass = 1.0;
 
-    // ---- 7. Four-Layer Weights & Height-Based Relief Blending ----
-    float wPath = 1.0 - smoothstep(1.10, 1.95, distToPath);
-    float wPathMargin = smoothstep(0.95, 1.65, distToPath) * (1.0 - smoothstep(1.65, 3.1, distToPath));
-    float wWetSoil = max(shoreFactor * 0.85, smoothstep(0.42, 0.88, streamWet));
-    if (lakeDepthFactor > 0.0) {
-        wWetSoil = mix(wWetSoil, 1.0, clamp(lakeDepthFactor * 2.0, 0.0, 1.0));
-    }
+    if (soilPossible) {
+        if (distToPath < PATH_INFLUENCE) {
+            float pathMeander = sin(fragWorldPos.x * 0.85 + fragWorldPos.z * 1.15) * 0.22
+                              + sin(fragWorldPos.x * 2.30 - fragWorldPos.z * 1.70) * 0.11;
+            distToPath += pathMeander;
+            if (u_ecologyEnabled != 0)
+                distToPath += (dirtDetail.r - 0.5) * 0.18;
+        }
 
-    // Transition steeper terrain banks and outer cliff rims into rock strata & scree
-    // Grass gracefully covers hillsides up to ~38 deg; steep scarps and cliffs (> 40 deg) expose rock.
-    float wSlope = smoothstep(0.24, 0.46, slope);
-    float outerAbyssMask = (1.0 - smoothstep(-2.40, -0.40, fragWorldPos.y)) * smoothstep(0.08, 0.28, slope);
-    float rockCliff = smoothstep(0.35, 0.75, rockScree) * smoothstep(0.12, 0.32, slope);
-    float wCliff = clamp(max(wSlope, max(rockCliff, outerAbyssMask)), 0.0, 1.0);
+        // ---- 7. Four-Layer Weights & Height-Based Relief Blending ----
+        wPath = 1.0 - smoothstep(1.10, 1.95, distToPath);
+        float wPathMargin = smoothstep(0.95, 1.65, distToPath) * (1.0 - smoothstep(1.65, 3.1, distToPath));
+        wWetSoil = max(shoreFactor * 0.85, smoothstep(0.42, 0.88, streamWet));
+        if (lakeDepthFactor > 0.0) {
+            wWetSoil = mix(wWetSoil, 1.0, clamp(lakeDepthFactor * 2.0, 0.0, 1.0));
+        }
 
-    // Natural riparian sand/pebble margin transitioning into meadow (compact, organic coves)
-    if (u_ecologyEnabled != 0 && smoothSignedShore >= -0.10) {
-        riparianSandMargin = (1.0 - smoothstep(0.05, 1.35, smoothSignedShore)) * 0.58;
-    }
+        // Transition steeper terrain banks and outer cliff rims into rock strata & scree
+        // Grass gracefully covers hillsides up to ~38 deg; steep scarps and cliffs (> 40 deg) expose rock.
+        float wSlope = smoothstep(0.24, 0.46, slope);
+        float outerAbyssMask = (1.0 - smoothstep(-2.40, -0.40, fragWorldPos.y)) * smoothstep(0.08, 0.28, slope);
+        float rockCliff = smoothstep(0.35, 0.75, rockScree) * smoothstep(0.12, 0.32, slope);
+        wCliff = clamp(max(wSlope, max(rockCliff, outerAbyssMask)), 0.0, 1.0);
 
-    float wDrySoil = clamp(max(max(wPathMargin * 0.78, wCliff), riparianSandMargin), 0.0, 1.0)
-                   * (1.0 - wWetSoil * 0.75) * (1.0 - wPath * 0.85);
-    float wGrass = clamp(1.0 - wPath - wWetSoil - wDrySoil, 0.0, 1.0);
+        // Natural riparian sand/pebble margin transitioning into meadow (compact, organic coves)
+        if (u_ecologyEnabled != 0 && smoothSignedShore >= -0.10) {
+            riparianSandMargin = (1.0 - smoothstep(0.05, 1.35, smoothSignedShore)) * 0.58;
+        }
 
-    // Feather grass smoothly into the riparian bank between 0.18m and 1.45m
-    if (u_ecologyEnabled != 0 && smoothSignedShore >= -0.25 && smoothSignedShore < 1.85) {
-        float grassGrain = (dirtDetail.r - 0.5) * 0.22;
-        float grassTaper = smoothstep(0.18, 1.45, smoothSignedShore + grassGrain);
-        wGrass *= grassTaper;
-        wDrySoil = clamp(1.0 - wPath - wWetSoil - wGrass, 0.0, 1.0);
+        wDrySoil = clamp(max(max(wPathMargin * 0.78, wCliff), riparianSandMargin), 0.0, 1.0)
+                       * (1.0 - wWetSoil * 0.75) * (1.0 - wPath * 0.85);
+        wGrass = clamp(1.0 - wPath - wWetSoil - wDrySoil, 0.0, 1.0);
+
+        // Feather grass smoothly into the riparian bank between 0.18m and 1.45m
+        if (u_ecologyEnabled != 0 && smoothSignedShore >= -0.25 && smoothSignedShore < 1.85) {
+            float grassGrain = (dirtDetail.r - 0.5) * 0.22;
+            float grassTaper = smoothstep(0.18, 1.45, smoothSignedShore + grassGrain);
+            wGrass *= grassTaper;
+            wDrySoil = clamp(1.0 - wPath - wWetSoil - wGrass, 0.0, 1.0);
+        }
     }
 
     vec4 weights = vec4(wGrass, wDrySoil, wWetSoil, wPath);
@@ -262,7 +270,7 @@ void main()
     vec2 litterClasses = vec2(0.5);
     float reliefShadow = 1.0;
 
-    if (u_groundReliefEnabled != 0 && detailResolve > 0.10) {
+    if (soilPossible && u_groundReliefEnabled != 0 && detailResolve > 0.10) {
         float combinedSoil = weights.y + weights.w;
         float dominantWeight = max(max(weights.x, combinedSoil), weights.z);
         bool boundary = dominantWeight < 0.96;
@@ -648,25 +656,28 @@ void main()
         soilMaterial = mix(soilMaterial, sampledSoilMat, soilMatFade);
     }
 
-    vec3 rawMicro = mix(grassMaterial.rgb, soilMaterial.rgb, soilWeight) * 2.0 - 1.0;
-    vec3 microNormal = rawMicro * inversesqrt(max(dot(rawMicro, rawMicro), 1e-8));
-    vec3 refAxis = (abs(geomNormal.z) < 0.999) ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0);
-    vec3 tRaw = cross(refAxis, geomNormal);
-    vec3 tangent = tRaw * inversesqrt(max(dot(tRaw, tRaw), 1e-8));
-    vec3 bitangent = cross(geomNormal, tangent);
+    vec3 normal = geomNormal;
+    if (camDistSqXZ < 1024.0 || soilWeight > 0.01 || wCliff > 0.01 || isRiparian > 0.01) {
+        vec3 rawMicro = mix(grassMaterial.rgb, soilMaterial.rgb, soilWeight) * 2.0 - 1.0;
+        vec3 microNormal = rawMicro * inversesqrt(max(dot(rawMicro, rawMicro), 1e-8));
+        vec3 refAxis = (abs(geomNormal.z) < 0.999) ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0);
+        vec3 tRaw = cross(refAxis, geomNormal);
+        vec3 tangent = tRaw * inversesqrt(max(dot(tRaw, tRaw), 1e-8));
+        vec3 bitangent = cross(geomNormal, tangent);
 
-    float puddleFlatten = 1.0 - smoothstep(0.60, 0.95, wWetSoil) * 0.45;
-    float microStrength = mix(0.26, 0.52, max(soilWeight, wCliff)) * puddleFlatten * (0.45 + 0.55 * detailResolve);
-    vec3 nRaw = geomNormal * (0.66 + 0.34 * microNormal.z)
-              + (tangent * microNormal.x + bitangent * microNormal.y) * microStrength;
-    if (isRiparian > 0.01) {
-        nRaw += (tangent * proceduralPebbleNormal.x + bitangent * proceduralPebbleNormal.y) * (isRiparian * 0.70 * puddleFlatten);
+        float puddleFlatten = 1.0 - smoothstep(0.60, 0.95, wWetSoil) * 0.45;
+        float microStrength = mix(0.26, 0.52, max(soilWeight, wCliff)) * puddleFlatten * (0.45 + 0.55 * detailResolve);
+        vec3 nRaw = geomNormal * (0.66 + 0.34 * microNormal.z)
+                  + (tangent * microNormal.x + bitangent * microNormal.y) * microStrength;
+        if (isRiparian > 0.01) {
+            nRaw += (tangent * proceduralPebbleNormal.x + bitangent * proceduralPebbleNormal.y) * (isRiparian * 0.70 * puddleFlatten);
+        }
+        if (wCliff > 0.01) {
+            float cliffBlend = smoothstep(0.04, 0.40, wCliff);
+            nRaw = mix(nRaw, cliffTriNormal, cliffBlend * (0.65 + 0.35 * detailResolve));
+        }
+        normal = nRaw * inversesqrt(max(dot(nRaw, nRaw), 1e-8));
     }
-    if (wCliff > 0.01) {
-        float cliffBlend = smoothstep(0.04, 0.40, wCliff);
-        nRaw = mix(nRaw, cliffTriNormal, cliffBlend * (0.65 + 0.35 * detailResolve));
-    }
-    vec3 normal = nRaw * inversesqrt(max(dot(nRaw, nRaw), 1e-8));
 
     float roughness = mix(grassMaterial.a, soilMaterial.a, soilWeight);
     roughness = mix(roughness, 0.78, (wDrySoil + wPath) * 0.80);

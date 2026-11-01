@@ -613,6 +613,16 @@ Texture2D SceneTargets_GetSceneSnapshotTexture(void) { return s_sceneSnapshot.te
  * (VFX gọi GetBackgroundLuma, AutoExposure gọi GetExposureTexture, frame đầu
  * tiên sau khi khởi tạo/resize, hoặc frame đang chạy RenderTargetProbe).
  * Khi không có VFX nào cần, tránh đóng/mở lại renderTex giữa chừng! */
+bool SceneTargets_NeedsBackgroundLuma(void)
+{
+  if (s_bgLuma.id == 0 || s_bgLumaShader.id == 0)
+    return false;
+  const bool probeActive = RenderTargetProbe_MatchesFrame(s_probeFrame);
+  if (!s_bgLumaValid || probeActive)
+    return true;
+  return s_bgLumaIdleFrames <= BG_LUMA_KEEPALIVE_FRAMES;
+}
+
 void SceneTargets_CaptureBackgroundLuma(void)
 {
   if (s_bgLuma.id == 0 || s_bgLumaShader.id == 0)

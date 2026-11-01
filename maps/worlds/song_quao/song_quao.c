@@ -87,24 +87,33 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
     float heightFade = MapMath_SmoothStep01(-2.20f, -1.10f, pos.y);
     float slopeFade = MapMath_SmoothStep01(0.50f, 0.72f, normal.y);
 
-    // Natural, organic shoreline clumping: lush sedge/grass pockets reach right to the water's edge
-    // while leaving organic sandy coves near stepping stones
-    float surfaceY = MapDem_SampleWaterHeight(&s_dem, x, z);
-    float waterClearance = pos.y - surfaceY;
-    if (waterClearance < 0.075f)
+    // 1. Lake water absolute clearance (radial basin)
+    float dxLake = (x - SONG_QUAO_LAKE_CENTER_X) / SONG_QUAO_LAKE_RADIUS_X;
+    float dzLake = (z - SONG_QUAO_LAKE_CENTER_Z) / SONG_QUAO_LAKE_RADIUS_Z;
+    if (dxLake * dxLake + dzLake * dzLake <= 1.25f * 1.25f && pos.y <= SONG_QUAO_LAKE_WATER_Y + 0.06f)
         return 0.0f;
 
     Color splat = MapDem_SampleSplat(&s_dem, x, z);
-    // Keep river sand beaches and alluvial gravel beds clean of grass
-    if (splat.a > 115 && waterClearance < 0.32f)
+    // Keep river sand beaches, alluvial gravel beds & stream channel clean of grass
+    if (splat.a > 80)
         return 0.0f;
+    float sandFade = 1.0f - MapMath_SmoothStep01(45.0f, 80.0f, (float)splat.a);
 
-    float coveNoise = sinf(x * 0.14f + z * 0.11f) * 0.55f
-                    + cosf(z * 0.23f - x * 0.19f + 0.8f) * 0.45f;
-    float minClearance = (coveNoise > 0.20f) ? 0.075f : (0.095f - coveNoise * 0.020f);
-    if (waterClearance < minClearance)
-        return 0.0f;
-    float shoreFade = MapMath_SmoothStep01(minClearance, minClearance + 0.11f, waterClearance);
+    // Natural, organic shoreline clumping: lush sedge/grass pockets reach right to the water's edge
+    float surfaceY = MapDem_SampleWaterHeight(&s_dem, x, z);
+    float shoreFade = 1.0f;
+    if (surfaceY > -CLIFF_DEPTH + 0.5f)
+    {
+        float waterClearance = pos.y - surfaceY;
+        if (waterClearance < 0.075f)
+            return 0.0f;
+        float coveNoise = sinf(x * 0.14f + z * 0.11f) * 0.55f
+                        + cosf(z * 0.23f - x * 0.19f + 0.8f) * 0.45f;
+        float minClearance = (coveNoise > 0.20f) ? 0.075f : (0.095f - coveNoise * 0.020f);
+        if (waterClearance < minClearance)
+            return 0.0f;
+        shoreFade = MapMath_SmoothStep01(minClearance, minClearance + 0.11f, waterClearance);
+    }
 
     // Gate rockScree by actual geometric slope (1.0 - normal.y), matching ground_splat.fs wCliff
     float geomSlope = 1.0f - normal.y;
@@ -127,7 +136,7 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
     float rockSuppression = MapProp_EvaluateRockSuppression(
         x, z, SONG_QUAO_ROCK_ITEMS, SONG_QUAO_ROCK_ITEM_COUNT);
 
-    return fmaxf(0.0f, fminf(1.0f, macro * heightFade * slopeFade * shoreFade * rockFade * flowerSuppression * rockSuppression));
+    return fmaxf(0.0f, fminf(1.0f, macro * heightFade * slopeFade * shoreFade * sandFade * rockFade * flowerSuppression * rockSuppression));
 }
 
 static float SongQuaoEdgeTaper(float cx, float cz, void *userData)
@@ -158,7 +167,7 @@ static bool SongQuaoIsFlowerExcluded(float x, float z, void *ctx)
     if (MapDem_SampleWaterHeight(&s_dem, x, z) >= pos.y - 0.015f)
         return true;
     Color splat = MapDem_SampleSplat(&s_dem, x, z);
-    if (splat.g > 205 || splat.b > 95)
+    if (splat.g > 205 || splat.b > 95 || splat.a > 80)
         return true;
     if (MapProp_EvaluateRockSuppression(x, z, SONG_QUAO_ROCK_ITEMS, SONG_QUAO_ROCK_ITEM_COUNT) < 0.65f)
         return true;
@@ -442,8 +451,8 @@ void InitSongQuaoMap(void)
             .bladeWidthScale = 0.124f,
             .lodDistance = 22.0f,
             .midLodDistance = 11.5f,
-            .drawDistance = 48.0f,
-            .shadowDistance = 24.0f,
+            .drawDistance = 38.0f,
+            .shadowDistance = 7.5f,
             .grassState = MAP_GRASS_STATE_LUSH,
             .reedRootColor = {30, 48, 22, 255},
             .reedTipColor = {108, 156, 62, 255},

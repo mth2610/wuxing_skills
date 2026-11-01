@@ -745,9 +745,9 @@ MapFloraSystem MapProp_CreateFloraSystem(
                 stemColor, centerColor,
                 NULL, 0.0f, 1, 1);
 
-            // High-fidelity LOD: near 3D petals to 24m, far drift to 68m, shadow casters to 16m
-            MapProp_SetFlowerFieldLod(&flora.flowerFields[i], 24.0f, 16.0f);
-            MapProp_SetFlowerFieldDrawDistance(&flora.flowerFields[i], 68.0f);
+            // High-fidelity LOD: near 3D petals to 20m, far drift to 44m, shadow casters to 14m
+            MapProp_SetFlowerFieldLod(&flora.flowerFields[i], 20.0f, 14.0f);
+            MapProp_SetFlowerFieldDrawDistance(&flora.flowerFields[i], 44.0f);
             placementOffset += count;
         }
     }
