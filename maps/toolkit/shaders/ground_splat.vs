@@ -1,4 +1,5 @@
 #version 330
+#include "maps/toolkit/shaders/seismic_displacement.glsl"
 
 // Đợt E / E2 — added so ground_splat.fs can be lit by VFX point lights.
 in vec3 vertexPosition;
@@ -25,16 +26,26 @@ void main()
 {
     fragTexCoord = vertexTexCoord;
     fragColor    = vertexColor;
-    vec4 worldVertex = vec4(vertexPosition, 1.0);
+
+    vec3 localPos = vertexPosition;
+    vec3 wp = localPos + u_groundOffset;
+
+    // Evaluate physical seismic wave deformation at this world position
+    vec2 seismicSlope;
+    float seismicDY = EvaluateSeismicDisplacement(wp.xz, seismicSlope);
+    localPos.y += seismicDY;
+    wp.y += seismicDY;
+
+    vec4 worldVertex = vec4(localPos, 1.0);
     vec4 shaderPos = matModel * worldVertex;
     fragPosition = shaderPos.xyz;
 
-    // Chuẩn hóa pháp tuyến an toàn theo ma trận model tại Vertex Shader
+    // Chuẩn hóa pháp tuyến an toàn theo ma trận model và làm nghiêng theo độ dốc sóng địa chấn
     vec3 worldNormal = mat3(matModel) * vertexNormal;
     float nLenSq = dot(worldNormal, worldNormal);
-    fragNormal = (nLenSq > 1e-8) ? (worldNormal * inversesqrt(nLenSq)) : vec3(0.0, 1.0, 0.0);
+    vec3 baseN = (nLenSq > 1e-8) ? (worldNormal * inversesqrt(nLenSq)) : vec3(0.0, 1.0, 0.0);
+    fragNormal = PerturbNormalWithSeismicWave(baseN, seismicSlope);
 
-    vec3 wp      = vertexPosition + u_groundOffset;
     fragWorldPos = wp;
     v_lightSpace = u_lightVP * shaderPos;
     v_staticLightSpace = u_staticLightVP * shaderPos;

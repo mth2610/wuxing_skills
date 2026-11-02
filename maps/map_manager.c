@@ -118,18 +118,48 @@ void MapManager_AddWaterRipple(Vector3 position, float radius, float intensity) 
     if (fn) fn(position, radius, intensity);
 }
 
+static MapGroundDisplacementFn s_groundDisplacementHook = NULL;
+static MapGroundWaveParamsFn s_groundWaveParamsHook = NULL;
+
+void MapManager_SetGroundDisplacementHook(MapGroundDisplacementFn fn) {
+    s_groundDisplacementHook = fn;
+}
+
+void MapManager_SetGroundWaveParamsHook(MapGroundWaveParamsFn fn) {
+    s_groundWaveParamsHook = fn;
+}
+
+bool MapManager_GetGroundWaveParams(Vector4 *outOriginDir, Vector4 *outWaveParams, Vector4 *outWaveProfile) {
+    if (s_groundWaveParamsHook) {
+        return s_groundWaveParamsHook(outOriginDir, outWaveParams, outWaveProfile);
+    }
+    if (outOriginDir) *outOriginDir = (Vector4){0.0f, 0.0f, 0.0f, 0.0f};
+    if (outWaveParams) *outWaveParams = (Vector4){0.0f, 0.0f, 0.0f, 0.0f};
+    if (outWaveProfile) *outWaveProfile = (Vector4){0.0f, 0.0f, 0.0f, 0.0f};
+    return false;
+}
+
 bool MapManager_SampleGroundSurfaceAt(float x, float z, Vector3 *outPosition, Vector3 *outNormal) {
     if (outPosition) *outPosition = (Vector3){x, MapManager_GetGroundHeightAt(x, z), z};
     if (outNormal) *outNormal = (Vector3){0.0f, 1.0f, 0.0f};
     if (s_mapCount == 0) return false;
     MapGroundSurfaceSampleFn fn = s_maps[s_activeMapIndex].SampleGroundSurface;
-    return fn ? fn(x, z, outPosition, outNormal) : false;
+    bool res = fn ? fn(x, z, outPosition, outNormal) : false;
+    if (res && outPosition && s_groundDisplacementHook) {
+        outPosition->y += s_groundDisplacementHook(x, z);
+    }
+    return res;
 }
 
 float MapManager_GetGroundHeightAt(float x, float z) {
-    if (s_mapCount == 0) return 0.0f;
-    float (*fn)(float, float) = s_maps[s_activeMapIndex].GetGroundHeight;
-    return fn ? fn(x, z) : 0.0f;
+    float baseY = 0.0f;
+    if (s_mapCount > 0 && s_maps[s_activeMapIndex].GetGroundHeight) {
+        baseY = s_maps[s_activeMapIndex].GetGroundHeight(x, z);
+    }
+    if (s_groundDisplacementHook) {
+        baseY += s_groundDisplacementHook(x, z);
+    }
+    return baseY;
 }
 
 void MapManager_Update(float dt) {

@@ -26,6 +26,7 @@ static int locGroundCloudUV = -1, locGroundCloudShape = -1, locGroundCloudProjec
 static int locThinShadowBoost = -1;
 static int locTexGrass = -1, locTexPath = -1;
 static int locTexGrassMaterial = -1, locTexSoilMaterial = -1;
+static int locSeismicOriginDir = -1, locSeismicParams = -1, locSeismicProfile = -1;
 
 #define MAX_GROUND_PATH_SEGS 16
 #define GROUND_CLOUD_TEXTURE_SLOT 7         // Raw 2D binding; not a cubemap material map.
@@ -362,6 +363,9 @@ static MapGroundSurface SetupGroundMaterial(Mesh mesh, float width, float depth,
         locTexPath = GetShaderLocation(groundShader, "texPath");
         locTexGrassMaterial = GetShaderLocation(groundShader, "texGrassMaterial");
         locTexSoilMaterial = GetShaderLocation(groundShader, "texSoilMaterial");
+        locSeismicOriginDir = GetShaderLocation(groundShader, "u_seismicOriginDir");
+        locSeismicParams = GetShaderLocation(groundShader, "u_seismicParams");
+        locSeismicProfile = GetShaderLocation(groundShader, "u_seismicProfile");
         VFXLight_RegisterShader(groundShader);
 
         shaderLoaded = true;
@@ -691,6 +695,15 @@ void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter)
         SetShaderValue(groundShader, locLakeParams, &s_groundLakeParams, SHADER_UNIFORM_VEC4);
 
     MapShadow_UpdateShader(groundShader);
+
+    Vector4 seismicOriginDir = {0}, seismicParams = {0}, seismicProfile = {0};
+    MapManager_GetGroundWaveParams(&seismicOriginDir, &seismicParams, &seismicProfile);
+    if (locSeismicOriginDir >= 0)
+        SetShaderValue(groundShader, locSeismicOriginDir, &seismicOriginDir, SHADER_UNIFORM_VEC4);
+    if (locSeismicParams >= 0)
+        SetShaderValue(groundShader, locSeismicParams, &seismicParams, SHADER_UNIFORM_VEC4);
+    if (locSeismicProfile >= 0)
+        SetShaderValue(groundShader, locSeismicProfile, &seismicProfile, SHADER_UNIFORM_VEC4);
     // Restrained thinShadowBoost (0.30) keeps grass shadow silhouettes soft and natural
     // rather than dilating them into harsh dark bars across hillsides.
     if (locThinShadowBoost >= 0)

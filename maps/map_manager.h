@@ -42,6 +42,19 @@ void MapManager_Unload(void);
 float MapManager_GetGroundHeightAt(float x, float z);
 bool MapManager_SampleGroundSurfaceAt(float x, float z, Vector3 *outPosition, Vector3 *outNormal);
 
+// Dynamic ground displacement hook (e.g. seismic wave heaving through the terrain).
+// When registered, MapManager_GetGroundHeightAt adds this displacement to the map's base height.
+typedef float (*MapGroundDisplacementFn)(float x, float z);
+void MapManager_SetGroundDisplacementHook(MapGroundDisplacementFn fn);
+
+// Primary active ground wave parameters hook (for GPU vertex shader displacement).
+// When active, writes origin/direction to outOriginDir (xy: source.xz, zw: fwdNorm.xz),
+// wave parameters to outWaveParams (x: frontDist, y: totalDist, z: amplitude, w: width),
+// and profile parameters to outWaveProfile (x: wavelength, y: packetLength, z: rippleCount, w: 1.0 if active).
+typedef bool (*MapGroundWaveParamsFn)(Vector4 *outOriginDir, Vector4 *outWaveParams, Vector4 *outWaveProfile);
+void MapManager_SetGroundWaveParamsHook(MapGroundWaveParamsFn fn);
+bool MapManager_GetGroundWaveParams(Vector4 *outOriginDir, Vector4 *outWaveParams, Vector4 *outWaveProfile);
+
 // Queries the active map for shallow water at (x, z).
 // Returns true if (x, z) is in a water body, writing the water surface Y to outSurfaceY
 // and the physical water depth (surfaceY - bedY) to outWaterDepth.

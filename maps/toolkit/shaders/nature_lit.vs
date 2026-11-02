@@ -2,6 +2,7 @@
 #include "maps/toolkit/shaders/nature_wind_impact.glsl"
 #include "maps/toolkit/shaders/nature_wind_field.glsl"
 #include "maps/toolkit/shaders/grass_blade_state.glsl"
+#include "maps/toolkit/shaders/seismic_displacement.glsl"
 
 in vec3 vertexPosition;
 in vec2 vertexTexCoord;
@@ -103,6 +104,13 @@ void main()
         float archSheenMask = h * clamp((0.92 - h) * 4.5, 0.0, 1.0);
         windSheen = clamp(dispLen / maxAllowedBend, 0.0, 1.0) * archSheenMask;
     }
+
+    // Physical seismic ground wave displacement: lift entire blade and tilt normal with ground heave
+    vec2 seismicSlope;
+    float seismicDY = EvaluateSeismicDisplacement(world.xz, seismicSlope);
+    local.y += seismicDY;
+    world.y += seismicDY;
+    bentNormal = PerturbNormalWithSeismicWave(bentNormal, seismicSlope);
 
     fragPosition = world;
     vec3 worldN = worldLinear * bentNormal;

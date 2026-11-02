@@ -478,6 +478,8 @@ const char            *VFX_SeismicWaveStyle_Name(VFX_SeismicWaveStyle style);
 void                   VC_SeismicWave_Update(float dt);
 void                   VC_SeismicWave_Draw3D(Camera3D cam);
 void                   VC_SeismicWave_DrawShadowPass(void);
+float                  VC_SeismicWave_GetGroundDisplacementAt(float x, float z);
+bool                   VC_SeismicWave_GetPrimaryWaveData(Vector4 *outOriginDir, Vector4 *outWaveParams, Vector4 *outWaveProfile);
 
 // Unified / Generalized API
 void VFX_ComposeFlame(Vector3 pos, VC_MaterialId matId, float scale, float intensity);

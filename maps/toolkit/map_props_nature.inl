@@ -310,6 +310,9 @@ typedef struct
     int widthScale;
     int tipWidth;
     int shadowStrength;
+    int seismicOriginDir;
+    int seismicParams;
+    int seismicProfile;
 
     // Trạng thái đã upload gần nhất trên shader này để tránh gọi lại SetShaderValue dư thừa
     unsigned int lastVisibleFrameId;
@@ -386,6 +389,9 @@ static NatureShaderLocs *Nature_GetCachedLocsMutable(Shader shader)
     locs->widthScale = GetShaderLocation(shader, "u_widthScale");
     locs->tipWidth = GetShaderLocation(shader, "u_tipWidth");
     locs->shadowStrength = GetShaderLocation(shader, "u_shadowStrength");
+    locs->seismicOriginDir = GetShaderLocation(shader, "u_seismicOriginDir");
+    locs->seismicParams = GetShaderLocation(shader, "u_seismicParams");
+    locs->seismicProfile = GetShaderLocation(shader, "u_seismicProfile");
 
     locs->lastUseTexture = -1;
     locs->lastResponseKind = -1;
@@ -2250,6 +2256,15 @@ static void Nature_UpdateShader(Shader shader, float time, Vector2 windDirection
 
         Nature_UploadGrassStateUniforms(shader);
 
+        Vector4 seismicOriginDir = {0}, seismicParams = {0}, seismicProfile = {0};
+        MapManager_GetGroundWaveParams(&seismicOriginDir, &seismicParams, &seismicProfile);
+        if (locs->seismicOriginDir >= 0)
+            SetShaderValue(shader, locs->seismicOriginDir, &seismicOriginDir, SHADER_UNIFORM_VEC4);
+        if (locs->seismicParams >= 0)
+            SetShaderValue(shader, locs->seismicParams, &seismicParams, SHADER_UNIFORM_VEC4);
+        if (locs->seismicProfile >= 0)
+            SetShaderValue(shader, locs->seismicProfile, &seismicProfile, SHADER_UNIFORM_VEC4);
+
         int interactionEnabled = s_natureInteractionReady ? 1 : 0;
         if (locs->interactionEnabled >= 0)
             SetShaderValue(shader, locs->interactionEnabled, &interactionEnabled, SHADER_UNIFORM_INT);
@@ -2361,6 +2376,15 @@ static void Nature_UpdateShadowShader(Shader shader, float time, Vector2 windDir
         if (locs->time >= 0)
             SetShaderValue(shader, locs->time, &time, SHADER_UNIFORM_FLOAT);
         Nature_UploadGrassStateUniforms(shader);
+
+        Vector4 seismicOriginDir = {0}, seismicParams = {0}, seismicProfile = {0};
+        MapManager_GetGroundWaveParams(&seismicOriginDir, &seismicParams, &seismicProfile);
+        if (locs->seismicOriginDir >= 0)
+            SetShaderValue(shader, locs->seismicOriginDir, &seismicOriginDir, SHADER_UNIFORM_VEC4);
+        if (locs->seismicParams >= 0)
+            SetShaderValue(shader, locs->seismicParams, &seismicParams, SHADER_UNIFORM_VEC4);
+        if (locs->seismicProfile >= 0)
+            SetShaderValue(shader, locs->seismicProfile, &seismicProfile, SHADER_UNIFORM_VEC4);
 
         int interactionEnabled = s_natureInteractionReady ? 1 : 0;
         if (locs->interactionEnabled >= 0)
