@@ -279,6 +279,119 @@ const char *VFX_FireEmissionMode_Name(VFX_FireEmissionMode mode);
 const char *VFX_FireMotion_Name(VFX_FireMotionType motion);
 const char *VFX_FireAttachment_Name(VFX_FireAttachment attachment);
 
+// ── GENERALIZED GUIDED EARTH SYSTEM ─────────────────────────────────────────
+typedef enum {
+    VFX_EARTH_PRESET_CUSTOM = 0,
+    VFX_EARTH_PRESET_BOULDER_LOB,     // Massive single boulder lobbed in a high arc, heavy crushing impact
+    VFX_EARTH_PRESET_ROCK_BARRAGE,    // Rapid volley of 6-8 sharp slates/rock projectiles with tight spread
+    VFX_EARTH_PRESET_METEOR_CRUSH,    // High-altitude plunging magma rock with smoke, crater & seismic shock
+    VFX_EARTH_PRESET_MUD_SLUG,        // Heavy ductile clay/mud mass, low trajectory, muddy splash impact
+    VFX_EARTH_PRESET_JADE_SHARDS,     // Swarm of crystalline jade needles converging & corkscrewing forward
+    VFX_EARTH_PRESET_SAND_SWARM,      // Cloud of coarse gravel & sand nodules sweeping along parabolic curve
+    VFX_EARTH_PRESET_COUNT
+} VFX_GuidedEarthPreset;
+
+typedef enum {
+    VFX_EARTH_STYLE_BOULDER = 0,      // Heavy rounded/rough granite boulder
+    VFX_EARTH_STYLE_JAGGED_SLATE,     // Angular squashed slate / rock shards
+    VFX_EARTH_STYLE_MUD_CHUNK,        // Soft lumpy clay/mud clump
+    VFX_EARTH_STYLE_GRAVEL_SWARM,     // Multi-pebble gravel cluster
+    VFX_EARTH_STYLE_JADE_CRYSTAL,     // Translucent glowing jade crystalline facets
+    VFX_EARTH_STYLE_MAGMA_ROCK,       // Basalt rock with incandescent glowing veins
+    VFX_EARTH_STYLE_COUNT
+} VFX_EarthRockStyle;
+
+typedef enum {
+    VFX_EARTH_SPAWN_GROUND_EMERGE = 0, // Erupts upward out of the fractured ground with dust billows
+    VFX_EARTH_SPAWN_ORBITAL_CONVERGE,  // Converges inward from surrounding orbit before launching
+    VFX_EARTH_SPAWN_LEVITATE_RISE,     // Hovers & bobs with tectonic qi before blasting forward
+    VFX_EARTH_SPAWN_INSTANT_LAUNCH,    // Instant ballistic ejection from caster socket
+    VFX_EARTH_SPAWN_COUNT
+} VFX_EarthSpawnMode;
+
+typedef enum {
+    VFX_EARTH_TRAJ_PARABOLIC_ARC = 0, // True ballistic parabolic trajectory with authored apex
+    VFX_EARTH_TRAJ_GUIDED_HOMING,     // Dynamic homing curve adjusting to moving targets
+    VFX_EARTH_TRAJ_SPIRAL_BARREL,     // Parabolic arc with corkscrew swirl around trajectory axis
+    VFX_EARTH_TRAJ_HIGH_CATAPULT,     // Steep mortar catapult lob (high apex, nearly vertical plunge)
+    VFX_EARTH_TRAJ_COUNT
+} VFX_EarthTrajectoryMode;
+
+typedef enum {
+    VFX_EARTH_IMPACT_SHATTER = 0,     // Shatters violently into bouncing physical debris chips & dust
+    VFX_EARTH_IMPACT_CRATER_CRACK,    // Impacts ground creating crater, radial fissure streaks & decals
+    VFX_EARTH_IMPACT_QUAKE_SHOCKWAVE, // Releases expansive ground wave shock ring + heavy camera tremor
+    VFX_EARTH_IMPACT_PIERCE_EMBED,    // Embeds firmly into terrain with lingering wisps of dust
+    VFX_EARTH_IMPACT_COUNT
+} VFX_EarthImpactMode;
+
+typedef struct VFX_GuidedEarthConfig {
+    VFX_GuidedEarthPreset preset;
+    VFX_EarthRockStyle style;
+    VFX_EarthSpawnMode spawnMode;
+    VFX_EarthTrajectoryMode trajectoryMode;
+    VFX_EarthImpactMode impactMode;
+
+    // Physical Geometry & Formation
+    int rockCount;          // Number of rock entities (1 to 24)
+    float rockRadius;       // Primary rock radius in meters (0.05 to 2.5m)
+    float rockSquashY;      // Vertical aspect ratio / flatness (0.2 to 2.0)
+    float rockSquashZ;      // Depth aspect ratio / thickness (0.2 to 2.0)
+    float jaggedness;       // Procedural vertex perturbation amount (0.0 to 1.0)
+    float clusterSpread;    // Radius of multi-rock escort swarm (0.0 to 3.0m)
+
+    // Phase 1: Emergence
+    float emergeDuration;   // Preparation / emergence duration in seconds (0.0 to 3.0s)
+    float emergeHeight;     // Initial subterranean depth / hover height (m)
+    bool emergeGroundDust;  // Emit billow dust puffs upon emerging
+    bool emergeCracks;      // Spawn launch fissure cracks / stress marks
+
+    // Phase 2: Flight & Parabolic Motion
+    Vector3 source;         // Origin point
+    Vector3 target;         // Destination point
+    float travelSpeed;      // Flight velocity in m/s (2.0 to 60.0)
+    float arcHeight;        // Parabolic arc apex height in meters (0.2 to 20.0)
+    float gravityScale;     // Ballistic gravity factor (0.0 to 3.0)
+    float swirlSpeed;       // Spiral barrel roll angular velocity in rad/s
+    float tumbleSpeed;      // Autonomous rock tumbling speed in deg/s
+    bool emitDustTrail;     // Shed earth dust motes along flight path
+    float dustRate;         // Dust particles shed per second
+    bool emitTrailRibbon;   // Trailing atmospheric qi ribbon
+    float ribbonWidth;      // Ribbon strip width in meters
+
+    // Phase 3: Impact & Aftermath
+    int shatterChips;       // Number of physical tumbling debris chips (0 to 48)
+    float shatterVelocity;  // Radial ejection speed of debris chips (m/s)
+    float impactDustRadius; // Expanding particulate dust puff cloud radius (m)
+    float impactShake;      // Camera shake trauma intensity (0.0 to 1.0)
+    bool impactCraterCrack; // Spawn radial ground fissure streaks
+    bool impactShockRing;   // Propagate ground wave shock ring
+
+    // Material Optics & Shading
+    VC_MaterialId matId;    // Base element material ID
+    Color rockBaseColor;    // Base diffuse rock tint
+    Color veinColor;        // Glowing mineral / magma / jade vein color
+    float veinIntensity;    // Vein glow boost / emissive power (0.0 to 4.0)
+    float ambientGain;      // Ambient floor to prevent black-on-black in night arena (0.1 to 0.6)
+    float specularGain;     // Facet specular glint multiplier (0.0 to 3.0)
+} VFX_GuidedEarthConfig;
+
+VFX_GuidedEarthConfig  VFX_GuidedEarth_DefaultConfig(void);
+VFX_GuidedEarthConfig *VFX_GuidedEarth_GetLiveConfig(void);
+void                   VFX_GuidedEarth_ApplyPreset(VFX_GuidedEarthConfig *cfg, VFX_GuidedEarthPreset preset);
+int                    VFX_GuidedEarth_GetParams(VFX_GuidedEarthConfig *cfg, VFX_ParamDef *outParams, int maxParams);
+int                    VFX_ComposeGuidedEarth(const VFX_GuidedEarthConfig *cfg);
+int                    VFX_ComposeGuidedEarthEx(Vector3 source, Vector3 target, const VFX_GuidedEarthConfig *cfg);
+void                   VFX_KillGuidedEarth(int handle);
+const char            *VFX_GuidedEarthPreset_Name(VFX_GuidedEarthPreset preset);
+const char            *VFX_EarthRockStyle_Name(VFX_EarthRockStyle style);
+const char            *VFX_EarthSpawnMode_Name(VFX_EarthSpawnMode mode);
+const char            *VFX_EarthTrajectory_Name(VFX_EarthTrajectoryMode traj);
+const char            *VFX_EarthImpact_Name(VFX_EarthImpactMode impact);
+void                   VC_GuidedEarth_Update(float dt);
+void                   VC_GuidedEarth_Draw3D(Camera3D cam);
+void                   VC_GuidedEarth_DrawShadowPass(void);
+
 // Unified / Generalized API
 void VFX_ComposeFlame(Vector3 pos, VC_MaterialId matId, float scale, float intensity);
 void VFX_ComposeAmbientFire(Vector3 pos, VC_MaterialId matId, float scale, float intensity);

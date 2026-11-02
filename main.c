@@ -1748,9 +1748,14 @@ int main(int argc, char **argv) {
             if ((!renderVFXMode || renderVFXIndex == -1) && !VFXTest_ShouldHideCharacterRef() && CharacterModel_IsLoaded()) {
                 CharacterModel_Draw(&player.anim, player.position, s_vfxPlayerYaw, 1.0f, WHITE);
             }
+            BeginShaderMode(EnvShadow_GetDepthShader());
             VFXTest_DrawShadowPass();
+            EndShaderMode();
         } else {
+            BeginShaderMode(EnvShadow_GetDepthShader());
             VFX_WaterOrb_DrawShadowPass();
+            VC_GuidedEarth_DrawShadowPass();
+            EndShaderMode();
         }
         if (CharacterModel_IsLoaded()) {
             SurfaceMaterial_EndShadowCast(charModel);

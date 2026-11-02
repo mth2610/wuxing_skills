@@ -791,6 +791,10 @@ static void VFXTest_RefreshInspectorParams(bool force)
     {
         s_inspectorParamCount = VFX_Fire_GetParams(VFX_Fire_GetLiveConfig(), s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
     }
+    else if (VFXTest_IsNewFxNamed("GUIDED EARTH"))
+    {
+        s_inspectorParamCount = VFX_GuidedEarth_GetParams(VFX_GuidedEarth_GetLiveConfig(), s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
+    }
 }
 
 static inline float VFXTest_Smoothstep(float e0, float e1, float x)
@@ -1402,6 +1406,13 @@ static bool VFXTest_FireNewFx(int newfxIndex, Vector3 pos)
     case 43: VFX_ComposeFireballBurst(pos, VC_MAT_FIRE, 1.5f, 1.0f); return true;
     case 45: VFX_ComposeIceCrystal(pos, posSeed); return true;
     case 46: VFX_ComposeWaterOrb(Vector3Add(pos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(pos, (Vector3){2.5f, 1.8f, 0.8f})); return true;
+    case 52: {
+        Vector3 target = Vector3Add(pos, (Vector3){5.5f, 0.0f, 2.5f});
+        target.y = MapManager_GetGroundHeightAt(target.x, target.z);
+        Vector3 castSocket = Vector3Add(pos, (Vector3){0.0f, 0.78f, 0.0f});
+        VFX_ComposeGuidedEarthEx(castSocket, target, VFX_GuidedEarth_GetLiveConfig());
+        return true;
+    }
     default: return false;
     }
 // @gen:newfx_fire end
@@ -1427,7 +1438,7 @@ static const char* s_newFxNames[] = {
     "SMOKE COLUMN", "SMOKE PUFF", "[PARTICLE] SMOKE VOLUME", "SURFACE IMPACT", "SURFACE PARTICLE RING", "SWEEP SLASH",
     "MOTION RIBBON TRAIL", "VACUUM CONVERGE", "VACUUM RING", "[TRAIL/FLOW] VOLUME TRAIL", "FISSURE STREAK", "STONE PILLAR",
     "GUIDED FIRE", "FIREBALL BURST", "BLACK HOLE", "ICE CRYSTAL", "WATER ORB", "WATER STREAM",
-    "WOOD FLOWER", "WOOD LEAVES", "WOOD PETALS", "WOOD VINE",
+    "WOOD FLOWER", "WOOD LEAVES", "WOOD PETALS", "WOOD VINE", "GUIDED EARTH",
 };
 // @gen:newfx_names end
 
@@ -1452,7 +1463,7 @@ static const int s_newFxCategories[] = {
     6, 1, 6, 6, 6, 6, 6, 6, 6, 6,
     6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
     4, 4, 0, 0, 5, 1, 1, 1, 2, 2,
-    2, 2,
+    2, 2, 4,
 };
 // @gen:newfx_categories end
 
@@ -1963,6 +1974,7 @@ static const char *VFXTest_UIActiveVariant(void)
     if (VFXTest_IsNewFxNamed("SURFACE PARTICLE RING")) return VFX_SurfaceParticleRingVariant_Name(s_surfaceParticleRingFixtureVariant);
     if (VFXTest_IsNewFxNamed("IMPACT DUST")) return VFX_ImpactDustVariant_Name(s_impactDustFixtureVariant);
     if (VFXTest_IsNewFxNamed("GUIDED FIRE")) return VFX_FirePreset_Name(VFX_Fire_GetLiveConfig()->preset);
+    if (VFXTest_IsNewFxNamed("GUIDED EARTH")) return VFX_GuidedEarthPreset_Name(VFX_GuidedEarth_GetLiveConfig()->preset);
     if (VFXTest_IsNewFxNamed("SURFACE IMPACT")) return VFXTest_SurfaceImpactReceiverName(s_surfaceImpactFixtureSurface);
     return NULL;
 }
@@ -2505,6 +2517,16 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
             VFXTest_FireGuidedMotion(castSocket, guidedTarget);
             return false;
         }
+        if (s_testCategory == TEST_CAT_NEWFX && VFXTest_IsNewFxNamed("GUIDED EARTH")) {
+            Vector3 castSocket = Vector3Add(playerPos, (Vector3){0.0f, 0.78f, 0.0f});
+            Vector3 guidedTarget = mouseTarget3D;
+            if (s_clickedOnUI) {
+                guidedTarget = Vector3Add(playerPos, (Vector3){5.0f, 0.0f, 2.0f});
+                guidedTarget.y = MapManager_GetGroundHeightAt(guidedTarget.x, guidedTarget.z);
+            }
+            VFX_ComposeGuidedEarthEx(castSocket, guidedTarget, VFX_GuidedEarth_GetLiveConfig());
+            return false;
+        }
           if (!VFXTest_FireNewFx(s_testIndex, s_prefabStartPos)) {
               /* continuous — handled per-frame in VFXTest_Draw3D */
               switch (s_testIndex) {
@@ -2729,7 +2751,7 @@ void VFXTest_Draw3D(void)
             }
 
             // Slash '/' (and '>' or '.') cycles the value of the selected variable
-            if ((IsKeyPressed(KEY_SLASH) || (IsKeyPressed(KEY_PERIOD) && ((!VFXTest_IsNewFxNamed("GUIDED MOTION") && !VFXTest_IsNewFxNamed("GUIDED FIRE")) ||
+            if ((IsKeyPressed(KEY_SLASH) || (IsKeyPressed(KEY_PERIOD) && ((!VFXTest_IsNewFxNamed("GUIDED MOTION") && !VFXTest_IsNewFxNamed("GUIDED FIRE") && !VFXTest_IsNewFxNamed("GUIDED EARTH")) ||
                 !(IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))))))
             {
                 if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))
@@ -2742,7 +2764,7 @@ void VFXTest_Draw3D(void)
                 TraceLog(LOG_INFO, "[Inspector] Param '%s' = %s",
                          s_inspectorParams[s_inspectorSelectedParam].name, valBuf);
             }
-            else if (IsKeyPressed(KEY_COMMA) && ((!VFXTest_IsNewFxNamed("GUIDED MOTION") && !VFXTest_IsNewFxNamed("GUIDED FIRE")) ||
+            else if (IsKeyPressed(KEY_COMMA) && ((!VFXTest_IsNewFxNamed("GUIDED MOTION") && !VFXTest_IsNewFxNamed("GUIDED FIRE") && !VFXTest_IsNewFxNamed("GUIDED EARTH")) ||
                      !(IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))))
             {
                 VFXTest_UIEditParameter(s_inspectorSelectedParam, -1);
@@ -2884,6 +2906,21 @@ void VFXTest_Draw3D(void)
                     VFX_Fire_ApplyPreset(fcfg, nextPreset);
                     VFXTest_RefreshInspectorParams(true);
                     TraceLog(LOG_INFO, "GUIDED FIRE preset: %s (Shift+> next; Shift+< previous)", VFX_FirePreset_Name(fcfg->preset));
+                }
+            }
+        }
+        else if (VFXTest_IsNewFxNamed("GUIDED EARTH"))
+        {
+            if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))
+            {
+                int direction = IsKeyPressed(KEY_PERIOD) ? 1 : (IsKeyPressed(KEY_COMMA) ? -1 : 0);
+                if (direction != 0)
+                {
+                    VFX_GuidedEarthConfig *ecfg = VFX_GuidedEarth_GetLiveConfig();
+                    VFX_GuidedEarthPreset nextPreset = (VFX_GuidedEarthPreset)(((int)ecfg->preset + direction + VFX_EARTH_PRESET_COUNT) % VFX_EARTH_PRESET_COUNT);
+                    VFX_GuidedEarth_ApplyPreset(ecfg, nextPreset);
+                    VFXTest_RefreshInspectorParams(true);
+                    TraceLog(LOG_INFO, "GUIDED EARTH preset: %s (Shift+> next; Shift+< previous)", VFX_GuidedEarthPreset_Name(ecfg->preset));
                 }
             }
         }
@@ -3097,6 +3134,17 @@ void VFXTest_Draw3D(void)
               case 49: do { VFX_WoodLeavesConfig _cfg = VFXTest_BuildWoodLeavesConfig(s_prefabStartPos, s_currentPlayerPos, s_meshTime); VFX_ComposeWoodLeaves(&_cfg); } while(0); break;
               case 50: do { VFX_WoodPetalConfig _cfg = VFXTest_BuildWoodPetalConfig(s_prefabStartPos, s_currentPlayerPos, s_meshTime); VFX_ComposeWoodPetals(&_cfg); } while(0); break;
               case 51: do { VFX_WoodVineConfig _cfg = VFXTest_BuildWoodVineConfig(s_prefabStartPos, s_currentPlayerPos, s_meshTime); VFX_ComposeWoodVine(&_cfg); } while(0); break;
+              case 52: {
+                  static float s_guidedEarthAutoTimer = 0.0f;
+                  s_guidedEarthAutoTimer += GetFrameTime();
+                  if (s_guidedEarthAutoTimer >= 2.4f) {
+                      s_guidedEarthAutoTimer = 0.0f;
+                      Vector3 target = Vector3Add(s_prefabStartPos, (Vector3){5.5f, 0.0f, 2.5f});
+                      target.y = MapManager_GetGroundHeightAt(target.x, target.z);
+                      VFX_ComposeGuidedEarthEx(s_prefabStartPos, target, VFX_GuidedEarth_GetLiveConfig());
+                  }
+                  break;
+              }
           }
 // @gen:newfx_draw end
         }
@@ -3140,6 +3188,7 @@ void VFXTest_DrawShadowPass(void)
     }
     VFX_FoliageSystem_DrawShadowPass();
     VFX_WaterOrb_DrawShadowPass();
+    VC_GuidedEarth_DrawShadowPass();
 }
 
 void VFXTest_DrawHUD(void)
@@ -3212,6 +3261,12 @@ void VFXTest_SetRenderTarget(int newfxIndex, Vector3 spawnPos)
     if (envR && *envR) {
         VFXTest_InitLiveConfigs();
         s_liveWoodVineConfig.reaction = (VFX_WoodReactionState)(atoi(envR) % WOOD_REACTION_COUNT);
+    }
+
+    const char *envEarthP = getenv("WUXING_GUIDED_EARTH_PRESET");
+    if (envEarthP && *envEarthP) {
+        int ep = (atoi(envEarthP) % VFX_EARTH_PRESET_COUNT + VFX_EARTH_PRESET_COUNT) % VFX_EARTH_PRESET_COUNT;
+        VFX_GuidedEarth_ApplyPreset(VFX_GuidedEarth_GetLiveConfig(), (VFX_GuidedEarthPreset)ep);
     }
     VFXTest_RefreshInspectorParams(true);
 
