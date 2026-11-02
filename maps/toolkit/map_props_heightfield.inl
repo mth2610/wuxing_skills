@@ -36,6 +36,8 @@ static Mesh Ground_CreateIndexedHeightfield(Image image, Vector3 size, bool pack
         float yb = mesh.vertices[b * 3 + 1];
         float yc = mesh.vertices[c * 3 + 1];
         float yd = mesh.vertices[d * 3 + 1];
+        if (size.y >= 15.0f && ya <= 0.75f && yb <= 0.75f && yc <= 0.75f && yd <= 0.75f)
+            continue;
         float diffAD = fabsf(ya - yd);
         float diffBC = fabsf(yb - yc);
         int ids[6];
@@ -48,6 +50,7 @@ static Mesh Ground_CreateIndexedHeightfield(Image image, Vector3 size, bool pack
         }
         for (int k = 0; k < 6; k++) mesh.indices[index++] = (unsigned short)ids[k];
     }
+    mesh.triangleCount = index / 3;
     for (int t = 0; t < mesh.triangleCount; t++) {
         unsigned short *ids = &mesh.indices[t * 3];
         Vector3 a = {mesh.vertices[ids[0]*3], mesh.vertices[ids[0]*3+1], mesh.vertices[ids[0]*3+2]};

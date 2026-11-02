@@ -1845,13 +1845,15 @@ int main(int argc, char **argv) {
        Bracketed by MyEndMode3D/MyBeginMode3D because the capture must use
        BeginTextureMode (nothing else renders into a target under rlvk) and
        EndTextureMode resets the camera — see SceneTargets_CaptureBackgroundLuma. */
-    MyEndMode3D();
     if (benchmarkVisible) profileTime[4] = GetTime();
     PASS_MARK("opaque");
-    SceneTargets_CaptureBackgroundLuma();
+    if (SceneTargets_NeedsBackgroundLuma()) {
+        MyEndMode3D();
+        SceneTargets_CaptureBackgroundLuma();
+        MyBeginMode3D(camera);
+    }
     if (benchmarkVisible) profileTime[5] = GetTime();
     PASS_MARK("luma");
-    MyBeginMode3D(camera);
 
     VFX_Compose_Draw3D(camera);
 

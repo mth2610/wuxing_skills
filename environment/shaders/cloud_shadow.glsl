@@ -12,7 +12,7 @@ float Environment_CloudVisibility(sampler2D cloudNoise, vec3 worldPosition) {
     if (u_cloudUV.w <= 0.0) return 1.0;
     vec2 planeXZ = worldPosition.xz - max(u_cloudShape.z - worldPosition.y, 0.0) * u_cloudProjection;
     vec2 uv = planeXZ * u_cloudUV.x - u_cloudUV.yz;
-    float field = texture(cloudNoise, uv).r;
+    float field = textureLod(cloudNoise, uv, 0.0).r;
     float threshold = 1.0 - u_cloudShape.x;
     float shadow = smoothstep(threshold - u_cloudShape.y, threshold + u_cloudShape.y, field);
     return 1.0 - u_cloudUV.w * shadow;

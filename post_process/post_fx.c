@@ -546,6 +546,31 @@ static void PostFX_PerfSample(const PostFXConfig *c, int width, int height, int 
   s_last = now;
 }
 
+// Switch directly between offscreen RenderTextures without calling EndTextureMode()
+// in between. Calling EndTextureMode() after every bloom/downsample/upsample stage
+// forces rlDisableFramebuffer() to open a 1280x720 swapchain renderPass (with
+// LOAD_OP_LOAD on color+depth) that immediately closes with 0 draws on the next
+// BeginTextureMode().
+static void PostFX_BeginOrSwitchTarget(RenderTexture2D target, bool *inTextureMode)
+{
+  if (!*inTextureMode)
+  {
+    BeginTextureMode(target);
+    *inTextureMode = true;
+  }
+  else
+  {
+    rlDrawRenderBatchActive();
+    rlEnableFramebuffer(target.id);
+    rlViewport(0, 0, target.texture.width, target.texture.height);
+    rlMatrixMode(RL_PROJECTION);
+    rlLoadIdentity();
+    rlOrtho(0.0, (double)target.texture.width, (double)target.texture.height, 0.0, 0.0, 1.0);
+    rlMatrixMode(RL_MODELVIEW);
+    rlLoadIdentity();
+  }
+}
+
 void PostFX_Draw(const PostFXConfig *config)
 {
   PostFXConfig local = *config;
@@ -581,11 +606,12 @@ void PostFX_Draw(const PostFXConfig *config)
   int width = srcTex.width;
   int height = srcTex.height;
   const int activeLevels = PostFX_GetActiveBloomLevels();
+  bool inTextureMode = false;
 
   if (config->bloomEnabled && bloomTex.id != 0)
   {
     // PASS 1: Extract bright pixels → bloomTex (1/4)
-    BeginTextureMode(bloomTex);
+    PostFX_BeginOrSwitchTarget(bloomTex, &inTextureMode);
     BeginShaderMode(brightShader);
     float threshold = (s_bloomThresholdOverride > 0.0f) ? s_bloomThresholdOverride
                                                         : config->bloomThreshold;
@@ -613,7 +639,6 @@ void PostFX_Draw(const PostFXConfig *config)
     rlEnableColorBlend();
 
     EndShaderMode();
-    EndTextureMode();
 
     // DOWNSAMPLE chain: đã loại bỏ các lệnh SetShaderValue nằm ngoài BeginShaderMode
     // để tránh ghi đè nhầm shader đang active trên backend rlvk.
@@ -624,10 +649,9 @@ void PostFX_Draw(const PostFXConfig *config)
     {
       int dstW = dfTex[i].texture.width, dstH = dfTex[i].texture.height;
       float karis = (i == 0) ? s_bloomKaris : 0.0f;
-      BeginTextureMode(dfTex[i]);
+      PostFX_BeginOrSwitchTarget(dfTex[i], &inTextureMode);
       DualFilterPass(dsShader, dsTexSizeLoc, prevTex, prevW, prevH, dstW, dstH,
                      config, karis, -1.0f);
-      EndTextureMode();
       prevTex = dfTex[i].texture;
       prevW = dstW;
       prevH = dstH;
@@ -646,10 +670,9 @@ void PostFX_Draw(const PostFXConfig *config)
     {
       RenderTexture2D dst = (i == 0) ? bloomTex : dfTex[i - 1];
       int dstW = dst.texture.width, dstH = dst.texture.height;
-      BeginTextureMode(dst);
+      PostFX_BeginOrSwitchTarget(dst, &inTextureMode);
       DualFilterPass(usShader, usTexSizeLoc, prevTex, prevW, prevH, dstW, dstH,
                      NULL, -1.0f, scatter);
-      EndTextureMode();
       prevTex = dst.texture;
       prevW = dstW;
       prevH = dstH;
@@ -658,7 +681,15 @@ void PostFX_Draw(const PostFXConfig *config)
 
   // PASS 6: Composite → screen (hoặc ldrTex nếu bật FXAA)
   const bool useFxaa = (s_fxaa > 0.5f) && fxaaShader.id != 0 && ldrTex.id != 0;
-  if (useFxaa) BeginTextureMode(ldrTex);
+  if (useFxaa)
+  {
+    PostFX_BeginOrSwitchTarget(ldrTex, &inTextureMode);
+  }
+  else if (inTextureMode)
+  {
+    EndTextureMode();
+    inTextureMode = false;
+  }
 
   BeginShaderMode(compositeShader);
 

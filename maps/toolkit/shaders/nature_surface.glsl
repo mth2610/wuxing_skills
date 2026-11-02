@@ -41,7 +41,7 @@ float FoliageShadowVisibility(vec4 lightSpace, vec4 staticLightSpace,
                               float distToCam)
 {
     // Smooth distance fade beyond the active shadow cascade
-    float shadowFade = 1.0 - FastRamp(22.0, 36.0, distToCam);
+    float shadowFade = 1.0 - clamp((distToCam - 22.0) * 0.07142857, 0.0, 1.0);
     if (shadowFade <= 0.0)
         return 1.0;
 
@@ -55,14 +55,9 @@ float FoliageShadowVisibility(vec4 lightSpace, vec4 staticLightSpace,
             float edgeFade = MapShadowCoverageFadeWidth(projected.xy, 0.22);
             if (edgeFade > 0.0) {
                 float bias = clamp(0.0028 + slope * 0.0035, 0.0025, 0.0065);
-                float sampleDyn;
-                if (u_shadowFilterQuality >= 1.5 && distToCam < 9.0) {
-                    sampleDyn = MapShadowFilteredVisibilityTier(shadowMap, projected.xy, projected.z - bias, u_shadowTexel, 1.35, 0.18, u_shadowFilterQuality);
-                } else if (distToCam < 24.0) {
-                    sampleDyn = MapShadowCompareBilinear(shadowMap, projected.xy, projected.z - bias, u_shadowTexel);
-                } else {
-                    sampleDyn = MapShadowCompare(shadowMap, projected.xy, projected.z - bias);
-                }
+                float sampleDyn = (distToCam < 24.0)
+                    ? MapShadowCompareBilinear(shadowMap, projected.xy, projected.z - bias, u_shadowTexel)
+                    : MapShadowCompare(shadowMap, projected.xy, projected.z - bias);
                 rawDyn = mix(1.0, sampleDyn, edgeFade);
             }
         }
@@ -76,7 +71,7 @@ float FoliageShadowVisibility(vec4 lightSpace, vec4 staticLightSpace,
             float edgeFade = MapShadowCoverageFadeWidth(projected.xy, 0.12);
             if (edgeFade > 0.0) {
                 float bias = clamp(0.0025 + slope * 0.0030, 0.0020, 0.0055);
-                float sampleStatic = (distToCam < 20.0)
+                float sampleStatic = (distToCam < 16.0)
                     ? MapShadowCompareBilinear(staticShadowMap, projected.xy, projected.z - bias, u_staticShadowTexel)
                     : MapShadowCompare(staticShadowMap, projected.xy, projected.z - bias);
                 float rawStatic = mix(1.0, sampleStatic, edgeFade);
@@ -278,13 +273,12 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     vec3 rawFaceN = vec3(worldNormal.x * 0.72, max(abs(worldNormal.y), 0.48), worldNormal.z * 0.72);
     vec3 faceNormal = rawFaceN * inversesqrt(max(dot(rawFaceN, rawFaceN), 1e-8));
     if (distToCam < 18.0) {
-        vec3 bladeSide = vec3(-faceNormal.z, 0.0, faceNormal.x);
-        float sideLenSq = dot(bladeSide, bladeSide);
+        float sideLenSq = 1.0 - faceNormal.y * faceNormal.y;
         if (sideLenSq > 1e-6) {
-            bladeSide *= inversesqrt(sideLenSq);
+            vec3 bladeSide = vec3(-faceNormal.z, 0.0, faceNormal.x) * inversesqrt(sideLenSq);
             float curvature = u * 0.19 * (1.0 - antiShimmer * 0.90);
             vec3 curvedN = faceNormal + bladeSide * curvature;
-            faceNormal = curvedN * inversesqrt(max(dot(curvedN, curvedN), 1e-8));
+            faceNormal = curvedN * inversesqrt(1.0 + curvature * curvature);
         }
     }
 
@@ -395,10 +389,11 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
         }
         float sunVis = mix(0.40, 1.0, shadow) * cloudVis;
         if (sunVis > 0.001) {
-            vec3 effectiveLightColor = u_lightColor * (1.0 / (1.0 + max(lightDir.y - 0.32, 0.0) * 1.18));
-            float horizonEnvelope = smoothstep(0.02, 0.38, max(lightDir.y, 0.0)) * 0.66 + 0.34;
+            float lightSunY = max(lightDir.y, 0.0);
+            float horizonEnv = smoothstep(0.02, 0.38, lightSunY) * 0.66 + 0.34;
+            vec3 effectiveSunColor = u_lightColor * (horizonEnv / (1.0 + max(lightDir.y - 0.32, 0.0) * 1.18));
 
-            float lowSunMacroBlend = 1.0 - smoothstep(0.08, 0.36, max(lightDir.y, 0.0));
+            float lowSunMacroBlend = 1.0 - smoothstep(0.08, 0.36, lightSunY);
             float shadingNWeight = mix(0.58, 0.82, lowSunMacroBlend);
             vec3 rawShadingN = mix(faceNormal, n, shadingNWeight);
             vec3 shadingN = rawShadingN * inversesqrt(max(dot(rawShadingN, rawShadingN), 1e-8));
@@ -406,13 +401,13 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
             vec3 modelLightDir = rawModelL * inversesqrt(max(dot(rawModelL, rawModelL), 1e-8));
             float wrappedFace  = clamp((dot(shadingN, lightDir) + 0.38) * 0.7246, 0.0, 1.0);
             float wrappedModel = clamp((dot(shadingN, modelLightDir) + 0.38) * 0.7246, 0.0, 1.0);
-            float zenithBlend  = FastRamp(0.50, 0.90, lightDir.y) * 0.60;
+            float zenithBlend  = clamp((lightDir.y - 0.50) * 1.5, 0.0, 0.60);
             float wrapped = mix(wrappedFace, wrappedModel, zenithBlend);
 
             float canopyDepth = 0.34 * (1.0 - h) * (1.0 - distRootLift * 0.55);
             float opticalDepth = canopyDepth * 0.75 / max(lightDir.y, 0.28);
             float expCanopy = 1.0 / (1.0 + opticalDepth + 0.35 * opticalDepth * opticalDepth);
-            float verticalSelfShadow = mix(mix(0.72, 0.90, distRootLift), 1.0, smoothstep(0.0, 0.46, h));
+            float verticalSelfShadow = mix(mix(0.72, 0.90, distRootLift), 1.0, clamp(h * 2.173913, 0.0, 1.0));
             float canopy = (mix(0.52, 0.76, distRootLift) + mix(0.48, 0.24, distRootLift) * expCanopy) * verticalSelfShadow;
 
             vec3 anisoSpec = vec3(0.0);
@@ -426,7 +421,7 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
                 float invTangentLenSq = 1.0 / max(1.0 - faceNormal.y * faceNormal.y, 1e-4);
                 float sinTHSq = clamp(1.0 - (shiftedTH * shiftedTH) * invTangentLenSq, 0.0, 1.0);
 
-                float distRoughness = FastRamp(8.0, 22.0, distToCam);
+                float distRoughness = clamp((distToCam - 8.0) * 0.07142857, 0.0, 1.0);
                 float specAA = (1.0 - antiShimmer) * archWindow * specScale;
                 float sinTH4  = sinTHSq * sinTHSq;
                 float sinTH8  = sinTH4 * sinTH4;
@@ -440,8 +435,8 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
             }
 
             // Tăng cường tán xạ ngược sáng Mie xuyên qua ngọn cỏ mỏng khi nhìn về phía Mặt Trời
-            vec3 distortedSun = normalize(lightDir + faceNormal * 0.32);
-            float forwardScatter = max(dot(-distortedSun, viewDir), 0.0);
+            vec3 rawDistortedSun = lightDir + faceNormal * 0.32;
+            float forwardScatter = max(-dot(rawDistortedSun, viewDir) * inversesqrt(max(dot(rawDistortedSun, rawDistortedSun), 1e-8)), 0.0);
             float backLight = max(-dot(faceNormal, modelLightDir), 0.0);
             float forwardLobe = forwardScatter * forwardScatter * (0.85 + 0.55 * forwardScatter);
             float backLobe = FastPow2(backLight) * (0.38 + 0.62 * forwardScatter);
@@ -455,8 +450,8 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
             vec3 jadeTrans = goldenJadeSSS * (transmission * 0.94);
             vec3 specHighlight = anisoSpec + vec3(waxySpec * 0.34) * baseColor;
 
-            vec3 directSun = ((directDiffuse + jadeTrans) * canopy + specHighlight) * (sunVis * horizonEnvelope);
-            lit += directSun * effectiveLightColor;
+            vec3 directSun = ((directDiffuse + jadeTrans) * canopy + specHighlight) * sunVis;
+            lit += directSun * effectiveSunColor;
         }
     }
 

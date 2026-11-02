@@ -64,7 +64,7 @@ uniform vec4 u_lakeParams;
 out vec4 finalColor;
 
 #define LAYER_EPS 0.003
-#define PATH_INFLUENCE 4.0
+#define PATH_INFLUENCE 3.55
 
 void main()
 {
@@ -77,15 +77,10 @@ void main()
     float pixelMetersSq = max(dot(wpDx, wpDx), dot(wpDy, wpDy));
     float detailResolve = 1.0 - smoothstep(0.000225, 0.0049, pixelMetersSq);
 
-    // ---- 1. Splat Fetch & Early Abyss Discard ----
-    vec4 splatSample = textureGrad(texture0, fragTexCoord, baseUvDx, baseUvDy);
+    // ---- 1. Splat Fetch ----
+    vec4 splatSample = textureLod(texture0, fragTexCoord, 0.0);
     float streamWet = splatSample.a;
     float rockScree = splatSample.g;
-
-    // Discard outer abyss floor outside the island perimeter
-    if (rockScree > 0.85 && splatSample.r < 0.10 && fragWorldPos.y <= -7.2) {
-        discard;
-    }
 
     float lightLenSq = dot(lightDir, lightDir);
     vec3 light = (lightLenSq > 0.01) ? (-lightDir * inversesqrt(lightLenSq)) : vec3(0.0, 1.0, 0.0);
@@ -127,26 +122,10 @@ void main()
         vec2 ecoUV = clamp((fragWorldPos.xz - u_ecologyRect.xy) / max(u_ecologyRect.zw, vec2(0.0001)), vec2(0.0), vec2(1.0));
         ecology = textureLod(u_ecology, ecoUV, 0.0);
 
-        // Decode 16-bit RG/BA at 4 texel corners BEFORE bilinear blend to prevent 8-bit low-byte wrap sawtooth
-        ivec2 distSize = textureSize(u_ecologyDistance, 0);
-        vec2 texCoordF = ecoUV * vec2(distSize - ivec2(1));
-        ivec2 tc0 = clamp(ivec2(floor(texCoordF)), ivec2(0), distSize - ivec2(1));
-        ivec2 tc1 = min(tc0 + ivec2(1), distSize - ivec2(1));
-        vec2 tf = fract(texCoordF);
-
-        vec4 m00 = texelFetch(u_ecologyDistance, tc0, 0);
-        vec4 m10 = texelFetch(u_ecologyDistance, ivec2(tc1.x, tc0.y), 0);
-        vec4 m01 = texelFetch(u_ecologyDistance, ivec2(tc0.x, tc1.y), 0);
-        vec4 m11 = texelFetch(u_ecologyDistance, tc1, 0);
-
-        vec2 d00 = vec2(m00.r * 65280.0 + m00.g * 255.0, m00.b * 65280.0 + m00.a * 255.0);
-        vec2 d10 = vec2(m10.r * 65280.0 + m10.g * 255.0, m10.b * 65280.0 + m10.a * 255.0);
-        vec2 d01 = vec2(m01.r * 65280.0 + m01.g * 255.0, m01.b * 65280.0 + m01.a * 255.0);
-        vec2 d11 = vec2(m11.r * 65280.0 + m11.g * 255.0, m11.b * 65280.0 + m11.a * 255.0);
-        vec2 decodedU16 = mix(mix(d00, d10, tf.x), mix(d01, d11, tf.x), tf.y) * (1.0 / 65535.0);
-
-        distToPath = (decodedU16.x * 2.0 - 1.0) * 16.0 + 1.15;
-        float signedShore = (decodedU16.y * 2.0 - 1.0) * 16.0;
+        // Hardware bilinear sample of pre-decoded monotonic 8-bit RG (2cm precision over active ranges)
+        vec2 decodedDist = textureLod(u_ecologyDistance, ecoUV, 0.0).rg;
+        distToPath = decodedDist.r * 5.1 - 0.5;
+        float signedShore = decodedDist.g * 5.5 - 3.1;
 
         // Multi-scale organic shoreline domain warp: breaks up any residual grid linearity into natural coves
         float shoreWarp = sin(fragWorldPos.x * 0.42 + fragWorldPos.z * 0.31) * 0.22
@@ -613,7 +592,7 @@ void main()
 
     if (u_groundDebrisEnabled != 0 && camDistSqXZ < 1024.0) {
         float debrisDistFade = 1.0 - smoothstep(576.0, 1024.0, camDistSqXZ);
-        vec4 debris = textureGrad(u_groundDebris, fragTexCoord, baseUvDx, baseUvDy);
+        vec4 debris = textureLod(u_groundDebris, fragTexCoord, 0.0);
         float fineGrain = (soilPossible) ? dirtDetail.r : fineGrassLuma;
         float grassDebrisAtten = 1.0 - wGrass * 0.72;
 

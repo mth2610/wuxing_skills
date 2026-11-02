@@ -139,12 +139,18 @@ float MapShadowFilteredVisibilityTier(highp sampler2D mapTexture, vec2 uv,
     vec2 fraction = centerPos - base;
     vec4 sc = step(vec4(compareDepth), textureGather(mapTexture, (base + 1.0) * texelSize));
     float cSum = sc.x + sc.y + sc.z + sc.w;
+    if (cSum <= 0.001)
+        return 0.0;
+    if (cSum >= 3.999 && thinFeatureBoost <= 0.01)
+        return 1.0;
 
     // Subtle rotated disk offsets (26.5 deg golden-ratio tilt) break up blocky axis-aligned staircase edges
     vec2 offA = vec2(diagonal * 0.894, diagonal * 0.447) * texelSize;
     vec2 offB = vec2(-diagonal * 0.447, diagonal * 0.894) * texelSize;
 
     float downLeft = MapShadowGatherBox4(mapTexture, uv - offA, compareDepth);
+    if (cSum >= 3.999 && downLeft >= 0.999)
+        return 1.0;
     float upRight  = MapShadowGatherBox4(mapTexture, uv + offA, compareDepth);
 
     float earlySum = cSum + (downLeft + upRight) * 4.0;

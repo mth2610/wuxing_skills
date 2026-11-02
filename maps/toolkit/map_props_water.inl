@@ -199,6 +199,7 @@ static void Water_InitializeWaveField(MapWaterSurface *water)
             SetTextureWrap(water->waveFieldTex, TEXTURE_WRAP_CLAMP);
             Water_InitializeWaveUploadCache(water);
         }
+        water->waveStepRemainder = -1.0f;
     }
 }
 
@@ -1286,6 +1287,8 @@ void MapProp_AddWaterRipple(MapWaterSurface *water, Vector3 position, float radi
                 water->waveVelocityField[z * n + x] += impulse * expf(-q) * (1.0f - q);
             }
         }
+        if (water->waveStepRemainder < 0.0f)
+            water->waveStepRemainder = 0.0f;
     }
 }
 
@@ -1321,41 +1324,45 @@ void MapProp_UpdateWaterSurface(MapWaterSurface *water, float dt)
 
             if (shiftX != 0 || shiftZ != 0)
             {
-                if (abs(shiftX) >= n || abs(shiftZ) >= n)
+                if (water->waveStepRemainder >= 0.0f)
                 {
-                    memset(water->waveHeightField, 0, (size_t)(n * n) * sizeof(float));
-                    memset(water->waveVelocityField, 0, (size_t)(n * n) * sizeof(float));
-                }
-                else
-                {
-                    for (int z = 0; z < n; z++)
+                    if (abs(shiftX) >= n || abs(shiftZ) >= n)
                     {
-                        int sz = z + shiftZ;
-                        for (int x = 0; x < n; x++)
-                        {
-                            int sx = x + shiftX;
-                            if (sx >= 0 && sx < n && sz >= 0 && sz < n)
-                                water->waveNextField[z * n + x] = water->waveHeightField[sz * n + sx];
-                            else
-                                water->waveNextField[z * n + x] = 0.0f;
-                        }
+                        memset(water->waveHeightField, 0, (size_t)(n * n) * sizeof(float));
+                        memset(water->waveVelocityField, 0, (size_t)(n * n) * sizeof(float));
+                        water->waveStepRemainder = -1.0f;
                     }
-                    memcpy(water->waveHeightField, water->waveNextField, (size_t)(n * n) * sizeof(float));
+                    else
+                    {
+                        for (int z = 0; z < n; z++)
+                        {
+                            int sz = z + shiftZ;
+                            for (int x = 0; x < n; x++)
+                            {
+                                int sx = x + shiftX;
+                                if (sx >= 0 && sx < n && sz >= 0 && sz < n)
+                                    water->waveNextField[z * n + x] = water->waveHeightField[sz * n + sx];
+                                else
+                                    water->waveNextField[z * n + x] = 0.0f;
+                            }
+                        }
+                        memcpy(water->waveHeightField, water->waveNextField, (size_t)(n * n) * sizeof(float));
 
-                    for (int z = 0; z < n; z++)
-                    {
-                        int sz = z + shiftZ;
-                        for (int x = 0; x < n; x++)
+                        for (int z = 0; z < n; z++)
                         {
-                            int sx = x + shiftX;
-                            if (sx >= 0 && sx < n && sz >= 0 && sz < n)
-                                water->waveNextField[z * n + x] = water->waveVelocityField[sz * n + sx];
-                            else
-                                water->waveNextField[z * n + x] = 0.0f;
+                            int sz = z + shiftZ;
+                            for (int x = 0; x < n; x++)
+                            {
+                                int sx = x + shiftX;
+                                if (sx >= 0 && sx < n && sz >= 0 && sz < n)
+                                    water->waveNextField[z * n + x] = water->waveVelocityField[sz * n + sx];
+                                else
+                                    water->waveNextField[z * n + x] = 0.0f;
+                            }
                         }
+                        memcpy(water->waveVelocityField, water->waveNextField, (size_t)(n * n) * sizeof(float));
+                        memset(water->waveNextField, 0, (size_t)(n * n) * sizeof(float));
                     }
-                    memcpy(water->waveVelocityField, water->waveNextField, (size_t)(n * n) * sizeof(float));
-                    memset(water->waveNextField, 0, (size_t)(n * n) * sizeof(float));
                 }
                 water->waveGridCenter.x += (float)shiftX * dx;
                 water->waveGridCenter.z += (float)shiftZ * dz;
@@ -1380,8 +1387,8 @@ void MapProp_UpdateWaterSurface(MapWaterSurface *water, float dt)
         water->waveWakeTimer = 0.11f;
     }
 
-    // 3. 128x128 2D Wave Equation Solver (only for lakes with waveFieldTex)
-    if (!water->waveFieldTex.id || !water->waveHeightField)
+    // 3. 128x128 2D Wave Equation Solver (only for lakes with waveFieldTex and active energy)
+    if (!water->waveFieldTex.id || !water->waveHeightField || water->waveStepRemainder < 0.0f)
         return;
 
     const int n = WATER_FIELD_SIZE;
@@ -1452,7 +1459,10 @@ void MapProp_UpdateWaterSurface(MapWaterSurface *water, float dt)
         water->waveHeightField = water->waveNextField;
         water->waveNextField = old;
         if (maxEnergy < 1e-5f)
+        {
+            water->waveStepRemainder = -1.0f;
             break;
+        }
     }
 
     // Only repack 128x128 RGBA8 pixels if a 60Hz PDE step ran and the field has active energy

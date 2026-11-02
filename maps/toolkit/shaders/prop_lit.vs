@@ -29,7 +29,11 @@ void main() {
     fragLocalY   = vertexPosition.y;
 
     mat3 model3 = mat3(matModel);
-    mat3 normalMat = transpose(inverse(model3));
+    mat3 normalMat = mat3(
+        cross(model3[1], model3[2]),
+        cross(model3[2], model3[0]),
+        cross(model3[0], model3[1])
+    );
     vec3 rawN = normalMat * vertexNormal;
     float nLenSq = dot(rawN, rawN);
     fragNormal = (nLenSq > 1e-8) ? (rawN * inversesqrt(nLenSq)) : vec3(0.0, 1.0, 0.0);

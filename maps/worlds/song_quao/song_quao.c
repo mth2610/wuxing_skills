@@ -394,9 +394,36 @@ void InitSongQuaoMap(void)
     s_habitat.habitatTexture = ResourceManager_LoadTextureVariant(
         "assets/maps/song_quao/song_quao_habitat.png", true,
         TEXTURE_FILTER_TRILINEAR, TEXTURE_WRAP_CLAMP);
-    s_habitat.distanceTexture = ResourceManager_LoadTextureVariant(
-        "assets/maps/song_quao/song_quao_habitat_distance.png", false,
-        TEXTURE_FILTER_BILINEAR, TEXTURE_WRAP_CLAMP);
+    {
+        Image distImg = LoadImage("assets/maps/song_quao/song_quao_habitat_distance.png");
+        if (distImg.data != NULL)
+        {
+            ImageFormat(&distImg, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+            unsigned char *bytes = (unsigned char *)distImg.data;
+            int totalPx = distImg.width * distImg.height;
+            for (int i = 0; i < totalPx; i++)
+            {
+                unsigned char *p = &bytes[i * 4];
+                float u16Path = (float)((int)p[0] * 256 + (int)p[1]) * (1.0f / 65535.0f);
+                float u16Shore = (float)((int)p[2] * 256 + (int)p[3]) * (1.0f / 65535.0f);
+                float distToPath = (u16Path * 2.0f - 1.0f) * 16.0f + 1.15f;
+                float signedShore = (u16Shore * 2.0f - 1.0f) * 16.0f;
+                float encPath = fminf(1.0f, fmaxf(0.0f, (distToPath + 0.5f) * (1.0f / 5.1f)));
+                float encShore = fminf(1.0f, fmaxf(0.0f, (signedShore + 3.1f) * (1.0f / 5.5f)));
+                p[0] = (unsigned char)(encPath * 255.0f + 0.5f);
+                p[1] = (unsigned char)(encShore * 255.0f + 0.5f);
+                p[2] = 0;
+                p[3] = 255;
+            }
+            s_habitat.distanceTexture = LoadTextureFromImage(distImg);
+            UnloadImage(distImg);
+            if (s_habitat.distanceTexture.id > 0)
+            {
+                SetTextureFilter(s_habitat.distanceTexture, TEXTURE_FILTER_BILINEAR);
+                SetTextureWrap(s_habitat.distanceTexture, TEXTURE_WRAP_CLAMP);
+            }
+        }
+    }
     s_habitat.rect = (Vector4){0, 0, MAP_WIDTH, MAP_DEPTH};
     s_habitat.ready = s_habitat.habitatTexture.id > 0 && s_habitat.distanceTexture.id > 0;
     MapProp_SetGroundEcology(&s_ground, &s_habitat);
@@ -525,20 +552,33 @@ void DrawSongQuaoMap(void)
     MapProp_ResetNatureRenderStats();
     PropLit_UpdateLighting();
 
-    if (!(s_skipMask & MAP_SKIP_GROUND))
-        MapProp_DrawGround(&s_ground, kMapCenter);
-    if (!(s_skipMask & MAP_SKIP_CLIFF))
-        MapProp_DrawCliffSkirt(&s_cliff, camera);
-
     bool useFakeRockShadows = !EnvShadow_IsEnabled();
-    if (!(s_skipMask & MAP_SKIP_ROCKS))
-        MapProp_DrawRockSystem(&s_rocks, useFakeRockShadows);
-
-    if (!(s_skipMask & MAP_SKIP_DEBRIS))
-        MapProp_DrawDebrisSystem(&s_debris, camera.position);
-
-    if (!(s_skipMask & MAP_SKIP_FLORA))
-        MapProp_DrawFloraSystem(&s_flora);
+    if (!useFakeRockShadows)
+    {
+        if (!(s_skipMask & MAP_SKIP_ROCKS))
+            MapProp_DrawRockSystem(&s_rocks, false);
+        if (!(s_skipMask & MAP_SKIP_DEBRIS))
+            MapProp_DrawDebrisSystem(&s_debris, camera.position);
+        if (!(s_skipMask & MAP_SKIP_FLORA))
+            MapProp_DrawFloraSystem(&s_flora);
+        if (!(s_skipMask & MAP_SKIP_GROUND))
+            MapProp_DrawGround(&s_ground, kMapCenter);
+        if (!(s_skipMask & MAP_SKIP_CLIFF))
+            MapProp_DrawCliffSkirt(&s_cliff, camera);
+    }
+    else
+    {
+        if (!(s_skipMask & MAP_SKIP_GROUND))
+            MapProp_DrawGround(&s_ground, kMapCenter);
+        if (!(s_skipMask & MAP_SKIP_CLIFF))
+            MapProp_DrawCliffSkirt(&s_cliff, camera);
+        if (!(s_skipMask & MAP_SKIP_ROCKS))
+            MapProp_DrawRockSystem(&s_rocks, true);
+        if (!(s_skipMask & MAP_SKIP_DEBRIS))
+            MapProp_DrawDebrisSystem(&s_debris, camera.position);
+        if (!(s_skipMask & MAP_SKIP_FLORA))
+            MapProp_DrawFloraSystem(&s_flora);
+    }
 
     if (!(s_skipMask & MAP_SKIP_SKY))
         MapProp_DrawSkyDome(&s_sky);
@@ -587,6 +627,8 @@ void UnloadSongQuaoMap(void)
     MapProp_UnloadGround(&s_ground);
 
     MapDem_UnloadIsland(&s_dem);
+    if (s_habitat.distanceTexture.id > 0)
+        UnloadTexture(s_habitat.distanceTexture);
     s_habitat = (MapEcology){0};
 
 #if !defined(__ANDROID__)

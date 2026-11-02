@@ -25,18 +25,18 @@ static inline float Rock_Mix(float a, float b, float t)
 
 static Mesh Nature_BuildProceduralRockMesh(int rockType)
 {
-    int rings = 28;
-    int slices = 40;
+    int rings = 22;
+    int slices = 30;
     if (rockType == MAP_ROCK_CRAG || rockType == MAP_ROCK_LIMESTONE) {
-        rings = 36; slices = 42;
+        rings = 24; slices = 32;
     } else if (rockType == MAP_ROCK_BASALT) {
-        rings = 32; slices = 42;
+        rings = 22; slices = 30;
     } else if (rockType == MAP_ROCK_SANDSTONE) {
-        rings = 32; slices = 40;
+        rings = 22; slices = 30;
     } else if (rockType == MAP_ROCK_SCREE) {
-        rings = 14; slices = 18;
+        rings = 12; slices = 16;
     } else if (rockType == MAP_ROCK_RIVER_STONE) {
-        rings = 32; slices = 48;
+        rings = 18; slices = 26;
     }
     Mesh mesh = GenMeshSphere(1.0f, rings, slices);
 
