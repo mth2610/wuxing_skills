@@ -481,6 +481,118 @@ void                   VC_SeismicWave_DrawShadowPass(void);
 float                  VC_SeismicWave_GetGroundDisplacementAt(float x, float z);
 bool                   VC_SeismicWave_GetPrimaryWaveData(Vector4 *outOriginDir, Vector4 *outWaveParams, Vector4 *outWaveProfile);
 
+// ── Unified Earth Spikes & Stone Pillars API ────────────────────────────────
+typedef enum VFX_EarthSpikePreset {
+    VFX_EARTH_SPIKE_PRESET_STONE_PILLAR = 0,
+    VFX_EARTH_SPIKE_PRESET_EARTH_SPIKES,
+    VFX_EARTH_SPIKE_PRESET_SPIKE_WAVE,
+    VFX_EARTH_SPIKE_PRESET_EARTH_PRISON,
+    VFX_EARTH_SPIKE_PRESET_JADE_SPIRE,
+    VFX_EARTH_SPIKE_PRESET_MAGMA_CRAG,
+    VFX_EARTH_SPIKE_PRESET_COUNT
+} VFX_EarthSpikePreset;
+
+typedef enum VFX_EarthSpikeShape {
+    VFX_EARTH_SPIKE_SHAPE_PILLAR = 0,
+    VFX_EARTH_SPIKE_SHAPE_SPIKE,
+    VFX_EARTH_SPIKE_SHAPE_OBELISK,
+    VFX_EARTH_SPIKE_SHAPE_SLAB,
+    VFX_EARTH_SPIKE_SHAPE_COUNT
+} VFX_EarthSpikeShape;
+
+typedef enum VFX_EarthSpikeStyle {
+    VFX_EARTH_SPIKE_STYLE_GRANITE = 0,
+    VFX_EARTH_SPIKE_STYLE_SOIL,
+    VFX_EARTH_SPIKE_STYLE_BASALT,
+    VFX_EARTH_SPIKE_STYLE_MAGMA,
+    VFX_EARTH_SPIKE_STYLE_JADE,
+    VFX_EARTH_SPIKE_STYLE_COUNT
+} VFX_EarthSpikeStyle;
+
+typedef enum VFX_EarthSpikeFormation {
+    VFX_EARTH_SPIKE_FORMATION_SINGLE = 0,
+    VFX_EARTH_SPIKE_FORMATION_CLUSTER,
+    VFX_EARTH_SPIKE_FORMATION_RING,
+    VFX_EARTH_SPIKE_FORMATION_LINE,
+    VFX_EARTH_SPIKE_FORMATION_COUNT
+} VFX_EarthSpikeFormation;
+
+typedef enum VFX_EarthSpikeExit {
+    VFX_EARTH_SPIKE_EXIT_SHATTER = 0,
+    VFX_EARTH_SPIKE_EXIT_SINK,
+    VFX_EARTH_SPIKE_EXIT_PERSIST,
+    VFX_EARTH_SPIKE_EXIT_COUNT
+} VFX_EarthSpikeExit;
+
+typedef struct VFX_EarthSpikeConfig {
+    VFX_EarthSpikePreset preset;
+    VFX_EarthSpikeShape shape;
+    VFX_EarthSpikeStyle style;
+    VFX_EarthSpikeFormation formation;
+    VFX_EarthSpikeExit exitMode;
+
+    Vector3 source;
+    Vector3 target;
+
+    // Dimensions
+    float height;
+    float baseRadius;
+    float topRadiusRatio;
+    int facetCount;
+    int heightSegments;
+    float jaggedness;
+    float tiltMaxDeg;
+
+    // Formation parameters
+    int spikeCount;
+    float formationRadius;
+    float staggerDelay;
+
+    // Lifecycle & Timings
+    float eruptDuration;
+    float holdDuration;
+    float retractDuration;
+    float yOvershoot;
+
+    // Colors & Optics
+    Color baseColor;
+    Color accentColor;
+    float ambientGain;
+    float specularGain;
+    float emissionIntensity;
+
+    // Environmental & Particulate Reactions
+    bool emitDust;
+    float dustScale;
+    bool emitDebris;
+    int debrisChips;
+    bool spawnDecal;
+    bool groundWaveBurst;
+    bool screenShake;
+    float traumaAmount;
+    bool windImpulse;
+    float windRadius;
+} VFX_EarthSpikeConfig;
+
+VFX_EarthSpikeConfig  VFX_EarthSpike_DefaultConfig(void);
+VFX_EarthSpikeConfig *VFX_EarthSpike_GetLiveConfig(void);
+void                  VFX_EarthSpike_ApplyPreset(VFX_EarthSpikeConfig *cfg, VFX_EarthSpikePreset preset);
+void                  VFX_EarthSpike_ApplyStyle(VFX_EarthSpikeConfig *cfg, VFX_EarthSpikeStyle style);
+int                   VFX_EarthSpike_GetParams(VFX_EarthSpikeConfig *cfg, VFX_ParamDef *outParams, int maxParams);
+int                   VFX_ComposeEarthSpike(const VFX_EarthSpikeConfig *cfg);
+int                   VFX_ComposeEarthSpikeEx(Vector3 source, Vector3 target, const VFX_EarthSpikeConfig *cfg);
+void                  VFX_KillEarthSpike(int handle);
+void                  VFX_EarthSpike_KillAll(void);
+const char           *VFX_EarthSpikePreset_Name(VFX_EarthSpikePreset preset);
+const char           *VFX_EarthSpikeShape_Name(VFX_EarthSpikeShape shape);
+const char           *VFX_EarthSpikeStyle_Name(VFX_EarthSpikeStyle style);
+const char           *VFX_EarthSpikeFormation_Name(VFX_EarthSpikeFormation formation);
+const char           *VFX_EarthSpikeExit_Name(VFX_EarthSpikeExit exitMode);
+
+void                  VC_EarthSpike_Update(float dt);
+void                  VC_EarthSpike_Draw3D(Camera3D cam);
+void                  VC_EarthSpike_DrawShadowPass(void);
+
 // Unified / Generalized API
 void VFX_ComposeFlame(Vector3 pos, VC_MaterialId matId, float scale, float intensity);
 void VFX_ComposeAmbientFire(Vector3 pos, VC_MaterialId matId, float scale, float intensity);
