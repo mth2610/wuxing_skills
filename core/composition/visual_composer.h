@@ -339,9 +339,11 @@ typedef struct VFX_GuidedEarthConfig {
     float rockSquashZ;      // Depth aspect ratio / thickness (0.2 to 2.0)
     float jaggedness;       // Procedural vertex perturbation amount (0.0 to 1.0)
     float clusterSpread;    // Radius of multi-rock escort swarm (0.0 to 3.0m)
+    float sizeVariation;    // Scale variation across cluster (0.0 = uniform, 0.6 = apex + shards)
 
     // Phase 1: Emergence
     float emergeDuration;   // Preparation / emergence duration in seconds (0.0 to 3.0s)
+    float hoverDuration;    // Levitation hold duration before firing (0.0 to 2.0s)
     float emergeHeight;     // Initial subterranean depth / hover height (m)
     bool emergeGroundDust;  // Emit billow dust puffs upon emerging
     bool emergeCracks;      // Spawn launch fissure cracks / stress marks
@@ -349,8 +351,10 @@ typedef struct VFX_GuidedEarthConfig {
     // Phase 2: Flight & Parabolic Motion
     Vector3 source;         // Origin point
     Vector3 target;         // Destination point
+    float launchStaggerDelay;// Sequential firing delay between consecutive rocks (0.0s = simultaneous volley, 0.05-0.35s = rapid sequential barrage)
     float travelSpeed;      // Flight velocity in m/s (2.0 to 60.0)
     float arcHeight;        // Parabolic arc apex height in meters (0.2 to 20.0)
+    float trajectorySpread; // Lateral trajectory spread fan angle / width (0.0 to 2.5m)
     float gravityScale;     // Ballistic gravity factor (0.0 to 3.0)
     float swirlSpeed;       // Spiral barrel roll angular velocity in rad/s
     float tumbleSpeed;      // Autonomous rock tumbling speed in deg/s
