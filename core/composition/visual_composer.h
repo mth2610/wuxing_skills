@@ -302,7 +302,8 @@ typedef enum {
 } VFX_EarthRockStyle;
 
 typedef enum {
-    VFX_EARTH_SPAWN_GROUND_EMERGE = 0, // Erupts upward out of the fractured ground with dust billows
+    VFX_EARTH_SPAWN_GROUND_EMERGE = 0, // Erupts upward out of the fractured ground (tactical rear arc)
+    VFX_EARTH_SPAWN_SURROUND_RING,     // 360-degree perimeter ring / scattered field around caster
     VFX_EARTH_SPAWN_ORBITAL_CONVERGE,  // Converges inward from surrounding orbit before launching
     VFX_EARTH_SPAWN_LEVITATE_RISE,     // Hovers & bobs with tectonic qi before blasting forward
     VFX_EARTH_SPAWN_INSTANT_LAUNCH,    // Instant ballistic ejection from caster socket
@@ -354,7 +355,9 @@ typedef struct VFX_GuidedEarthConfig {
     float launchStaggerDelay;// Sequential firing delay between consecutive rocks (0.0s = simultaneous volley, 0.05-0.35s = rapid sequential barrage)
     float travelSpeed;      // Flight velocity in m/s (2.0 to 60.0)
     float arcHeight;        // Parabolic arc apex height in meters (0.2 to 20.0)
+    float arcVariation;     // Apex arc height variation across rocks (0.0 = uniform, 1.0 = highly varied)
     float trajectorySpread; // Lateral trajectory spread fan angle / width (0.0 to 2.5m)
+    float targetSpread;     // Target impact area scatter radius (0.0 = pinpoint, > 0.0 = area bombardment)
     float gravityScale;     // Ballistic gravity factor (0.0 to 3.0)
     float swirlSpeed;       // Spiral barrel roll angular velocity in rad/s
     float tumbleSpeed;      // Autonomous rock tumbling speed in deg/s
@@ -395,6 +398,86 @@ const char            *VFX_EarthImpact_Name(VFX_EarthImpactMode impact);
 void                   VC_GuidedEarth_Update(float dt);
 void                   VC_GuidedEarth_Draw3D(Camera3D cam);
 void                   VC_GuidedEarth_DrawShadowPass(void);
+
+// ── GENERALIZED SEISMIC WAVE SYSTEM (HỆ THỔ: ĐỊA CHẤN BA) ───────────────────
+typedef enum {
+    VFX_SEISMIC_PRESET_CUSTOM = 0,
+    VFX_SEISMIC_PRESET_ROLLING_SWELL,     // Smooth rolling terrain swell with grass-parting wave
+    VFX_SEISMIC_PRESET_JAGGED_FRACTURE,   // Aggressive tectonic rupture with tilting rock slabs
+    VFX_SEISMIC_PRESET_TECTONIC_PULSE,    // Massive high-amplitude ground upheaval with terminal burst
+    VFX_SEISMIC_PRESET_RAPID_TREMOR,      // High-speed multi-crested ripple train racing to target
+    VFX_SEISMIC_PRESET_JADE_CHASM,        // Crystalline jade ridges & glowing emerald veins
+    VFX_SEISMIC_PRESET_MAGMA_FISSURE,     // Basalt crust tearing open with incandescent magma core
+    VFX_SEISMIC_PRESET_COUNT
+} VFX_SeismicWavePreset;
+
+typedef enum {
+    VFX_SEISMIC_STYLE_ROLLING_EARTH = 0,  // Smooth continuous undulating terrain wave
+    VFX_SEISMIC_STYLE_FRACTURED_SLABS,    // Tilting fractured rock plates & stone slabs
+    VFX_SEISMIC_STYLE_JAGGED_SPIKES,      // Jagged geological rock spines bursting along crest
+    VFX_SEISMIC_STYLE_JADE_CRYSTAL,       // Translucent crystalline jade slabs
+    VFX_SEISMIC_STYLE_MAGMA_BASALT,       // Dark basalt slabs with glowing red-hot magma veins
+    VFX_SEISMIC_STYLE_COUNT
+} VFX_SeismicWaveStyle;
+
+typedef struct VFX_SeismicWaveConfig {
+    VFX_SeismicWavePreset preset;
+    VFX_SeismicWaveStyle style;
+
+    // Wave Dynamics & Ground Undulation
+    float travelSpeed;      // Velocity along path in m/s (4.0 to 40.0)
+    float waveWidth;        // Lateral corridor width in meters (0.8 to 6.0)
+    float waveAmplitude;    // Peak ground vertical displacement in meters (0.1 to 2.5)
+    float wavelength;       // Spatial wavelength of crest in meters (0.8 to 6.0)
+    float packetLength;     // Active longitudinal packet length in meters (1.5 to 10.0)
+    int   rippleCount;      // Number of wave crests in packet (1 to 4)
+
+    // Tectonic Slabs / Rock Plates
+    int   slabCount;        // Number of lifting rock slabs along corridor (0 to 16)
+    float slabRadius;       // Slab base radius in meters (0.15 to 1.5)
+    float slabSquashY;      // Slab vertical flatness ratio (0.15 to 0.8)
+    float slabTiltMult;     // Multiplier on wave-induced tilt angle (0.0 to 2.5)
+    float jaggedness;       // Procedural roughness of rock slabs (0.0 to 1.0)
+
+    // Soil & Dust Particulates
+    bool  emitDust;         // Emit billow dust puffs along moving wave crest
+    float dustRate;         // Dust spawn rate (puffs/sec)
+    bool  emitDebris;       // Shed bouncing debris chips
+    int   debrisChips;      // Chunks per burst
+    bool  emitFissure;      // Draw trailing fissure streak along ground
+    bool  windImpulse;      // Part grass via Wind system
+
+    // Terminal Impact at Target
+    bool  impactBurst;      // Trigger terminal eruption when reaching target
+    float impactRadius;     // Terminal shockwave radius
+    bool  terminalPillar;   // Thrust stone pillar at target impact
+
+    // Shading & Optics
+    VC_MaterialId matId;
+    Color soilColor;
+    Color rockColor;
+    Color veinColor;
+    float veinGlow;         // Emissive vein brightness (0.0 to 4.0)
+    float ambientGain;      // Ambient floor (0.15 to 0.6)
+    float specularGain;     // Specular glint (0.0 to 3.0)
+
+    // Endpoints
+    Vector3 source;
+    Vector3 target;
+} VFX_SeismicWaveConfig;
+
+VFX_SeismicWaveConfig  VFX_SeismicWave_DefaultConfig(void);
+VFX_SeismicWaveConfig *VFX_SeismicWave_GetLiveConfig(void);
+void                   VFX_SeismicWave_ApplyPreset(VFX_SeismicWaveConfig *cfg, VFX_SeismicWavePreset preset);
+int                    VFX_SeismicWave_GetParams(VFX_SeismicWaveConfig *cfg, VFX_ParamDef *outParams, int maxParams);
+int                    VFX_ComposeSeismicWave(const VFX_SeismicWaveConfig *cfg);
+int                    VFX_ComposeSeismicWaveEx(Vector3 source, Vector3 target, const VFX_SeismicWaveConfig *cfg);
+void                   VFX_KillSeismicWave(int handle);
+const char            *VFX_SeismicWavePreset_Name(VFX_SeismicWavePreset preset);
+const char            *VFX_SeismicWaveStyle_Name(VFX_SeismicWaveStyle style);
+void                   VC_SeismicWave_Update(float dt);
+void                   VC_SeismicWave_Draw3D(Camera3D cam);
+void                   VC_SeismicWave_DrawShadowPass(void);
 
 // Unified / Generalized API
 void VFX_ComposeFlame(Vector3 pos, VC_MaterialId matId, float scale, float intensity);

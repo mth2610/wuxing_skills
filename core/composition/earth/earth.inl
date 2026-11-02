@@ -31,6 +31,7 @@ static void EarthFx_InitShared(void)
 #include "stone_pillar.inl"
 #include "fissure_streak.inl"
 #include "vc_guided_earth.inl"
+#include "vc_seismic_wave.inl"
 // @gen:earth_includes begin
 // 0 include(s) — auto-managed by sync_vfx_test.py
 // @gen:earth_includes end

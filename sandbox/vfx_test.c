@@ -795,6 +795,10 @@ static void VFXTest_RefreshInspectorParams(bool force)
     {
         s_inspectorParamCount = VFX_GuidedEarth_GetParams(VFX_GuidedEarth_GetLiveConfig(), s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
     }
+    else if (VFXTest_IsNewFxNamed("SEISMIC WAVE"))
+    {
+        s_inspectorParamCount = VFX_SeismicWave_GetParams(VFX_SeismicWave_GetLiveConfig(), s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
+    }
 }
 
 static inline float VFXTest_Smoothstep(float e0, float e1, float x)
@@ -1413,6 +1417,13 @@ static bool VFXTest_FireNewFx(int newfxIndex, Vector3 pos)
         VFX_ComposeGuidedEarthEx(castSocket, target, VFX_GuidedEarth_GetLiveConfig());
         return true;
     }
+    case 53: {
+        Vector3 target = Vector3Add(pos, (Vector3){6.5f, 0.0f, 2.8f});
+        target.y = MapManager_GetGroundHeightAt(target.x, target.z);
+        Vector3 castSocket = Vector3Add(pos, (Vector3){0.0f, 0.05f, 0.0f});
+        VFX_ComposeSeismicWaveEx(castSocket, target, VFX_SeismicWave_GetLiveConfig());
+        return true;
+    }
     default: return false;
     }
 // @gen:newfx_fire end
@@ -1438,7 +1449,7 @@ static const char* s_newFxNames[] = {
     "SMOKE COLUMN", "SMOKE PUFF", "[PARTICLE] SMOKE VOLUME", "SURFACE IMPACT", "SURFACE PARTICLE RING", "SWEEP SLASH",
     "MOTION RIBBON TRAIL", "VACUUM CONVERGE", "VACUUM RING", "[TRAIL/FLOW] VOLUME TRAIL", "FISSURE STREAK", "STONE PILLAR",
     "GUIDED FIRE", "FIREBALL BURST", "BLACK HOLE", "ICE CRYSTAL", "WATER ORB", "WATER STREAM",
-    "WOOD FLOWER", "WOOD LEAVES", "WOOD PETALS", "WOOD VINE", "GUIDED EARTH",
+    "WOOD FLOWER", "WOOD LEAVES", "WOOD PETALS", "WOOD VINE", "GUIDED EARTH", "SEISMIC WAVE",
 };
 // @gen:newfx_names end
 
@@ -1463,7 +1474,7 @@ static const int s_newFxCategories[] = {
     6, 1, 6, 6, 6, 6, 6, 6, 6, 6,
     6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
     4, 4, 0, 0, 5, 1, 1, 1, 2, 2,
-    2, 2, 4,
+    2, 2, 4, 4,
 };
 // @gen:newfx_categories end
 
@@ -1817,6 +1828,18 @@ static void VFXTest_UIEditParameter(int index, int direction)
     } else {
         VFX_Param_CyclePrev(param);
     }
+
+    if (param->type == VFX_PARAM_ENUM && strcmp(param->name, "Preset") == 0) {
+        if (VFXTest_IsNewFxNamed("SEISMIC WAVE")) {
+            VFX_SeismicWaveConfig *scfg = VFX_SeismicWave_GetLiveConfig();
+            VFX_SeismicWave_ApplyPreset(scfg, scfg->preset);
+            VFXTest_RefreshInspectorParams(true);
+        } else if (VFXTest_IsNewFxNamed("GUIDED EARTH")) {
+            VFX_GuidedEarthConfig *ecfg = VFX_GuidedEarth_GetLiveConfig();
+            VFX_GuidedEarth_ApplyPreset(ecfg, ecfg->preset);
+            VFXTest_RefreshInspectorParams(true);
+        }
+    }
 }
 
 static bool VFXTest_UIHandleInput(Vector3 playerPos)
@@ -1975,6 +1998,7 @@ static const char *VFXTest_UIActiveVariant(void)
     if (VFXTest_IsNewFxNamed("IMPACT DUST")) return VFX_ImpactDustVariant_Name(s_impactDustFixtureVariant);
     if (VFXTest_IsNewFxNamed("GUIDED FIRE")) return VFX_FirePreset_Name(VFX_Fire_GetLiveConfig()->preset);
     if (VFXTest_IsNewFxNamed("GUIDED EARTH")) return VFX_GuidedEarthPreset_Name(VFX_GuidedEarth_GetLiveConfig()->preset);
+    if (VFXTest_IsNewFxNamed("SEISMIC WAVE")) return VFX_SeismicWavePreset_Name(VFX_SeismicWave_GetLiveConfig()->preset);
     if (VFXTest_IsNewFxNamed("SURFACE IMPACT")) return VFXTest_SurfaceImpactReceiverName(s_surfaceImpactFixtureSurface);
     return NULL;
 }
@@ -2527,6 +2551,16 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
             VFX_ComposeGuidedEarthEx(castSocket, guidedTarget, VFX_GuidedEarth_GetLiveConfig());
             return false;
         }
+        if (s_testCategory == TEST_CAT_NEWFX && VFXTest_IsNewFxNamed("SEISMIC WAVE")) {
+            Vector3 castSocket = Vector3Add(playerPos, (Vector3){0.0f, 0.05f, 0.0f});
+            Vector3 guidedTarget = mouseTarget3D;
+            if (s_clickedOnUI) {
+                guidedTarget = Vector3Add(playerPos, (Vector3){6.0f, 0.0f, 2.0f});
+                guidedTarget.y = MapManager_GetGroundHeightAt(guidedTarget.x, guidedTarget.z);
+            }
+            VFX_ComposeSeismicWaveEx(castSocket, guidedTarget, VFX_SeismicWave_GetLiveConfig());
+            return false;
+        }
           if (!VFXTest_FireNewFx(s_testIndex, s_prefabStartPos)) {
               /* continuous — handled per-frame in VFXTest_Draw3D */
               switch (s_testIndex) {
@@ -2751,7 +2785,7 @@ void VFXTest_Draw3D(void)
             }
 
             // Slash '/' (and '>' or '.') cycles the value of the selected variable
-            if ((IsKeyPressed(KEY_SLASH) || (IsKeyPressed(KEY_PERIOD) && ((!VFXTest_IsNewFxNamed("GUIDED MOTION") && !VFXTest_IsNewFxNamed("GUIDED FIRE") && !VFXTest_IsNewFxNamed("GUIDED EARTH")) ||
+            if ((IsKeyPressed(KEY_SLASH) || (IsKeyPressed(KEY_PERIOD) && ((!VFXTest_IsNewFxNamed("GUIDED MOTION") && !VFXTest_IsNewFxNamed("GUIDED FIRE") && !VFXTest_IsNewFxNamed("GUIDED EARTH") && !VFXTest_IsNewFxNamed("SEISMIC WAVE")) ||
                 !(IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))))))
             {
                 if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))
@@ -2764,7 +2798,7 @@ void VFXTest_Draw3D(void)
                 TraceLog(LOG_INFO, "[Inspector] Param '%s' = %s",
                          s_inspectorParams[s_inspectorSelectedParam].name, valBuf);
             }
-            else if (IsKeyPressed(KEY_COMMA) && ((!VFXTest_IsNewFxNamed("GUIDED MOTION") && !VFXTest_IsNewFxNamed("GUIDED FIRE") && !VFXTest_IsNewFxNamed("GUIDED EARTH")) ||
+            else if (IsKeyPressed(KEY_COMMA) && ((!VFXTest_IsNewFxNamed("GUIDED MOTION") && !VFXTest_IsNewFxNamed("GUIDED FIRE") && !VFXTest_IsNewFxNamed("GUIDED EARTH") && !VFXTest_IsNewFxNamed("SEISMIC WAVE")) ||
                      !(IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))))
             {
                 VFXTest_UIEditParameter(s_inspectorSelectedParam, -1);
@@ -2921,6 +2955,21 @@ void VFXTest_Draw3D(void)
                     VFX_GuidedEarth_ApplyPreset(ecfg, nextPreset);
                     VFXTest_RefreshInspectorParams(true);
                     TraceLog(LOG_INFO, "GUIDED EARTH preset: %s (Shift+> next; Shift+< previous)", VFX_GuidedEarthPreset_Name(ecfg->preset));
+                }
+            }
+        }
+        else if (VFXTest_IsNewFxNamed("SEISMIC WAVE"))
+        {
+            if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))
+            {
+                int direction = IsKeyPressed(KEY_PERIOD) ? 1 : (IsKeyPressed(KEY_COMMA) ? -1 : 0);
+                if (direction != 0)
+                {
+                    VFX_SeismicWaveConfig *scfg = VFX_SeismicWave_GetLiveConfig();
+                    VFX_SeismicWavePreset nextPreset = (VFX_SeismicWavePreset)(((int)scfg->preset + direction + VFX_SEISMIC_PRESET_COUNT) % VFX_SEISMIC_PRESET_COUNT);
+                    VFX_SeismicWave_ApplyPreset(scfg, nextPreset);
+                    VFXTest_RefreshInspectorParams(true);
+                    TraceLog(LOG_INFO, "SEISMIC WAVE preset: %s (Shift+> next; Shift+< previous)", VFX_SeismicWavePreset_Name(scfg->preset));
                 }
             }
         }
@@ -3145,6 +3194,17 @@ void VFXTest_Draw3D(void)
                   }
                   break;
               }
+              case 53: {
+                  static float s_seismicWaveAutoTimer = 0.0f;
+                  s_seismicWaveAutoTimer += GetFrameTime();
+                  if (s_seismicWaveAutoTimer >= 2.4f) {
+                      s_seismicWaveAutoTimer = 0.0f;
+                      Vector3 target = Vector3Add(s_prefabStartPos, (Vector3){6.5f, 0.0f, 2.8f});
+                      target.y = MapManager_GetGroundHeightAt(target.x, target.z);
+                      VFX_ComposeSeismicWaveEx(s_prefabStartPos, target, VFX_SeismicWave_GetLiveConfig());
+                  }
+                  break;
+              }
           }
 // @gen:newfx_draw end
         }
@@ -3189,6 +3249,7 @@ void VFXTest_DrawShadowPass(void)
     VFX_FoliageSystem_DrawShadowPass();
     VFX_WaterOrb_DrawShadowPass();
     VC_GuidedEarth_DrawShadowPass();
+    VC_SeismicWave_DrawShadowPass();
 }
 
 void VFXTest_DrawHUD(void)
@@ -3267,6 +3328,18 @@ void VFXTest_SetRenderTarget(int newfxIndex, Vector3 spawnPos)
     if (envEarthP && *envEarthP) {
         int ep = (atoi(envEarthP) % VFX_EARTH_PRESET_COUNT + VFX_EARTH_PRESET_COUNT) % VFX_EARTH_PRESET_COUNT;
         VFX_GuidedEarth_ApplyPreset(VFX_GuidedEarth_GetLiveConfig(), (VFX_GuidedEarthPreset)ep);
+    }
+
+    const char *envEarthSpawn = getenv("WUXING_GUIDED_EARTH_SPAWN");
+    if (envEarthSpawn && *envEarthSpawn) {
+        int sm = (atoi(envEarthSpawn) % VFX_EARTH_SPAWN_COUNT + VFX_EARTH_SPAWN_COUNT) % VFX_EARTH_SPAWN_COUNT;
+        VFX_GuidedEarth_GetLiveConfig()->spawnMode = (VFX_EarthSpawnMode)sm;
+    }
+
+    const char *envSeismicP = getenv("WUXING_SEISMIC_WAVE_PRESET");
+    if (envSeismicP && *envSeismicP) {
+        int sp = (atoi(envSeismicP) % VFX_SEISMIC_PRESET_COUNT + VFX_SEISMIC_PRESET_COUNT) % VFX_SEISMIC_PRESET_COUNT;
+        VFX_SeismicWave_ApplyPreset(VFX_SeismicWave_GetLiveConfig(), (VFX_SeismicWavePreset)sp);
     }
     VFXTest_RefreshInspectorParams(true);
 

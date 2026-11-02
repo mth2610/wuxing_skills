@@ -49,6 +49,7 @@ typedef struct {
     Vector3 pos;
     Vector3 prevPos;
     Vector3 launchPos;
+    Vector3 targetPos;
     Vector3 localOffset;
     Vector3 spinAxis;
     float spinAngle;
@@ -56,15 +57,17 @@ typedef struct {
     float radius;
     float massKg;
     float wakeTimer;
+    float crumbTimer;
+    float arcHeight;
     unsigned int seed;
 
     // Per-rock staggered launch & flight state
     VC_RockState state;
     float launchTime;
     float flightProgress;
-    float crumbTimer;
     bool hasImpacted;
     bool launchWindFired;
+    bool emergeFired;
 
     RockMeshData mesh;
     bool meshBuilt;
@@ -403,7 +406,9 @@ VFX_GuidedEarthConfig VFX_GuidedEarth_DefaultConfig(void)
     cfg.launchStaggerDelay = 0.0f;
     cfg.travelSpeed = 16.0f;
     cfg.arcHeight = 4.2f;
+    cfg.arcVariation = 0.25f;
     cfg.trajectorySpread = 0.0f;
+    cfg.targetSpread = 0.0f;
     cfg.gravityScale = 1.0f;
     cfg.swirlSpeed = 0.0f;
     cfg.tumbleSpeed = 120.0f;
@@ -692,7 +697,7 @@ const char *VFX_EarthRockStyle_Name(VFX_EarthRockStyle style)
 const char *VFX_EarthSpawnMode_Name(VFX_EarthSpawnMode mode)
 {
     static const char *const names[] = {
-        "Ground Emerge", "Orbital Converge", "Levitate Rise", "Instant Launch"
+        "Ground Emerge", "Surround Ring", "Orbital Converge", "Levitate Rise", "Instant Launch"
     };
     return (mode >= 0 && mode < VFX_EARTH_SPAWN_COUNT) ? names[mode] : "Unknown";
 }
@@ -729,7 +734,7 @@ int VFX_GuidedEarth_GetParams(VFX_GuidedEarthConfig *cfg, VFX_ParamDef *out, int
         "Jade Crystal", "Magma Rock"
     };
     static const char *const spawnNames[] = {
-        "Ground Emerge", "Orbital Converge", "Levitate Rise", "Instant Launch"
+        "Ground Emerge", "Surround Ring", "Orbital Converge", "Levitate Rise", "Instant Launch"
     };
     static const char *const trajNames[] = {
         "Parabolic Arc", "Guided Homing", "Spiral Barrel", "High Catapult"
@@ -790,7 +795,9 @@ int VFX_GuidedEarth_GetParams(VFX_GuidedEarthConfig *cfg, VFX_ParamDef *out, int
     EARTH_PARAM_FLOAT("Launch stagger s", "Flight", cfg->launchStaggerDelay, 0.0f, 0.60f, 0.02f);
     EARTH_PARAM_FLOAT("Travel speed m/s", "Flight", cfg->travelSpeed, 2.0f, 60.0f, 1.0f);
     EARTH_PARAM_FLOAT("Arc height m", "Flight", cfg->arcHeight, 0.2f, 20.0f, 0.2f);
+    EARTH_PARAM_FLOAT("Arc variation", "Flight", cfg->arcVariation, 0.0f, 1.0f, 0.05f);
     EARTH_PARAM_FLOAT("Traj spread m", "Flight", cfg->trajectorySpread, 0.0f, 3.0f, 0.1f);
+    EARTH_PARAM_FLOAT("Target spread m", "Flight", cfg->targetSpread, 0.0f, 4.0f, 0.1f);
     EARTH_PARAM_FLOAT("Gravity scale", "Flight", cfg->gravityScale, 0.0f, 3.0f, 0.1f);
     EARTH_PARAM_FLOAT("Swirl speed rad/s", "Flight", cfg->swirlSpeed, 0.0f, 25.0f, 0.5f);
     EARTH_PARAM_FLOAT("Tumble speed deg/s", "Flight", cfg->tumbleSpeed, 0.0f, 720.0f, 10.0f);
@@ -868,10 +875,18 @@ int VFX_ComposeGuidedEarthEx(Vector3 source, Vector3 target, const VFX_GuidedEar
         float sizeMult = (1.0f + cfg->sizeVariation * 0.40f) * (1.0f - cfg->sizeVariation * 0.70f * sizeFrac);
         r->radius = cfg->rockRadius * sizeMult;
 
-        // Tactical combat fan formation arc
+        // Spatial formation layout
         if (count == 1) {
             r->localOffset = Vector3Zero();
+        } else if (cfg->spawnMode == VFX_EARTH_SPAWN_SURROUND_RING) {
+            // 360-degree perimeter ring / scattered field around caster
+            float angle = ((float)i / (float)count) * 2.0f * PI + (float)(r->seed % 100) * 0.005f;
+            float spreadR = fmaxf(cfg->clusterSpread, 1.4f);
+            float dist = spreadR * (0.80f + 0.35f * ((float)(r->seed % 10) / 9.0f));
+            float elev = 0.15f * sinf((float)i * 2.1f);
+            r->localOffset = (Vector3){cosf(angle) * dist, elev, sinf(angle) * dist};
         } else {
+            // Tactical combat fan formation arc
             float spreadFrac = ((float)i / (float)(count - 1)) - 0.5f; // -0.5 to +0.5
             float angle = spreadFrac * 2.2f;
             float arcR = cfg->clusterSpread * 1.5f + 0.35f;
@@ -882,12 +897,44 @@ int VFX_ComposeGuidedEarthEx(Vector3 source, Vector3 target, const VFX_GuidedEar
         }
 
         // World-space launch hover position
-        float groundY = VFX_GroundHeightFromMap(source.x, source.z, NULL);
+        Vector3 worldSpawnBase;
+        if (cfg->spawnMode == VFX_EARTH_SPAWN_SURROUND_RING) {
+            worldSpawnBase = (Vector3){source.x + r->localOffset.x, 0.0f, source.z + r->localOffset.z};
+        } else {
+            worldSpawnBase = (Vector3){
+                source.x + rgtNorm.x * r->localOffset.x + fwdNorm.x * r->localOffset.z,
+                0.0f,
+                source.z + rgtNorm.z * r->localOffset.x + fwdNorm.z * r->localOffset.z
+            };
+        }
+        float groundY = VFX_GroundHeightFromMap(worldSpawnBase.x, worldSpawnBase.z, NULL);
         r->launchPos = (Vector3){
-            source.x + rgtNorm.x * r->localOffset.x + fwdNorm.x * r->localOffset.z,
+            worldSpawnBase.x,
             groundY + cfg->emergeHeight + r->localOffset.y,
-            source.z + rgtNorm.z * r->localOffset.x + fwdNorm.z * r->localOffset.z
+            worldSpawnBase.z
         };
+
+        // Per-rock destination point (with targetSpread)
+        if (cfg->targetSpread > 0.001f && count > 1) {
+            float tAngle = ((float)i / (float)count) * 2.0f * PI + (float)(r->seed % 50) * 0.02f;
+            float tDist = cfg->targetSpread * (0.35f + 0.65f * ((float)(r->seed % 8) / 7.0f));
+            r->targetPos = (Vector3){
+                target.x + cosf(tAngle) * tDist,
+                target.y,
+                target.z + sinf(tAngle) * tDist
+            };
+        } else {
+            r->targetPos = target;
+        }
+
+        // Per-rock individual arc height (with arcVariation)
+        float arcVar = 1.0f;
+        if (cfg->arcVariation > 0.001f && count > 1) {
+            float frac = ((float)(i * 3 % count) / (float)(count - 1)) - 0.5f;
+            arcVar = 1.0f + frac * cfg->arcVariation * 0.85f;
+        }
+        r->arcHeight = cfg->arcHeight * arcVar;
+        r->emergeFired = false;
 
         // Sequential launch timing
         r->launchTime = cfg->emergeDuration + cfg->hoverDuration + (float)i * cfg->launchStaggerDelay;
@@ -1049,6 +1096,26 @@ void VC_GuidedEarth_Update(float dt)
                 r->prevPos = r->pos;
                 r->spinAngle += r->spinSpeed * 0.35f * dt;
 
+                // Per-rock emergence effects directly at this rock's launch position
+                if (!r->emergeFired && prog > 0.08f) {
+                    r->emergeFired = true;
+                    Vector3 groundPt = (Vector3){r->launchPos.x, groundY, r->launchPos.z};
+                    Wind_SpawnRadialBlast(groundPt, r->radius * 2.8f, 4.5f, 0.30f);
+                    Vector3 clodVel = (Vector3){(r->localOffset.x > 0.0f ? 0.6f : -0.6f), 3.2f, (r->localOffset.z > 0.0f ? 0.6f : -0.6f)};
+                    VFX_ComposeDebrisShards(groundPt, clodVel, cfg->matId, r->radius * 0.18f, 3);
+                    VFX_ComposeImpactDustVariant(groundPt, cfg->matId, r->radius * 1.3f, 0.50f, VFX_IMPACT_DUST_VARIANT_DUST_PUFF);
+
+                    if (cfg->emergeCracks && cfg->spawnMode == VFX_EARTH_SPAWN_SURROUND_RING) {
+                        for (int k = 0; k < 2; k++) {
+                            float cAngle = ((float)k / 2.0f) * PI + ((float)r->seed * 0.01f);
+                            float cDist = r->radius * 1.5f;
+                            Vector3 cEnd = Vector3Add(groundPt, (Vector3){cosf(cAngle) * cDist, 0.0f, sinf(cAngle) * cDist});
+                            cEnd.y = VFX_GroundHeightFromMap(cEnd.x, cEnd.z, NULL);
+                            VFX_ComposeFissureStreak(groundPt, cEnd, r->radius * 0.20f, 1.0f, inst->timer);
+                        }
+                    }
+                }
+
                 if (prog >= 1.0f) {
                     r->state = ROCK_STATE_HOVERING;
                 }
@@ -1077,12 +1144,12 @@ void VC_GuidedEarth_Update(float dt)
                 r->flightProgress = Clamp(flightElapsed / fmaxf(inst->flightDuration, 0.05f), 0.0f, 1.0f);
                 float tau = r->flightProgress;
 
-                // Parabolic Arc
+                // Parabolic Arc using this rock's individual arcHeight
                 float arcY = 0.0f;
                 if (cfg->trajectoryMode == VFX_EARTH_TRAJ_HIGH_CATAPULT) {
-                    arcY = cfg->arcHeight * sinf(tau * PI) * (1.0f + 0.55f * (1.0f - tau));
+                    arcY = r->arcHeight * sinf(tau * PI) * (1.0f + 0.55f * (1.0f - tau));
                 } else {
-                    arcY = 4.0f * cfg->arcHeight * tau * (1.0f - tau);
+                    arcY = 4.0f * r->arcHeight * tau * (1.0f - tau);
                 }
 
                 // Gravity drop
@@ -1091,12 +1158,19 @@ void VC_GuidedEarth_Update(float dt)
                     arcY = fmaxf(0.0f, arcY - gDrop * tau);
                 }
 
+                // Per-rock 3D baseline vector to its target
+                Vector3 rockFwd = Vector3Subtract(r->targetPos, r->launchPos);
+                float rockDist = Vector3Length(rockFwd);
+                Vector3 rockFwdNorm = (rockDist > 0.001f) ? Vector3Scale(rockFwd, 1.0f / rockDist) : fwdNorm;
+                Vector3 rockRightNorm = Vector3Normalize(Vector3CrossProduct(rockFwdNorm, worldUp));
+                Vector3 rockUpNorm = Vector3CrossProduct(rockRightNorm, rockFwdNorm);
+
                 // Trajectory spread fan
                 Vector3 latSpread = Vector3Zero();
                 if (cfg->trajectorySpread > 0.001f && inst->rockCount > 1) {
                     float spreadFrac = ((float)i / (float)(inst->rockCount - 1)) - 0.5f;
                     float lateralDist = spreadFrac * cfg->trajectorySpread * sinf(tau * PI);
-                    latSpread = Vector3Scale(rightNorm, lateralDist);
+                    latSpread = Vector3Scale(rockRightNorm, lateralDist);
                 }
 
                 // Swirl corkscrew
@@ -1104,12 +1178,12 @@ void VC_GuidedEarth_Update(float dt)
                     float a = inst->timer * cfg->swirlSpeed + ((float)i / (float)inst->rockCount) * 2.0f * PI;
                     float rollR = cfg->clusterSpread * 0.45f * sinf(tau * PI);
                     latSpread = Vector3Add(latSpread, Vector3Add(
-                        Vector3Scale(rightNorm, cosf(a) * rollR),
-                        Vector3Scale(upNorm, sinf(a) * rollR)
+                        Vector3Scale(rockRightNorm, cosf(a) * rollR),
+                        Vector3Scale(rockUpNorm, sinf(a) * rollR)
                     ));
                 }
 
-                Vector3 basePos = Vector3Lerp(r->launchPos, inst->curTarget, tau);
+                Vector3 basePos = Vector3Lerp(r->launchPos, r->targetPos, tau);
                 basePos.y += arcY;
                 r->prevPos = r->pos;
                 r->pos = Vector3Add(basePos, latSpread);

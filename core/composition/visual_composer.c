@@ -133,6 +133,7 @@ void VFX_Compose_Update(float dt)
     VC_GuidedMotion_Update(dt);
     WaterOrb_Update(dt);
     VC_GuidedEarth_Update(dt);
+    VC_SeismicWave_Update(dt);
     /* Five-body liquid stress lab (WUXING_LIQUID_BENCH=1). The heartbeat keeps
      * the fixture alive; simulation and surface submission stay in the engine's
      * normal update/composite phases. */
@@ -177,6 +178,7 @@ void VFX_Compose_Draw3D(Camera3D cam)
     SmokeEmitter_Draw3D(cam);
     VFX_FoliageSystem_Draw();
     VC_GuidedEarth_Draw3D(cam);
+    VC_SeismicWave_Draw3D(cam);
 }
 
 /* Screen-space VFX producers that must submit their particle streams before the
