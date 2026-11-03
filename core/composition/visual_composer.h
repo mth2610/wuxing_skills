@@ -566,7 +566,7 @@ typedef struct VFX_EarthSpikeConfig {
     float dustScale;
     bool emitDebris;
     int debrisChips;
-    bool spawnDecal;
+    bool spawnGroundCrack;
     bool groundWaveBurst;
     bool screenShake;
     float traumaAmount;
@@ -781,11 +781,13 @@ typedef struct VFX_GuidedLiquidConfig {
     // Phase 3: Impact & Aftermath
     int splashDropletCount;     // Secondary bouncing splash droplets (0 to 48)
     float splashVelocity;       // Radial splash droplet velocity (m/s)
-    float puddleRadius;         // Ground water puddle radius (0.0 to 6.0m)
-    float puddleDuration;       // Puddle persistence duration (seconds)
+    float wetRadius;            // Expanding wet moisture radius (0.0 to 6.0m)
+    float wetDuration;          // Wet moisture persistence / drying duration (seconds)
+    float puddleRadius;         // Deprecated alias for wetRadius
+    float puddleDuration;       // Deprecated alias for wetDuration
     bool impactCrown;           // Worthington splash crown fluid geometry
     bool impactShockRing;       // Radial ground wave shock ring
-    bool impactDecal;           // Spawn conformal wet puddle decal
+    bool impactDecal;           // Deprecated
     float impactMistRadius;     // Water vapor cloud puff radius (m)
     float impactShake;          // Camera shake trauma intensity (0.0 to 1.0)
     float windBlastRadius;      // Radial wind blast flattening grass/foliage (m)
