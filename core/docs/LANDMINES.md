@@ -4,7 +4,19 @@
 > Cross-cutting traps (batching hazard, depth-test-vs-mask, `rlFrustum near<1.0`, lit-material-dark, emitter collision) live in root `ENGINE_LANDMINES.md` — read that too.
 > Long session logs and open backlog are in `PROGRESS.md`, not here.
 
-### A material `output` label that does not select code is documentation, not a contract
+### Sunken 3D Crevices / Fissures Occluded by Terrain Depth Buffer
+
+**Symptom.** A 3D crack mesh designed with physical depth (plunging below ground level $Y < \text{ground}$) is invisible or clipped away, or terrain displacement creates giant 1.5m blurry funnels and tanks frame rate from 60 to 15 FPS.
+
+**Cause.**
+1. The terrain mesh is rendered first into the depth buffer at $Y = \text{ground}$. Subsequent geometry drawn below ground level ($Y = \text{ground} - \text{depth}$) fails the `GL_LEQUAL` depth test against the existing terrain depth buffer and is discarded.
+2. In `default_arena.c`, enabling `waveActive = true` causes `ShadeArenaVertex` to run finite-difference normal queries across 576 vertices $\times 4$ samples ($2,304$ queries/frame) with an `eps = 0.30m` radius, turning a $20\text{cm}$ sharp crack into a $1.5\text{m}$ muddy shadow and wasting $15\text{ms}$ of CPU time.
+
+**Rule.**
+1. Render sunken chasm meshes using two ordered sub-passes with `rlDisableDepthTest()` and `rlDisableDepthMask()`: Sub-pass A draws outer soil lip transitions, Sub-pass B draws steep vertical rock cliff walls and the sunken chasm floor. This guarantees the canyon interior is never occluded by overlapping outer lips at branch junctions.
+2. Ground displacement in `MapManager_GetGroundHeightAt` must use tightly bounded segment radii (`maxRadius = halfWidth * 1.35f`), and `VC_EarthCrack_GetPrimaryWaveData` must return `false` so the costly finite-difference shading loop is bypassed.
+
+
 
 **Symptom.** A generated material declares `premultiplied`, calls
 `VFX_ResolveBody`, and is drawn under caller-owned blend state. It still renders,
@@ -4287,4 +4299,148 @@ doubled GPU execution time.
 - Guard `mCurl` calls with `flowParams.x > 0.0` and pass precalculated `w` directly to avoid redundant weight evaluations per particle per field.
 - Precalculate `invRadius` in `mSampleField` to replace repeated divisions by radius with multiplications, and guard lane tracking with `!dragPass`.
 
+## Velocity-Stretched Billboarding Foreshortening & Edge-On Collapse (03/11/2026)
 
+**Symptom.** High-capacity fluid particles (droplets/spray in Guided Liquid, water streams,
+cascading rain) appear as flattened, squashed horizontal rectangular slabs/wafers ("những ô dẹp")
+instead of round spherical droplets or organic teardrops. When moving along the X axis or
+swirling in depth, particles collapse into 1-pixel thin slits.
+
+**Cause.** The billboard quad semi-axes were constructed by mixing camera screen basis with
+3D world velocity:
+```c
+Vector3 extX = Vector3Scale(camRight, r);
+Vector3 extY = Vector3Scale(vDir, r * stretch); // vDir in 3D world space
+```
+(1) When particles move along +X (e.g. forward skill trajectory), `vDir` is parallel to `camRight`,
+so `extX` and `extY` are colinear. The quad collapses to zero height in Y.
+(2) When particles move along Z or vertical arcs, `vDir` has a large component along `camFwd`.
+Viewed from an isometric camera, the quad is tilted or viewed edge-on, shrinking its projected
+height on screen by $\cos(\theta_{\text{view}})$.
+(3) Furthermore, non-uniform vertex coloring across opposite quad corners creates artificial
+diagonal stripes across the circular texture.
+
+**Rule.**
+- Always project 3D velocity onto the camera view plane before constructing billboard axes:
+  ```c
+  Vector3 vCam = Vector3Subtract(v, Vector3Scale(camFwd, Vector3DotProduct(v, camFwd)));
+  float speedCam = Vector3Length(vCam);
+  Vector3 uLong  = (speedCam > 0.20f) ? Vector3Scale(vCam, 1.0f / speedCam) : camUp;
+  Vector3 uTrans = Vector3Normalize(Vector3CrossProduct(uLong, camFwd));
+  ```
+- Scale `extX = uTrans * r` and `extY = uLong * (r * stretch)`. Because `uLong` and `uTrans` are
+  guaranteed orthonormal in the camera plane, the quad faces the camera 100% flat at all times,
+  guaranteeing an exact 1:1 circular aspect ratio when stationary/slow and clean motion stretching
+  without foreshortening or edge-on collapse.
+- Assign uniform vertex colors across all 4 quad vertices and rely on radial texture alpha (`glow_circle.png`)
+  for smooth circular droplet contours.
+
+## Batch Overflow Texture Reset & Hard Square Particles (03/11/2026)
+
+**Symptom.** High-capacity particle systems (thousands of fluid droplets or spray particles in
+Guided Liquid, rain, or dust) render as hard, solid geometric squares ("những ô dẹp / ô vuông")
+with sharp 90-degree corners instead of soft circular beads or organic fluid droplets.
+
+**Cause.** In Vulkan 1.1 (`rlvk`) and OpenGL batching architectures, `rlCheckRenderBatchLimit`
+flushes the buffer when the vertex count reaches buffer capacity (8192 vertices = 2048 quads).
+Upon flushing, `RLVK.State.currentTextureSlot` resets to `RLVK.defaultTextureSlot` (the 1x1 solid
+white pixel). If a loop over thousands of particles calls `rlSetTexture` only once before
+`rlBegin(RL_QUADS)`:
+```c
+rlSetTexture(dropletTex.id);
+rlBegin(RL_QUADS);
+for (int i = 0; i < 2048; i++) { ... } // buffer flushes mid-loop!
+rlEnd();
+```
+Every quad drawn after the batch flush samples the default 1x1 white texture. Because alpha is 1.0
+across the entire quad surface, the quads lose all circular transparency and render as flat,
+solid-edged squares. Furthermore, in stream emission modes, unlaunched particles (`DROPLET_STATE_IDLE`)
+must not linger in world space forming static geometric lattices.
+
+**Rule.**
+- Subdivide large quad drawing loops into batch chunks (e.g. 256 quads per chunk) and re-bind
+  `rlSetTexture(dropletTex.id)` before each `rlBegin(RL_QUADS)`.
+- Generate self-contained procedural droplet textures (`GuidedLiquid_GetDropletTexture`) in RAM
+  with antialiased circular alpha ($1.0 - \text{smoothstep}(0.82, 1.0, r)$), 3D spherical dome
+  normals, and specular sun highlights to guarantee glossy round droplets under all graphics backends.
+- In stream emission modes, unspawned particles must remain dormant at the nozzle with zero radius
+  and be strictly skipped during rendering.
+
+## Coherent Fluid Body vs. Billboard Quad Spray Separation (03/11/2026)
+
+**Symptom.** In `Metaball 3D` and `Screen Space Fluid (SSF)` modes, high-particle-count liquids
+(e.g. 2,048 droplets in Guided Liquid `Water Orb` or `Stream Jet`) appear as a dense hollow shell
+of overlapping flat square panels, sliced facets, or crescent cutouts ("những ô dẹp / bị cắt lát")
+encasing a small inner core.
+
+**Cause.** When delegating particles to surface backends (Metaball 3D with 64 blobs or SSF with 384 particles),
+if droplets beyond an arbitrary macro threshold (e.g. $i \ge 36$) are rendered as camera-facing billboard
+quads while still in coherent body states (`DROPLET_STATE_EMERGING`, `DROPLET_STATE_HOVERING`, or
+`DROPLET_STATE_FLYING`), thousands of 2D quads overlap in 3D space with arbitrary draw order and no
+back-to-front depth sorting. This produces severe planar slicing and stepped transparent facets over the
+fluid surface. Furthermore, passing only the first 36 sequentially indexed droplets to Metaball 3D starves
+the outer shell, because Fibonacci sphere offset generation sorts droplets radially from $r = 0$ to $r = R$;
+the first 36 droplets only occupy the innermost core ($r < 0.20 R$).
+
+**Rule.**
+- In `METABALL3D`, `SSF`, and `HYBRID` backends, billboard quads must **NEVER** render particles that belong
+  to the coherent fluid mass (`DROPLET_STATE_EMERGING`, `DROPLET_STATE_HOVERING`, `DROPLET_STATE_FLYING`).
+  Billboard quads are strictly gated to detached airborne spray droplets during `DROPLET_STATE_CASCADING`
+  (after ground/target impact).
+- When droplet counts exceed the shader capacity ($> 64$ blobs in Metaball 3D, $> 384$ particles in SSF),
+  seed the surface renderer using **stratified sampling** (`idx = (k * (count - 1)) / (maxBlobs - 1)` for
+  $k = 0 \dots \text{maxBlobs} - 1$) so seed blobs span the full radial thickness from core to surface.
+  In Metaball 3D, remaining droplets merge their volume into the nearest seed blob via $V_{\text{sum}} = V_a + V_b$
+  and $r = \sqrt[3]{V_{\text{sum}}}$, seamlessly reconstructing the full 3D macro body.
+
+
+
+
+## An overpacked liquid body pours itself onto the ground (03/11/2026)
+
+**Symptom.** A guided liquid orb hovering at `source.y = 0.75 m` lost its lower droplets to the
+floor *before launch*: 13-42 of 512 droplets entered `DROPLET_STATE_CASCADING` at `launchT ≈ -0.07`
+with `pos.y ≈ 0.13-0.18`, and a `GLQ` trace measured a downward contact acceleration of
+`-390 m/s^2` (~40 g) on a droplet whose spring offset and relative velocity were both zero.
+
+**Cause.** Two separate mistakes that looked like one.
+1. The physical droplet radius was taken verbatim from `cfg->dropletRadius` (0.16 m). 512 such
+   spheres inside a 0.45 m emission sphere is a packing fraction of ~23, i.e. 8.8 t of water in
+   0.38 m^3 (23 t/m^3). Every force derived from that radius was wrong by the same factor, and
+   the neighbour contact term summed one capped push per pair, so a droplet on the *bottom* of the
+   cluster (20+ neighbours above it) received a net 40 g field pointing down. No binding spring can
+   hold that, which is why the body leaked onto the floor and why "just cap each pair" did not help.
+2. `LiquidMedium_StableFraction` returns a **volume** fraction (`We_crit/We`) but callers assigned it
+   to the **radius**, so any splash droplet faster than ~1 m/s collapsed to the 0.01 m floor and the
+   spray rendered as scratches.
+
+**Rule.**
+- Derive the physical droplet radius from the emitter volume, not from the authored blob size:
+  `r = cbrt(3 * 0.64 * V_emitter / (4*pi*N))`, clamped above by `cfg->dropletRadius`. Measure
+  `V_emitter` from the generated offsets (`r_rms/sqrt(3/5)` so any emission shape works). The
+  authored radius is a ceiling, never the body's density.
+- Render with a separate **density-field kernel radius** (~1.15 mean spacing). A physical radius that
+  is correct for mass/drag is too small to close a metaball isosurface; inflating the *physical*
+  radius to fix a coarse body is the bug above, not the fix.
+- Bound contact as a **whole**, after summing all neighbours, not per pair: `2*g` total. Per-pair
+  caps still accumulate into tens of g on the surface of a cluster.
+- A dimensionless ratio applied to a radius must be applied as `w^(1/3)`; keep volume bookkeeping in
+  `volumeM3` (summed for the puddle) and never let a breakup fraction silently redefine mass.
+
+---
+
+### Ground Fissures / Surface Fractures Painting Over Foliage or Vanishing Under Terrain
+
+**Symptom.** A ground fissure VFX (such as Earth Crack) rendered on meadow or uneven hill maps (like `song_quao`) appeared as a 2D decal stamped on top of flower petals and grass stems, painting black rock over elevated foliage. Conversely, turning on `rlEnableDepthTest()` made the crack completely vanish under the terrain or grass canopy.
+
+**Cause.**
+1. Disabling depth testing (`rlDisableDepthTest()`) caused all fracture quads to overwrite the framebuffer unconditionally, stamping black rock over flowers and grass standing 20–50 cm in the air.
+2. Disabling depth testing was originally used because the terrain mesh was rendered as a solid surface in the opaque pass without a cutout. Geometry placed at or below ground elevation ($Y \le Y_{\text{ground}}$) failed the GPU depth test ($Z_{\text{chasm}} > Z_{\text{ground}}$) against the already-rendered terrain.
+3. On sloped hills, cross-section vertices sampled only the centerline height $Y_{\text{center}}$, causing lateral vertices on $10^\circ–20^\circ$ slopes to submerge underground by 5–10 cm.
+4. Without aerodynamic parting, dense grass blades stood directly inside the fissure volume, occluding the crack when depth testing was enabled.
+
+**Rule.**
+- Always enable depth testing (`rlEnableDepthTest()`) for ground fractures so foreground grass blades and flowers properly occlude the crevice beneath them.
+- Sample local terrain height per-vertex at each vertex's actual $(X, Z)$ coordinate (`ya0 = MapManager_GetGroundHeightAt(a0_x, a0_z) - dispA`) rather than assuming flat ground across the fracture width.
+- Offset crack vertices slightly above the terrain surface ($+2\text{ mm}$ for chasm floor, $+8\text{--}12\text{ mm} + \text{heave}$ for rock shoulders) so they pass depth testing against the solid ground mesh ($Z_{\text{crack}} \le Z_{\text{ground}}$) while remaining far below the vegetation canopy ($Z_{\text{foliage}} \ll Z_{\text{crack}}$).
+- Emit radial wind shockwaves (`Wind_SpawnRadialBlast`) along the active needle tip and opened fissure to dynamically part grass blades and wildflowers away from the chasm.

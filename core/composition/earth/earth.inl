@@ -33,6 +33,7 @@ static void EarthFx_InitShared(void)
 #include "vc_guided_earth.inl"
 #include "vc_seismic_wave.inl"
 #include "vc_earth_spike.inl"
+#include "vc_earth_crack.inl"
 // @gen:earth_includes begin
 // 0 include(s) — auto-managed by sync_vfx_test.py
 // @gen:earth_includes end

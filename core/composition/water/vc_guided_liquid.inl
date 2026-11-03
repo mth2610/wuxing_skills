@@ -1,28 +1,47 @@
 // ── GENERALIZED GUIDED LIQUID (HỆ THỦY: DẪN LỰC THỦY QUÁI) ───────────────────
 //
-// High-Capacity Physical Liquid Simulation (Thousands of Fluid Particles):
-// Phase 1 (Emission): Configurable particle release modes (Burst, Stream Jet,
-//                      Surround Ring, Orbital Converge, Ground Gush, Cone Spray)
-//                      and parametric geometric shapes (Sphere, Ring, Cylinder,
-//                      Helix, Disc) with tunable emission radius, inner radius,
-//                      stagger delays and up to 2,048 fluid droplets.
-// Phase 2 (Flight):    Integrated with ForceField and MotionField systems.
-//                      Physical guided trajectories (Ballistic Arc, Homing Curve,
-//                      Spiral Corkscrew, High Catapult, Straight Jet, Serpentine
-//                      Wave) driven by attraction/pull forces, forward propulsion,
-//                      vortex swirl, turbulent noise, viscous drag, and aerodynamic
-//                      wind wake parting surrounding grass and foliage.
-// Phase 3 (Impact):    Target arrival interaction (Worthington Splash Crown,
-//                      Terrain-Conformal Expanding Puddle, Vortex Maelstrom,
-//                      Explosive Hydraulic Burst, Deluge Cascade, Piercing Drill).
-//                      True downward gravity cascade ($9.81 m/s^2$) when striking
-//                      airborne targets, terrain surface bouncing restitution,
-//                      conformal ground decals, and vegetation blast.
-// Rendering:           Full dual-backend support: True 3D Analytical Metaball
-//                      Raymarching and Screen Space Fluid (SSF), with high-fidelity
-//                      Beer-Lambert absorption, chromatic dispersion refraction,
-//                      dual-lobe specular highlights, and ultra-fast batched
-//                      quad droplet rendering for thousands of water particles.
+// One liquid model, every liquid. The effect is a *physical* body of droplets:
+//
+//   Medium    `core/liquid/liquid_medium.h` supplies the SI identity of the
+//             liquid (density, dynamic viscosity, surface tension, yield
+//             stress). Everything below is derived from those four numbers, so
+//             water, poison, mud, lava and mercury differ by physics rather
+//             than by separate tuning tables.
+//
+//   Guide     The guide is a moving FRAME, never a spline position. Its state
+//             comes from `core/liquid/liquid_ballistic.h` (exact projectile
+//             solution: apex-authored or speed-authored), so at every instant
+//             the frame has a real velocity and a real acceleration — gravity.
+//             Helical and serpentine steering are added as analytic terms with
+//             matching first and second derivatives, not as a sine wobble on a
+//             lerped position.
+//
+//   Motion    The frame owns a typed `FieldDesc` (core/motion) that moves with
+//             it and publishes `frameVelocityMps`: inside its radius the medium
+//             (qi current) travels with the guide, plus a Rankine swirl and
+//             curl-noise turbulence. Every droplet is integrated as a real body
+//             (`MotionBody_AdvanceFieldVelocity`): gravity + buoyancy, quadratic
+//             aerodynamic drag against the sampled medium, turbulence as a
+//             Newton force. Droplet mass comes from its volume and the liquid's
+//             density, so heavy liquids ignore the current and water does not.
+//
+//   Cohesion  Droplets hold their lane inside the moving frame through a
+//             critically damped, force-budgeted spring (the skill's binding
+//             actuator). Neighbour droplets additionally exchange a surface
+//             tension attraction (2*pi*sigma*r, negligible for a metre-scale
+//             blob — as it is in reality — dominant for the fine spray) and an
+//             incompressibility separation impulse. Internal shear decays at the
+//             liquid's own rate r^2/nu, and a Bingham yield makes mud and lava
+//             stop flowing while water keeps spreading.
+//
+//   Impact    The body's real incoming velocity is handed to
+//             `LiquidImpact_SpawnWater()` (core owns the crown/volume seeding),
+//             and settling droplets feed a puddle whose spreading slows with the
+//             medium's yield stress.
+//
+// Rendering: Metaball 3D raymarching or Screen-Space Fluid for the coherent
+// mass; billboard quads are reserved for detached spray. Deliberately no
+// per-frame RNG on the flight path: a droplet's arc is fixed at spawn.
 //
 #ifndef VC_GUIDED_LIQUID_INL
 #define VC_GUIDED_LIQUID_INL
@@ -33,6 +52,8 @@
 #include "core/motion/motion_recipe.h"
 #include "core/motion/motion_fields.h"
 #include "core/path_spline.h"
+#include "core/liquid/liquid_medium.h"
+#include "core/liquid/liquid_ballistic.h"
 #include "core/liquid/liquid_surface.h"
 #include "core/liquid/liquid_metaball3d.h"
 #include "core/liquid/liquid_motion.h"
@@ -54,74 +75,119 @@
 #define PI 3.14159265358979323846f
 #endif
 
-#ifndef PHYSICS_GRAVITY_MPS2
-#define PHYSICS_GRAVITY_MPS2 9.81f
-#endif
-
 #define VC_GUIDED_LIQUID_MAX_INSTANCES 8
 #define VC_GUIDED_LIQUID_MAX_DROPLETS  2048
 #define VC_GUIDED_LIQUID_MACRO_SURFACE_BLOBS 48
+
+/* Neighbour grid for surface tension / incompressibility. Fixed storage, shared
+ * by every instance because only one body is walked at a time. */
+#define VC_GUIDED_LIQUID_GRID_DIM 9
+#define VC_GUIDED_LIQUID_GRID_CELLS (VC_GUIDED_LIQUID_GRID_DIM * VC_GUIDED_LIQUID_GRID_DIM * \
+                                     VC_GUIDED_LIQUID_GRID_DIM)
 
 typedef enum {
     DROPLET_STATE_IDLE = 0,
     DROPLET_STATE_EMERGING,
     DROPLET_STATE_HOVERING,
     DROPLET_STATE_FLYING,
-    DROPLET_STATE_CASCADING, // Water struck target; raining downward with gravity onto ground
-    DROPLET_STATE_SETTLED,   // Hit terrain and merged into ground puddle
+    DROPLET_STATE_CASCADING, // Body broke on the receiver; ballistic spray
+    DROPLET_STATE_SETTLED,   // Merged into the ground puddle
     DROPLET_STATE_DEAD
 } VC_DropletState;
 
 typedef struct {
     Vector3 pos;
     Vector3 prevPos;
-    Vector3 launchPos;
-    Vector3 targetPos;
-    Vector3 localOffset;
     Vector3 velocity;
-    float radius;
+    Vector3 launchPos;
+    Vector3 laneOffset;   // Body-frame offset, in the guide basis at launch
+    float radius;         // Physical radius (metres): mass, drag, contact
+    float drawRadius;     // Visual kernel radius: the density-field splat
     float baseRadius;
+    float volumeM3;       // Conserved across merge/settle
+    float massKg;
     VC_DropletState state;
     float launchDelay;
-    float flightProgress;
     float age;
-    float flightDuration;
-    unsigned int seed;
     float swirlPhase;
+    unsigned int seed;
     bool wakeWindFired;
     int bounceCount;
 } VC_LiquidDroplet;
+
+/* Moving guide frame with a real derivative. */
+typedef struct {
+    Vector3 pos;
+    Vector3 vel;
+    Vector3 acc;
+    Vector3 right;
+    Vector3 up;
+    Vector3 tangent;
+} VC_LiquidGuideFrame;
 
 typedef struct {
     bool active;
     int id;
     VFX_GuidedLiquidConfig config;
+    LiquidMediumDesc medium;
     float timer;
-    float flightDuration;
-    Vector3 curTarget;
     int dropletCount;
     VC_LiquidDroplet droplets[VC_GUIDED_LIQUID_MAX_DROPLETS];
 
-    // Physics Fields
-    MotionFieldHandle motionField;
-    bool motionFieldCreated;
+    // Target the guide was solved for (set once; homing still tracks it)
+    Vector3 curTarget;
 
-    // Environmental Interaction
+    // Launched trajectory (exact projectile solution, fixed at spawn)
+    LiquidBallisticSolution launch;
+    bool launchSolved;
+    float launchDelay;      // emerge + hover
+    bool launched;
+
+    // Guide frame state (integrated for homing, analytic otherwise)
+    VC_LiquidGuideFrame frame;
+
+    // Binding actuator: critically damped spring towards each droplet's lane
+    float bindOmega;
+    float bindAccelBudget;
+    float pressureOmega;
+
+    // Measured body state (mass-weighted centre of mass)
+    Vector3 comPos;
+    Vector3 comVel;
+    float bodyMassKg;
+    float bodyVolumeM3;
+    float bodyRadiusM;
+
+    /* Physical droplet radius for this body: the authored `dropletRadius` is a
+     * ceiling (a sparse spray keeps it), but a body packed into the emitter
+     * cannot exceed the emitter's own volume. */
+    float dropletRadiusM;
+
+    // Motion field (medium inside the frame: frame velocity + swirl + turbulence)
+    MotionFieldHandle mediumField;
+    bool fieldAlive;
+    float fieldRadius;
+
+    // Environmental interaction
     bool emergeWindTriggered;
     bool impactTriggered;
     Vector3 impactPos;
     Vector3 impactNormal;
+    Vector3 impactVelocity;
+    float impactSpeed;
     float impactTimer;
 
-    // Ground-Conformal Puddle State
+    // Ground-conformal puddle
     Vector3 groundPuddlePos;
     float puddleRadius;
     float puddleMaxRadius;
     float puddleTimer;
     float puddleDuration;
+    float puddleThickness;
+    float puddleVolumeM3;
     bool decalSpawned;
 
-    // Material Optical Properties
+    // Material optics
     LiquidDesc material;
 } VC_GuidedLiquidInstance;
 
@@ -129,6 +195,9 @@ static VC_GuidedLiquidInstance s_guidedLiquidInstances[VC_GUIDED_LIQUID_MAX_INST
 static VFX_GuidedLiquidConfig s_liveGuidedLiquidConfig;
 static bool s_guidedLiquidInit = false;
 static int s_guidedLiquidNextId = 1;
+
+static int s_glGridHead[VC_GUIDED_LIQUID_GRID_CELLS];
+static int s_glGridNext[VC_GUIDED_LIQUID_MAX_DROPLETS];
 
 // ── Deterministic RNG Helpers ────────────────────────────────────────────────
 
@@ -146,6 +215,46 @@ static inline float GuidedLiquid_RandomFloat(unsigned int *seed)
     return (float)(*seed % 10000u) / 10000.0f;
 }
 
+/* Deterministic [-0.5,0.5] from a stored seed, WITHOUT advancing it. Used where
+ * a value must stay constant for the droplet's whole life. */
+static inline float GuidedLiquid_StableSigned(unsigned int seed)
+{
+    return (float)(GuidedLiquid_Hash(seed) % 10000u) / 10000.0f - 0.5f;
+}
+
+// ── Medium Resolution ────────────────────────────────────────────────────────
+
+static LiquidMediumDesc GuidedLiquid_ResolveMedium(const VFX_GuidedLiquidConfig *cfg)
+{
+    int profile = cfg->liquidProfile;
+    if (profile < 0 || profile >= LIQUID_MEDIUM_COUNT) profile = LIQUID_MEDIUM_WATER;
+    LiquidMediumDesc m = LiquidMedium_Get((LiquidMediumId)profile);
+    return LiquidMedium_Override(m, cfg->mediumDensityKgM3, cfg->mediumViscosityPaS,
+                                 cfg->mediumSurfaceTensionNm);
+}
+
+/* Real body description for one droplet: mass and frontal area both follow from
+ * its volume, so a bigger blob is harder for the current to carry. */
+static MotionBodyProfile GuidedLiquid_MakeBody(const VFX_GuidedLiquidConfig *cfg,
+                                               const LiquidMediumDesc *medium, float radius,
+                                               float *outMass)
+{
+    MotionBodyProfile body = (MotionBodyProfile){0};
+    float mass = LiquidMedium_DropletMassKg(medium, radius);
+    if (!(mass > 1e-6f)) mass = 1e-6f;
+    body.inverseMassKg = 1.0f / mass;
+    body.gravityScale = cfg->gravityScale;
+    body.aerodynamicAreaM2 = LiquidMedium_DropletAreaM2(radius);
+    body.aerodynamicDragCoefficient = medium->dragCoefficient;
+    body.airDensityKgM3 = LIQUID_AIR_DENSITY_KG_M3;
+    body.densityKgM3 = medium->densityKgM3; /* enables buoyancy: rho_air/rho */
+    /* The quadratic-drag term is scaled by susceptibility; leaving it 0 would
+     * make the droplet match the airflow instantly instead of feeling drag. */
+    body.windSusceptibility = 1.0f;
+    if (outMass) *outMass = mass;
+    return body;
+}
+
 // ── Default Configurations & Presets ─────────────────────────────────────────
 
 VFX_GuidedLiquidConfig VFX_GuidedLiquid_DefaultConfig(void)
@@ -159,9 +268,9 @@ VFX_GuidedLiquidConfig VFX_GuidedLiquid_DefaultConfig(void)
     cfg.trajectoryMode = VFX_LIQUID_TRAJ_PARABOLIC_ARC;
     cfg.impactMode = VFX_LIQUID_IMPACT_SPLASH_CROWN;
     cfg.renderBackend = VFX_LIQUID_BACKEND_METABALL3D;
-    cfg.liquidProfile = 0; // LIQUID_MOTION_WATER
+    cfg.liquidProfile = LIQUID_MEDIUM_WATER;
 
-    // Phase 1: High-Capacity Emission & Geometry (Thousands of particles)
+    // Phase 1: Emission & Geometry
     cfg.particleCount = 512;
     cfg.emissionRadius = 0.45f;
     cfg.emissionInnerRadius = 0.0f;
@@ -181,7 +290,7 @@ VFX_GuidedLiquidConfig VFX_GuidedLiquid_DefaultConfig(void)
     cfg.guideRadius = 1.2f;
     cfg.pullForceN = 5.5f;
     cfg.forwardForceN = 1.4f;
-    cfg.swirlSpeed = 8.0f;
+    cfg.swirlSpeed = 8.0f;   // rad/s of helical swirl
     cfg.turbulenceSpeed = 2.2f;
     cfg.fluidDrag = 1.1f;
     cfg.gravityScale = 1.0f;
@@ -210,6 +319,11 @@ VFX_GuidedLiquidConfig VFX_GuidedLiquid_DefaultConfig(void)
     cfg.foamAmount = 0.20f;
     cfg.threshold = 0.52f;
 
+    // Physical medium: 0 = measured profile values
+    cfg.mediumDensityKgM3 = 0.0f;
+    cfg.mediumViscosityPaS = 0.0f;
+    cfg.mediumSurfaceTensionNm = 0.0f;
+    cfg.cohesionScale = 0.0f;
     return cfg;
 }
 
@@ -241,6 +355,16 @@ void VFX_GuidedLiquid_ApplyPreset(VFX_GuidedLiquidConfig *cfg, VFX_GuidedLiquidP
     if (!cfg) return;
     cfg->preset = preset;
 
+    // Medium overrides default to "measured values for the profile".
+    cfg->mediumDensityKgM3 = 0.0f;
+    cfg->mediumViscosityPaS = 0.0f;
+    cfg->mediumSurfaceTensionNm = 0.0f;
+    cfg->cohesionScale = 1.0f;
+    cfg->liquidProfile = LIQUID_MEDIUM_WATER;
+    cfg->gravityScale = 1.0f;
+    cfg->emitQiRibbon = false;
+    cfg->ribbonWidth = 0.08f;
+
     switch (preset)
     {
     case VFX_LIQUID_PRESET_WATER_ORB:
@@ -267,9 +391,7 @@ void VFX_GuidedLiquid_ApplyPreset(VFX_GuidedLiquidConfig *cfg, VFX_GuidedLiquidP
         cfg->swirlSpeed = 8.0f;
         cfg->turbulenceSpeed = 2.2f;
         cfg->fluidDrag = 1.1f;
-        cfg->gravityScale = 1.0f;
         cfg->emitMistTrail = true;
-        cfg->emitQiRibbon = false;
         cfg->splashDropletCount = 32;
         cfg->splashVelocity = 6.0f;
         cfg->puddleRadius = 1.8f;
@@ -295,11 +417,11 @@ void VFX_GuidedLiquid_ApplyPreset(VFX_GuidedLiquidConfig *cfg, VFX_GuidedLiquidP
         cfg->particleCount = 1024;
         cfg->emissionRadius = 0.25f;
         cfg->emissionInnerRadius = 0.0f;
-        cfg->coneAngleDeg = 15.0f;
+        cfg->coneAngleDeg = 12.0f;
         cfg->dropletRadius = 0.12f;
         cfg->blobVariation = 0.25f;
-        cfg->emergeDuration = 0.15f;
-        cfg->hoverDuration = 0.05f;
+        cfg->emergeDuration = 0.0f;
+        cfg->hoverDuration = 0.0f;
         cfg->launchStaggerDelay = 0.0015f;
         cfg->travelSpeed = 32.0f;
         cfg->arcHeight = 0.4f;
@@ -400,7 +522,6 @@ void VFX_GuidedLiquid_ApplyPreset(VFX_GuidedLiquidConfig *cfg, VFX_GuidedLiquidP
         cfg->fluidDrag = 1.1f;
         cfg->gravityScale = 1.6f;
         cfg->emitMistTrail = true;
-        cfg->emitQiRibbon = false;
         cfg->splashDropletCount = 64;
         cfg->splashVelocity = 8.0f;
         cfg->puddleRadius = 4.0f;
@@ -441,9 +562,6 @@ void VFX_GuidedLiquid_ApplyPreset(VFX_GuidedLiquidConfig *cfg, VFX_GuidedLiquidP
         cfg->swirlSpeed = 6.0f;
         cfg->turbulenceSpeed = 2.2f;
         cfg->fluidDrag = 1.2f;
-        cfg->gravityScale = 1.0f;
-        cfg->emitMistTrail = true;
-        cfg->emitQiRibbon = false;
         cfg->splashDropletCount = 36;
         cfg->splashVelocity = 5.5f;
         cfg->puddleRadius = 2.4f;
@@ -486,7 +604,6 @@ void VFX_GuidedLiquid_ApplyPreset(VFX_GuidedLiquidConfig *cfg, VFX_GuidedLiquidP
         cfg->fluidDrag = 1.3f;
         cfg->gravityScale = 0.8f;
         cfg->emitMistTrail = true;
-        cfg->emitQiRibbon = false;
         cfg->splashDropletCount = 32;
         cfg->splashVelocity = 5.0f;
         cfg->puddleRadius = 4.8f;
@@ -503,6 +620,98 @@ void VFX_GuidedLiquid_ApplyPreset(VFX_GuidedLiquidConfig *cfg, VFX_GuidedLiquidP
         cfg->threshold = 0.50f;
         break;
 
+    case VFX_LIQUID_PRESET_MOLTEN_GEYSER:
+        /* Lava: a Bingham plastic. Low restitution, very high viscosity and a
+         * real yield stress mean the splash barely rebounds and the puddle
+         * creeps instead of spreading. */
+        cfg->spawnMode = VFX_LIQUID_SPAWN_GROUND_GUSH;
+        cfg->emissionShape = VFX_LIQUID_SHAPE_CYLINDER;
+        cfg->trajectoryMode = VFX_LIQUID_TRAJ_HIGH_CATAPULT;
+        cfg->impactMode = VFX_LIQUID_IMPACT_DELUGE_CASCADE;
+        cfg->renderBackend = VFX_LIQUID_BACKEND_METABALL3D;
+        cfg->liquidProfile = LIQUID_MEDIUM_LAVA;
+        cfg->particleCount = 640;
+        cfg->emissionRadius = 0.9f;
+        cfg->emissionInnerRadius = 0.0f;
+        cfg->coneAngleDeg = 40.0f;
+        cfg->dropletRadius = 0.22f;
+        cfg->blobVariation = 0.30f;
+        cfg->emergeDuration = 0.75f;
+        cfg->hoverDuration = 0.10f;
+        cfg->launchStaggerDelay = 0.002f;
+        cfg->travelSpeed = 11.0f;
+        cfg->arcHeight = 6.5f;
+        cfg->arcVariation = 0.15f;
+        cfg->guideRadius = 1.5f;
+        cfg->pullForceN = 4.0f;
+        cfg->forwardForceN = 1.0f;
+        cfg->swirlSpeed = 2.0f;
+        cfg->turbulenceSpeed = 0.8f;
+        cfg->fluidDrag = 3.0f;
+        cfg->cohesionScale = 1.6f;
+        cfg->gravityScale = 0.9f;
+        cfg->emitMistTrail = true;
+        cfg->splashDropletCount = 18;
+        cfg->splashVelocity = 3.0f;
+        cfg->puddleRadius = 2.6f;
+        cfg->puddleDuration = 5.5f;
+        cfg->impactCrown = true;
+        cfg->impactShockRing = true;
+        cfg->impactDecal = true;
+        cfg->impactMistRadius = 1.8f;
+        cfg->impactShake = 0.25f;
+        cfg->windBlastRadius = 3.0f;
+        cfg->liquidBodyColor = (Color){196, 62, 12, 245};
+        cfg->liquidGlowColor = (Color){255, 186, 74, 255};
+        cfg->liquidFoamColor = (Color){255, 228, 150, 255};
+        cfg->threshold = 0.46f;
+        break;
+
+    case VFX_LIQUID_PRESET_MERCURIAL_ORB:
+        /* Mercury: 13.5x water density, tiny viscosity, huge surface tension.
+         * The current cannot shear it and capillarity pulls it into beads. */
+        cfg->spawnMode = VFX_LIQUID_SPAWN_ORBITAL_CONVERGE;
+        cfg->emissionShape = VFX_LIQUID_SHAPE_SPHERE;
+        cfg->trajectoryMode = VFX_LIQUID_TRAJ_GUIDED_HOMING;
+        cfg->impactMode = VFX_LIQUID_IMPACT_PIERCING_DRILL;
+        cfg->renderBackend = VFX_LIQUID_BACKEND_METABALL3D;
+        cfg->liquidProfile = LIQUID_MEDIUM_LIQUID_METAL;
+        cfg->particleCount = 384;
+        cfg->emissionRadius = 1.8f;
+        cfg->emissionInnerRadius = 0.6f;
+        cfg->coneAngleDeg = 25.0f;
+        cfg->dropletRadius = 0.13f;
+        cfg->blobVariation = 0.22f;
+        cfg->emergeDuration = 0.45f;
+        cfg->hoverDuration = 0.20f;
+        cfg->launchStaggerDelay = 0.001f;
+        cfg->travelSpeed = 26.0f;
+        cfg->arcHeight = 1.6f;
+        cfg->arcVariation = 0.05f;
+        cfg->guideRadius = 0.8f;
+        cfg->pullForceN = 9.0f;
+        cfg->forwardForceN = 3.0f;
+        cfg->swirlSpeed = 10.0f;
+        cfg->turbulenceSpeed = 1.2f;
+        cfg->fluidDrag = 0.4f;
+        cfg->cohesionScale = 2.0f;
+        cfg->emitMistTrail = false;
+        cfg->splashDropletCount = 10;
+        cfg->splashVelocity = 2.5f;
+        cfg->puddleRadius = 1.4f;
+        cfg->puddleDuration = 4.5f;
+        cfg->impactCrown = false;
+        cfg->impactShockRing = true;
+        cfg->impactDecal = true;
+        cfg->impactMistRadius = 0.8f;
+        cfg->impactShake = 0.30f;
+        cfg->windBlastRadius = 2.4f;
+        cfg->liquidBodyColor = (Color){168, 176, 190, 250};
+        cfg->liquidGlowColor = (Color){236, 240, 255, 255};
+        cfg->liquidFoamColor = (Color){255, 255, 255, 255};
+        cfg->threshold = 0.56f;
+        break;
+
     case VFX_LIQUID_PRESET_CUSTOM:
     default:
         break;
@@ -513,9 +722,10 @@ void VFX_GuidedLiquid_ApplyPreset(VFX_GuidedLiquidConfig *cfg, VFX_GuidedLiquidP
 
 const char *VFX_GuidedLiquidPreset_Name(VFX_GuidedLiquidPreset preset)
 {
-    static const char *const names[] = {
+    static const char *const names[VFX_LIQUID_PRESET_COUNT] = {
         "Custom", "Water Orb", "Torrent Jet", "Vortex Dragon",
-        "Orbital Deluge", "Spring Gush", "Surging Tide"
+        "Orbital Deluge", "Spring Gush", "Surging Tide",
+        "Molten Geyser", "Mercurial Orb"
     };
     return (preset >= 0 && preset < VFX_LIQUID_PRESET_COUNT) ? names[preset] : "Unknown";
 }
@@ -567,9 +777,10 @@ int VFX_GuidedLiquid_GetParams(VFX_GuidedLiquidConfig *cfg, VFX_ParamDef *out, i
     if (!cfg || !out || max <= 0) return 0;
     int n = 0;
 
-    static const char *const presetNames[] = {
+    static const char *const presetNames[VFX_LIQUID_PRESET_COUNT] = {
         "Custom", "Water Orb", "Torrent Jet", "Vortex Dragon",
-        "Orbital Deluge", "Spring Gush", "Surging Tide"
+        "Orbital Deluge", "Spring Gush", "Surging Tide",
+        "Molten Geyser", "Mercurial Orb"
     };
     static const char *const spawnNames[] = {
         "Burst Ejection", "Stream Jet", "Surround Ring", "Orbital Converge", "Ground Gush", "Cone Spray"
@@ -620,7 +831,7 @@ int VFX_GuidedLiquid_GetParams(VFX_GuidedLiquidConfig *cfg, VFX_ParamDef *out, i
     // Preset & Architecture
     LIQUID_PARAM_ENUM("Preset", "Preset", cfg->preset, presetNames, VFX_LIQUID_PRESET_COUNT);
     LIQUID_PARAM_ENUM("Render Backend", "Preset", cfg->renderBackend, backendNames, VFX_LIQUID_BACKEND_COUNT);
-    LIQUID_PARAM_ENUM("Liquid Profile", "Preset", cfg->liquidProfile, profileNames, 5);
+    LIQUID_PARAM_ENUM("Liquid Profile", "Preset", cfg->liquidProfile, profileNames, LIQUID_MEDIUM_COUNT);
 
     // Phase 1: Emission & Shape
     LIQUID_PARAM_ENUM("Spawn Mode", "Emission", cfg->spawnMode, spawnNames, VFX_LIQUID_SPAWN_COUNT);
@@ -643,12 +854,17 @@ int VFX_GuidedLiquid_GetParams(VFX_GuidedLiquidConfig *cfg, VFX_ParamDef *out, i
     LIQUID_PARAM_FLOAT("Guide Radius m", "Forces", cfg->guideRadius, 0.3f, 4.0f, 0.1f);
     LIQUID_PARAM_FLOAT("Pull Force N", "Forces", cfg->pullForceN, 0.1f, 15.0f, 0.5f);
     LIQUID_PARAM_FLOAT("Forward Force N", "Forces", cfg->forwardForceN, 0.05f, 8.0f, 0.2f);
-    LIQUID_PARAM_FLOAT("Swirl Speed rad/s", "Forces", cfg->swirlSpeed, 0.0f, 25.0f, 1.0f);
+    LIQUID_PARAM_FLOAT("Swirl rad/s", "Forces", cfg->swirlSpeed, 0.0f, 25.0f, 1.0f);
     LIQUID_PARAM_FLOAT("Turbulence m/s", "Forces", cfg->turbulenceSpeed, 0.0f, 8.0f, 0.5f);
-    LIQUID_PARAM_FLOAT("Fluid Drag", "Forces", cfg->fluidDrag, 0.1f, 5.0f, 0.1f);
     LIQUID_PARAM_FLOAT("Gravity Scale", "Forces", cfg->gravityScale, 0.0f, 2.5f, 0.1f);
     LIQUID_PARAM_BOOL("Emit Mist Trail", "Trajectory", cfg->emitMistTrail);
     LIQUID_PARAM_BOOL("Emit Qi Ribbon", "Trajectory", cfg->emitQiRibbon);
+
+    // Physical medium overrides (0 = measured value for the profile)
+    LIQUID_PARAM_FLOAT("Density kg/m3", "Medium", cfg->mediumDensityKgM3, 0.0f, 14000.0f, 50.0f);
+    LIQUID_PARAM_FLOAT("Viscosity Pa.s", "Medium", cfg->mediumViscosityPaS, 0.0f, 200.0f, 0.5f);
+    LIQUID_PARAM_FLOAT("Surface Tension N/m", "Medium", cfg->mediumSurfaceTensionNm, 0.0f, 1.0f, 0.01f);
+    LIQUID_PARAM_FLOAT("Cohesion Scale", "Medium", cfg->cohesionScale, 0.2f, 3.0f, 0.05f);
 
     // Phase 3: Impact & Interaction
     LIQUID_PARAM_ENUM("Impact Mode", "Impact", cfg->impactMode, impactNames, VFX_LIQUID_IMPACT_COUNT);
@@ -672,167 +888,341 @@ int VFX_GuidedLiquid_GetParams(VFX_GuidedLiquidConfig *cfg, VFX_ParamDef *out, i
     return n;
 }
 
-// ── Geometric Emission Helpers ───────────────────────────────────────────────
+// ── Emission Geometry ────────────────────────────────────────────────────────
+//
+// Every shape samples its OWN volume uniformly (or its own surface, for the
+// planar shapes). The previous power-law radial spread packed half the droplets
+// into a shell and left the core empty, which is why a 2,048-droplet body
+// rendered as a hollow cage.
 
-static Vector3 GuidedLiquid_CalculateSpawnOffset(VFX_LiquidEmissionShape shape, float radius,
-                                                float innerRadius, float coneAngleDeg,
-                                                int index, int count, unsigned int *seed,
-                                                Vector3 forwardDir)
+static Vector3 GuidedLiquid_EmissionOffset(const VFX_GuidedLiquidConfig *cfg, int index, int count,
+                                           unsigned int *seed, const VC_LiquidGuideFrame *frame)
 {
     if (count <= 0) return Vector3Zero();
-    float frac = (count > 1) ? ((float)index / (float)(count - 1)) : 0.5f;
+    const float golden = 2.39996323f; /* golden angle, low-discrepancy azimuth */
+    float u = ((float)index + 0.5f) / (float)count;
+    float radius = fmaxf(0.01f, cfg->emissionRadius);
+    float inner = Clamp(cfg->emissionInnerRadius, 0.0f, radius);
 
-    switch (shape)
+    switch (cfg->emissionShape)
     {
-    case VFX_LIQUID_SHAPE_SPHERE: {
-        // Fibonacci spherical spiral volume
-        float phi = acosf(1.0f - 2.0f * ((float)index + 0.5f) / (float)count);
-        float theta = PI * (1.0f + sqrtf(5.0f)) * (float)index;
-        float r = radius * powf(frac, 0.40f);
-        return (Vector3){r * sinf(phi) * cosf(theta), r * cosf(phi), r * sinf(phi) * sinf(theta)};
-    }
     case VFX_LIQUID_SHAPE_RING: {
-        // Toroidal perimeter ring in horizontal plane
-        float angle = ((float)index / (float)count) * 2.0f * PI;
-        float rRange = fmaxf(0.01f, radius - innerRadius);
-        float r = innerRadius + rRange * (0.6f + 0.4f * GuidedLiquid_RandomFloat(seed));
-        return (Vector3){r * cosf(angle), 0.06f * sinf(angle * 4.0f), r * sinf(angle)};
+        /* Solid torus: major radius between inner and outer, tube filled by
+         * area so the ring reads as a volume instead of a wire. */
+        float major = 0.5f * (radius + inner);
+        float minor = fmaxf(0.02f, 0.5f * (radius - inner));
+        float angle = u * 2.0f * PI;
+        float tubeAngle = GuidedLiquid_RandomFloat(seed) * 2.0f * PI;
+        float tubeR = minor * sqrtf(GuidedLiquid_RandomFloat(seed));
+        Vector3 radial = {cosf(angle), 0.0f, sinf(angle)};
+        Vector3 up = {0.0f, 1.0f, 0.0f};
+        return Vector3Add(Vector3Scale(radial, major + cosf(tubeAngle) * tubeR),
+                          Vector3Scale(up, sinf(tubeAngle) * tubeR));
     }
     case VFX_LIQUID_SHAPE_CYLINDER: {
-        // High-density vertical water column / jet nozzle
-        float angle = ((float)index / (float)count) * 2.0f * PI;
-        float r = radius * sqrtf((float)((index % 9) + 1) / 9.0f);
-        float h = (radius * 2.5f) * (frac - 0.5f);
-        return (Vector3){r * cosf(angle), h, r * sinf(angle)};
+        float r = radius * sqrtf(u);
+        float angle = u * golden * 6.0f;
+        float halfHeight = radius * 1.25f;
+        float y = halfHeight * (2.0f * GuidedLiquid_RandomFloat(seed) - 1.0f);
+        return (Vector3){cosf(angle) * r, y, sinf(angle) * r};
     }
     case VFX_LIQUID_SHAPE_HELIX: {
-        // Double-helix spiral strands
-        int strand = index % 2;
-        float angle = ((float)index / (float)count) * 6.0f * PI + (float)strand * PI;
-        float r = radius * 0.85f;
-        float h = (radius * 3.5f) * (frac - 0.5f);
-        return (Vector3){r * cosf(angle), h, r * sinf(angle)};
+        int strand = index & 1;
+        float angle = u * 6.0f * PI + (float)strand * PI;
+        float tube = radius * 0.16f * sqrtf(GuidedLiquid_RandomFloat(seed));
+        float h = radius * 3.5f * (u - 0.5f);
+        Vector3 radial = {cosf(angle), 0.0f, sinf(angle)};
+        Vector3 tangent = {-sinf(angle), 0.0f, cosf(angle)};
+        return Vector3Add(Vector3Scale(radial, radius * 0.85f + tube),
+                          Vector3Add(Vector3Scale(tangent, tube * 0.5f), (Vector3){0.0f, h, 0.0f}));
     }
     case VFX_LIQUID_SHAPE_DISC: {
-        // Planar horizontal circular disc
-        float angle = ((float)index / (float)count) * 2.0f * PI;
-        float r = radius * sqrtf(frac);
-        return (Vector3){r * cosf(angle), 0.02f, r * sinf(angle)};
+        /* Annulus: uniform area between inner and outer radius. */
+        float r2 = inner * inner + (radius * radius - inner * inner) * u;
+        float angle = u * golden * 8.0f;
+        float r = sqrtf(fmaxf(0.0f, r2));
+        return (Vector3){cosf(angle) * r, 0.0f, sinf(angle) * r};
     }
-    default:
-        return Vector3Zero();
-    }
-}
-
-static inline float GuidedLiquid_Smoothstep(float edge0, float edge1, float x)
-{
-    float t = Clamp((x - edge0) / (edge1 - edge0), 0.0f, 1.0f);
-    return t * t * (3.0f - 2.0f * t);
-}
-
-// ── Physical Trajectory Evaluation ───────────────────────────────────────────
-
-static Vector3 GuidedLiquid_CalculateTrajectoryPos(VFX_LiquidTrajectoryMode mode, Vector3 p0,
-                                                  Vector3 pTarget, float progress, float arcHeight,
-                                                  float swirlSpeed, float timer, unsigned int seed)
-{
-    progress = fmaxf(0.0f, fminf(1.0f, progress));
-
-    // Linear baseline interpolation
-    Vector3 basePos = Vector3Lerp(p0, pTarget, progress);
-    Vector3 fwd = Vector3Subtract(pTarget, p0);
-    float distXZ = sqrtf(fwd.x * fwd.x + fwd.z * fwd.z);
-    Vector3 fwdNorm = (distXZ > 0.001f) ? (Vector3){fwd.x / distXZ, 0.0f, fwd.z / distXZ} : (Vector3){0, 0, 1};
-    Vector3 rightNorm = {-fwdNorm.z, 0.0f, fwdNorm.x};
-    Vector3 upNorm = {0.0f, 1.0f, 0.0f};
-
-    switch (mode)
-    {
-    case VFX_LIQUID_TRAJ_PARABOLIC_ARC: {
-        float arcY = 4.0f * arcHeight * progress * (1.0f - progress);
-        basePos.y += arcY;
-        break;
-    }
-    case VFX_LIQUID_TRAJ_HIGH_CATAPULT: {
-        float arcY = arcHeight * powf(sinf(progress * PI), 0.70f);
-        basePos.y += arcY;
-        break;
-    }
-    case VFX_LIQUID_TRAJ_SPIRAL_CORKSCREW: {
-        float arcY = 4.0f * arcHeight * progress * (1.0f - progress);
-        basePos.y += arcY;
-        float spiralAngle = swirlSpeed * timer + progress * 14.0f + (float)(seed % 100) * 0.06f;
-        float spiralRad = 0.35f * sinf(progress * PI);
-        basePos = Vector3Add(basePos, Vector3Scale(rightNorm, cosf(spiralAngle) * spiralRad));
-        basePos = Vector3Add(basePos, Vector3Scale(upNorm, sinf(spiralAngle) * spiralRad));
-        break;
-    }
-    case VFX_LIQUID_TRAJ_JET_STREAM: {
-        float arcY = arcHeight * 0.25f * sinf(progress * PI);
-        basePos.y += arcY;
-        float eddyAngle = timer * 18.0f + progress * 24.0f;
-        float eddyRad = 0.08f * sinf(progress * PI);
-        basePos = Vector3Add(basePos, Vector3Scale(rightNorm, cosf(eddyAngle) * eddyRad));
-        break;
-    }
-    case VFX_LIQUID_TRAJ_SERPENTINE_WAVE: {
-        float waveLat = sinf(progress * 4.0f * PI - timer * 8.0f) * (arcHeight * 0.5f + 0.2f);
-        basePos = Vector3Add(basePos, Vector3Scale(rightNorm, waveLat));
-        float arcY = arcHeight * 0.4f * sinf(progress * PI);
-        basePos.y += arcY;
-        break;
-    }
-    case VFX_LIQUID_TRAJ_GUIDED_HOMING:
+    case VFX_LIQUID_SHAPE_SPHERE:
     default: {
-        float arcY = 4.0f * arcHeight * progress * (1.0f - progress);
-        basePos.y += arcY;
-        break;
+        /* Uniform inside the sphere: r = R * cbrt(u) is what makes the density
+         * constant. Using u^(0.4) instead put 60% of the droplets in the outer
+         * third and left the interior empty. */
+        float cosTheta = 1.0f - 2.0f * u;
+        float sinTheta = sqrtf(fmaxf(0.0f, 1.0f - cosTheta * cosTheta));
+        float azimuth = u * golden * 4.0f;
+        float r = radius * cbrtf(fmaxf(0.0f, GuidedLiquid_RandomFloat(seed)));
+        Vector3 offset = {sinTheta * cosf(azimuth) * r, cosTheta * r, sinTheta * sinf(azimuth) * r};
+        (void)frame;
+        return offset;
     }
     }
-
-    return basePos;
 }
 
-// ── Target Impact & Ground Cascade Dispatch ──────────────────────────────────
-
-static void GuidedLiquid_TriggerImpact(VC_GuidedLiquidInstance *inst, Vector3 impactPoint, Vector3 normal)
+/* Cone spray: uniform solid angle inside the authored half-angle, around the
+ * launch direction. This is the mode that made `coneAngleDeg` meaningful. */
+static Vector3 GuidedLiquid_ConeOffset(const VFX_GuidedLiquidConfig *cfg, int index, int count,
+                                       unsigned int *seed, const VC_LiquidGuideFrame *frame)
 {
-    if (!inst) return;
+    float halfAngle = Clamp(cfg->coneAngleDeg, 1.0f, 89.0f) * (PI / 180.0f);
+    float cosMax = cosf(halfAngle);
+    float u = ((float)index + 0.5f) / (float)fmaxf(1, count);
+    float cosTheta = 1.0f - (1.0f - cosMax) * u;
+    float sinTheta = sqrtf(fmaxf(0.0f, 1.0f - cosTheta * cosTheta));
+    float azimuth = GuidedLiquid_RandomFloat(seed) * 2.0f * PI;
+    float r = fmaxf(0.02f, cfg->emissionRadius);
+    Vector3 dir = Vector3Add(Vector3Scale(frame->tangent, cosTheta),
+                             Vector3Add(Vector3Scale(frame->right, sinTheta * cosf(azimuth)),
+                                        Vector3Scale(frame->up, sinTheta * sinf(azimuth))));
+    return Vector3Scale(dir, r);
+}
+
+// ── Guide Frame ───────────────────────────────���──────────────────────────────
+
+static void GuidedLiquid_BuildBasis(Vector3 tangent, VC_LiquidGuideFrame *frame)
+{
+    Vector3 t = tangent;
+    if (!isfinite(t.x) || !isfinite(t.y) || !isfinite(t.z) || Vector3Length(t) < 1e-4f) {
+        t = (Vector3){0.0f, 0.0f, 1.0f};
+    } else {
+        t = Vector3Normalize(t);
+    }
+    Vector3 worldUp = {0.0f, 1.0f, 0.0f};
+    Vector3 right = Vector3CrossProduct(worldUp, t);
+    if (Vector3Length(right) < 1e-4f) right = (Vector3){1.0f, 0.0f, 0.0f};
+    right = Vector3Normalize(right);
+    Vector3 up = Vector3Normalize(Vector3CrossProduct(t, right));
+    frame->right = right;
+    frame->up = up;
+    frame->tangent = t;
+}
+
+/* Exact target point of a droplet's lane at guide time `t`. The lane itself
+ * rotates: the binding actuator makes the body spin at `swirlSpeed`, which is
+ * a real circular motion (the target's own velocity is omega x offset), not a
+ * decorative sine. */
+static Vector3 GuidedLiquid_LaneTarget(const VC_GuidedLiquidInstance *inst,
+                                       const VC_LiquidDroplet *d,
+                                       const VC_LiquidGuideFrame *frame, float timeSec,
+                                       Vector3 *outLaneVelocity)
+{
+    /* Squash/stretch the body along its direction of travel by the ratio of
+     * external acceleration to the binding stiffness. A liquid in an
+     * accelerating field is not a rigid lattice. */
+    float omega2 = inst->bindOmega * inst->bindOmega;
+    float strain = 0.0f;
+    if (omega2 > 1e-3f) {
+        float aExt = Vector3Length(inst->frame.acc);
+        strain = Clamp(aExt / omega2 / fmaxf(0.05f, inst->config.guideRadius), 0.0f, 0.55f);
+    }
+
+    float swirl = inst->config.swirlSpeed;
+    float angle = swirl * fmaxf(0.0f, timeSec);
+    Vector3 lane = d->laneOffset;
+    if (fabsf(angle) > 1e-5f && Vector3LengthSqr(lane) > 1e-8f) {
+        lane = Vector3RotateByAxisAngle(lane, frame->tangent, angle);
+    }
+
+    float along = Vector3DotProduct(lane, frame->tangent);
+    float transverseScale = 1.0f - strain * 0.45f;
+    Vector3 offset = Vector3Add(
+        Vector3Scale(frame->tangent, along * (1.0f + strain)),
+        Vector3Scale(Vector3Subtract(lane, Vector3Scale(frame->tangent, along)),
+                     transverseScale));
+
+    if (outLaneVelocity) {
+        /* d/dt of the lane in the moving frame: rigid rotation about the
+         * body's own axis. */
+        *outLaneVelocity = swirl != 0.0f
+                               ? Vector3CrossProduct(Vector3Scale(frame->tangent, swirl),
+                                                     Vector3Scale(offset, transverseScale))
+                               : Vector3Zero();
+    }
+    return Vector3Add(frame->pos, offset);
+}
+
+static void GuidedLiquid_SampleGuideFrame(VC_GuidedLiquidInstance *inst, float t)
+{
+    const VFX_GuidedLiquidConfig *cfg = &inst->config;
+    VC_LiquidGuideFrame *out = &inst->frame;
+
+    Vector3 gravity = {0.0f, -LIQUID_GRAVITY_MPS2 * cfg->gravityScale, 0.0f};
+    if (!inst->launchSolved) {
+        out->pos = Vector3Add(cfg->source, Vector3Scale(gravity, 0.5f * t * t));
+        out->vel = Vector3Scale(gravity, t);
+        out->acc = gravity;
+        GuidedLiquid_BuildBasis(Vector3Subtract(inst->curTarget, cfg->source), out);
+        return;
+    }
+
+    float duration = fmaxf(0.05f, inst->launch.durationSec);
+    float tc = Clamp(t, 0.0f, duration);
+    LiquidBallistic_Sample(&inst->launch, tc, &out->pos, &out->vel, &out->acc);
+    if (t > duration) {
+        /* Arrived: the frame stops. Below it the body is handed to the
+         * cascade, so holding the frame is what makes the break readable. */
+        LiquidBallistic_Sample(&inst->launch, duration, &out->pos, NULL, NULL);
+        out->vel = Vector3Zero();
+        out->acc = Vector3Zero();
+    }
+
+    Vector3 baseTangent = inst->launch.horizontalDir;
+    if (Vector3Length(out->vel) > 0.1f) baseTangent = out->vel;
+    GuidedLiquid_BuildBasis(baseTangent, out);
+
+    /* Helical steering: a real circular motion (centripetal acceleration
+     * omega^2 * r) whose radius grows in and out with the flight. */
+    if (cfg->trajectoryMode == VFX_LIQUID_TRAJ_SPIRAL_CORKSCREW) {
+        Vector3 baseTangentFlat = inst->launch.horizontalDir;
+        Vector3 right = {baseTangentFlat.z, 0.0f, -baseTangentFlat.x};
+        Vector3 up = {0.0f, 1.0f, 0.0f};
+        float omega = Clamp(cfg->swirlSpeed, 0.0f, 25.0f);
+        float helixR = Clamp(cfg->guideRadius * 0.35f, 0.10f, 1.2f);
+        float theta = omega * tc;
+        float r = helixR * sinf(PI * tc / duration);
+        float dr = helixR * (PI / duration) * cosf(PI * tc / duration);
+        float ddr = -helixR * (PI / duration) * (PI / duration) * sinf(PI * tc / duration);
+        Vector3 e = Vector3Add(Vector3Scale(right, cosf(theta)), Vector3Scale(up, sinf(theta)));
+        Vector3 de = Vector3Add(Vector3Scale(right, -sinf(theta)), Vector3Scale(up, cosf(theta)));
+        out->pos = Vector3Add(out->pos, Vector3Scale(e, r));
+        out->vel = Vector3Add(out->vel,
+                              Vector3Add(Vector3Scale(e, dr), Vector3Scale(de, r * omega)));
+        out->acc = Vector3Add(out->acc,
+                              Vector3Add(Vector3Scale(e, ddr - r * omega * omega),
+                                         Vector3Scale(de, 2.0f * dr * omega)));
+    }
+
+    /* Serpentine steering: transverse harmonic motion along the line of
+     * flight. Its acceleration is -A*Omega^2*sin(), i.e. a real centripetal
+     * oscillation, not a phase-shifted copy of the position. */
+    if (cfg->trajectoryMode == VFX_LIQUID_TRAJ_SERPENTINE_WAVE) {
+        Vector3 baseTangentFlat = inst->launch.horizontalDir;
+        Vector3 right = {baseTangentFlat.z, 0.0f, -baseTangentFlat.x};
+        float amplitude = fmaxf(0.15f, cfg->arcHeight * 0.35f);
+        float wavelength = fmaxf(0.6f, (inst->launch.horizontalSpeedMps * duration) / 2.5f);
+        float omega = fmaxf(0.8f, Clamp(cfg->swirlSpeed, 0.0f, 25.0f) * 0.6f);
+        float rate = (2.0f * PI / wavelength) * inst->launch.horizontalSpeedMps - omega;
+        float phase = rate * tc;
+        out->pos = Vector3Add(out->pos, Vector3Scale(right, amplitude * sinf(phase)));
+        out->vel = Vector3Add(out->vel, Vector3Scale(right, amplitude * rate * cosf(phase)));
+        out->acc = Vector3Add(out->acc,
+                              Vector3Scale(right, -amplitude * rate * rate * sinf(phase)));
+    }
+}
+
+/* Guided homing integrates a controlled body: thrust towards the target with
+ * critical damping plus real gravity, bounded by its acceleration budget. */
+static void GuidedLiquid_IntegrateHoming(VC_GuidedLiquidInstance *inst, float dt)
+{
+    const VFX_GuidedLiquidConfig *cfg = &inst->config;
+    Vector3 gravity = {0.0f, -LIQUID_GRAVITY_MPS2 * cfg->gravityScale, 0.0f};
+    float flight = fmaxf(0.25f, inst->launchSolved ? inst->launch.durationSec : 0.8f);
+    float omega = Clamp(6.0f / (0.6f * flight), 1.5f, 12.0f);
+    Vector3 toTarget = Vector3Subtract(inst->curTarget, inst->frame.pos);
+    Vector3 acc = Vector3Add(Vector3Scale(toTarget, omega * omega),
+                             Vector3Scale(inst->frame.vel, -2.0f * omega));
+    acc = Vector3Add(acc, gravity);
+    float budget = fmaxf(4.0f * LIQUID_GRAVITY_MPS2, cfg->travelSpeed * 3.0f);
+    float len = Vector3Length(acc);
+    if (len > budget) acc = Vector3Scale(acc, budget / len);
+
+    inst->frame.acc = acc;
+    inst->frame.vel = Vector3Add(inst->frame.vel, Vector3Scale(acc, dt));
+    inst->frame.pos = Vector3Add(inst->frame.pos, Vector3Scale(inst->frame.vel, dt));
+    GuidedLiquid_BuildBasis(inst->frame.vel, &inst->frame);
+
+    if (Vector3Distance(inst->frame.pos, inst->curTarget) < 0.25f) {
+        inst->frame.vel = Vector3Scale(inst->frame.vel, 0.4f);
+    }
+}
+
+// ── Impact & Settlement ──────────────────────────────────────────────────────
+
+/* Element material for the aftermath. A lava or mud body must not leave a blue
+ * water shock ring and a wet decal behind. */
+static VC_MaterialId GuidedLiquid_ImpactMaterial(int liquidProfile)
+{
+    switch (liquidProfile) {
+    case LIQUID_MEDIUM_LAVA:         return VC_MAT_FIRE;
+    case LIQUID_MEDIUM_MUD:          return VC_MAT_EARTH;
+    case LIQUID_MEDIUM_POISON:       return VC_MAT_POISON;
+    case LIQUID_MEDIUM_LIQUID_METAL: return VC_MAT_METAL;
+    case LIQUID_MEDIUM_WATER:
+    default:                         return VC_MAT_WATER;
+    }
+}
+
+static void GuidedLiquid_TriggerImpact(VC_GuidedLiquidInstance *inst, Vector3 point, Vector3 normal,
+                                       Vector3 incomingVelocity)
+{
+    if (!inst || inst->impactTriggered) return;
     const VFX_GuidedLiquidConfig *cfg = &inst->config;
 
-    if (!inst->impactTriggered) {
-        inst->impactTriggered = true;
-        inst->impactPos = impactPoint;
-        inst->impactNormal = normal;
-        inst->impactTimer = 0.0f;
+    inst->impactTriggered = true;
+    inst->impactPos = point;
+    inst->impactNormal = Vector3Length(normal) > 1e-4f ? Vector3Normalize(normal) : (Vector3){0, 1, 0};
+    inst->impactVelocity = incomingVelocity;
+    inst->impactSpeed = Vector3Length(incomingVelocity);
+    inst->impactTimer = 0.0f;
 
-        // Anchor ground puddle strictly to terrain height at target
-        float groundY = MapManager_GetGroundHeightAt(inst->curTarget.x, inst->curTarget.z);
-        inst->groundPuddlePos = (Vector3){inst->curTarget.x, groundY + 0.015f, inst->curTarget.z};
+    float groundY = MapManager_GetGroundHeightAt(point.x, point.z);
+    inst->groundPuddlePos = (Vector3){point.x, groundY + 0.012f, point.z};
 
-        // Initialize ground puddle
-        inst->puddleRadius = 0.10f;
-        inst->puddleMaxRadius = cfg->puddleRadius;
-        inst->puddleTimer = 0.0f;
-        inst->puddleDuration = fmaxf(0.5f, cfg->puddleDuration);
+    inst->puddleRadius = fmaxf(0.10f, inst->bodyRadiusM * 0.35f);
+    inst->puddleMaxRadius = cfg->puddleRadius;
+    inst->puddleTimer = 0.0f;
+    inst->puddleDuration = fmaxf(0.5f, cfg->puddleDuration);
+    inst->puddleVolumeM3 = 0.0f;
+    /* Film thickness of a puddle is a liquid property (capillary length /
+     * yield): the front speed below is derived from it. */
+    inst->puddleThickness = fmaxf(0.01f, fminf(0.08f, inst->bodyRadiusM * 0.30f));
 
-        // Environmental wind shockwave flattening surrounding grass
-        if (cfg->windBlastRadius > 0.05f) {
-            Wind_SpawnRadialBlast(inst->groundPuddlePos, cfg->windBlastRadius, 14.0f, 0.45f);
-            Wind_SpawnTurbulence(inst->groundPuddlePos, cfg->windBlastRadius * 0.75f, 6.0f, 0.25f, 3.5f, 0.35f);
-        }
-
-        // Conformal ground wave shock ring
-        if (cfg->impactShockRing) {
-            VFX_ComposeGroundWave(inst->groundPuddlePos, VC_MAT_WATER, cfg->dropletRadius * 4.2f, 0.45f, VFX_GroundHeightFromMap, NULL);
-        }
-
-        // Spawn conformal wet puddle decal
-        if (cfg->impactDecal && !inst->decalSpawned) {
-            inst->decalSpawned = true;
-            VFX_ComposeDecal(inst->groundPuddlePos, VC_MAT_WATER, cfg->puddleRadius, 0.85f, 1.0f);
-        }
+    // Environmental wind shockwave (pressure front, then turbulence wake)
+    if (cfg->windBlastRadius > 0.05f) {
+        float blastSpeed = Clamp(inst->impactSpeed * 0.75f, 4.0f, 14.0f);
+        Wind_SpawnRadialBlast(inst->groundPuddlePos, cfg->windBlastRadius, blastSpeed, 0.45f);
+        Wind_SpawnTurbulence(inst->groundPuddlePos, cfg->windBlastRadius * 0.75f, 6.0f, 0.25f, 3.5f, 0.35f);
     }
+
+    VC_MaterialId impactMat = GuidedLiquid_ImpactMaterial(cfg->liquidProfile);
+
+    if (cfg->impactShockRing) {
+        float ringRadius = fmaxf(cfg->dropletRadius * 4.2f, inst->bodyRadiusM * 1.5f);
+        VFX_ComposeGroundWave(inst->groundPuddlePos, impactMat, ringRadius, 0.45f,
+                              VFX_GroundHeightFromMap, NULL);
+    }
+
+    if (cfg->impactDecal && !inst->decalSpawned) {
+        inst->decalSpawned = true;
+        VFX_ComposeDecal(inst->groundPuddlePos, impactMat, cfg->puddleRadius, 0.85f, 1.0f);
+    }
+
+    if (cfg->emitMistTrail && cfg->impactMistRadius > 0.2f) {
+        VFX_ComposeMistVeilEx(inst->groundPuddlePos, impactMat,
+                              cfg->impactMistRadius, 0.55f + 0.35f * cfg->puddleDuration * 0.1f);
+    }
+
+    /* Hand the real incoming velocity to the engine's liquid impact: it owns
+     * normal reflection, tangential retention and the crown volume. The
+     * composition keeps rendering its own body, so this is an external body. */
+    LiquidImpactEvent event = {0};
+    event.hitPoint = point;
+    event.hitNormal = inst->impactNormal;
+    event.impulseDirection = Vector3Length(incomingVelocity) > 0.1f
+                                 ? Vector3Normalize(incomingVelocity)
+                                 : inst->impactNormal;
+    event.initialVelocity = incomingVelocity;
+    event.force01 = Clamp(inst->impactSpeed / 22.0f, 0.05f, 1.0f);
+    event.scale = Clamp(inst->bodyRadiusM * 1.4f, 0.4f, 2.6f);
+    event.bodyColor = inst->material.body;
+    event.glowColor = inst->material.glow;
+    event.softColor = inst->material.soft;
+    event.motionProfile = (LiquidMotionProfile)Clamp(inst->config.liquidProfile, 0,
+                                                     LIQUID_MEDIUM_COUNT - 1);
+    event.forceFieldOnly = true;
+    event.externalBody = true;
+    event.backend = LIQUID_IMPACT_BACKEND_FORCE_FIELD;
+    LiquidImpact_SpawnWater(&event);
 }
 
 bool VFX_GuidedLiquid_IsAnyActive(void)
@@ -844,6 +1234,11 @@ bool VFX_GuidedLiquid_IsAnyActive(void)
 }
 
 // ── Public Composition Entry Points ──────────────────────────────────────────
+
+static bool GuidedLiquid_IsJetLike(const VFX_GuidedLiquidConfig *cfg)
+{
+    return cfg->spawnMode == VFX_LIQUID_SPAWN_STREAM || cfg->spawnMode == VFX_LIQUID_SPAWN_CONE_SPRAY;
+}
 
 int VFX_ComposeGuidedLiquidEx(Vector3 source, Vector3 target, const VFX_GuidedLiquidConfig *cfg)
 {
@@ -862,7 +1257,7 @@ int VFX_ComposeGuidedLiquidEx(Vector3 source, Vector3 target, const VFX_GuidedLi
         return VFX_ComposeWaterDragonEx(source, target, &dragonCfg);
     }
 
-    // Find available instance slot
+    // Find an available instance slot
     VC_GuidedLiquidInstance *inst = NULL;
     int instIdx = -1;
     for (int i = 0; i < VC_GUIDED_LIQUID_MAX_INSTANCES; i++) {
@@ -873,109 +1268,141 @@ int VFX_ComposeGuidedLiquidEx(Vector3 source, Vector3 target, const VFX_GuidedLi
         }
     }
     if (!inst) {
-        // Pool exhaustion: steal oldest
         instIdx = 0;
         inst = &s_guidedLiquidInstances[0];
-        if (inst->motionField != MOTION_FIELD_INVALID) {
-            MotionFields_Stop(inst->motionField);
-            inst->motionField = MOTION_FIELD_INVALID;
+        if (inst->fieldAlive) {
+            MotionFields_Stop(inst->mediumField);
+            inst->fieldAlive = false;
         }
     }
 
     memset(inst, 0, sizeof(VC_GuidedLiquidInstance));
+    (void)instIdx;
     inst->active = true;
     inst->id = s_guidedLiquidNextId++;
     if (s_guidedLiquidNextId <= 0) s_guidedLiquidNextId = 1;
 
-    // Copy authored config
-    if (cfg) {
-        inst->config = *cfg;
-    } else {
-        inst->config = *VFX_GuidedLiquid_GetLiveConfig();
-    }
+    inst->config = cfg ? *cfg : *VFX_GuidedLiquid_GetLiveConfig();
     inst->config.source = source;
     inst->config.target = target;
     inst->curTarget = target;
+    inst->medium = GuidedLiquid_ResolveMedium(&inst->config);
 
     // Optical material description
-    LiquidMotionProfile profile = (LiquidMotionProfile)inst->config.liquidProfile;
-    inst->material = LiquidSurface_ProfileDesc(profile);
+    int profileIndex = Clamp(inst->config.liquidProfile, 0, LIQUID_MEDIUM_COUNT - 1);
+    inst->material = LiquidSurface_ProfileDesc((LiquidMotionProfile)profileIndex);
     inst->material.body = inst->config.liquidBodyColor;
     inst->material.glow = inst->config.liquidGlowColor;
     inst->material.soft = inst->config.liquidFoamColor;
     inst->material.ior = inst->config.ior;
     inst->material.foam = inst->config.foamAmount;
 
-    // Compute trajectory distance and flight time
-    Vector3 fwd = Vector3Subtract(target, source);
-    float dist = Vector3Length(fwd);
-    float speed = fmaxf(3.0f, inst->config.travelSpeed);
-    float flightTime = (dist > 0.05f) ? (dist / speed) : 0.5f;
-    inst->flightDuration = flightTime;
+    // ── Exact launch solution ────────────────────────────────────────────────
+    float gravity = LIQUID_GRAVITY_MPS2 * fmaxf(0.05f, inst->config.gravityScale);
+    float apex = inst->config.arcHeight;
+    bool homing = inst->config.trajectoryMode == VFX_LIQUID_TRAJ_GUIDED_HOMING;
+    switch (inst->config.trajectoryMode) {
+    case VFX_LIQUID_TRAJ_PARABOLIC_ARC:
+        inst->launchSolved = LiquidBallistic_SolveApex(source, target, apex, gravity, &inst->launch);
+        break;
+    case VFX_LIQUID_TRAJ_HIGH_CATAPULT:
+        inst->launchSolved = LiquidBallistic_SolveApex(source, target, apex * 1.6f, gravity, &inst->launch);
+        break;
+    case VFX_LIQUID_TRAJ_JET_STREAM:
+        inst->launchSolved = LiquidBallistic_SolveApex(source, target, apex, gravity, &inst->launch);
+        break;
+    case VFX_LIQUID_TRAJ_SPIRAL_CORKSCREW:
+        inst->launchSolved = LiquidBallistic_SolveSpeed(source, target, inst->config.travelSpeed, gravity,
+                                                        &inst->launch);
+        break;
+    case VFX_LIQUID_TRAJ_SERPENTINE_WAVE:
+    case VFX_LIQUID_TRAJ_GUIDED_HOMING:
+    default:
+        inst->launchSolved = LiquidBallistic_SolveSpeed(source, target, inst->config.travelSpeed, gravity,
+                                                        &inst->launch);
+        break;
+    }
+    if (!inst->launchSolved) {
+        inst->launchSolved = LiquidBallistic_SolveApex(source, target, 0.6f, gravity, &inst->launch);
+    }
+    inst->launchDelay = fmaxf(0.0f, inst->config.emergeDuration + inst->config.hoverDuration);
+    inst->launched = false;
 
-    // Initialize high-density fluid droplets (hundreds to thousands of particles)
+    // Binding actuator gains, derived from the real body (mass-aware, bounded)
+    LiquidMediumDesc *medium = &inst->medium;
+    float meanRadius = fmaxf(0.02f, inst->config.dropletRadius);
+    float meanMass = LiquidMedium_DropletMassKg(medium, meanRadius);
+    BodyPhysicalProperties referenceBody = BodyPhysicalProperties_Sphere(
+        fmaxf(meanMass, 1e-5f), fmaxf(medium->densityKgM3, 1.0f), fmaxf(medium->dragCoefficient, 0.01f));
+    GuideTuning tuning = GuideTuning_Derive(
+        &referenceBody, fmaxf(0.25f, inst->config.guideRadius),
+        fmaxf(1.0f, inst->config.travelSpeed), inst->config.swirlSpeed,
+        inst->config.turbulenceSpeed, LIQUID_GRAVITY_MPS2 * inst->config.gravityScale,
+        GUIDE_BALANCED);
+    float omega = tuning.settlingTimeSec > 0.0f ? 6.0f / tuning.settlingTimeSec : 12.0f;
+    float cohesion = inst->config.cohesionScale > 0.0f ? inst->config.cohesionScale : 1.0f;
+    inst->bindOmega = Clamp(omega, 6.0f, 45.0f) * sqrtf(Clamp(cohesion, 0.2f, 3.0f));
+    inst->bindAccelBudget = fmaxf(6.0f * LIQUID_GRAVITY_MPS2,
+                                  2.0f * inst->bindOmega * inst->bindOmega *
+                                      fmaxf(0.1f, inst->config.guideRadius));
+    inst->pressureOmega = 4.0f * inst->bindOmega;
+
+    // ── Droplets ─────────────────────────────────────────────────────────────
     int count = inst->config.particleCount;
     if (count < 32) count = 32;
     if (count > VC_GUIDED_LIQUID_MAX_DROPLETS) count = VC_GUIDED_LIQUID_MAX_DROPLETS;
     inst->dropletCount = count;
 
     unsigned int rng = (unsigned int)inst->id * 1337u + 42u;
-    Vector3 fwdNorm = (dist > 0.001f) ? Vector3Scale(fwd, 1.0f / dist) : (Vector3){0, 0, 1};
+    Vector3 fwd = Vector3Subtract(target, source);
+    VC_LiquidGuideFrame seedFrame = {0};
+    seedFrame.pos = source;
+    GuidedLiquid_BuildBasis(fwd, &seedFrame);
+    bool jetLike = GuidedLiquid_IsJetLike(&inst->config);
 
+    /* Pass 1: placement. The emission offsets are pure geometry, so they are
+     * generated before any mass exists — the emitter's own size then decides how
+     * much liquid a droplet can be. */
+    float offsetSqSum = 0.0f;
     for (int i = 0; i < count; i++) {
         VC_LiquidDroplet *d = &inst->droplets[i];
         d->seed = rng + (unsigned int)i * 101u;
         d->age = 0.0f;
-        d->flightProgress = 0.0f;
-        d->flightDuration = flightTime;
-        d->wakeWindFired = false;
         d->bounceCount = 0;
+        d->wakeWindFired = false;
         d->swirlPhase = GuidedLiquid_RandomFloat(&d->seed) * 2.0f * PI;
 
-        // Size variation across particles
-        float var = inst->config.blobVariation;
-        float rScale = (1.0f - var * 0.5f) + var * GuidedLiquid_RandomFloat(&d->seed);
-        d->baseRadius = inst->config.dropletRadius * rScale;
-        d->radius = d->baseRadius;
-
-        // Staggered launch delay & geometry setup
-        if (inst->config.spawnMode == VFX_LIQUID_SPAWN_STREAM) {
-            d->launchDelay = (float)i * inst->config.launchStaggerDelay;
-            // Nozzle stream: tightly centered around emitter nozzle
-            float nozzleR = fminf(inst->config.emissionRadius, 0.16f);
-            float nAngle = GuidedLiquid_RandomFloat(&d->seed) * 2.0f * PI;
-            float nDist = nozzleR * sqrtf(GuidedLiquid_RandomFloat(&d->seed));
-            Vector3 rightNorm = {-fwdNorm.z, 0.0f, fwdNorm.x};
-            d->localOffset = Vector3Add(Vector3Scale(rightNorm, cosf(nAngle) * nDist),
-                                        Vector3Scale((Vector3){0, 1, 0}, sinf(nAngle) * nDist));
-            d->launchPos = Vector3Add(source, d->localOffset);
-            d->targetPos = target;
-            if (d->launchDelay > 0.0001f) {
-                d->state = DROPLET_STATE_IDLE;
-            } else {
-                d->state = DROPLET_STATE_FLYING;
-            }
+        if (inst->config.spawnMode == VFX_LIQUID_SPAWN_CONE_SPRAY) {
+            d->laneOffset = GuidedLiquid_ConeOffset(&inst->config, i, count, &d->seed, &seedFrame);
         } else {
-            // Burst / Ground gush / Orbital converge: gather into authored emission shape
-            d->launchDelay = (float)(i % 16) * (inst->config.launchStaggerDelay * 0.15f);
-            d->localOffset = GuidedLiquid_CalculateSpawnOffset(
-                inst->config.emissionShape, inst->config.emissionRadius,
-                inst->config.emissionInnerRadius, inst->config.coneAngleDeg,
-                i, count, &d->seed, fwdNorm
-            );
-            d->launchPos = Vector3Add(source, d->localOffset);
-            d->targetPos = target;
-            if (d->launchDelay > 0.001f) {
+            d->laneOffset = GuidedLiquid_EmissionOffset(&inst->config, i, count, &d->seed, &seedFrame);
+        }
+        offsetSqSum += Vector3LengthSqr(d->laneOffset);
+
+        if (jetLike) {
+            /* Nozzle: a continuous pressure-driven jet leaves the emitter at a
+             * fixed cadence. Each droplet then flies ballistically — there is
+             * no single frame that could carry a stream. */
+            float nozzleR = fminf(inst->config.emissionRadius, 0.18f);
+            Vector3 nozzle = {cosf(d->swirlPhase) * nozzleR * 0.5f, sinf(d->swirlPhase) * nozzleR * 0.5f, 0.0f};
+            d->launchPos = Vector3Add(source, Vector3Add(
+                Vector3Add(Vector3Scale(seedFrame.right, nozzle.x), Vector3Scale(seedFrame.up, nozzle.y)),
+                Vector3Scale(seedFrame.tangent, -0.05f)));
+            d->launchDelay = (float)i * fmaxf(0.0002f, inst->config.launchStaggerDelay);
+            d->state = DROPLET_STATE_IDLE;
+        } else {
+            d->launchDelay = (float)(i % 16) * fmaxf(0.0f, inst->config.launchStaggerDelay) * 0.15f;
+            d->launchPos = Vector3Add(source, d->laneOffset);
+            if (inst->config.spawnMode == VFX_LIQUID_SPAWN_GROUND_GUSH) {
+                float groundY = MapManager_GetGroundHeightAt(d->launchPos.x, d->launchPos.z);
+                d->launchPos.y = fminf(d->launchPos.y, groundY - 0.35f);
+            }
+            if (inst->config.emergeDuration > 0.01f) {
                 d->state = DROPLET_STATE_IDLE;
-            } else if (inst->config.emergeDuration > 0.01f) {
-                d->state = DROPLET_STATE_EMERGING;
-                if (inst->config.spawnMode == VFX_LIQUID_SPAWN_GROUND_GUSH) {
-                    d->launchPos.y = MapManager_GetGroundHeightAt(d->launchPos.x, d->launchPos.z) - 0.4f;
-                }
             } else if (inst->config.hoverDuration > 0.01f) {
-                d->state = DROPLET_STATE_HOVERING;
+                d->state = DROPLET_STATE_IDLE;
             } else {
-                d->state = DROPLET_STATE_FLYING;
+                d->state = DROPLET_STATE_IDLE;
             }
         }
         d->pos = d->launchPos;
@@ -983,28 +1410,93 @@ int VFX_ComposeGuidedLiquidEx(Vector3 source, Vector3 target, const VFX_GuidedLi
         d->velocity = Vector3Zero();
     }
 
-    // Physical Motion Field integration
-    MotionFieldRecipe r = {
-        .kind = MOTION_RECIPE_MOVING_GUIDE,
-        .origin = source,
-        .axis = fwd,
-        .radiusM = inst->config.guideRadius,
-        .speedMps = speed,
-        .swirlSpeedMps = inst->config.swirlSpeed,
-        .turbulenceSpeedMps = inst->config.turbulenceSpeed,
-        .durationSec = flightTime + inst->config.emergeDuration + inst->config.hoverDuration + 3.0f,
-        .attackSec = 0.05f,
-        .fadeSec = 0.25f,
-        .guidance = GUIDE_BALANCED,
-        .receiverMask = MOTION_RECEIVER_ALL_COMPONENTS
-    };
-    FieldDesc fieldDesc;
-    if (MotionFieldRecipe_Build(&r, &fieldDesc)) {
-        inst->motionField = MotionFields_CreateField(&fieldDesc);
-        inst->motionFieldCreated = true;
-    } else {
-        inst->motionField = MOTION_FIELD_INVALID;
-        inst->motionFieldCreated = false;
+    /* Pass 2: incompressible size. A liquid body of `count` droplets that
+     * occupies the emitter's volume cannot also keep an arbitrarily large blob
+     * radius: N spheres must fit inside that volume at a monodisperse packing
+     * fraction (0.64 = random close packing). The authored `dropletRadius` is
+     * the ceiling, so a sparse spray keeps the authored blob, but a body packed
+     * into a 0.45 m orb drops from 0.16 m blobs to ~0.05 m ones — otherwise the
+     * same orb would carry 8.8 t of water (23 t/m^3) and every force derived
+     * from that mass (drag, Weber breakup, contact) would be wrong by the same
+     * factor that made the body blow itself apart on the ground. */
+    float meanOffsetSq = offsetSqSum / (float)count;
+    /* A uniform ball has <r^2> = (3/5)R^2, so its radius is r_rms/sqrt(3/5).
+     * Any shape works: a spray on a cone shell, a torus and a disc all get their
+     * own r_rms, so the derived volume follows the shape that was authored. */
+    float emitterRadius = sqrtf(meanOffsetSq) / sqrtf(3.0f / 5.0f);
+    if (!(emitterRadius > 1e-3f)) emitterRadius = 1e-3f;
+    float emitterVolumeM3 = LiquidMedium_SphereVolumeM3(emitterRadius);
+    const float kPackingFraction = 0.64f;
+    float packedRadius = cbrtf(3.0f * kPackingFraction * emitterVolumeM3 /
+                               (4.0f * PI * (float)count));
+    float physicalRadius = fminf(fmaxf(0.005f, inst->config.dropletRadius), packedRadius);
+    inst->dropletRadiusM = physicalRadius;
+
+    /* The visual kernel is the splat of a density field, not a solid: it has to
+     * reach roughly one mean spacing so the isosurface closes, otherwise 512
+     * correctly-sized droplets render as a tangle of filaments. Physical radius
+     * and kernel radius are therefore two different quantities by design. */
+    float meanSpacing = cbrtf(fmaxf(emitterVolumeM3, 1e-9f) / (float)count);
+    float kernelRadius = fmaxf(physicalRadius, meanSpacing * 1.15f);
+
+    for (int i = 0; i < count; i++) {
+        VC_LiquidDroplet *d = &inst->droplets[i];
+        float var = inst->config.blobVariation;
+        float rScale = (1.0f - var * 0.5f) + var * GuidedLiquid_RandomFloat(&d->seed);
+        d->baseRadius = physicalRadius * rScale;
+        d->radius = d->baseRadius;
+        d->drawRadius = kernelRadius * rScale;
+        d->volumeM3 = LiquidMedium_SphereVolumeM3(d->baseRadius);
+        d->massKg = inst->medium.densityKgM3 * d->volumeM3;
+    }
+
+    // ── Motion field: the medium the body flies through ──────────────────────
+    FieldDesc field = MotionField_Default();
+    field.volume.shape = FIELD_SPHERE;
+    field.volume.radiusM = fmaxf(0.25f, inst->config.guideRadius);
+    field.volume.coreFraction = 0.25f;
+    field.transform = (FieldTransform){
+        .position = source,
+        .axisX = seedFrame.right, .axisY = seedFrame.up, .axisZ = seedFrame.tangent,
+        .frameVelocityMps = {0},
+        .angularVelocityRadPerSec = {seedFrame.tangent.x * inst->config.swirlSpeed,
+                                     seedFrame.tangent.y * inst->config.swirlSpeed,
+                                     seedFrame.tangent.z * inst->config.swirlSpeed}};
+    field.lifetime = (FieldLifetime){
+        .startDelaySec = 0.0f,
+        .durationSec = inst->launchDelay + (inst->launchSolved ? inst->launch.durationSec : 0.8f) + 1.0f,
+        .attackSec = 0.05f, .fadeSec = 0.25f};
+    field.receiverMask = MOTION_RECEIVER_ALL_COMPONENTS;
+    field.flow.enabled = true;
+    field.flow.addBackgroundVelocity = false;
+    field.flow.axis = seedFrame.tangent;
+    /* Swirl is authored in rad/s (helix rate); a Rankine core of radius R has a
+     * rim speed of omega*R, which is the unit the flow field speaks. */
+    field.flow.procedural.swirlSpeedMps =
+        Clamp(inst->config.swirlSpeed * inst->config.guideRadius, 0.0f, 40.0f);
+    field.flow.procedural.turbulenceSpeedMps = fmaxf(0.0f, inst->config.turbulenceSpeed);
+    field.flow.procedural.eddyLengthM = fmaxf(0.10f, inst->config.guideRadius * 0.3f);
+    field.forceLawCount = 0;
+    if (tuning.turbulenceForceNewtons > 1e-4f && inst->config.turbulenceSpeed > 0.01f) {
+        field.forceLaws[field.forceLawCount++] = (ForceLaw){
+            .type = FORCE_LAW_CURL_FORCE,
+            .magnitudeNewtons = tuning.turbulenceForceNewtons,
+            .procedural = {.turbulenceSpeedMps = inst->config.turbulenceSpeed,
+                           .eddyLengthM = field.flow.procedural.eddyLengthM}};
+    }
+    inst->mediumField = MotionFields_CreateField(&field);
+    inst->fieldAlive = inst->mediumField != MOTION_FIELD_INVALID;
+    inst->fieldRadius = field.volume.radiusM;
+
+    if (homing) {
+        inst->frame.pos = source;
+        inst->frame.vel = inst->launchSolved
+                              ? (Vector3){inst->launch.horizontalDir.x * inst->launch.horizontalSpeedMps,
+                                          inst->launch.verticalSpeedMps,
+                                          inst->launch.horizontalDir.z * inst->launch.horizontalSpeedMps}
+                              : (Vector3){0, 0, 1};
+        inst->frame.acc = (Vector3){0, -gravity, 0};
+        GuidedLiquid_BuildBasis(inst->frame.vel, &inst->frame);
     }
 
     return inst->id;
@@ -1020,9 +1512,9 @@ void VFX_KillGuidedLiquid(int handle)
 {
     for (int i = 0; i < VC_GUIDED_LIQUID_MAX_INSTANCES; i++) {
         if (s_guidedLiquidInstances[i].active && s_guidedLiquidInstances[i].id == handle) {
-            if (s_guidedLiquidInstances[i].motionField != MOTION_FIELD_INVALID) {
-                MotionFields_Stop(s_guidedLiquidInstances[i].motionField);
-                s_guidedLiquidInstances[i].motionField = MOTION_FIELD_INVALID;
+            if (s_guidedLiquidInstances[i].fieldAlive) {
+                MotionFields_Stop(s_guidedLiquidInstances[i].mediumField);
+                s_guidedLiquidInstances[i].fieldAlive = false;
             }
             s_guidedLiquidInstances[i].active = false;
             break;
@@ -1030,11 +1522,27 @@ void VFX_KillGuidedLiquid(int handle)
     }
 }
 
+// ── Neighbour Interaction (surface tension + incompressibility) ──────────────
+
+static inline int GuidedLiquid_CellIndex(Vector3 p, Vector3 min, float invCell)
+{
+    int x = (int)((p.x - min.x) * invCell);
+    int y = (int)((p.y - min.y) * invCell);
+    int z = (int)((p.z - min.z) * invCell);
+    if (x < 0) x = 0; else if (x >= VC_GUIDED_LIQUID_GRID_DIM) x = VC_GUIDED_LIQUID_GRID_DIM - 1;
+    if (y < 0) y = 0; else if (y >= VC_GUIDED_LIQUID_GRID_DIM) y = VC_GUIDED_LIQUID_GRID_DIM - 1;
+    if (z < 0) z = 0; else if (z >= VC_GUIDED_LIQUID_GRID_DIM) z = VC_GUIDED_LIQUID_GRID_DIM - 1;
+    return (z * VC_GUIDED_LIQUID_GRID_DIM + y) * VC_GUIDED_LIQUID_GRID_DIM + x;
+}
+
 // ── Physical Simulation & State Update ───────────────────────────────────────
 
 void VC_GuidedLiquid_Update(float dt)
 {
-    if (dt <= 0.0f || dt > 0.1f) dt = 0.016f;
+    if (dt <= 0.0f || dt > 0.1f) dt = 1.0f / 60.0f;
+    /* One bounded step per frame, matching the particle backend contract: the
+     * spring gains below are clamped so this is stable at 30 FPS. */
+    float h = fminf(dt, 1.0f / 30.0f);
 
     for (int instIdx = 0; instIdx < VC_GUIDED_LIQUID_MAX_INSTANCES; instIdx++) {
         VC_GuidedLiquidInstance *inst = &s_guidedLiquidInstances[instIdx];
@@ -1042,40 +1550,111 @@ void VC_GuidedLiquid_Update(float dt)
 
         inst->timer += dt;
         const VFX_GuidedLiquidConfig *cfg = &inst->config;
+        LiquidMediumDesc *medium = &inst->medium;
+        bool jetLike = GuidedLiquid_IsJetLike(cfg);
 
-        // Vector frame along trajectory
-        Vector3 fwd = Vector3Subtract(inst->curTarget, cfg->source);
-        float distXZ = sqrtf(fwd.x * fwd.x + fwd.z * fwd.z);
-        Vector3 fwdNorm = (distXZ > 0.001f) ? (Vector3){fwd.x / distXZ, 0.0f, fwd.z / distXZ} : (Vector3){0, 0, 1};
+        float launchT = inst->timer - inst->launchDelay;
+        if (launchT >= 0.0f) {
+            if (!inst->launched) {
+                inst->launched = true;
+                inst->emergeWindTriggered = false;
+            }
+            if (cfg->trajectoryMode == VFX_LIQUID_TRAJ_GUIDED_HOMING && inst->launched) {
+                GuidedLiquid_IntegrateHoming(inst, h);
+            } else {
+                GuidedLiquid_SampleGuideFrame(inst, launchT);
+            }
+        } else {
+            GuidedLiquid_SampleGuideFrame(inst, 0.0f);
+            inst->frame.vel = Vector3Zero();
+            inst->frame.acc = Vector3Zero();
+        }
 
-        // Emergence wind impulse
-        if (!inst->emergeWindTriggered && inst->timer >= 0.05f) {
+        // Emergence wind impulse (the body displaces air as it forms)
+        if (!inst->emergeWindTriggered && inst->timer >= 0.05f && !inst->launched) {
             inst->emergeWindTriggered = true;
-            Wind_SpawnRadialBlast(cfg->source, cfg->emissionRadius * 2.2f, 4.0f, 0.35f);
+            Wind_SpawnRadialBlast(cfg->source, cfg->emissionRadius * 2.2f,
+                                  Clamp(1.0f + cfg->emissionRadius * 2.0f, 1.0f, 5.0f), 0.35f);
         }
 
-        // Advance moving guide position for MotionField
-        float guideProgress = 0.0f;
-        float launchPhase = cfg->emergeDuration + cfg->hoverDuration;
-        if (inst->timer > launchPhase && inst->flightDuration > 0.001f) {
-            guideProgress = Clamp((inst->timer - launchPhase) / inst->flightDuration, 0.0f, 1.0f);
-        }
-        Vector3 guidePos = GuidedLiquid_CalculateTrajectoryPos(
-            cfg->trajectoryMode, cfg->source, inst->curTarget,
-            guideProgress, cfg->arcHeight, cfg->swirlSpeed, inst->timer, (unsigned int)inst->id
-        );
-        if (inst->motionField != MOTION_FIELD_INVALID) {
+        // Move the medium with the frame. Its published frame velocity is what
+        // drags the droplets, so no positional transport is needed anywhere.
+        if (inst->fieldAlive) {
             FieldTransform xf = {
-                .position = guidePos,
-                .axisX = (Vector3){1.0f, 0.0f, 0.0f},
-                .axisY = (Vector3){0.0f, 1.0f, 0.0f},
-                .axisZ = (Vector3){0.0f, 0.0f, 1.0f}
-            };
-            MotionFields_SetTransform(inst->motionField, &xf);
+                .position = inst->frame.pos,
+                .axisX = inst->frame.right,
+                .axisY = inst->frame.up,
+                .axisZ = inst->frame.tangent,
+                .frameVelocityMps = inst->frame.vel,
+                .angularVelocityRadPerSec = Vector3Scale(inst->frame.tangent, cfg->swirlSpeed)};
+            MotionFields_SetTransform(inst->mediumField, &xf);
         }
 
-        // Update high-density fluid droplets
-        int activeDropletCount = 0;
+        // Body centre of mass (mass weighted) — the frame every droplet shears against.
+        Vector3 com = Vector3Zero();
+        Vector3 comVel = Vector3Zero();
+        float totalMass = 0.0f;
+        float totalVolume = 0.0f;
+        for (int i = 0; i < inst->dropletCount; i++) {
+            VC_LiquidDroplet *d = &inst->droplets[i];
+            if (d->state != DROPLET_STATE_HOVERING && d->state != DROPLET_STATE_FLYING) continue;
+            com = Vector3Add(com, Vector3Scale(d->pos, d->massKg));
+            comVel = Vector3Add(comVel, Vector3Scale(d->velocity, d->massKg));
+            totalMass += d->massKg;
+            totalVolume += d->volumeM3;
+        }
+        if (totalMass > 1e-6f) {
+            inst->comPos = Vector3Scale(com, 1.0f / totalMass);
+            inst->comVel = Vector3Scale(comVel, 1.0f / totalMass);
+        } else {
+            inst->comPos = inst->frame.pos;
+            inst->comVel = inst->frame.vel;
+        }
+        inst->bodyMassKg = totalMass;
+        inst->bodyVolumeM3 = totalVolume;
+        inst->bodyRadiusM = LiquidMedium_SphereRadiusM(fmaxf(totalVolume, 1e-6f));
+
+        /* Neighbour grid over the coherent mass. Cell size follows the largest
+         * droplet so a 27-cell scan can never miss a contact pair. */
+        Vector3 boundsMin = {1e30f, 1e30f, 1e30f};
+        Vector3 boundsMax = {-1e30f, -1e30f, -1e30f};
+        float maxR = 0.0f;
+        for (int i = 0; i < inst->dropletCount; i++) {
+            VC_LiquidDroplet *d = &inst->droplets[i];
+            if (d->state != DROPLET_STATE_HOVERING && d->state != DROPLET_STATE_FLYING) continue;
+            boundsMin.x = fminf(boundsMin.x, d->pos.x); boundsMin.y = fminf(boundsMin.y, d->pos.y);
+            boundsMin.z = fminf(boundsMin.z, d->pos.z);
+            boundsMax.x = fmaxf(boundsMax.x, d->pos.x); boundsMax.y = fmaxf(boundsMax.y, d->pos.y);
+            boundsMax.z = fmaxf(boundsMax.z, d->pos.z);
+            maxR = fmaxf(maxR, d->radius);
+        }
+        bool gridValid = (boundsMax.x > boundsMin.x);
+        float invCell = 0.0f;
+        if (gridValid) {
+            Vector3 extent = Vector3Subtract(boundsMax, boundsMin);
+            float span = fmaxf(extent.x, fmaxf(extent.y, extent.z));
+            float cell = fmaxf(2.2f * maxR, span / (float)VC_GUIDED_LIQUID_GRID_DIM);
+            invCell = 1.0f / fmaxf(cell, 1e-4f);
+            for (int c = 0; c < VC_GUIDED_LIQUID_GRID_CELLS; c++) s_glGridHead[c] = -1;
+            for (int i = 0; i < inst->dropletCount; i++) {
+                VC_LiquidDroplet *d = &inst->droplets[i];
+                s_glGridNext[i] = -1;
+                if (d->state != DROPLET_STATE_HOVERING && d->state != DROPLET_STATE_FLYING) continue;
+                int cell = GuidedLiquid_CellIndex(d->pos, boundsMin, invCell);
+                s_glGridNext[i] = s_glGridHead[cell];
+                s_glGridHead[cell] = i;
+            }
+        }
+
+        float nu = LiquidMedium_KinematicViscosityM2S(medium);
+        float yieldSpeed = LiquidMedium_YieldSpeedMps(medium);
+        float sigma = fmaxf(0.0f, medium->surfaceTensionNm);
+        /* Timestep-stable gains: an explicit spring must satisfy omega*h < ~1. */
+        float bindOmega = fminf(inst->bindOmega, 0.55f / h);
+        float pressureOmega = fminf(inst->pressureOmega, 0.45f / h);
+        if (pressureOmega < bindOmega) pressureOmega = bindOmega;
+
+        int activeDroplets = 0;
 
         for (int i = 0; i < inst->dropletCount; i++) {
             VC_LiquidDroplet *d = &inst->droplets[i];
@@ -1085,169 +1664,308 @@ void VC_GuidedLiquid_Update(float dt)
             switch (d->state)
             {
             case DROPLET_STATE_IDLE: {
+                /* A waiting droplet is still part of the body: counting it keeps
+                 * the instance alive across the frame it leaves IDLE. */
+                activeDroplets++;
                 if (inst->timer >= d->launchDelay) {
                     d->age = 0.0f;
-                    if (cfg->spawnMode == VFX_LIQUID_SPAWN_STREAM) {
-                        d->state = DROPLET_STATE_FLYING;
-                        d->flightProgress = 0.0f;
-                    } else if (cfg->emergeDuration > 0.01f) {
-                        d->state = DROPLET_STATE_EMERGING;
-                        if (cfg->spawnMode == VFX_LIQUID_SPAWN_GROUND_GUSH) {
-                            float groundY = MapManager_GetGroundHeightAt(d->launchPos.x, d->launchPos.z);
-                            d->launchPos.y = groundY - 0.4f;
-                        }
-                    } else if (cfg->hoverDuration > 0.01f) {
-                        d->state = DROPLET_STATE_HOVERING;
-                    } else {
-                        d->state = DROPLET_STATE_FLYING;
-                        d->flightProgress = 0.0f;
-                    }
                     d->pos = d->launchPos;
                     d->prevPos = d->pos;
+                    d->state = DROPLET_STATE_EMERGING;
+                    if (jetLike) {
+                        d->state = DROPLET_STATE_FLYING;
+                        Vector3 muzzle = inst->frame.tangent;
+                        Vector3 dir = Vector3Add(muzzle, Vector3Scale(d->laneOffset, 0.35f));
+                        dir = Vector3Normalize(dir);
+                        float speed = fmaxf(3.0f, cfg->travelSpeed) *
+                                      (1.0f + 0.06f * GuidedLiquid_StableSigned(d->seed));
+                        d->velocity = Vector3Scale(dir, speed);
+                    }
                 }
                 break;
             }
 
             case DROPLET_STATE_EMERGING: {
-                activeDropletCount++;
+                activeDroplets++;
                 float emergeT = Clamp(d->age / fmaxf(0.01f, cfg->emergeDuration), 0.0f, 1.0f);
-
-                if (cfg->spawnMode == VFX_LIQUID_SPAWN_GROUND_GUSH) {
-                    float groundY = MapManager_GetGroundHeightAt(d->launchPos.x, d->launchPos.z);
-                    d->pos.x = d->launchPos.x;
-                    d->pos.z = d->launchPos.z;
-                    d->pos.y = (groundY - 0.4f) + (cfg->source.y - groundY + 0.4f) * emergeT;
-                } else if (cfg->spawnMode == VFX_LIQUID_SPAWN_ORBITAL_CONVERGE) {
-                    float angle = d->swirlPhase + emergeT * 6.0f;
-                    float curRad = cfg->emissionRadius * (1.0f - emergeT * 0.75f);
-                    d->pos.x = cfg->source.x + cosf(angle) * curRad;
-                    d->pos.z = cfg->source.z + sinf(angle) * curRad;
-                    d->pos.y = cfg->source.y + 0.15f * sinf(emergeT * PI);
-                } else {
-                    d->pos = Vector3Lerp(d->launchPos, Vector3Add(cfg->source, Vector3Scale(d->localOffset, 0.5f)), emergeT);
-                }
-
+                /* Inflow boundary: the source feeds the body at a known rate.
+                 * The velocity is the analytic derivative of that feed, so the
+                 * hand-over to force integration has no discontinuity. */
+                float s = emergeT * emergeT * (3.0f - 2.0f * emergeT);
+                float ds = 6.0f * emergeT * (1.0f - emergeT) / fmaxf(0.01f, cfg->emergeDuration);
+                Vector3 target = Vector3Add(inst->frame.pos, d->laneOffset);
+                Vector3 delta = Vector3Subtract(target, d->launchPos);
+                d->pos = Vector3Add(d->launchPos, Vector3Scale(delta, s));
+                d->velocity = Vector3Scale(delta, ds);
                 if (d->age >= cfg->emergeDuration) {
-                    d->state = (cfg->hoverDuration > 0.01f) ? DROPLET_STATE_HOVERING : DROPLET_STATE_FLYING;
+                    d->state = DROPLET_STATE_HOVERING;
                     d->age = 0.0f;
-                    d->flightProgress = 0.0f;
                 }
                 break;
             }
 
-            case DROPLET_STATE_HOVERING: {
-                activeDropletCount++;
-                float hoverT = Clamp(d->age / fmaxf(0.01f, cfg->hoverDuration), 0.0f, 1.0f);
-                float bobY = 0.08f * sinf(hoverT * 2.0f * PI + d->swirlPhase);
-                d->pos = Vector3Add(cfg->source, d->localOffset);
-                d->pos.y += bobY;
-
-                if (d->age >= cfg->hoverDuration) {
-                    d->state = DROPLET_STATE_FLYING;
-                    d->age = 0.0f;
-                    d->flightProgress = 0.0f;
-                }
-                break;
-            }
-
+            case DROPLET_STATE_HOVERING:
             case DROPLET_STATE_FLYING: {
-                activeDropletCount++;
-                d->flightProgress = Clamp(d->age / fmaxf(0.01f, d->flightDuration), 0.0f, 1.0f);
+                activeDroplets++;
+                if (jetLike) {
+                    // Free ballistic jet droplet: no body binding.
+                    MotionBodyProfile body = GuidedLiquid_MakeBody(cfg, medium, d->radius, NULL);
+                    BodyPhysicalProperties props = MotionBody_GetPhysicalProperties(&body);
+                    MediumProperties air = {.densityKgM3 = LIQUID_AIR_DENSITY_KG_M3,
+                                            .dynamicViscosityPaS = LIQUID_AIR_DYNAMIC_VISCOSITY_PAS,
+                                            .velocityMps = {0},
+                                            .gravityMps2 = {0, -LIQUID_GRAVITY_MPS2 * cfg->gravityScale, 0}};
+                    ReceiverConstraints constraints = {.mode = RECEIVER_FREE, .permittedAxes = {1, 1, 1}};
+                    FieldSample sample;
+                    MotionFields_SampleSpatialBodyAtOffset(d->pos, d->velocity, &props, &air, &constraints,
+                                                           h, 0.0f, MOTION_RECEIVER_ALL_COMPONENTS, NULL,
+                                                           &sample);
+                    d->velocity = MotionBody_AdvanceFieldVelocity(d->velocity, &body, Vector3Zero(),
+                                                                  Vector3Zero(), &sample, Vector3Zero(), h);
+                    d->pos = Vector3Add(d->pos, Vector3Scale(d->velocity, h));
+                } else {
+                    // Coherent body: binding + viscosity + neighbours + field.
+                    Vector3 laneVelocity = Vector3Zero();
+                    Vector3 laneTarget = GuidedLiquid_LaneTarget(inst, d, &inst->frame, launchT,
+                                                                 &laneVelocity);
+                    laneVelocity = Vector3Add(inst->frame.vel, laneVelocity);
+                    Vector3 rel = Vector3Subtract(d->velocity, laneVelocity);
+                    Vector3 accel = Vector3Subtract(Vector3Scale(Vector3Subtract(laneTarget, d->pos),
+                                                                 bindOmega * bindOmega),
+                                                    Vector3Scale(rel, 2.0f * bindOmega));
 
-                // Per-droplet varied arc height
-                float dropArc = cfg->arcHeight * (1.0f + cfg->arcVariation * (GuidedLiquid_RandomFloat(&d->seed) - 0.5f));
+                    // Internal shear decay at nu/r^2: lava's kinematic
+                    // viscosity is ~38,000x water's, so it damps deformation
+                    // almost instantly, while water barely damps. Below the
+                    // Bingham yield speed the liquid behaves as a solid.
+                    float deform = Vector3Length(Vector3Subtract(d->velocity, inst->comVel));
+                    if (nu > 1e-9f) {
+                        float lambda = nu / fmaxf(1e-6f, d->radius * d->radius);
+                        if (yieldSpeed > 1e-4f && deform < yieldSpeed) lambda += 8.0f;
+                        lambda = fminf(lambda, 12.0f);
+                        accel = Vector3Subtract(accel, Vector3Scale(Vector3Subtract(d->velocity, inst->comVel),
+                                                                    lambda));
+                    }
 
-                // Calculate base trajectory position
-                Vector3 trajPos = GuidedLiquid_CalculateTrajectoryPos(
-                    cfg->trajectoryMode, cfg->source, inst->curTarget,
-                    d->flightProgress, dropArc, cfg->swirlSpeed, inst->timer, d->seed
-                );
+                    /* Contact and capillary bridges are accumulated separately
+                     * so the contact response can be bounded as a WHOLE. A
+                     * per-pair cap is not enough: a droplet on the surface of a
+                     * dense body has 20+ neighbours on one side, and 20 x 2g
+                     * downhill is a 40g field that no binding spring can hold,
+                     * which is how the bottom of the emission sphere used to
+                     * pour onto the floor before launch. */
+                    Vector3 contactAccel = Vector3Zero();
+                    Vector3 capillaryAccel = Vector3Zero();
 
-                // Add local clustering offset with guide attraction (converges smoothly to stream axis)
-                float clusterDamp = (1.0f - d->flightProgress) * (1.0f - d->flightProgress);
-                Vector3 desiredPos = Vector3Add(trajPos, Vector3Scale(d->localOffset, clusterDamp));
+                    // Surface tension + incompressibility against neighbours.
+                    if (gridValid) {
+                        int cx, cy, cz;
+                        int base = GuidedLiquid_CellIndex(d->pos, boundsMin, invCell);
+                        cx = base % VC_GUIDED_LIQUID_GRID_DIM;
+                        cy = (base / VC_GUIDED_LIQUID_GRID_DIM) % VC_GUIDED_LIQUID_GRID_DIM;
+                        cz = base / (VC_GUIDED_LIQUID_GRID_DIM * VC_GUIDED_LIQUID_GRID_DIM);
+                        float invMass = d->massKg > 1e-9f ? 1.0f / d->massKg : 0.0f;
+                        for (int dz = -1; dz <= 1; dz++)
+                        for (int dy = -1; dy <= 1; dy++)
+                        for (int dx = -1; dx <= 1; dx++) {
+                            int nx = cx + dx, ny = cy + dy, nz = cz + dz;
+                            if (nx < 0 || ny < 0 || nz < 0 ||
+                                nx >= VC_GUIDED_LIQUID_GRID_DIM ||
+                                ny >= VC_GUIDED_LIQUID_GRID_DIM ||
+                                nz >= VC_GUIDED_LIQUID_GRID_DIM) continue;
+                            int cell = (nz * VC_GUIDED_LIQUID_GRID_DIM + ny) * VC_GUIDED_LIQUID_GRID_DIM + nx;
+                            for (int j = s_glGridHead[cell]; j >= 0; j = s_glGridNext[j]) {
+                                if (j == i) continue;
+                                const VC_LiquidDroplet *o = &inst->droplets[j];
+                                Vector3 delta = Vector3Subtract(o->pos, d->pos);
+                                float dist = Vector3Length(delta);
+                                float rSum = d->radius + o->radius;
+                                if (dist < 1e-5f || dist > rSum * 1.6f) continue;
+                                Vector3 n = Vector3Scale(delta, 1.0f / dist);
+                                float gap = dist - rSum;
+                                if (gap < 0.0f) {
+                                    /* Contact, not a bulk modulus: the body is
+                                     * a bound isosurface, not a conserved
+                                     * volume, so a real incompressibility
+                                     * pressure (K_water ~ 2.2 GPa) cannot be
+                                     * integrated explicitly. This is a bounded
+                                     * numerical contact that only stops visible
+                                     * interpenetration. */
+                                    float overlap = -gap / fmaxf(rSum, 1e-5f);
+                                    float push = overlap * pressureOmega * pressureOmega * 0.5f;
+                                    contactAccel = Vector3Subtract(contactAccel, Vector3Scale(n, push));
+                                } else if (sigma > 0.0f) {
+                                    /* Capillary bridge: 2*pi*sigma*r_neck / mass. */
+                                    float neck = 2.0f * PI * sigma * fminf(d->radius, o->radius) * invMass;
+                                    float falloff = 1.0f - gap / (rSum * 0.6f);
+                                    if (falloff > 0.0f) capillaryAccel = Vector3Add(capillaryAccel,
+                                                                                    Vector3Scale(n, neck * falloff));
+                                }
+                            }
+                        }
+                    }
 
-                // Compute instantaneous velocity and blend towards guide
-                Vector3 toDesired = Vector3Subtract(desiredPos, d->pos);
-                Vector3 pullAcc = Vector3Scale(toDesired, cfg->pullForceN);
-                d->velocity = Vector3Add(d->velocity, Vector3Scale(pullAcc, dt));
-                d->velocity = Vector3Scale(d->velocity, 1.0f / (1.0f + cfg->fluidDrag * dt));
-                d->pos = Vector3Add(d->pos, Vector3Scale(d->velocity, dt));
+                    /* Contact budget: the body's own binding must stay dominant.
+                     * Two gravities is enough to separate interpenetrating blobs
+                     * within a frame or two, and small enough that the guide can
+                     * always hold the shape. */
+                    float contactLen = Vector3Length(contactAccel);
+                    float contactBudget = 2.0f * LIQUID_GRAVITY_MPS2 *
+                                          fmaxf(1.0f, inst->config.gravityScale);
+                    if (contactLen > contactBudget) {
+                        contactAccel = Vector3Scale(contactAccel, contactBudget / contactLen);
+                    }
+                    accel = Vector3Add(accel, Vector3Add(contactAccel, capillaryAccel));
 
-                // Tight convergence to path
-                d->pos = Vector3Lerp(d->pos, desiredPos, Clamp(dt * 14.0f, 0.0f, 1.0f));
+                    float accelLen = Vector3Length(accel);
+                    if (accelLen > inst->bindAccelBudget) {
+                        accel = Vector3Scale(accel, inst->bindAccelBudget / accelLen);
+                    }
 
-                // Aerodynamic wind wake parting foliage
-                if (!d->wakeWindFired && d->flightProgress >= 0.35f && d->flightProgress <= 0.85f && (i % 8 == 0)) {
-                    Wind_SpawnGust(d->pos, fwdNorm, cfg->dropletRadius * 3.5f, fminf(cfg->travelSpeed * 0.6f, 12.0f), 0.18f);
+                    MotionBodyProfile body = GuidedLiquid_MakeBody(cfg, medium, d->radius, NULL);
+                    BodyPhysicalProperties props = MotionBody_GetPhysicalProperties(&body);
+                    MediumProperties air = {.densityKgM3 = LIQUID_AIR_DENSITY_KG_M3,
+                                            .dynamicViscosityPaS = LIQUID_AIR_DYNAMIC_VISCOSITY_PAS,
+                                            .velocityMps = {0},
+                                            .gravityMps2 = {0, -LIQUID_GRAVITY_MPS2 * cfg->gravityScale, 0}};
+                    ReceiverConstraints constraints = {.mode = RECEIVER_FREE, .permittedAxes = {1, 1, 1}};
+                    FieldSample sample = {0};
+                    if (inst->fieldAlive) {
+                        float reach = inst->fieldRadius + d->radius;
+                        if (Vector3DistanceSqr(d->pos, inst->frame.pos) <= reach * reach) {
+                            MotionFields_SampleSpatialBodyAtOffset(d->pos, d->velocity, &props, &air,
+                                                                   &constraints, h, 0.0f,
+                                                                   MOTION_RECEIVER_ALL_COMPONENTS, NULL,
+                                                                   &sample);
+                        }
+                    }
+                    d->velocity = MotionBody_AdvanceFieldVelocity(d->velocity, &body, accel, Vector3Zero(),
+                                                                  &sample, Vector3Zero(), h);
+                    d->pos = Vector3Add(d->pos, Vector3Scale(d->velocity, h));
+                }
+
+                // Aerodynamic wake parting foliage along the flight.
+                float progress = inst->launchSolved && inst->launch.durationSec > 0.01f
+                                     ? Clamp(launchT / inst->launch.durationSec, 0.0f, 1.0f) : 1.0f;
+                if (!d->wakeWindFired && progress >= 0.30f && progress <= 0.85f && (i % 8 == 0)) {
+                    Vector3 dir = Vector3Length(d->velocity) > 0.2f ? Vector3Normalize(d->velocity)
+                                                                    : inst->frame.tangent;
+                    Wind_SpawnGust(d->pos, dir, d->radius * 3.5f,
+                                   fminf(Vector3Length(d->velocity) * 0.6f, 12.0f), 0.18f);
                     d->wakeWindFired = true;
                 }
 
-                // Check for target arrival or stray ground collision
-                float groundY = MapManager_GetGroundHeightAt(d->pos.x, d->pos.z);
-                float distToTarget = Vector3Distance(d->pos, inst->curTarget);
-                bool arrivedAtTarget = (d->flightProgress >= 0.95f || distToTarget < 0.65f);
+                bool arrived = false;
+                if (jetLike) {
+                    /* A jet droplet has no shared frame: it is done when it
+                     * reaches the target, or when its solved flight expires. */
+                    float arrivalRadius = fmaxf(0.30f, d->radius * 2.0f);
+                    arrived = Vector3Distance(d->pos, inst->curTarget) <= arrivalRadius ||
+                              inst->timer >= inst->launchDelay + inst->launch.durationSec;
+                } else {
+                    /* The frame is exactly on the target at durationSec and
+                     * every droplet rides that frame, so arrival is a time. */
+                    arrived = launchT >= inst->launch.durationSec;
+                }
 
-                if (arrivedAtTarget) {
-                    // Transition to downward gravity cascade
+                float groundY = MapManager_GetGroundHeightAt(d->pos.x, d->pos.z);
+                bool grazing = d->pos.y - d->radius <= groundY;
+
+                if (arrived || grazing) {
+                    Vector3 incoming = d->velocity;
+                    float speed = Vector3Length(incoming);
+                    if (grazing && incoming.y > 0.0f) {
+                        incoming.y = 0.0f;
+                        speed = Vector3Length(incoming);
+                    }
+
+                    /* Fragmentation: a droplet moving faster than its Weber
+                     * breakup speed cannot stay whole, so the visible radius
+                     * follows the fraction of volume the airspeed can hold. */
+                    float stable = LiquidMedium_StableFraction(medium, speed, d->radius * 2.0f);
+                    /* `stable` is a VOLUME fraction, so it enters the radius
+                     * as its cube root. The remaining volume is not destroyed:
+                     * it leaves as the mist this effect already emits. */
+                    d->radius = fmaxf(0.01f, d->baseRadius * cbrtf(fmaxf(stable, 1e-6f)));
+
                     d->state = DROPLET_STATE_CASCADING;
                     d->age = 0.0f;
-                    float scatterSpeed = cfg->splashVelocity * (0.4f + 0.6f * GuidedLiquid_RandomFloat(&d->seed));
-                    float scatterAngle = GuidedLiquid_RandomFloat(&d->seed) * 2.0f * PI;
 
-                    // Waterfall downward gravity cascade + radial burst scatter
-                    d->velocity.x = cosf(scatterAngle) * scatterSpeed + fwdNorm.x * cfg->travelSpeed * 0.12f;
-                    d->velocity.z = sinf(scatterAngle) * scatterSpeed + fwdNorm.z * cfg->travelSpeed * 0.12f;
-                    d->velocity.y = -(2.5f + 4.5f * GuidedLiquid_RandomFloat(&d->seed)); // Downward rush!
+                    /* The burst keeps the body's momentum and adds a radial
+                     * component bounded by the authored splash speed. */
+                    float scatter = fminf(speed * 0.25f, fmaxf(0.0f, cfg->splashVelocity));
+                    float angle = d->swirlPhase + (float)(i & 31) * (2.0f * PI / 32.0f);
+                    float radial = 0.55f + 0.45f * GuidedLiquid_StableSigned(d->seed);
+                    d->velocity.x += cosf(angle) * scatter * radial;
+                    d->velocity.z += sinf(angle) * scatter * radial;
+                    d->velocity.y = grazing && !arrived
+                                        ? fminf(fabsf(d->velocity.y), 1.5f)
+                                        : fmaxf(-fabsf(d->velocity.y) - 0.5f, -scatter * 1.2f);
 
-                    GuidedLiquid_TriggerImpact(inst, inst->curTarget, (Vector3){0, 1, 0});
-                } else if (d->flightProgress > 0.15f && d->pos.y <= groundY + 0.02f) {
-                    // Stray droplet hit ground mid-flight: settle and dissipate without triggering master impact
-                    d->pos.y = groundY + 0.015f;
-                    d->state = DROPLET_STATE_DEAD;
+                    if (arrived) {
+                        /* First arrival hands the body's real incoming velocity
+                         * to the engine's impact model. It is guarded, so the
+                         * crown is seeded once for the whole body. */
+                        GuidedLiquid_TriggerImpact(inst, inst->curTarget, (Vector3){0, 1, 0}, incoming);
+                    } else {
+                        /* Grazed terrain before the target: no crown, but the
+                         * body has landed, so the puddle belongs here too. */
+                        GuidedLiquid_TriggerImpact(inst, d->pos, (Vector3){0, 1, 0}, incoming);
+                    }
                 }
                 break;
             }
 
             case DROPLET_STATE_CASCADING: {
-                activeDropletCount++;
+                activeDroplets++;
+                /* Detached spray: gravity + quadratic air drag only. There is
+                 * no guide frame around it any more, so no medium field. */
+                MotionBodyProfile body = GuidedLiquid_MakeBody(cfg, medium, d->radius, NULL);
+                FieldSample freeAir = {0};
+                d->velocity = MotionBody_AdvanceFieldVelocity(d->velocity, &body, Vector3Zero(),
+                                                              Vector3Zero(), &freeAir, Vector3Zero(), h);
+                d->pos = Vector3Add(d->pos, Vector3Scale(d->velocity, h));
 
-                // Real downward gravitational acceleration ($9.81 m/s^2$)
-                d->velocity.y -= PHYSICS_GRAVITY_MPS2 * cfg->gravityScale * dt;
-                d->velocity.x *= 1.0f / (1.0f + 0.35f * dt);
-                d->velocity.z *= 1.0f / (1.0f + 0.35f * dt);
-                d->pos = Vector3Add(d->pos, Vector3Scale(d->velocity, dt));
+                float airspeed = Vector3Length(d->velocity);
+                d->radius = fmaxf(0.008f, d->baseRadius *
+                                  cbrtf(fmaxf(LiquidMedium_StableFraction(medium, airspeed,
+                                                                         d->baseRadius * 2.0f),
+                                              1e-6f)));
 
-                // Check terrain collision
                 float groundY = MapManager_GetGroundHeightAt(d->pos.x, d->pos.z);
-                if (d->pos.y <= groundY + 0.02f) {
-                    d->pos.y = groundY + 0.015f;
+                float restY = groundY + d->radius;
+                if (d->pos.y <= restY) {
+                    d->pos.y = restY;
                     d->bounceCount++;
-
-                    // Bounce with water restitution or settle into puddle
-                    if (d->bounceCount == 1 && fabsf(d->velocity.y) > 2.0f) {
-                        d->velocity.y = -d->velocity.y * 0.22f;
-                        d->velocity.x *= 0.45f;
-                        d->velocity.z *= 0.45f;
-                    } else {
+                    float impactSpeed = -d->velocity.y;
+                    if (impactSpeed > 0.0f) {
+                        d->velocity.y = impactSpeed * medium->restitution;
+                        d->velocity.x *= medium->contactFriction;
+                        d->velocity.z *= medium->contactFriction;
+                    }
+                    /* Below the capillary rebound / Bingham yield speed the
+                     * droplet wets the surface instead of bouncing — the same
+                     * threshold that makes mud and lava pile up. */
+                    float stickSpeed = fmaxf(0.30f, LiquidMedium_YieldSpeedMps(medium));
+                    if (impactSpeed < stickSpeed || d->bounceCount > 3) {
+                        float shrink = d->radius / fmaxf(1e-4f, d->baseRadius);
                         d->state = DROPLET_STATE_SETTLED;
                         d->age = 0.0f;
                         d->velocity = Vector3Zero();
-                        inst->puddleRadius = fminf(inst->puddleMaxRadius, inst->puddleRadius + 0.0015f);
+                        inst->puddleVolumeM3 += d->volumeM3 * shrink * shrink * shrink;
                     }
                 }
                 break;
             }
 
             case DROPLET_STATE_SETTLED: {
-                d->age += dt;
-                if (d->age >= 0.18f) {
+                activeDroplets++;
+                /* Its volume already belongs to the puddle; the droplet only
+                 * exists for the merge frame so the surface does not pop. */
+                if (d->age >= 0.16f) {
                     d->state = DROPLET_STATE_DEAD;
                 } else {
-                    activeDropletCount++;
-                    // Smoothly fade out as droplet dissolves into ground puddle body
-                    float mergeFade = 1.0f - (d->age / 0.18f);
-                    d->radius = d->baseRadius * mergeFade * 0.75f;
+                    d->radius = d->baseRadius * (1.0f - d->age / 0.16f) * 0.7f;
                 }
                 break;
             }
@@ -1258,30 +1976,81 @@ void VC_GuidedLiquid_Update(float dt)
             }
         }
 
-        // Update ground puddle expansion and fading
+        /* Puddle spreading: volume conservation sets the target radius, and a
+         * gravity-current front capped by the medium's yield velocity sets how
+         * fast it can get there. Water spreads (sqrt(g*h) ~ 0.7 m/s); lava and
+         * mud creep at sqrt(tau_y/rho), which is why they pile up. */
         if (inst->impactTriggered) {
             inst->impactTimer += dt;
-            if (inst->puddleRadius < inst->puddleMaxRadius) {
-                float growSpeed = inst->puddleMaxRadius / fmaxf(0.25f, cfg->puddleDuration * 0.35f);
-                inst->puddleRadius = fminf(inst->puddleMaxRadius, inst->puddleRadius + growSpeed * dt);
-            }
             inst->puddleTimer += dt;
+
+            float thickness = fmaxf(0.005f, inst->puddleThickness);
+            float targetRadius = inst->puddleVolumeM3 > 1e-6f
+                                     ? sqrtf(inst->puddleVolumeM3 / (PI * thickness))
+                                     : inst->puddleRadius;
+            targetRadius = fminf(targetRadius, cfg->puddleRadius);
+            if (targetRadius > inst->puddleRadius) {
+                float frontSpeed = sqrtf(LIQUID_GRAVITY_MPS2 * thickness);
+                float yieldSpeed = LiquidMedium_YieldSpeedMps(medium);
+                if (yieldSpeed > 1e-3f) frontSpeed = fminf(frontSpeed, yieldSpeed);
+                inst->puddleRadius = fminf(targetRadius, inst->puddleRadius + frontSpeed * dt);
+            }
         }
 
-        // Cleanup instance when finished
-        bool puddleExpired = inst->impactTriggered && (inst->puddleTimer >= inst->puddleDuration);
-        bool allDead = (activeDropletCount == 0 && puddleExpired);
-        if (allDead || inst->timer > (inst->flightDuration + cfg->emergeDuration + cfg->hoverDuration + inst->puddleDuration + 3.0f)) {
-            if (inst->motionField != MOTION_FIELD_INVALID) {
-                MotionFields_Stop(inst->motionField);
-                inst->motionField = MOTION_FIELD_INVALID;
+        /* Instance lifetime: the body is over when no droplet is left and the
+         * puddle has drained. The hard deadline is a leak guard, not timing. */
+        if (getenv("WUXING_LIQUID_DEBUG") && ((int)(inst->timer * 10.0f) % 10) == 0) {
+            int stat[7] = {0};
+            for (int q = 0; q < inst->dropletCount; q++) {
+                int st = (int)inst->droplets[q].state;
+                if (st >= 0 && st < 7) stat[st]++;
+            }
+            TraceLog(LOG_INFO, "GLQ id=%d t=%.2f alive=%d idle=%d emrg=%d hover=%d fly=%d casc=%d set=%d dead=%d puddleR=%.2f vol=%.3f",
+                     inst->id, inst->timer, activeDroplets, stat[0], stat[1], stat[2], stat[3], stat[4],
+                     stat[5], (int)inst->droplets[0].state, inst->puddleRadius, inst->puddleVolumeM3);
+        }
+        bool puddleExpired = !inst->impactTriggered || inst->puddleTimer >= inst->puddleDuration;
+        float deadline = inst->launchDelay + fmaxf(0.2f, inst->launch.durationSec) +
+                         3.0f * cfg->puddleDuration + 6.0f;
+        if ((activeDroplets == 0 && puddleExpired) || inst->timer > deadline) {
+            if (inst->fieldAlive) {
+                MotionFields_Stop(inst->mediumField);
+                inst->mediumField = MOTION_FIELD_INVALID;
+                inst->fieldAlive = false;
             }
             inst->active = false;
         }
     }
 }
 
-// ── Screen-Space Surface Submission (SSF Pass) ───────────────────────────────
+// ── Screen-Space Fluid Submission ────────────────────────────────────────────
+//
+// The SSF backends fuse overlapping spheres into one surface, which is exactly
+// what a coherent liquid is. The body caps its submission at
+// LIQUID_SURFACE_MAX_PARTICLES, so an over-dense body is decimated by a stride
+// over its ALIVE droplets (never over raw indices: dead slots would waste the
+// budget and the surface would thin out as the body lands).
+
+static inline bool GuidedLiquid_IsDrawable(VC_DropletState state)
+{
+    return state == DROPLET_STATE_EMERGING || state == DROPLET_STATE_HOVERING ||
+           state == DROPLET_STATE_FLYING || state == DROPLET_STATE_CASCADING ||
+           state == DROPLET_STATE_SETTLED;
+}
+
+/* Visible size: the density-field kernel, shrunk by whatever fraction the
+ * physical radius has lost (Weber breakup) so the surface still thins out. */
+static inline float GuidedLiquid_VisibleRadius(const VC_LiquidDroplet *d)
+{
+    float base = d->baseRadius > 1e-6f ? d->baseRadius : 1e-6f;
+    return d->drawRadius * Clamp(d->radius / base, 0.05f, 1.0f);
+}
+
+static inline float GuidedLiquid_Smoothstep(float edge0, float edge1, float x)
+{
+    float t = Clamp((x - edge0) / fmaxf(1e-6f, edge1 - edge0), 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
 
 void VC_GuidedLiquid_SubmitSurface(void)
 {
@@ -1296,53 +2065,51 @@ void VC_GuidedLiquid_SubmitSurface(void)
         }
 
         LiquidSurface_BindMaterial(&inst->material);
-        // Blending reconstruction radius scaled to fuse adjacent droplets smoothly
-        LiquidSurface_SetReconstructionRadius(cfg->dropletRadius * 1.15f);
+        // Reconstruction radius fuses adjacent droplets into one meniscus.
+        LiquidSurface_SetReconstructionRadius(fmaxf(0.02f, inst->dropletRadiusM) * 1.15f);
 
-        // Solid core anchor for spherical hover/emerge
-        if (cfg->emissionShape == VFX_LIQUID_SHAPE_SPHERE &&
-            (inst->timer < (cfg->emergeDuration + cfg->hoverDuration))) {
-            LiquidSurface_RegisterParticle(cfg->source, cfg->dropletRadius * 1.4f);
+        int alive = 0;
+        for (int i = 0; i < inst->dropletCount; i++) {
+            if (GuidedLiquid_IsDrawable(inst->droplets[i].state)) alive++;
         }
 
-        // Submit fluid droplets up to LIQUID_SURFACE_MAX_PARTICLES (384)
-        if (inst->dropletCount <= LIQUID_SURFACE_MAX_PARTICLES) {
+        int budget = LIQUID_SURFACE_MAX_PARTICLES;
+        if (alive > 0 && alive <= budget) {
             for (int i = 0; i < inst->dropletCount; i++) {
                 const VC_LiquidDroplet *d = &inst->droplets[i];
-                if (d->state != DROPLET_STATE_EMERGING &&
-                    d->state != DROPLET_STATE_HOVERING &&
-                    d->state != DROPLET_STATE_FLYING &&
-                    d->state != DROPLET_STATE_CASCADING) continue;
-                LiquidSurface_RegisterParticle(d->pos, d->radius * 1.35f);
+                if (!GuidedLiquid_IsDrawable(d->state)) continue;
+                LiquidSurface_RegisterParticle(d->pos, GuidedLiquid_VisibleRadius(d) * 1.35f);
             }
-        } else {
-            // Stratified sampling across the entire volume so SSF covers center to surface
-            int maxSSF = LIQUID_SURFACE_MAX_PARTICLES;
-            for (int k = 0; k < maxSSF; k++) {
-                int idx = (k * (inst->dropletCount - 1)) / (maxSSF - 1);
-                const VC_LiquidDroplet *d = &inst->droplets[idx];
-                if (d->state != DROPLET_STATE_EMERGING &&
-                    d->state != DROPLET_STATE_HOVERING &&
-                    d->state != DROPLET_STATE_FLYING &&
-                    d->state != DROPLET_STATE_CASCADING) continue;
-                LiquidSurface_RegisterParticle(d->pos, d->radius * 1.50f);
+        } else if (alive > 0) {
+            int stride = (alive + budget - 1) / budget;
+            int registered = 0;
+            int seen = 0;
+            for (int i = 0; i < inst->dropletCount && registered < budget; i++) {
+                const VC_LiquidDroplet *d = &inst->droplets[i];
+                if (!GuidedLiquid_IsDrawable(d->state)) continue;
+                if ((seen++ % stride) != 0) continue;
+                LiquidSurface_RegisterParticle(d->pos, GuidedLiquid_VisibleRadius(d) * 1.50f);
+                registered++;
             }
         }
 
-        // Submit terrain-conformal expanding puddle with physical liquid meniscus dome thickness
+        // Terrain-conformal puddle: thickness is the physical film, not a fade.
         if (inst->impactTriggered && inst->puddleRadius > 0.05f) {
-            float alphaFade = 1.0f - Clamp(inst->puddleTimer / inst->puddleDuration, 0.0f, 1.0f);
-            float curRad = inst->puddleRadius * sqrtf(alphaFade);
+            float lifeFade = 1.0f - Clamp(inst->puddleTimer / fmaxf(0.1f, inst->puddleDuration), 0.0f, 1.0f);
+            float curRad = inst->puddleRadius * sqrtf(lifeFade);
             if (curRad > 0.05f) {
-                float puddleThickness = fminf(0.10f, 0.035f + curRad * 0.05f);
+                float thickness = fmaxf(0.01f, inst->puddleThickness);
                 LiquidSurface_RegisterEllipsoid(
-                    (Vector3){inst->groundPuddlePos.x, inst->groundPuddlePos.y + puddleThickness * 0.5f, inst->groundPuddlePos.z},
-                    (Vector3){curRad, puddleThickness, curRad}
-                );
+                    (Vector3){inst->groundPuddlePos.x,
+                              inst->groundPuddlePos.y + thickness * 0.5f,
+                              inst->groundPuddlePos.z},
+                    (Vector3){curRad, thickness, curRad});
             }
         }
     }
 }
+
+// ── Droplet Billboard Texture ────────────────────────────────────────────────
 
 static Texture2D GuidedLiquid_GetDropletTexture(void)
 {
@@ -1372,28 +2139,19 @@ static Texture2D GuidedLiquid_GetDropletTexture(void)
             }
 
             float r = sqrtf(r2);
-            // Smooth, anti-aliased circular alpha edge boundary (ZERO hard corners)
             float edgeAlpha = 1.0f - GuidedLiquid_Smoothstep(0.72f, 1.0f, r);
 
-            // 3D spherical dome normal (surface normal of water droplet)
             float nz = sqrtf(1.0f - r2);
             Vector3 norm = {px, py, nz};
 
-            // Photorealistic water lighting components
             float nDotL = fmaxf(0.0f, Vector3DotProduct(norm, sunL));
             float nDotH = fmaxf(0.0f, Vector3DotProduct(norm, halfSun));
             float specSun = powf(nDotH, 28.0f);
-
             float nDotBounce = fmaxf(0.0f, Vector3DotProduct(norm, bounceL));
             float specBounce = powf(nDotBounce, 12.0f) * 0.22f;
-
-            // Translucent core absorption (Beer-Lambert cyan water body)
             float coreDiffuse = 0.70f + 0.30f * nDotL;
-
-            // Dielectric Fresnel edge rim (glancing angle reflection)
             float fresnel = powf(1.0f - nz, 2.4f) * 0.60f;
 
-            // Composite glossy water droplet RGBA
             float red   = Clamp(180.0f * coreDiffuse + 255.0f * specSun + 130.0f * fresnel + 45.0f * specBounce, 0.0f, 255.0f);
             float green = Clamp(228.0f * coreDiffuse + 255.0f * specSun + 175.0f * fresnel + 85.0f * specBounce, 0.0f, 255.0f);
             float blue  = Clamp(255.0f * coreDiffuse + 255.0f * specSun + 235.0f * fresnel + 140.0f * specBounce, 0.0f, 255.0f);
@@ -1410,13 +2168,17 @@ static Texture2D GuidedLiquid_GetDropletTexture(void)
     return s_dropletTex;
 }
 
-// ── 3D Geometry Pass (Metaball 3D & High-Performance Droplet Rendering) ───────
+// ── 3D Geometry Pass ─────────────────────────────────────────────────────────
+//
+// The coherent phases are a single liquid body, so they are rendered by the
+// metaball raymarcher (or SSF above). Billboard quads are reserved for the
+// DETACHED spray after the body breaks, because drawing them over a coherent
+// body is what previously sliced the orb into visible flat cards.
 
 void VC_GuidedLiquid_Draw3D(Camera3D cam)
 {
     Texture2D dropletTex = GuidedLiquid_GetDropletTexture();
 
-    // Camera basis vectors for strictly camera-facing quad alignment
     Vector3 camFwd = Vector3Subtract(cam.target, cam.position);
     float camDist = Vector3Length(camFwd);
     if (camDist > 0.001f) camFwd = Vector3Scale(camFwd, 1.0f / camDist);
@@ -1429,86 +2191,60 @@ void VC_GuidedLiquid_Draw3D(Camera3D cam)
 
         const VFX_GuidedLiquidConfig *cfg = &inst->config;
 
-        // 1. True 3D Analytical Metaball Raymarching (for Macro Body Core)
         if (cfg->renderBackend == VFX_LIQUID_BACKEND_METABALL3D ||
             cfg->renderBackend == VFX_LIQUID_BACKEND_HYBRID)
         {
+            // Reserve blob slots for the crown and the puddle so a full body
+            // cannot starve the aftermath.
+            const int crownBlobs = cfg->impactCrown ? 8 : 0;
+            const int puddleBlobs = 9;
+            int bodyBudget = LIQUID_METABALL3D_MAX_BLOBS - crownBlobs - puddleBlobs;
+            if (bodyBudget < 8) bodyBudget = 8;
+
             LiquidMetaball3D_BeginBody(&inst->material, cfg->threshold);
 
-            // Solid core anchor for spherical hover/emerge
-            if (cfg->emissionShape == VFX_LIQUID_SHAPE_SPHERE &&
-                (inst->timer < (cfg->emergeDuration + cfg->hoverDuration))) {
-                LiquidMetaball3D_RegisterBlob(cfg->source, cfg->dropletRadius * 1.6f);
+            int alive = 0;
+            for (int i = 0; i < inst->dropletCount; i++) {
+                if (GuidedLiquid_IsDrawable(inst->droplets[i].state)) alive++;
             }
-
-            // Register all active droplets of the fluid body into LiquidMetaball3D.
-            // When dropletCount exceeds 64, stratified seed sampling ensures the initial 64
-            // blobs span the entire volume (from center to surface), and subsequent blobs
-            // merge their volume into the nearest seed blob.
-            if (inst->dropletCount <= LIQUID_METABALL3D_MAX_BLOBS) {
-                for (int i = 0; i < inst->dropletCount; i++) {
+            if (alive > 0) {
+                int stride = alive > bodyBudget ? (alive + bodyBudget - 1) / bodyBudget : 1;
+                // Sampled blobs carry the volume of the ones they replace.
+                float volumeScale = cbrtf((float)stride);
+                int registered = 0, seen = 0;
+                for (int i = 0; i < inst->dropletCount && registered < bodyBudget; i++) {
                     const VC_LiquidDroplet *d = &inst->droplets[i];
-                    if (d->state == DROPLET_STATE_EMERGING ||
-                        d->state == DROPLET_STATE_HOVERING ||
-                        d->state == DROPLET_STATE_FLYING ||
-                        d->state == DROPLET_STATE_CASCADING) {
-                        LiquidMetaball3D_RegisterBlob(d->pos, d->radius * 1.35f);
-                    }
-                }
-            } else {
-                // Stratified seed pass: 64 blobs evenly distributed across all radial layers & azimuths
-                int maxBlobs = LIQUID_METABALL3D_MAX_BLOBS;
-                for (int k = 0; k < maxBlobs; k++) {
-                    int idx = (k * (inst->dropletCount - 1)) / (maxBlobs - 1);
-                    const VC_LiquidDroplet *d = &inst->droplets[idx];
-                    if (d->state == DROPLET_STATE_EMERGING ||
-                        d->state == DROPLET_STATE_HOVERING ||
-                        d->state == DROPLET_STATE_FLYING ||
-                        d->state == DROPLET_STATE_CASCADING) {
-                        LiquidMetaball3D_RegisterBlob(d->pos, d->radius * 1.35f);
-                    }
-                }
-                // Volume consolidation pass: remaining droplets merge into nearest seed blob
-                int mergeStride = (inst->dropletCount > 512) ? 4 : 1;
-                for (int i = 0; i < inst->dropletCount; i += mergeStride) {
-                    const VC_LiquidDroplet *d = &inst->droplets[i];
-                    if (d->state == DROPLET_STATE_EMERGING ||
-                        d->state == DROPLET_STATE_HOVERING ||
-                        d->state == DROPLET_STATE_FLYING ||
-                        d->state == DROPLET_STATE_CASCADING) {
-                        float vScale = (float)mergeStride;
-                        float effectiveRad = d->radius * cbrtf(vScale) * 1.35f;
-                        LiquidMetaball3D_RegisterBlob(d->pos, effectiveRad);
-                    }
+                    if (!GuidedLiquid_IsDrawable(d->state)) continue;
+                    if ((seen++ % stride) != 0) continue;
+                    LiquidMetaball3D_RegisterBlob(d->pos, GuidedLiquid_VisibleRadius(d) * 1.35f * volumeScale);
+                    registered++;
                 }
             }
 
-            // Worthington splash crown rim blobs (expand from ground level and collapse)
-            if (inst->impactTriggered && cfg->impactCrown && inst->impactTimer < 0.35f) {
+            // Worthington crown: rim blobs rising and collapsing from the
+            // contact point, driven by the real impact timer.
+            if (cfg->impactCrown && inst->impactTriggered && inst->impactTimer < 0.35f) {
                 float crownT = inst->impactTimer / 0.35f;
                 float crownRad = cfg->dropletRadius * (1.2f + 2.0f * crownT);
                 float crownH = cfg->dropletRadius * 2.0f * sinf(crownT * PI);
-                int rimPoints = 8;
-                for (int p = 0; p < rimPoints; p++) {
-                    float angle = ((float)p / (float)rimPoints) * 2.0f * PI;
+                for (int p = 0; p < crownBlobs; p++) {
+                    float angle = ((float)p / (float)crownBlobs) * 2.0f * PI;
                     Vector3 rimPos = {
                         inst->groundPuddlePos.x + cosf(angle) * crownRad,
                         inst->groundPuddlePos.y + crownH * (0.8f + 0.3f * sinf((float)p * 2.0f)),
-                        inst->groundPuddlePos.z + sinf(angle) * crownRad
-                    };
+                        inst->groundPuddlePos.z + sinf(angle) * crownRad};
                     LiquidMetaball3D_RegisterBlob(rimPos, cfg->dropletRadius * 0.38f * (1.0f - crownT * 0.5f));
                 }
             }
 
-            // Flat terrain-conformal puddle in 3D Metaball (concentric small blobs at ground level)
+            // Conformal puddle: centre blob plus a terrain-following ring.
             if (inst->impactTriggered && inst->puddleRadius > 0.10f) {
-                float alphaFade = 1.0f - Clamp(inst->puddleTimer / inst->puddleDuration, 0.0f, 1.0f);
-                float curRad = inst->puddleRadius * sqrtf(alphaFade);
+                float lifeFade = 1.0f - Clamp(inst->puddleTimer / fmaxf(0.1f, inst->puddleDuration), 0.0f, 1.0f);
+                float curRad = inst->puddleRadius * sqrtf(lifeFade);
                 if (curRad > 0.10f) {
                     LiquidMetaball3D_RegisterBlob(inst->groundPuddlePos, fminf(0.25f, curRad * 0.45f));
-                    int ringBlobs = 8;
-                    for (int rb = 0; rb < ringBlobs; rb++) {
-                        float theta = ((float)rb / (float)ringBlobs) * 2.0f * PI;
+                    for (int rb = 0; rb < 8; rb++) {
+                        float theta = ((float)rb / 8.0f) * 2.0f * PI;
                         float rx = inst->groundPuddlePos.x + cosf(theta) * curRad * 0.55f;
                         float rz = inst->groundPuddlePos.z + sinf(theta) * curRad * 0.55f;
                         float ry = MapManager_GetGroundHeightAt(rx, rz) + 0.04f;
@@ -1520,16 +2256,11 @@ void VC_GuidedLiquid_Draw3D(Camera3D cam)
             LiquidMetaball3D_EndBody();
         }
 
-        // 2. High-Performance Batched Water Droplet Quad Rendering (Secondary Cascading Splash Spray)
-        // For coherent macro liquid phases (EMERGING, HOVERING, FLYING), the fluid body is 100% rendered
-        // by the fluid surface backends (Metaball 3D or SSF) without any planar quad slicing artifacts.
-        // Billboard quads are strictly reserved for detached cascading splash/mist spray droplets
-        // after impact.
+        // Detached spray only: camera-facing quads, velocity-stretched inside
+        // the view plane, batched 256 quads per texture bind.
         int cascadeCount = 0;
         for (int i = 0; i < inst->dropletCount; i++) {
-            if (inst->droplets[i].state == DROPLET_STATE_CASCADING) {
-                cascadeCount++;
-            }
+            if (inst->droplets[i].state == DROPLET_STATE_CASCADING) cascadeCount++;
         }
         if (cascadeCount == 0) continue;
 
@@ -1539,7 +2270,7 @@ void VC_GuidedLiquid_Draw3D(Camera3D cam)
         rlDisableDepthMask();
         BeginBlendMode(BLEND_ALPHA);
 
-        int batchChunk = 256;
+        const int batchChunk = 256;
         for (int bStart = 0; bStart < inst->dropletCount; bStart += batchChunk) {
             int bEnd = (bStart + batchChunk < inst->dropletCount) ? bStart + batchChunk : inst->dropletCount;
 
@@ -1549,12 +2280,14 @@ void VC_GuidedLiquid_Draw3D(Camera3D cam)
                 const VC_LiquidDroplet *d = &inst->droplets[i];
                 if (d->state != DROPLET_STATE_CASCADING) continue;
 
-                // Project velocity onto camera view plane to eliminate depth foreshortening & squashing
-                Vector3 vCam = Vector3Subtract(d->velocity, Vector3Scale(camFwd, Vector3DotProduct(d->velocity, camFwd)));
+                // Project velocity into the view plane so the streak never
+                // foreshortens into a disc.
+                Vector3 vCam = Vector3Subtract(d->velocity,
+                                               Vector3Scale(camFwd, Vector3DotProduct(d->velocity, camFwd)));
                 float speedCam = Vector3Length(vCam);
 
                 Vector3 uLong, uTrans;
-                float stretch = 1.0f;
+                float stretch;
                 if (speedCam > 0.35f) {
                     uLong = Vector3Scale(vCam, 1.0f / speedCam);
                     uTrans = Vector3Normalize(Vector3CrossProduct(uLong, camFwd));
@@ -1565,17 +2298,12 @@ void VC_GuidedLiquid_Draw3D(Camera3D cam)
                     stretch = 1.0f;
                 }
 
-                float r = d->radius;
+                float r = GuidedLiquid_VisibleRadius(d);
                 Vector3 extX = Vector3Scale(uTrans, r);
                 Vector3 extY = Vector3Scale(uLong, r * stretch);
 
                 Color col = cfg->liquidBodyColor;
-                float fade = 1.0f;
-                if (d->state == DROPLET_STATE_SETTLED) {
-                    fade = 1.0f - Clamp(d->age / 0.18f, 0.0f, 1.0f);
-                }
-
-                col.a = (unsigned char)(col.a * fade * 0.85f);
+                col.a = (unsigned char)(col.a * 0.85f);
 
                 Vector3 p0 = Vector3Subtract(Vector3Subtract(d->pos, extX), extY);
                 Vector3 p1 = Vector3Subtract(Vector3Add(d->pos, extX), extY);
@@ -1601,7 +2329,9 @@ void VC_GuidedLiquid_Draw3D(Camera3D cam)
 
 void VC_GuidedLiquid_DrawShadowPass(void)
 {
-    // Directional shadow pass: Liquids are translucent dielectrics and cast soft ground decals
+    // Liquids are translucent dielectrics; the puddle contributes its own
+    // conformal decal at impact, so there is no opaque shadow caster here.
 }
 
 #endif // VC_GUIDED_LIQUID_INL
+

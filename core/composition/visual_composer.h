@@ -593,6 +593,272 @@ void                  VC_EarthSpike_Update(float dt);
 void                  VC_EarthSpike_Draw3D(Camera3D cam);
 void                  VC_EarthSpike_DrawShadowPass(void);
 
+// ── Generalized Earth Surface Crack & Fissure API ───────────────────────────
+typedef enum VFX_EarthCrackMode {
+    VFX_EARTH_CRACK_MODE_RADIAL_POINT = 0, // Spreads radially from 1 epicenter point
+    VFX_EARTH_CRACK_MODE_PATH_AB,          // Spreads from A to B along path C
+    VFX_EARTH_CRACK_MODE_COUNT
+} VFX_EarthCrackMode;
+
+typedef enum VFX_EarthCrackPreset {
+    VFX_EARTH_CRACK_PRESET_RADIAL_BURST = 0,
+    VFX_EARTH_CRACK_PRESET_FISSURE_PATH,
+    VFX_EARTH_CRACK_PRESET_SEISMIC_CHASM,
+    VFX_EARTH_CRACK_PRESET_MOLTEN_VEINS,
+    VFX_EARTH_CRACK_PRESET_DARK_FISSURE,
+    VFX_EARTH_CRACK_PRESET_JADE_FRACTURE,
+    VFX_EARTH_CRACK_PRESET_CELESTIAL_GOLD,
+    VFX_EARTH_CRACK_PRESET_COUNT
+} VFX_EarthCrackPreset;
+
+typedef enum VFX_EarthCrackStyle {
+    VFX_EARTH_CRACK_STYLE_ANCIENT_EARTH = 0,
+    VFX_EARTH_CRACK_STYLE_MOLTEN_BASALT,
+    VFX_EARTH_CRACK_STYLE_DARK_ABYSS,
+    VFX_EARTH_CRACK_STYLE_JADE_QI,
+    VFX_EARTH_CRACK_STYLE_CELESTIAL_GOLD,
+    VFX_EARTH_CRACK_STYLE_ABYSSAL_VOID,
+    VFX_EARTH_CRACK_STYLE_COUNT
+} VFX_EarthCrackStyle;
+
+typedef struct VFX_EarthCrackConfig {
+    VFX_EarthCrackPreset preset;
+    VFX_EarthCrackMode   mode;
+    VFX_EarthCrackStyle  style;
+
+    // Endpoints / Control points
+    Vector3  source;                 // Epicenter for RADIAL, Start point A for PATH
+    Vector3  target;                 // End point B for PATH (optional for RADIAL)
+    Vector3  pathPoints[16];         // Explicit path C waypoints (if > 0, overrides line A->B)
+    int      pathPointCount;         // Number of waypoints in path C
+
+    // Dimensions & Morphology
+    float    length;                 // Max radius for RADIAL, or path length override
+    float    mainWidth;              // Width of main fissure (e.g. 0.25m - 1.2m)
+    float    branchWidth;            // Width of secondary branches (e.g. 0.08m - 0.4m)
+    float    depth;                  // Depth of fissure chasm (e.g. 0.15m - 0.8m)
+    float    jaggedness;             // Noise jitter amplitude (0.0 to 1.5)
+    int      radialBranchCount;      // Number of radial spokes (3 to 12)
+    int      subBranchDensity;       // Number of lateral tributary splits (0 to 10)
+    int      seed;                   // Procedural deterministic seed
+
+    // Timing & Propagation
+    float    spreadDuration;         // Time to propagate fully (e.g. 0.3s - 1.5s)
+    float    holdDuration;           // Time crack stays fully open (e.g. 1.0s - 5.0s)
+    float    fadeDuration;           // Fade out time (e.g. 0.5s - 2.0s)
+
+    // Shading & Optics
+    Color    soilColor;              // Outer rim soil/rock color
+    Color    rockColor;              // Inner cliff wall rock color
+    Color    glowColor;              // Subterranean vein emission color
+    Color    leadFrontColor;         // Tearing tip hot stress glow
+    float    veinGlowIntensity;      // Emission intensity (0.5 to 4.0)
+    float    pulseSpeed;             // Vein pulse frequency
+
+    // Environmental Coupling
+    bool     emitDust;               // Spawn dust puffs at advancing tip
+    bool     emitDebris;             // Spawn flying rock shards
+    bool     emitDecal;              // Spawn conformal ground stress decal
+    bool     windShockwave;          // Trigger grass-parting wind gust
+    bool     cameraTrauma;           // Trigger screen shake on impact
+} VFX_EarthCrackConfig;
+
+VFX_EarthCrackConfig  VFX_EarthCrack_DefaultConfig(void);
+VFX_EarthCrackConfig *VFX_EarthCrack_GetLiveConfig(void);
+void                  VFX_EarthCrack_ApplyPreset(VFX_EarthCrackConfig *cfg, VFX_EarthCrackPreset preset);
+void                  VFX_EarthCrack_ApplyStyle(VFX_EarthCrackConfig *cfg, VFX_EarthCrackStyle style);
+int                   VFX_EarthCrack_GetParams(VFX_EarthCrackConfig *cfg, VFX_ParamDef *outParams, int maxParams);
+int                   VFX_ComposeEarthCrack(const VFX_EarthCrackConfig *cfg);
+int                   VFX_ComposeEarthCrackRadial(Vector3 epicenter, float radius, const VFX_EarthCrackConfig *cfgOrNull);
+int                   VFX_ComposeEarthCrackPath(const Vector3 *pathWaypoints, int count, float width, const VFX_EarthCrackConfig *cfgOrNull);
+int                   VFX_ComposeEarthCrackAB(Vector3 start, Vector3 end, float width, const VFX_EarthCrackConfig *cfgOrNull);
+void                  VFX_KillEarthCrack(int handle);
+void                  VFX_EarthCrack_KillAll(void);
+const char           *VFX_EarthCrackPreset_Name(VFX_EarthCrackPreset preset);
+const char           *VFX_EarthCrackStyle_Name(VFX_EarthCrackStyle style);
+const char           *VFX_EarthCrackMode_Name(VFX_EarthCrackMode mode);
+
+void                  VC_EarthCrack_Update(float dt);
+void                  VC_EarthCrack_Draw3D(Camera3D cam);
+
+// ── GENERALIZED GUIDED LIQUID SYSTEM (HỆ THỦY: DẪN LỰC THỦY QUÁI) ───────────
+typedef enum {
+    VFX_LIQUID_PRESET_CUSTOM = 0,
+    VFX_LIQUID_PRESET_WATER_ORB,      // Classic guided water orb with droplet halo, ballistic arc & splash crown
+    VFX_LIQUID_PRESET_TORRENT_JET,    // High-pressure continuous water jet torrent with mist wake & piercing impact
+    VFX_LIQUID_PRESET_VORTEX_DRAGON,  // Helical corkscrew water drill spiraling around trajectory into a maelstrom
+    VFX_LIQUID_PRESET_ORBITAL_DELUGE, // Satellite droplets gathering from 360-deg orbit into high-altitude deluge
+    VFX_LIQUID_PRESET_SPRING_GUSH,    // Subterranean artesian spring geyser surging upward into bursting rain
+    VFX_LIQUID_PRESET_SURGING_TIDE,   // Low conformal water surge rushing across terrain and spreading an expansive puddle
+    VFX_LIQUID_PRESET_MOLTEN_GEYSER,  // Lava: slow Bingham gush, short splash, thick crusted puddle
+    VFX_LIQUID_PRESET_MERCURIAL_ORB,  // Liquid metal: dense, high surface tension, tight cohesion, beads on impact
+    VFX_LIQUID_PRESET_COUNT
+} VFX_GuidedLiquidPreset;
+
+typedef enum {
+    VFX_LIQUID_SPAWN_BURST = 0,       // Instant simultaneous cluster ejection from cast socket
+    VFX_LIQUID_SPAWN_STREAM,          // Staggered continuous fluid jet emitted sequentially over time
+    VFX_LIQUID_SPAWN_SURROUND_RING,   // 360-degree perimeter ring welling up around caster before launch
+    VFX_LIQUID_SPAWN_ORBITAL_CONVERGE,// Satellite droplets spiraling inward into core before slingshot launch
+    VFX_LIQUID_SPAWN_GROUND_GUSH,     // Artesian geyser erupting vertically from ground before accelerating
+    VFX_LIQUID_SPAWN_CONE_SPRAY,      // Directional nozzle fan spray expanding outward
+    VFX_LIQUID_SPAWN_COUNT
+} VFX_LiquidSpawnMode;
+
+typedef enum {
+    VFX_LIQUID_SHAPE_SPHERE = 0,      // Uniform volume sphere cluster
+    VFX_LIQUID_SHAPE_RING,            // Toroidal perimeter ring / donut
+    VFX_LIQUID_SHAPE_CYLINDER,        // Vertical water column / cylinder
+    VFX_LIQUID_SHAPE_HELIX,           // Double-helix spiral strand
+    VFX_LIQUID_SHAPE_DISC,            // Flat circular planar disc
+    VFX_LIQUID_SHAPE_COUNT
+} VFX_LiquidEmissionShape;
+
+typedef enum {
+    VFX_LIQUID_TRAJ_PARABOLIC_ARC = 0,// Ballistic parabolic arc with authored apex height
+    VFX_LIQUID_TRAJ_GUIDED_HOMING,    // Dynamic tracking homing curve tracking target position
+    VFX_LIQUID_TRAJ_SPIRAL_CORKSCREW, // Helical corkscrew swirl around trajectory axis
+    VFX_LIQUID_TRAJ_HIGH_CATAPULT,    // Steep mortar catapult lob with high altitude and plunge
+    VFX_LIQUID_TRAJ_JET_STREAM,       // High-velocity straight piercing beam torrent
+    VFX_LIQUID_TRAJ_SERPENTINE_WAVE,  // Undulating sinusoidal transverse water serpent
+    VFX_LIQUID_TRAJ_COUNT
+} VFX_LiquidTrajectoryMode;
+
+typedef enum {
+    VFX_LIQUID_IMPACT_SPLASH_CROWN = 0,// Worthington splash crown with radial projectile droplets
+    VFX_LIQUID_IMPACT_EXPANDING_PUDDLE,// Spreading ground water puddle with Fresnel reflection & normal waves
+    VFX_LIQUID_IMPACT_VORTEX_MAELSTROM,// Swirling centrifugal maelstrom whirlpool at target location
+    VFX_LIQUID_IMPACT_EXPLOSIVE_BURST, // High-pressure radial hydraulic shockwave burst + vapor cloud
+    VFX_LIQUID_IMPACT_DELUGE_CASCADE,  // Vertical downward rain deluge and cascading ripple pool
+    VFX_LIQUID_IMPACT_PIERCING_DRILL,  // Continuous high-velocity whirlpool drill eroding ground
+    VFX_LIQUID_IMPACT_COUNT
+} VFX_LiquidImpactMode;
+
+typedef enum {
+    VFX_LIQUID_BACKEND_METABALL3D = 0,// Analytical 3D true metaball raymarching with Beer-Lambert absorption
+    VFX_LIQUID_BACKEND_SSF,           // Screen Space Fluid depth reconstruction with shimmer waves
+    VFX_LIQUID_BACKEND_HYBRID,        // 3D Metaball core body + SSF splash/satellite droplets
+    VFX_LIQUID_BACKEND_COUNT
+} VFX_LiquidRenderBackend;
+
+typedef struct VFX_GuidedLiquidConfig {
+    VFX_GuidedLiquidPreset preset;
+    VFX_LiquidSpawnMode spawnMode;
+    VFX_LiquidEmissionShape emissionShape;
+    VFX_LiquidTrajectoryMode trajectoryMode;
+    VFX_LiquidImpactMode impactMode;
+    VFX_LiquidRenderBackend renderBackend;
+    int liquidProfile; // LiquidMotionProfile: 0=Water, 1=Poison, 2=Mud, 3=Lava, 4=Metal
+
+    // Phase 1: Emission & Shape
+    int particleCount;          // 4 to 96 fluid droplets/blobs
+    float emissionRadius;       // Outer radius of emission shape in meters (0.05 to 5.0m)
+    float emissionInnerRadius;  // Inner donut radius for ring shape (0.0 to 4.0m)
+    float coneAngleDeg;         // Fan/cone spread angle in degrees (5 to 90)
+    float dropletRadius;        // Base droplet radius in meters (0.04 to 0.60m)
+    float blobVariation;        // Size variation across particles (0.0 to 0.8)
+    float emergeDuration;       // Gather/charge duration in seconds (0.0 to 3.0s)
+    float hoverDuration;        // Hold/swirl duration before launch (0.0 to 2.0s)
+    float launchStaggerDelay;   // Sequential release cadence (0.0s = volley, >0 = stream)
+
+    // Phase 2: Guiding Forces & Flight
+    Vector3 source;             // Origin point
+    Vector3 target;             // Target destination
+    float travelSpeed;          // Velocity in m/s (3.0 to 50.0)
+    float arcHeight;            // Ballistic arc apex in meters (0.0 to 15.0m)
+    float arcVariation;         // Height variance across particles (0.0 to 1.0)
+    float guideRadius;          // Influence radius of guiding motion field (m)
+    float pullForceN;           // Force pulling particles towards guide (0.1 to 10.0 N)
+    float forwardForceN;        // Forward thrust along trajectory (0.05 to 5.0 N)
+    float swirlSpeed;           // Helical vortex swirl velocity (rad/s, 0.0 to 25.0)
+    float turbulenceSpeed;      // Curl noise turbulence speed (m/s, 0.0 to 8.0)
+    float fluidDrag;            // Viscous medium drag (0.1 to 5.0)
+    float gravityScale;         // Real-world gravity multiplier (g * 9.81 m/s2)
+    bool emitMistTrail;         // Shed water vapor/mist motes along flight path
+    bool emitQiRibbon;          // Trailing atmospheric water Qi streamer
+    float ribbonWidth;          // Ribbon strip width in meters
+
+    // Phase 3: Impact & Aftermath
+    int splashDropletCount;     // Secondary bouncing splash droplets (0 to 48)
+    float splashVelocity;       // Radial splash droplet velocity (m/s)
+    float puddleRadius;         // Ground water puddle radius (0.0 to 6.0m)
+    float puddleDuration;       // Puddle persistence duration (seconds)
+    bool impactCrown;           // Worthington splash crown fluid geometry
+    bool impactShockRing;       // Radial ground wave shock ring
+    bool impactDecal;           // Spawn conformal wet puddle decal
+    float impactMistRadius;     // Water vapor cloud puff radius (m)
+    float impactShake;          // Camera shake trauma intensity (0.0 to 1.0)
+    float windBlastRadius;      // Radial wind blast flattening grass/foliage (m)
+
+    // Optics & Appearance
+    Color liquidBodyColor;      // Deep fluid albedo (Beer-Lambert core)
+    Color liquidGlowColor;      // Specular rim / Qi glow
+    Color liquidFoamColor;      // Foam / highlight horizon reflection
+    float ior;                  // Index of refraction (1.333 for water)
+    float specularPower;        // Dual-lobe specular glint sharpness
+    float foamAmount;           // Foam gain along turbulent boundaries
+    float threshold;            // Metaball field potential surface threshold
+
+    // Physical medium (SI). Zero keeps the measured value for `liquidProfile`,
+    // so a new liquid is authored as density / viscosity / surface tension and
+    // every derived behaviour (drag, deformation damping, atomisation, puddle
+    // spreading) follows instead of being tuned per effect.
+    float mediumDensityKgM3;      // 0 = profile default (water 998.2)
+    float mediumViscosityPaS;     // 0 = profile default (water 1.002e-3)
+    float mediumSurfaceTensionNm; // 0 = profile default (water 0.0728)
+    float cohesionScale;          // 0 = 1.0; multiplies the binding actuator
+} VFX_GuidedLiquidConfig;
+
+VFX_GuidedLiquidConfig  VFX_GuidedLiquid_DefaultConfig(void);
+VFX_GuidedLiquidConfig *VFX_GuidedLiquid_GetLiveConfig(void);
+void                    VFX_GuidedLiquid_ApplyPreset(VFX_GuidedLiquidConfig *cfg, VFX_GuidedLiquidPreset preset);
+int                     VFX_GuidedLiquid_GetParams(VFX_GuidedLiquidConfig *cfg, VFX_ParamDef *outParams, int maxParams);
+int                     VFX_ComposeGuidedLiquid(const VFX_GuidedLiquidConfig *cfg);
+int                     VFX_ComposeGuidedLiquidEx(Vector3 source, Vector3 target, const VFX_GuidedLiquidConfig *cfg);
+void                    VFX_KillGuidedLiquid(int handle);
+const char             *VFX_GuidedLiquidPreset_Name(VFX_GuidedLiquidPreset preset);
+const char             *VFX_LiquidSpawnMode_Name(VFX_LiquidSpawnMode mode);
+const char             *VFX_LiquidEmissionShape_Name(VFX_LiquidEmissionShape shape);
+const char             *VFX_LiquidTrajectory_Name(VFX_LiquidTrajectoryMode traj);
+const char             *VFX_LiquidImpact_Name(VFX_LiquidImpactMode impact);
+const char             *VFX_LiquidBackend_Name(VFX_LiquidRenderBackend backend);
+bool                    VFX_GuidedLiquid_IsAnyActive(void);
+void                    VC_GuidedLiquid_Update(float dt);
+void                    VC_GuidedLiquid_Draw3D(Camera3D cam);
+void                    VC_GuidedLiquid_SubmitSurface(void);
+void                    VC_GuidedLiquid_DrawShadowPass(void);
+
+// ── Water Dragon (Thủy Long Xuất Hải) ────────────────────────────────────────
+typedef struct VFX_WaterDragonConfig {
+    Vector3 source;
+    Vector3 target;
+    float travelSpeed;      // Velocity in m/s (12.0 to 35.0)
+    float bodyRadius;       // Water stream radius in meters (0.25 to 1.0m)
+    float arcHeight;        // Ballistic arc apex in meters (1.0 to 8.0m)
+    float swimFrequency;    // Serpentine swimming undulation frequency (6.0 to 20.0 rad/s)
+    float swimAmplitude;    // S-curve wave lateral amplitude in meters (0.2 to 1.5m)
+    float headScale;        // Dragon head scale multiplier (0.8 to 2.5)
+    float spiralSpeed;      // Helical tendril spin rate (8.0 to 30.0 rad/s)
+    float spiralRadius;     // Helical tendril coil radius (0.4 to 2.0m)
+    Color waterBodyColor;   // Deep water cyan body
+    Color waterGlowColor;   // Specular rim / luminous eye glow
+    Color waterFoamColor;   // Crest foam highlight
+    float puddleRadius;     // Ground puddle impact size (1.5 to 6.0m)
+    float puddleDuration;   // Puddle persistence (seconds)
+    bool impactGeyser;      // Upward water geyser eruption on impact
+    bool impactDecal;       // Wet splash ground decal
+} VFX_WaterDragonConfig;
+
+VFX_WaterDragonConfig  VFX_WaterDragon_DefaultConfig(void);
+VFX_WaterDragonConfig *VFX_WaterDragon_GetLiveConfig(void);
+int                    VFX_WaterDragon_GetParams(VFX_WaterDragonConfig *cfg, VFX_ParamDef *outParams, int maxParams);
+int                    VFX_ComposeWaterDragon(const VFX_WaterDragonConfig *cfg);
+int                    VFX_ComposeWaterDragonEx(Vector3 source, Vector3 target, const VFX_WaterDragonConfig *cfg);
+void                   VFX_KillWaterDragon(int handle);
+bool                   VFX_WaterDragon_IsAnyActive(void);
+void                   VC_WaterDragon_Update(float dt);
+void                   VC_WaterDragon_Draw3D(Camera3D cam);
+
 // Unified / Generalized API
 void VFX_ComposeFlame(Vector3 pos, VC_MaterialId matId, float scale, float intensity);
 void VFX_ComposeAmbientFire(Vector3 pos, VC_MaterialId matId, float scale, float intensity);

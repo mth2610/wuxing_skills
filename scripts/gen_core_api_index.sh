@@ -18,6 +18,8 @@ HEADERS=(
   core/liquid/liquid_impact.h
   core/liquid/liquid_surface.h
   core/liquid/liquid_orb.h
+  core/liquid/liquid_medium.h
+  core/liquid/liquid_ballistic.h
   core/gas/gas_system.h
   core/force_field.h
   core/motion/motion_path.h core/motion/motion_path_transport.h core/motion/motion_flow.h core/motion/physical_field.h
