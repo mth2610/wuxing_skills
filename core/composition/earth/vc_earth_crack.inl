@@ -44,7 +44,7 @@
 #define PI 3.14159265358979323846f
 #endif
 
-#define VC_EARTH_CRACK_MAX_INSTANCES 16
+#define VC_EARTH_CRACK_MAX_INSTANCES 32
 #define VC_EARTH_CRACK_MAX_SEGMENTS  96
 
 // ── 2D Fracture Segment ─────────────────────────────────────────────────────
@@ -54,12 +54,16 @@ typedef struct {
     Vector2 b;             // End point (XZ)
     Vector2 dir;           // Normalized unit vector a->b
     Vector2 normal;        // Perpendicular unit vector (-dir.y, dir.x)
+    Vector2 normalA;       // Joint-smoothed normal at start point A
+    Vector2 normalB;       // Joint-smoothed normal at end point B
     float   length;        // Metric length of segment
     float   invLengthSq;   // 1.0f / (length * length) for division-free projection
     float   startArcDist;  // Arc length from crack origin to segment start
-    float   halfWidth;     // Local fissure half-width
-    float   depth;         // Local fissure depth
-    float   maxRadius;     // Influence radius: halfWidth * 1.8f
+    float   halfWidthA;    // Local fissure half-width at start
+    float   halfWidthB;    // Local fissure half-width at end
+    float   depthA;        // Local fissure depth at start
+    float   depthB;        // Local fissure depth at end
+    float   maxRadius;     // Influence radius: fmaxf(halfWidthA, halfWidthB) * 1.35f
     float   minX, maxX;    // Tight 2D AABB
     float   minZ, maxZ;
 } EarthCrackSegment;
@@ -149,7 +153,7 @@ void VFX_EarthCrack_ApplyStyle(VFX_EarthCrackConfig *cfg, VFX_EarthCrackStyle st
             cfg->rockColor         = (Color){48, 42, 38, 255};   // Broken slate/rock shelf
             cfg->glowColor         = (Color){255, 165, 40, 255}; // Subterranean golden amber Qi
             cfg->leadFrontColor    = (Color){255, 245, 190, 255}; // Searing gold core seam
-            cfg->veinGlowIntensity = 2.6f;
+            cfg->veinGlowIntensity = 0.0f; // Pure physical fracture: vein glow default is 0.0
             cfg->pulseSpeed        = 3.4f;
             break;
 
@@ -321,6 +325,7 @@ VFX_EarthCrackConfig VFX_EarthCrack_DefaultConfig(void)
     VFX_EarthCrackConfig cfg;
     memset(&cfg, 0, sizeof(VFX_EarthCrackConfig));
     VFX_EarthCrack_ApplyPreset(&cfg, VFX_EARTH_CRACK_PRESET_RADIAL_BURST);
+    cfg.veinGlowIntensity = 0.0f;
     return cfg;
 }
 
@@ -434,7 +439,9 @@ int VFX_EarthCrack_GetParams(VFX_EarthCrackConfig *cfg, VFX_ParamDef *outParams,
 
 static inline void EarthCrack_PushSegment(VC_EarthCrackInstance *inst,
                                           Vector2 a, Vector2 b,
-                                          float accumDist, float widthTaper, float depthTaper,
+                                          float accumDist,
+                                          float widthTaperA, float widthTaperB,
+                                          float depthTaperA, float depthTaperB,
                                           const VFX_EarthCrackConfig *cfg)
 {
     if (inst->segmentCount >= VC_EARTH_CRACK_MAX_SEGMENTS) return;
@@ -451,12 +458,18 @@ static inline void EarthCrack_PushSegment(VC_EarthCrackInstance *inst,
         seg->invLengthSq = 0.0f;
     }
     seg->normal = (Vector2){-seg->dir.y, seg->dir.x};
+    seg->normalA = seg->normal;
+    seg->normalB = seg->normal;
     seg->startArcDist = accumDist;
-    seg->halfWidth = cfg->mainWidth * 0.5f * widthTaper;
-    if (seg->halfWidth < 0.002f) seg->halfWidth = 0.002f;
-    seg->depth = cfg->depth * depthTaper;
-    if (seg->depth < 0.004f) seg->depth = 0.004f;
-    seg->maxRadius = seg->halfWidth * 1.35f;
+    seg->halfWidthA = cfg->mainWidth * 0.5f * widthTaperA;
+    if (seg->halfWidthA < 0.002f) seg->halfWidthA = 0.002f;
+    seg->halfWidthB = cfg->mainWidth * 0.5f * widthTaperB;
+    if (seg->halfWidthB < 0.002f) seg->halfWidthB = 0.002f;
+    seg->depthA = cfg->depth * depthTaperA;
+    if (seg->depthA < 0.004f) seg->depthA = 0.004f;
+    seg->depthB = cfg->depth * depthTaperB;
+    if (seg->depthB < 0.004f) seg->depthB = 0.004f;
+    seg->maxRadius = fmaxf(seg->halfWidthA, seg->halfWidthB) * 1.35f;
 
     // Segment AABB
     float r = seg->maxRadius;
@@ -470,6 +483,23 @@ static inline void EarthCrack_PushSegment(VC_EarthCrackInstance *inst,
     if (seg->maxX > inst->maxX) inst->maxX = seg->maxX;
     if (seg->minZ < inst->minZ) inst->minZ = seg->minZ;
     if (seg->maxZ > inst->maxZ) inst->maxZ = seg->maxZ;
+}
+
+static inline void EarthCrack_SmoothNormals(VC_EarthCrackInstance *inst, int startIdx, int count)
+{
+    if (count <= 1) return;
+    for (int k = 0; k < count - 1; k++) {
+        EarthCrackSegment *s0 = &inst->segments[startIdx + k];
+        EarthCrackSegment *s1 = &inst->segments[startIdx + k + 1];
+        Vector2 sum = (Vector2){s0->normal.x + s1->normal.x, s0->normal.y + s1->normal.y};
+        float lenSq = sum.x * sum.x + sum.y * sum.y;
+        if (lenSq > 0.0001f) {
+            float inv = 1.0f / sqrtf(lenSq);
+            Vector2 avg = (Vector2){sum.x * inv, sum.y * inv};
+            s0->normalB = avg;
+            s1->normalA = avg;
+        }
+    }
 }
 
 static void EarthCrack_BakeSegments(VC_EarthCrackInstance *inst)
@@ -528,6 +558,7 @@ static void EarthCrack_BakeSegments(VC_EarthCrackInstance *inst)
             float branchHeading2 = currHeading;
             int branchSegIdx2 = 7 + ((i * 2 + seed) % 3);
 
+            int branchStartIdx = inst->segmentCount;
             for (int s = 0; s < segs && inst->segmentCount < VC_EARTH_CRACK_MAX_SEGMENTS; s++) {
                 // Natural Brownian fracture drift: organic shear deflection across rock facets
                 float noiseTurn = EarthCrack_Noise2(i * 47 + s, 104, seed) * 0.32f * cfg->jaggedness;
@@ -551,12 +582,16 @@ static void EarthCrack_BakeSegments(VC_EarthCrackInstance *inst)
                     p0.y + sinf(currHeading) * localSegLen
                 };
 
-                float u = (float)s / (float)(segs - 1);
-                // Sharp taper from impact epicenter to razor hairline tip
-                float widthTaper = powf(1.0f - u, 1.4f);
-                float depthTaper = powf(1.0f - u, 1.3f);
+                float u0 = (float)s / (float)segs;
+                float u1 = (float)(s + 1) / (float)segs;
+                // Sharp continuous taper from epicenter to razor hairline tip (zero joint step)
+                float widthTaperA = powf(1.0f - u0, 1.4f);
+                float widthTaperB = powf(1.0f - u1, 1.4f);
+                float depthTaperA = powf(1.0f - u0, 1.3f);
+                float depthTaperB = powf(1.0f - u1, 1.3f);
 
-                EarthCrack_PushSegment(inst, p0, p1, accumDist, widthTaper, depthTaper, cfg);
+                EarthCrack_PushSegment(inst, p0, p1, accumDist,
+                                       widthTaperA, widthTaperB, depthTaperA, depthTaperB, cfg);
 
                 Vector2 diff = (Vector2){p1.x - p0.x, p1.y - p0.y};
                 float dLen = sqrtf(diff.x * diff.x + diff.y * diff.y);
@@ -575,6 +610,7 @@ static void EarthCrack_BakeSegments(VC_EarthCrackInstance *inst)
                 p0 = p1;
                 accumDist += dLen;
             }
+            EarthCrack_SmoothNormals(inst, branchStartIdx, inst->segmentCount - branchStartIdx);
 
             // Geological Bifurcations (Splitting forward at acute 30-40 degree angles)
             if (cfg->subBranchDensity > 0 && inst->segmentCount < VC_EARTH_CRACK_MAX_SEGMENTS - 8) {
@@ -587,6 +623,7 @@ static void EarthCrack_BakeSegments(VC_EarthCrackInstance *inst)
                 float bAccum = branchArcDist1;
                 float currBHeading = bHeading1;
 
+                int subStartIdx1 = inst->segmentCount;
                 for (int bs = 0; bs < bSegs && inst->segmentCount < VC_EARTH_CRACK_MAX_SEGMENTS; bs++) {
                     float bTurn = EarthCrack_Noise2(i * 64 + bs, 106, seed) * 0.22f * cfg->jaggedness;
                     currBHeading += bTurn;
@@ -595,17 +632,22 @@ static void EarthCrack_BakeSegments(VC_EarthCrackInstance *inst)
                         bp0.y + sinf(currBHeading) * bLen
                     };
 
-                    float bu = (float)(bs + 1) / (float)bSegs;
-                    float bWidthTaper = powf(1.0f - bu, 1.4f) * 0.45f;
-                    float bDepthTaper = powf(1.0f - bu, 1.4f) * 0.45f;
+                    float bu0 = (float)bs / (float)bSegs;
+                    float bu1 = (float)(bs + 1) / (float)bSegs;
+                    float bWidthTaperA = powf(1.0f - bu0, 1.4f) * 0.45f;
+                    float bWidthTaperB = powf(1.0f - bu1, 1.4f) * 0.45f;
+                    float bDepthTaperA = powf(1.0f - bu0, 1.4f) * 0.45f;
+                    float bDepthTaperB = powf(1.0f - bu1, 1.4f) * 0.45f;
 
-                    EarthCrack_PushSegment(inst, bp0, bp1, bAccum, bWidthTaper, bDepthTaper, cfg);
+                    EarthCrack_PushSegment(inst, bp0, bp1, bAccum,
+                                           bWidthTaperA, bWidthTaperB, bDepthTaperA, bDepthTaperB, cfg);
 
                     Vector2 bDiff = (Vector2){bp1.x - bp0.x, bp1.y - bp0.y};
                     float bdLen = sqrtf(bDiff.x * bDiff.x + bDiff.y * bDiff.y);
                     bp0 = bp1;
                     bAccum += bdLen;
                 }
+                EarthCrack_SmoothNormals(inst, subStartIdx1, inst->segmentCount - subStartIdx1);
 
                 // Second sub-branch (on opposite side if density >= 2)
                 if (cfg->subBranchDensity >= 2 && inst->segmentCount < VC_EARTH_CRACK_MAX_SEGMENTS - 4) {
@@ -617,6 +659,7 @@ static void EarthCrack_BakeSegments(VC_EarthCrackInstance *inst)
                     float bAccum2 = branchArcDist2;
                     float currBHeading2 = bHeading2;
 
+                    int subStartIdx2 = inst->segmentCount;
                     for (int bs = 0; bs < bSegs2 && inst->segmentCount < VC_EARTH_CRACK_MAX_SEGMENTS; bs++) {
                         float bTurn = EarthCrack_Noise2(i * 64 + bs + 32, 108, seed) * 0.22f * cfg->jaggedness;
                         currBHeading2 += bTurn;
@@ -625,17 +668,22 @@ static void EarthCrack_BakeSegments(VC_EarthCrackInstance *inst)
                             bp2.y + sinf(currBHeading2) * bLen2
                         };
 
-                        float bu = (float)(bs + 1) / (float)bSegs2;
-                        float bWidthTaper = powf(1.0f - bu, 1.4f) * 0.35f;
-                        float bDepthTaper = powf(1.0f - bu, 1.4f) * 0.35f;
+                        float bu0 = (float)bs / (float)bSegs2;
+                        float bu1 = (float)(bs + 1) / (float)bSegs2;
+                        float bWidthTaperA = powf(1.0f - bu0, 1.4f) * 0.35f;
+                        float bWidthTaperB = powf(1.0f - bu1, 1.4f) * 0.35f;
+                        float bDepthTaperA = powf(1.0f - bu0, 1.4f) * 0.35f;
+                        float bDepthTaperB = powf(1.0f - bu1, 1.4f) * 0.35f;
 
-                        EarthCrack_PushSegment(inst, bp2, bp3, bAccum2, bWidthTaper, bDepthTaper, cfg);
+                        EarthCrack_PushSegment(inst, bp2, bp3, bAccum2,
+                                               bWidthTaperA, bWidthTaperB, bDepthTaperA, bDepthTaperB, cfg);
 
                         Vector2 bDiff2 = (Vector2){bp3.x - bp2.x, bp3.y - bp2.y};
                         float bdLen2 = sqrtf(bDiff2.x * bDiff2.x + bDiff2.y * bDiff2.y);
                         bp2 = bp3;
                         bAccum2 += bdLen2;
                     }
+                    EarthCrack_SmoothNormals(inst, subStartIdx2, inst->segmentCount - subStartIdx2);
                 }
             }
         }
@@ -730,14 +778,21 @@ static void EarthCrack_BakeSegments(VC_EarthCrackInstance *inst)
         inst->totalLength = accumTrunk;
 
         // Build trunk segments with needle-sharp tapers at both endpoints
+        int trunkStartIdx = inst->segmentCount;
         for (int s = 0; s < totalTrunkSegs && inst->segmentCount < VC_EARTH_CRACK_MAX_SEGMENTS; s++) {
-            float u = (float)s / (float)totalTrunkSegs;
-            float pathEnv = sinf(PI * Clamp(u, 0.0f, 1.0f));
-            float widthTaper = sqrtf(pathEnv) * (0.65f + 0.35f * (1.0f - 0.4f * u));
-            float depthTaper = sqrtf(pathEnv) * (0.65f + 0.35f * (1.0f - 0.4f * u));
+            float u0 = (float)s / (float)totalTrunkSegs;
+            float u1 = (float)(s + 1) / (float)totalTrunkSegs;
+            float pathEnv0 = sinf(PI * Clamp(u0, 0.0f, 1.0f));
+            float pathEnv1 = sinf(PI * Clamp(u1, 0.0f, 1.0f));
+            float widthTaperA = sqrtf(pathEnv0) * (0.65f + 0.35f * (1.0f - 0.4f * u0));
+            float widthTaperB = sqrtf(pathEnv1) * (0.65f + 0.35f * (1.0f - 0.4f * u1));
+            float depthTaperA = sqrtf(pathEnv0) * (0.65f + 0.35f * (1.0f - 0.4f * u0));
+            float depthTaperB = sqrtf(pathEnv1) * (0.65f + 0.35f * (1.0f - 0.4f * u1));
 
-            EarthCrack_PushSegment(inst, trunkPts[s], trunkPts[s + 1], trunkArcDist[s], widthTaper, depthTaper, cfg);
+            EarthCrack_PushSegment(inst, trunkPts[s], trunkPts[s + 1], trunkArcDist[s],
+                                   widthTaperA, widthTaperB, depthTaperA, depthTaperB, cfg);
         }
+        EarthCrack_SmoothNormals(inst, trunkStartIdx, inst->segmentCount - trunkStartIdx);
 
         // Secondary lateral tension branches (en-echelon Riedel shears at 32-44 degrees)
         int numSplits = cfg->subBranchDensity;
@@ -766,6 +821,7 @@ static void EarthCrack_BakeSegments(VC_EarthCrackInstance *inst)
             float bAccumDist = trunkArcDist[trunkIdx];
             Vector2 currBDir = branchDir;
 
+            int bStartIdx = inst->segmentCount;
             for (int bs = 0; bs < branchSegs && inst->segmentCount < VC_EARTH_CRACK_MAX_SEGMENTS; bs++) {
                 float bTurn = EarthCrack_Noise2(b * 16 + bs, 114, seed) * 0.18f * cfg->jaggedness;
                 currBDir = (Vector2){
@@ -778,15 +834,20 @@ static void EarthCrack_BakeSegments(VC_EarthCrackInstance *inst)
                     bp0.y + currBDir.y * branchSegLen
                 };
 
-                float bu = (float)(bs + 1) / (float)branchSegs;
-                float bWidthTaper = powf(1.0f - bu, 1.4f) * 0.40f;
-                float bDepthTaper = powf(1.0f - bu, 1.4f) * 0.40f;
+                float bu0 = (float)bs / (float)branchSegs;
+                float bu1 = (float)(bs + 1) / (float)branchSegs;
+                float bWidthTaperA = powf(1.0f - bu0, 1.4f) * 0.40f;
+                float bWidthTaperB = powf(1.0f - bu1, 1.4f) * 0.40f;
+                float bDepthTaperA = powf(1.0f - bu0, 1.4f) * 0.40f;
+                float bDepthTaperB = powf(1.0f - bu1, 1.4f) * 0.40f;
 
-                EarthCrack_PushSegment(inst, bp0, bp1, bAccumDist, bWidthTaper, bDepthTaper, cfg);
+                EarthCrack_PushSegment(inst, bp0, bp1, bAccumDist,
+                                       bWidthTaperA, bWidthTaperB, bDepthTaperA, bDepthTaperB, cfg);
 
                 bp0 = bp1;
                 bAccumDist += branchSegLen;
             }
+            EarthCrack_SmoothNormals(inst, bStartIdx, inst->segmentCount - bStartIdx);
         }
     }
 
@@ -852,8 +913,8 @@ static float EarthCrack_CalcDisplacement(const VC_EarthCrackInstance *inst, floa
         float tipDist = currentFront - arcAtPoint;
         float tipTaper = Clamp(tipDist / 0.35f, 0.0f, 1.0f);
 
-        float halfW = seg->halfWidth;
-        float depth = seg->depth * lifeScale * tipTaper;
+        float halfW = seg->halfWidthA + (seg->halfWidthB - seg->halfWidthA) * t;
+        float depth = (seg->depthA + (seg->depthB - seg->depthA) * t) * lifeScale * tipTaper;
 
         // Profile across fissure:
         // Inside crack (d < halfW): sharp steep cleft depression
@@ -1069,7 +1130,7 @@ void VC_EarthCrack_Update(float dt)
                         float tipX = seg->a.x + (seg->b.x - seg->a.x) * segT;
                         float tipZ = seg->a.y + (seg->b.y - seg->a.y) * segT;
                         float tipY = MapManager_GetGroundHeightAt(tipX, tipZ);
-                        Wind_SpawnRadialBlast((Vector3){tipX, tipY, tipZ}, seg->halfWidth * 3.8f + 0.35f, 6.0f, 0.25f);
+                        Wind_SpawnRadialBlast((Vector3){tipX, tipY, tipZ}, seg->halfWidthA * 3.8f + 0.35f, 6.0f, 0.25f);
                     }
                 }
             }
@@ -1083,7 +1144,7 @@ void VC_EarthCrack_Update(float dt)
                     float midX = (seg->a.x + seg->b.x) * 0.5f;
                     float midZ = (seg->a.y + seg->b.y) * 0.5f;
                     float midY = MapManager_GetGroundHeightAt(midX, midZ);
-                    Wind_SpawnRadialBlast((Vector3){midX, midY, midZ}, seg->halfWidth * 3.2f + 0.30f, 4.2f, 0.22f);
+                    Wind_SpawnRadialBlast((Vector3){midX, midY, midZ}, seg->halfWidthA * 3.2f + 0.30f, 4.2f, 0.22f);
                 }
             }
         }
@@ -1148,33 +1209,42 @@ void VC_EarthCrack_Draw3D(Camera3D cam)
                 seg->a.y + (seg->b.y - seg->a.y) * segP
             };
 
-            float hwA = seg->halfWidth;
+            float hwA = seg->halfWidthA;
             float tipTaper = (segP < 1.0f) ? segP : 1.0f;
-            float hwB = seg->halfWidth * tipTaper;
-            Vector2 norm = seg->normal;
+            float hwB = (seg->halfWidthA + (seg->halfWidthB - seg->halfWidthA) * segP) * tipTaper;
+            Vector2 normA = seg->normalA;
+            Vector2 normB = seg->normalB;
+            if (segP < 1.0f) {
+                Vector2 nInterp = (Vector2){
+                    seg->normalA.x + (seg->normalB.x - seg->normalA.x) * segP,
+                    seg->normalA.y + (seg->normalB.y - seg->normalA.y) * segP
+                };
+                float nLen = sqrtf(nInterp.x * nInterp.x + nInterp.y * nInterp.y);
+                if (nLen > 0.001f) normB = (Vector2){nInterp.x / nLen, nInterp.y / nLen};
+            }
 
             float tipAlphaA = (hwA < 0.024f) ? Clamp(hwA / 0.024f, 0.0f, 1.0f) : 1.0f;
             float tipAlphaB = (hwB < 0.024f) ? Clamp(hwB / 0.024f, 0.0f, 1.0f) : 1.0f;
             if (segP < 1.0f) tipAlphaB *= segP;
 
-            float depthA = seg->depth * lifeAlpha * tipAlphaA;
-            float depthB = seg->depth * lifeAlpha * tipAlphaB;
+            float depthA = seg->depthA * lifeAlpha * tipAlphaA;
+            float depthB = (seg->depthA + (seg->depthB - seg->depthA) * segP) * lifeAlpha * tipAlphaB;
             float heaveA = depthA * 0.18f;
             float heaveB = depthB * 0.18f;
 
             // Lateral cross-section coordinates for A:
-            float a0_x = pa.x - norm.x * (hwA * 1.35f);
-            float a0_z = pa.y - norm.y * (hwA * 1.35f);
-            float a1_x = pa.x - norm.x * (hwA * 0.70f);
-            float a1_z = pa.y - norm.y * (hwA * 0.70f);
-            float a2_x = pa.x - norm.x * (hwA * 0.25f);
-            float a2_z = pa.y - norm.y * (hwA * 0.25f);
-            float a3_x = pa.x + norm.x * (hwA * 0.25f);
-            float a3_z = pa.y + norm.y * (hwA * 0.25f);
-            float a4_x = pa.x + norm.x * (hwA * 0.70f);
-            float a4_z = pa.y + norm.y * (hwA * 0.70f);
-            float a5_x = pa.x + norm.x * (hwA * 1.35f);
-            float a5_z = pa.y + norm.y * (hwA * 1.35f);
+            float a0_x = pa.x - normA.x * (hwA * 1.35f);
+            float a0_z = pa.y - normA.y * (hwA * 1.35f);
+            float a1_x = pa.x - normA.x * (hwA * 0.70f);
+            float a1_z = pa.y - normA.y * (hwA * 0.70f);
+            float a2_x = pa.x - normA.x * (hwA * 0.25f);
+            float a2_z = pa.y - normA.y * (hwA * 0.25f);
+            float a3_x = pa.x + normA.x * (hwA * 0.25f);
+            float a3_z = pa.y + normA.y * (hwA * 0.25f);
+            float a4_x = pa.x + normA.x * (hwA * 0.70f);
+            float a4_z = pa.y + normA.y * (hwA * 0.70f);
+            float a5_x = pa.x + normA.x * (hwA * 1.35f);
+            float a5_z = pa.y + normA.y * (hwA * 1.35f);
 
             // Slope-conforming height sampling across local terrain:
             float ya0 = MapManager_GetGroundHeightAt(a0_x, a0_z) - EarthCrack_CalcDisplacement(inst, a0_x, a0_z);
@@ -1184,18 +1254,18 @@ void VC_EarthCrack_Draw3D(Camera3D cam)
             float yaMid = (ya1 + ya4) * 0.5f;
 
             // Lateral cross-section coordinates for B:
-            float b0_x = pb.x - norm.x * (hwB * 1.35f);
-            float b0_z = pb.y - norm.y * (hwB * 1.35f);
-            float b1_x = pb.x - norm.x * (hwB * 0.70f);
-            float b1_z = pb.y - norm.y * (hwB * 0.70f);
-            float b2_x = pb.x - norm.x * (hwB * 0.25f);
-            float b2_z = pb.y - norm.y * (hwB * 0.25f);
-            float b3_x = pb.x + norm.x * (hwB * 0.25f);
-            float b3_z = pb.y + norm.y * (hwB * 0.25f);
-            float b4_x = pb.x + norm.x * (hwB * 0.70f);
-            float b4_z = pb.y + norm.y * (hwB * 0.70f);
-            float b5_x = pb.x + norm.x * (hwB * 1.35f);
-            float b5_z = pb.y + norm.y * (hwB * 1.35f);
+            float b0_x = pb.x - normB.x * (hwB * 1.35f);
+            float b0_z = pb.y - normB.y * (hwB * 1.35f);
+            float b1_x = pb.x - normB.x * (hwB * 0.70f);
+            float b1_z = pb.y - normB.y * (hwB * 0.70f);
+            float b2_x = pb.x - normB.x * (hwB * 0.25f);
+            float b2_z = pb.y - normB.y * (hwB * 0.25f);
+            float b3_x = pb.x + normB.x * (hwB * 0.25f);
+            float b3_z = pb.y + normB.y * (hwB * 0.25f);
+            float b4_x = pb.x + normB.x * (hwB * 0.70f);
+            float b4_z = pb.y + normB.y * (hwB * 0.70f);
+            float b5_x = pb.x + normB.x * (hwB * 1.35f);
+            float b5_z = pb.y + normB.y * (hwB * 1.35f);
 
             float yb0 = MapManager_GetGroundHeightAt(b0_x, b0_z) - EarthCrack_CalcDisplacement(inst, b0_x, b0_z);
             float yb1 = MapManager_GetGroundHeightAt(b1_x, b1_z) - EarthCrack_CalcDisplacement(inst, b1_x, b1_z);
@@ -1292,14 +1362,28 @@ void VC_EarthCrack_Draw3D(Camera3D cam)
                     };
 
                     float tipTaper = (segP < 1.0f) ? segP : 1.0f;
+                    float hwA = seg->halfWidthA;
+                    float hwB = (seg->halfWidthA + (seg->halfWidthB - seg->halfWidthA) * segP) * tipTaper;
+                    Vector2 normA = seg->normalA;
+                    Vector2 normB = seg->normalB;
+                    if (segP < 1.0f) {
+                        Vector2 nInterp = (Vector2){
+                            seg->normalA.x + (seg->normalB.x - seg->normalA.x) * segP,
+                            seg->normalA.y + (seg->normalB.y - seg->normalA.y) * segP
+                        };
+                        float nLen = sqrtf(nInterp.x * nInterp.x + nInterp.y * nInterp.y);
+                        if (nLen > 0.001f) normB = (Vector2){nInterp.x / nLen, nInterp.y / nLen};
+                    }
+
+                    float tipAlphaA = (hwA < 0.024f) ? Clamp(hwA / 0.024f, 0.0f, 1.0f) : 1.0f;
+                    float tipAlphaB = (hwB < 0.024f) ? Clamp(hwB / 0.024f, 0.0f, 1.0f) : 1.0f;
+                    if (segP < 1.0f) tipAlphaB *= segP;
 
                     // Narrow luminous vein nestled deep inside the sunken chasm floor (25% of halfWidth)
-                    float gWidthA = seg->halfWidth * 0.25f;
-                    float gWidthB = seg->halfWidth * 0.25f * tipTaper;
+                    float gWidthA = hwA * 0.25f;
+                    float gWidthB = hwB * 0.25f;
                     if (gWidthA < 0.0020f) gWidthA = 0.0020f;
                     if (gWidthB < 0.0020f) gWidthB = 0.0020f;
-
-                    Vector2 norm = seg->normal;
 
                     // Epicenter attenuation: prevents multi-branch additive blowout at center
                     float centerFadeA = 1.0f;
@@ -1311,10 +1395,6 @@ void VC_EarthCrack_Draw3D(Camera3D cam)
                     if (endDist < 0.40f) {
                         centerFadeB = 0.25f + 0.75f * (endDist / 0.40f);
                     }
-
-                    float tipAlphaA = (seg->halfWidth < 0.024f) ? Clamp(seg->halfWidth / 0.024f, 0.0f, 1.0f) : 1.0f;
-                    float tipAlphaB = (seg->halfWidth * tipTaper < 0.024f) ? Clamp(seg->halfWidth * tipTaper / 0.024f, 0.0f, 1.0f) : 1.0f;
-                    if (segP < 1.0f) tipAlphaB *= segP;
 
                     unsigned char vA_start = (unsigned char)Clamp(baseVeinAlpha * centerFadeA * tipAlphaA, 0.0f, 255.0f);
                     unsigned char vA_end   = (unsigned char)Clamp(baseVeinAlpha * centerFadeB * tipAlphaB, 0.0f, 255.0f);
@@ -1331,10 +1411,10 @@ void VC_EarthCrack_Draw3D(Camera3D cam)
                     float floorYa = (rawYa - dispA) + 0.0035f;
                     float floorYb = (rawYb - dispB) + 0.0035f;
 
-                    Vector3 ga0 = { pa.x - norm.x * gWidthA, floorYa, pa.y - norm.y * gWidthA };
-                    Vector3 ga1 = { pa.x + norm.x * gWidthA, floorYa, pa.y + norm.y * gWidthA };
-                    Vector3 gb1 = { pb.x + norm.x * gWidthB, floorYb, pb.y + norm.y * gWidthB };
-                    Vector3 gb0 = { pb.x - norm.x * gWidthB, floorYb, pb.y - norm.y * gWidthB };
+                    Vector3 ga0 = { pa.x - normA.x * gWidthA, floorYa, pa.y - normA.y * gWidthA };
+                    Vector3 ga1 = { pa.x + normA.x * gWidthA, floorYa, pa.y + normA.y * gWidthA };
+                    Vector3 gb1 = { pb.x + normB.x * gWidthB, floorYb, pb.y + normB.y * gWidthB };
+                    Vector3 gb0 = { pb.x - normB.x * gWidthB, floorYb, pb.y - normB.y * gWidthB };
 
                     rlColor4ub(colGlow.r, colGlow.g, colGlow.b, glowAlphaA); rlVertex3f(ga0.x, ga0.y, ga0.z);
                     rlColor4ub(colGlow.r, colGlow.g, colGlow.b, glowAlphaA); rlVertex3f(ga1.x, ga1.y, ga1.z);
@@ -1347,10 +1427,10 @@ void VC_EarthCrack_Draw3D(Camera3D cam)
                     float coreYa = floorYa + 0.0012f;
                     float coreYb = floorYb + 0.0012f;
 
-                    Vector3 ca0 = { pa.x - norm.x * cWidthA, coreYa, pa.y - norm.y * cWidthA };
-                    Vector3 ca1 = { pa.x + norm.x * cWidthA, coreYa, pa.y + norm.y * cWidthA };
-                    Vector3 cb1 = { pb.x + norm.x * cWidthB, coreYb, pb.y + norm.y * cWidthB };
-                    Vector3 cb0 = { pb.x - norm.x * cWidthB, coreYb, pb.y - norm.y * cWidthB };
+                    Vector3 ca0 = { pa.x - normA.x * cWidthA, coreYa, pa.y - normA.y * cWidthA };
+                    Vector3 ca1 = { pa.x + normA.x * cWidthA, coreYa, pa.y + normA.y * cWidthA };
+                    Vector3 cb1 = { pb.x + normB.x * cWidthB, coreYb, pb.y + normB.y * cWidthB };
+                    Vector3 cb0 = { pb.x - normB.x * cWidthB, coreYb, pb.y - normB.y * cWidthB };
 
                     rlColor4ub(cfg->leadFrontColor.r, cfg->leadFrontColor.g, cfg->leadFrontColor.b, vA_start); rlVertex3f(ca0.x, ca0.y, ca0.z);
                     rlColor4ub(cfg->leadFrontColor.r, cfg->leadFrontColor.g, cfg->leadFrontColor.b, vA_start); rlVertex3f(ca1.x, ca1.y, ca1.z);

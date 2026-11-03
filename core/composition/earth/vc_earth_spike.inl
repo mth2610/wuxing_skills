@@ -27,7 +27,6 @@
 #include "core/composition/visual_composer.h"
 #include "core/presets/vfx_presets.h"
 #include "post_process/camera_fx.h"
-#include "core/decals/decal_system.h"
 #include "core/wind/wind_system.h"
 #include "core/material/material_system.h"
 #include "environment/environment_system.h"
@@ -513,7 +512,7 @@ void VFX_EarthSpike_ApplyPreset(VFX_EarthSpikeConfig *cfg, VFX_EarthSpikePreset 
     cfg->dustScale = 1.0f;
     cfg->emitDebris = true;
     cfg->debrisChips = 5;
-    cfg->spawnDecal = true;
+    cfg->spawnGroundCrack = true;
     cfg->groundWaveBurst = true;
     cfg->screenShake = true;
     cfg->traumaAmount = 0.12f;
@@ -752,9 +751,25 @@ void VC_EarthSpike_Update(float dt)
             if (!sub->eruptTriggered && t >= 0.0f) {
                 sub->eruptTriggered = true;
 
-                // Ground Crack Decal under the base
-                if (cfg->spawnDecal) {
-                    VFX_ComposeDecalVariant(sub->groundPos, VC_MAT_EARTH, sub->baseRadius * 2.2f, 0.45f, 3.5f, VFX_DECAL_VARIANT_IMPACT);
+                // Physical Earth Crack under the base
+                if (cfg->spawnGroundCrack) {
+                    VFX_EarthCrackConfig crackCfg = VFX_EarthCrack_DefaultConfig();
+                    crackCfg.mode = VFX_EARTH_CRACK_MODE_RADIAL_POINT;
+                    crackCfg.source = sub->groundPos;
+                    crackCfg.length = sub->baseRadius * 2.5f + 0.35f;
+                    crackCfg.mainWidth = sub->baseRadius * 0.20f;
+                    if (crackCfg.mainWidth < 0.08f) crackCfg.mainWidth = 0.08f;
+                    crackCfg.depth = 0.08f;
+                    crackCfg.radialBranchCount = (sub->baseRadius > 0.45f) ? 5 : 4;
+                    crackCfg.subBranchDensity = 2;
+                    crackCfg.spreadDuration = fminf(cfg->eruptDuration * 0.85f, 0.18f);
+                    crackCfg.holdDuration = cfg->holdDuration;
+                    crackCfg.fadeDuration = fminf(cfg->retractDuration, 0.6f);
+                    crackCfg.veinGlowIntensity = 0.0f; // Pure physical fracture
+                    crackCfg.seed = (int)(EarthSpike_Hash((unsigned int)(sub->groundPos.x * 100.0f) ^
+                                                          (unsigned int)(sub->groundPos.z * 100.0f) ^
+                                                          (unsigned int)(s * 7919)));
+                    VFX_ComposeEarthCrack(&crackCfg);
                 }
 
                 // Expanding Dust Ring & Clouds
@@ -1000,7 +1015,7 @@ int VFX_EarthSpike_GetParams(VFX_EarthSpikeConfig *cfg, VFX_ParamDef *out, int m
     SPIKE_PARAM_FLOAT("Dust Scale", "Particulates", cfg->dustScale, 0.2f, 3.0f, 0.1f);
     SPIKE_PARAM_BOOL("Emit Debris", "Particulates", cfg->emitDebris);
     SPIKE_PARAM_INT("Debris Chips", "Particulates", cfg->debrisChips, 0, 12);
-    SPIKE_PARAM_BOOL("Ground Decal", "Particulates", cfg->spawnDecal);
+    SPIKE_PARAM_BOOL("Ground Crack", "Particulates", cfg->spawnGroundCrack);
     SPIKE_PARAM_BOOL("Wave Burst", "Particulates", cfg->groundWaveBurst);
     SPIKE_PARAM_BOOL("Screen Shake", "Particulates", cfg->screenShake);
     SPIKE_PARAM_FLOAT("Trauma", "Particulates", cfg->traumaAmount, 0.0f, 0.35f, 0.02f);
