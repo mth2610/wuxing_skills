@@ -217,6 +217,13 @@ VFX_GuidedLiquidConfig *VFX_GuidedLiquid_GetLiveConfig(void)
 {
     if (!s_guidedLiquidInit) {
         s_liveGuidedLiquidConfig = VFX_GuidedLiquid_DefaultConfig();
+        const char *presetEnv = getenv("WUXING_LIQUID_PRESET");
+        if (presetEnv) {
+            int p = atoi(presetEnv);
+            if (p >= 0 && p < VFX_LIQUID_PRESET_COUNT) {
+                VFX_GuidedLiquid_ApplyPreset(&s_liveGuidedLiquidConfig, (VFX_GuidedLiquidPreset)p);
+            }
+        }
         const char *backendEnv = getenv("WUXING_LIQUID_BACKEND");
         if (backendEnv) {
             int b = atoi(backendEnv);
@@ -842,6 +849,17 @@ int VFX_ComposeGuidedLiquidEx(Vector3 source, Vector3 target, const VFX_GuidedLi
 {
     if (!s_guidedLiquidInit) {
         VFX_GuidedLiquid_GetLiveConfig();
+    }
+
+    const VFX_GuidedLiquidConfig *activeCfg = cfg ? cfg : VFX_GuidedLiquid_GetLiveConfig();
+    if (activeCfg->preset == VFX_LIQUID_PRESET_VORTEX_DRAGON) {
+        VFX_WaterDragonConfig dragonCfg = VFX_WaterDragon_DefaultConfig();
+        dragonCfg.travelSpeed = activeCfg->travelSpeed;
+        dragonCfg.arcHeight = activeCfg->arcHeight;
+        dragonCfg.spiralSpeed = activeCfg->swirlSpeed;
+        dragonCfg.puddleRadius = activeCfg->puddleRadius;
+        dragonCfg.puddleDuration = activeCfg->puddleDuration;
+        return VFX_ComposeWaterDragonEx(source, target, &dragonCfg);
     }
 
     // Find available instance slot
