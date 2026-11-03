@@ -354,6 +354,13 @@ void main() {
     vec3 inScatter = waterScatterColor * scatterAmount * (0.34 + illuminationEnergy * 0.42)
                    * grazingWeight * suspendedScatter;
     inScatter += materialBody * illumination * (0.22 + 0.78 * ndl) * mediumOpacity * 0.85;
+
+    // Backlit Subsurface Scattering (SSS) for wave crests and thin droplet silhouettes
+    float sssFactor = pow(clamp(1.0 - ndv, 0.0, 1.0), 2.2) * exp(-waterColumnDepth * 0.55);
+    vec3 sssColor = materialGlow * (sssFactor * 0.65 + max(0.0, dot(worldNormal, vec3(0.0, 1.0, 0.0))) * 0.15)
+                  * (1.0 - mediumOpacity * 0.65);
+    if (!conductor) inScatter += sssColor;
+
     if (liquidClass == LIQUID_CLASS_EMISSIVE) inScatter *= 0.35;
 
     vec3 dielectricF0 = vec3(IorToF0(materialIor));
@@ -432,6 +439,13 @@ void main() {
     vec3 specular = u_sunColor * (WaterSpecularBRDF(N, V, L, roughness, specularF0)
                                   + vec3((broadSunLobe + sharpGlint) * blinnGate)) * ndl;
     specular *= mix(vec3(1.0), materialGlow, 0.08);
+
+    // Secondary Qi rim specular highlight
+    vec3 qiLightView = normalize(vec3(-L.x, 0.65, -L.z));
+    vec3 qiHalf = normalize(V + qiLightView);
+    float qiNdh = max(dot(N, qiHalf), 0.0);
+    float qiGlint = pow(qiNdh, 64.0 * lobeScale) * 0.38 * smoothstep(0.016, 0.085, kernelThickness);
+    specular += materialGlow * qiGlint * (0.35 + 0.65 * illuminationEnergy) * blinnGate;
 
     for (int i = 0; i < LIQUID_POINT_LIGHTS; i++) {
         if (i >= u_pointLightCount) break;

@@ -6,6 +6,7 @@ in vec2 v_texCoord;
 out vec4 finalColor;
 
 #define MAX_BLOBS 64
+#define MAX_ACTIVE 32
 
 uniform vec4 u_blobs[MAX_BLOBS]; // xyz: world center, w: radius in meters
 uniform int u_blobCount;
@@ -36,56 +37,6 @@ uniform vec3 u_sunColor;
 uniform vec3 u_skyAmbient;
 uniform vec3 u_groundAmbient;
 uniform float u_time;
-
-/* Bitmask of blobs actually intersected by the current pixel's ray.
- * Any blob missed by the ray has distance >= r at EVERY point along the ray
- * and contributes strictly 0 to the Wyvill field and normal on the ray. */
-uint g_activeMaskLo = 0u;
-uint g_activeMaskHi = 0u;
-int g_firstActiveBlob = 0;
-int g_lastActiveBlob = -1;
-
-bool IsBlobActiveOnRay(int i) {
-    if (i < 32) return ((g_activeMaskLo >> uint(i)) & 1u) != 0u;
-    return ((g_activeMaskHi >> uint(i - 32)) & 1u) != 0u;
-}
-
-// Wyvill potential field: (1 - d^2)^3 for d < 1, restricted to ray-active blobs
-float EvaluateField(vec3 p) {
-    float phi = 0.0;
-    for (int i = g_firstActiveBlob; i <= g_lastActiveBlob; i++) {
-        if (!IsBlobActiveOnRay(i)) continue;
-        vec4 b = u_blobs[i];
-        vec3 d = p - b.xyz;
-        if (abs(d.x) >= b.w || abs(d.y) >= b.w || abs(d.z) >= b.w) continue;
-        float r2 = b.w * b.w;
-        float distSq = dot(d, d);
-        if (distSq < r2) {
-            float w = 1.0 - distSq / r2;
-            phi += w * w * w;
-        }
-    }
-    return phi;
-}
-
-// Exact analytical gradient: grad = sum( -6 * (1 - d^2)^2 * (p - c) / r^2 )
-vec3 EvaluateNormal(vec3 p) {
-    vec3 grad = vec3(0.0);
-    for (int i = g_firstActiveBlob; i <= g_lastActiveBlob; i++) {
-        if (!IsBlobActiveOnRay(i)) continue;
-        vec4 b = u_blobs[i];
-        vec3 d = p - b.xyz;
-        if (abs(d.x) >= b.w || abs(d.y) >= b.w || abs(d.z) >= b.w) continue;
-        float invR2 = 1.0 / (b.w * b.w);
-        float d2 = dot(d, d) * invR2;
-        if (d2 < 1.0) {
-            float w = 1.0 - d2;
-            grad += (-6.0 * w * w * invR2) * d;
-        }
-    }
-    float gLen = length(grad);
-    return (gLen > 1e-5) ? (-grad / gLen) : vec3(0.0, 1.0, 0.0);
-}
 
 // Lightweight 3D value noise for organic lava crust plates and poison shimmer
 float Hash31(vec3 p) {
@@ -157,84 +108,129 @@ void main() {
         discard;
     }
 
-    /* Fast ray-sphere interval tightening + per-ray active blob bitmask construction */
+    /* 1D Ray-Sphere Interval Pruning & Parameter Reduction:
+     * Along p(t) = ro + t*rd, ||p(t) - c_i||^2 = h_i^2 + (t - tc_i)^2.
+     * Thus q_i(t) = 1 - r_i^2 / R_i^2 = peak_i - (t - tc_i)^2 * invR2_i. */
+    vec3 activeBlob[MAX_ACTIVE]; // x = tc_i, y = peak_i, z = invR2_i
+    int activeIdx[MAX_ACTIVE];
+    int activeCount = 0;
+
     float tightEnter = tEnd;
     float tightExit = tStart;
-    g_activeMaskLo = 0u;
-    g_activeMaskHi = 0u;
-    g_firstActiveBlob = MAX_BLOBS;
-    g_lastActiveBlob = -1;
+    float maxPossibleField = 0.0;
 
     int count = min(u_blobCount, MAX_BLOBS);
     for (int i = 0; i < MAX_BLOBS; i++) {
         if (i >= count) break;
         vec4 b = u_blobs[i];
         vec3 toBlob = b.xyz - rayOrigin;
-        float proj = dot(toBlob, rayDir);
+        float proj = dot(toBlob, rayDir); // tc
         if (proj + b.w < tStart || proj - b.w > tEnd) continue;
-        float distSq = dot(toBlob, toBlob) - proj * proj;
+
+        float distSq = dot(toBlob, toBlob) - proj * proj; // h^2
         float r2 = b.w * b.w;
         if (distSq < r2) {
             float halfChord = sqrt(max(r2 - distSq, 0.0));
-            tightEnter = min(tightEnter, max(tStart, proj - halfChord));
-            tightExit  = max(tightExit,  min(tEnd,   proj + halfChord));
-            if (i < 32) g_activeMaskLo |= (1u << uint(i));
-            else        g_activeMaskHi |= (1u << uint(i - 32));
-            g_firstActiveBlob = min(g_firstActiveBlob, i);
-            g_lastActiveBlob = max(g_lastActiveBlob, i);
+            float tIn = max(tStart, proj - halfChord);
+            float tOut = min(tEnd, proj + halfChord);
+            if (tIn < tOut) {
+                tightEnter = min(tightEnter, tIn);
+                tightExit  = max(tightExit,  tOut);
+                float invR2 = 1.0 / r2;
+                float peak = (r2 - distSq) * invR2;
+                maxPossibleField += peak * peak * peak;
+
+                if (activeCount < MAX_ACTIVE) {
+                    activeBlob[activeCount] = vec3(proj, peak, invR2);
+                    activeIdx[activeCount] = i;
+                    activeCount++;
+                }
+            }
         }
     }
 
-    if (g_lastActiveBlob < g_firstActiveBlob || tightEnter >= tightExit) {
+    /* Peak-Sum Upper Bound Culling: if the sum of maximum possible potentials
+     * along this ray is less than threshold, the ray cannot intersect the isosurface. */
+    if (activeCount == 0 || tightEnter >= tightExit || maxPossibleField < u_threshold) {
         discard;
     }
 
     tStart = tightEnter;
     tEnd = tightExit;
 
-    int numSteps = clamp(u_stepCount, 8, 36);
-    float stepSize = max(tEnd - tStart, 1e-5) / float(numSteps);
-    float t = tStart;
-    float tPrev = t;
-    float phiPrev = EvaluateField(rayOrigin + rayDir * t);
+    float tHit = tStart;
     bool hit = false;
-    float tHit = t;
 
-    if (phiPrev >= u_threshold) {
-        hit = true;
-        tHit = tStart;
-    } else {
-        for (int s = 0; s < 36; s++) {
-            if (s >= numSteps) break;
-            t += stepSize;
-            if (t > tEnd) t = tEnd;
-            float phi = EvaluateField(rayOrigin + rayDir * t);
-            if (phi >= u_threshold) {
-                /* Initial secant guess + 4 binary refinement steps for sub-mm accuracy */
-                float frac = clamp((u_threshold - phiPrev) / max(phi - phiPrev, 1e-5), 0.1, 0.9);
-                float tA = tPrev;
-                float tB = t;
-                float tMid = mix(tA, tB, frac);
-                for (int b = 0; b < 4; b++) {
-                    if (EvaluateField(rayOrigin + rayDir * tMid) >= u_threshold) {
-                        tB = tMid;
-                    } else {
-                        tA = tMid;
-                    }
-                    tMid = (tA + tB) * 0.5;
-                }
-                tHit = tMid;
+    // Fast O(1) Exact Closed-Form Algebraic Root when ray intersects a single Metaball
+    if (activeCount == 1) {
+        vec3 b = activeBlob[0];
+        float cbrtIso = pow(u_threshold, 0.3333333);
+        if (b.y >= cbrtIso) {
+            float dtHit = sqrt(max(0.0, (b.y - cbrtIso) / b.z));
+            tHit = b.x - dtHit;
+            if (tHit >= tStart - 0.005 && tHit <= tEnd + 0.005) {
                 hit = true;
-                break;
             }
-            if (t >= tEnd) break;
-            tPrev = t;
-            phiPrev = phi;
         }
-    }
+        if (!hit) discard;
+    } else {
+        // Fast 1D Polynomial Marching over only the active intersecting blobs
+        int numSteps = clamp(u_stepCount, 10, 36);
+        float stepSize = (tEnd - tStart) / float(numSteps);
+        float t = tStart;
+        float tPrev = t;
 
-    if (!hit) {
-        discard;
+        float phiPrev = 0.0;
+        for (int k = 0; k < MAX_ACTIVE; k++) {
+            if (k >= activeCount) break;
+            vec3 ab = activeBlob[k];
+            float dtc = t - ab.x;
+            float q = ab.y - dtc * dtc * ab.z;
+            if (q > 0.0) phiPrev += q * q * q;
+        }
+
+        if (phiPrev >= u_threshold) {
+            hit = true;
+            tHit = tStart;
+        } else {
+            for (int s = 0; s < 36; s++) {
+                if (s >= numSteps) break;
+                t += stepSize;
+                if (t > tEnd) t = tEnd;
+                float phi = 0.0;
+                for (int k = 0; k < MAX_ACTIVE; k++) {
+                    if (k >= activeCount) break;
+                    vec3 ab = activeBlob[k];
+                    float dtc = t - ab.x;
+                    float q = ab.y - dtc * dtc * ab.z;
+                    if (q > 0.0) phi += q * q * q;
+                }
+                if (phi >= u_threshold) {
+                    /* 4-step 1D bisection refinement */
+                    float tA = tPrev;
+                    float tB = t;
+                    for (int b = 0; b < 4; b++) {
+                        float tMid = (tA + tB) * 0.5;
+                        float fMid = 0.0;
+                        for (int k = 0; k < MAX_ACTIVE; k++) {
+                            if (k >= activeCount) break;
+                            vec3 ab = activeBlob[k];
+                            float dtc = tMid - ab.x;
+                            float q = ab.y - dtc * dtc * ab.z;
+                            if (q > 0.0) fMid += q * q * q;
+                        }
+                        if (fMid >= u_threshold) tB = tMid;
+                        else tA = tMid;
+                    }
+                    tHit = (tA + tB) * 0.5;
+                    hit = true;
+                    break;
+                }
+                if (t >= tEnd) break;
+                tPrev = t;
+            }
+        }
+        if (!hit) discard;
     }
 
     vec3 hitPos = rayOrigin + rayDir * tHit;
@@ -246,35 +242,36 @@ void main() {
         intersectionFade = smoothstep(-0.005, 0.018, depthDiff);
     }
 
+    // Exact analytical gradient evaluated ONLY on active blobs + simultaneous in-flight thickness sample
+    vec3 grad = vec3(0.0);
+    float interiorField = 0.0;
+    float tSample = tHit + 0.35;
+    for (int k = 0; k < MAX_ACTIVE; k++) {
+        if (k >= activeCount) break;
+        vec3 ab = activeBlob[k];
+        float dtc = tHit - ab.x;
+        float q = ab.y - dtc * dtc * ab.z;
+        if (q > 0.0) {
+            vec3 center = u_blobs[activeIdx[k]].xyz;
+            grad += (-6.0 * q * q * ab.z) * (hitPos - center);
+        }
+        float dtc2 = tSample - ab.x;
+        float q2 = ab.y - dtc2 * dtc2 * ab.z;
+        if (q2 > 0.0) interiorField += q2 * q2 * q2;
+    }
+
+    float gradMag = length(grad);
+    vec3 normal = (gradMag > 1e-5) ? (-grad / gradMag) : vec3(0.0, 1.0, 0.0);
+
     float thickness;
     if (u_liquidClass == 2 || u_opacityPerMeter > 36.0) {
         thickness = max(min((tEnd - tHit) * 0.25, 0.08), 0.02);
     } else {
-        float tThickSearch = tHit;
-        float tBackHit = tEnd;
-        float thickStep = (tEnd - tHit) / 5.0;
-        for (int k = 0; k < 5; k++) {
-            tThickSearch += thickStep;
-            if (EvaluateField(rayOrigin + rayDir * tThickSearch) < u_threshold) {
-                float tA = tThickSearch - thickStep;
-                float tB = tThickSearch;
-                for (int b = 0; b < 2; b++) {
-                    float tMid = (tA + tB) * 0.5;
-                    if (EvaluateField(rayOrigin + rayDir * tMid) >= u_threshold) {
-                        tA = tMid;
-                    } else {
-                        tB = tMid;
-                    }
-                }
-                tBackHit = tB;
-                break;
-            }
-            tBackHit = tThickSearch;
-        }
-        thickness = max(tBackHit - tHit, 0.02);
+        thickness = clamp((tEnd - tHit) * 0.50 + interiorField * 0.80, 0.02, 3.0);
     }
 
-    vec3 normal = EvaluateNormal(hitPos);
+    // Tendril bridge factor: low gradient magnitude on isosurface marks a stretched fluid neck
+    float tendrilBridge = clamp(1.0 - gradMag * 0.42, 0.0, 1.0);
     float mediumOpacity = 1.0 - exp(-u_opacityPerMeter * 0.20);
 
     vec3 waveNormal = normal;
@@ -318,9 +315,9 @@ void main() {
 
     vec3 sceneCol = vec3(0.0);
     if (u_hasSceneColor != 0 && u_liquidClass != 2) {
-        vec2 uvR = clamp(screenUV + disp * 0.985, vec2(0.002), vec2(0.998));
+        vec2 uvR = clamp(screenUV + disp * 0.980, vec2(0.002), vec2(0.998));
         vec2 uvG = clamp(screenUV + disp * 1.000, vec2(0.002), vec2(0.998));
-        vec2 uvB = clamp(screenUV + disp * 1.015, vec2(0.002), vec2(0.998));
+        vec2 uvB = clamp(screenUV + disp * 1.020, vec2(0.002), vec2(0.998));
         sceneCol.r = texture(u_sceneColor, uvR).r;
         sceneCol.g = texture(u_sceneColor, uvG).g;
         sceneCol.b = texture(u_sceneColor, uvB).b;
@@ -345,6 +342,14 @@ void main() {
     float sunSheen = pow(NdotH, 36.0) * (NdotL > 0.0 ? 0.38 : 0.0);
     vec3 sunSpecular = (u_sunColor + vec3(0.45)) * (sunSpark + sunSheen);
 
+    // Dual Specular highlights: Primary Key light + Secondary Qi Rim light
+    vec3 qiLightDir = normalize(vec3(-lightDir.x, 0.65, -lightDir.z));
+    vec3 qiHalf = normalize(qiLightDir + viewDir);
+    float qiNdh = max(dot(waveNormal, qiHalf), 0.0);
+    float qiSpark = pow(qiNdh, mix(140.0, 48.0, clamp(u_roughness, 0.0, 1.0))) * 0.55;
+    vec3 qiSpecular = (u_glowColor.rgb + vec3(0.18)) * qiSpark * (0.35 + 0.65 * (1.0 - mediumOpacity));
+    sunSpecular += qiSpecular;
+
     vec3 reflDir = reflect(rayDir, waveNormal);
     float hemi = clamp(reflDir.y * 0.5 + 0.5, 0.0, 1.0);
     vec3 envSky = mix(u_groundAmbient * 0.85, u_skyAmbient * 1.35, hemi);
@@ -355,6 +360,11 @@ void main() {
     float suspendedScatter = mix(0.22, 1.0, mediumOpacity);
     vec3 inScatter = u_bodyColor.rgb * (vec3(1.0) - transmittance) * illumination * (grazingWeight * suspendedScatter * 0.38);
     inScatter += u_bodyColor.rgb * illumination * (0.22 + 0.78 * NdotL) * mediumOpacity * 0.82;
+
+    // Subsurface scattering (SSS) & liquid tendril glow
+    float sssFactor = pow(clamp(1.0 - NdotV, 0.0, 1.0), 2.2) * exp(-thickness * 0.45);
+    vec3 sssColor = u_glowColor.rgb * (sssFactor * 0.85 + tendrilBridge * 0.55);
+    inScatter += sssColor * (0.65 * (1.0 - mediumOpacity * 0.6));
 
     float sunForward = max(dot(refrDir, -lightDir), 0.0);
     float causticLensing = pow(sunForward, 8.0) * 0.32 * (1.0 - transmittance.r) * (1.0 - mediumOpacity);
@@ -406,6 +416,13 @@ void main() {
             color = waterColor;
         }
         color += sunSpecular;
+
+        // Stretched surface-tension bridge foam
+        float bridgeFoam = smoothstep(0.38, 0.85, tendrilBridge) * (1.0 - mediumOpacity * 0.5);
+        if (bridgeFoam > 0.01) {
+            color = mix(color, mix(u_softColor.rgb, vec3(0.92, 0.98, 1.0), 0.55), bridgeFoam * 0.70);
+        }
+
         if (contactFoam > 0.01) {
             color = mix(color, mix(u_softColor.rgb, vec3(0.94, 0.97, 1.0), 0.5), contactFoam * 0.65);
         }

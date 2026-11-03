@@ -799,6 +799,10 @@ static void VFXTest_RefreshInspectorParams(bool force)
     {
         s_inspectorParamCount = VFX_SeismicWave_GetParams(VFX_SeismicWave_GetLiveConfig(), s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
     }
+    else if (VFXTest_IsNewFxNamed("STONE PILLAR"))
+    {
+        s_inspectorParamCount = VFX_EarthSpike_GetParams(VFX_EarthSpike_GetLiveConfig(), s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
+    }
 }
 
 static inline float VFXTest_Smoothstep(float e0, float e1, float x)
@@ -1407,6 +1411,12 @@ static bool VFXTest_FireNewFx(int newfxIndex, Vector3 pos)
     case 31: VFX_ComposeSmokePuff(pos, VC_MAT_FIRE, 1.5f, 1.0f); return true;
     case 33: VFX_ComposeSurfaceImpact(pos, s_surfaceImpactFixtureSurface); return false;
     case 34: VFX_ComposeSurfaceParticleRing(pos, s_surfaceParticleRingFixtureVariant == VFX_SURFACE_PARTICLE_RING_VARIANT_ENERGY_WISP ? VC_MAT_LIGHTNING : VC_MAT_EARTH, 1.5f, 1.0f, s_surfaceParticleRingFixtureVariant); return false;
+    case 41: {
+        Vector3 target = Vector3Add(pos, (Vector3){3.5f, 0.0f, 1.5f});
+        target.y = MapManager_GetGroundHeightAt(target.x, target.z);
+        VFX_ComposeEarthSpikeEx(pos, target, VFX_EarthSpike_GetLiveConfig());
+        return true;
+    }
     case 43: VFX_ComposeFireballBurst(pos, VC_MAT_FIRE, 1.5f, 1.0f); return true;
     case 45: VFX_ComposeIceCrystal(pos, posSeed); return true;
     case 46: VFX_ComposeWaterOrb(Vector3Add(pos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(pos, (Vector3){2.5f, 1.8f, 0.8f})); return true;
@@ -1838,7 +1848,24 @@ static void VFXTest_UIEditParameter(int index, int direction)
             VFX_GuidedEarthConfig *ecfg = VFX_GuidedEarth_GetLiveConfig();
             VFX_GuidedEarth_ApplyPreset(ecfg, ecfg->preset);
             VFXTest_RefreshInspectorParams(true);
+        } else if (VFXTest_IsNewFxNamed("STONE PILLAR")) {
+            VFX_EarthSpikeConfig *scfg = VFX_EarthSpike_GetLiveConfig();
+            VFX_EarthSpike_ApplyPreset(scfg, scfg->preset);
+            VFXTest_RefreshInspectorParams(true);
         }
+    } else if (param->type == VFX_PARAM_ENUM && strcmp(param->name, "Style") == 0) {
+        if (VFXTest_IsNewFxNamed("STONE PILLAR")) {
+            VFX_EarthSpikeConfig *scfg = VFX_EarthSpike_GetLiveConfig();
+            VFX_EarthSpike_ApplyStyle(scfg, scfg->style);
+            VFXTest_RefreshInspectorParams(true);
+        }
+    }
+
+    if (VFXTest_IsNewFxNamed("STONE PILLAR")) {
+        VFX_EarthSpike_KillAll();
+        Vector3 target = Vector3Add(s_prefabStartPos, (Vector3){3.5f, 0.0f, 1.5f});
+        target.y = MapManager_GetGroundHeightAt(target.x, target.z);
+        VFX_ComposeEarthSpikeEx(s_prefabStartPos, target, VFX_EarthSpike_GetLiveConfig());
     }
 }
 
@@ -1923,6 +1950,18 @@ static bool VFXTest_UIHandleInput(Vector3 playerPos)
                     s_inspectorParams, s_inspectorParamCount, VFX_TEST_MAX_INSPECTOR_PARAMS);
             }
             VFXTest_UILogParameter(s_vfxDraggingSlider);
+            if (VFXTest_IsNewFxNamed("STONE PILLAR")) {
+                VFX_EarthSpikeConfig *scfg = VFX_EarthSpike_GetLiveConfig();
+                if (strcmp(param->name, "Preset") == 0) {
+                    VFX_EarthSpike_ApplyPreset(scfg, scfg->preset);
+                } else if (strcmp(param->name, "Style") == 0) {
+                    VFX_EarthSpike_ApplyStyle(scfg, scfg->style);
+                }
+                VFX_EarthSpike_KillAll();
+                Vector3 target = Vector3Add(s_prefabStartPos, (Vector3){3.5f, 0.0f, 1.5f});
+                target.y = MapManager_GetGroundHeightAt(target.x, target.z);
+                VFX_ComposeEarthSpikeEx(s_prefabStartPos, target, scfg);
+            }
         } else {
             for (int row = 0; row < ui.inspectorRows && row + s_vfxInspectorScroll < s_inspectorParamCount; ++row) {
                 int index = row + s_vfxInspectorScroll;
@@ -1945,6 +1984,18 @@ static bool VFXTest_UIHandleInput(Vector3 playerPos)
                             s_inspectorParams, s_inspectorParamCount, VFX_TEST_MAX_INSPECTOR_PARAMS);
                     }
                     VFXTest_UILogParameter(index);
+                    if (VFXTest_IsNewFxNamed("STONE PILLAR")) {
+                        VFX_EarthSpikeConfig *scfg = VFX_EarthSpike_GetLiveConfig();
+                        if (strcmp(param->name, "Preset") == 0) {
+                            VFX_EarthSpike_ApplyPreset(scfg, scfg->preset);
+                        } else if (strcmp(param->name, "Style") == 0) {
+                            VFX_EarthSpike_ApplyStyle(scfg, scfg->style);
+                        }
+                        VFX_EarthSpike_KillAll();
+                        Vector3 target = Vector3Add(s_prefabStartPos, (Vector3){3.5f, 0.0f, 1.5f});
+                        target.y = MapManager_GetGroundHeightAt(target.x, target.z);
+                        VFX_ComposeEarthSpikeEx(s_prefabStartPos, target, scfg);
+                    }
                     break;
                 } else if (VFXTest_UIButtonReleased(VFXTest_UIParameterButton(rect, -1))) {
                     s_inspectorSelectedParam = index; VFXTest_UIEditParameter(index, -1); VFXTest_UILogParameter(index);
@@ -1999,6 +2050,7 @@ static const char *VFXTest_UIActiveVariant(void)
     if (VFXTest_IsNewFxNamed("GUIDED FIRE")) return VFX_FirePreset_Name(VFX_Fire_GetLiveConfig()->preset);
     if (VFXTest_IsNewFxNamed("GUIDED EARTH")) return VFX_GuidedEarthPreset_Name(VFX_GuidedEarth_GetLiveConfig()->preset);
     if (VFXTest_IsNewFxNamed("SEISMIC WAVE")) return VFX_SeismicWavePreset_Name(VFX_SeismicWave_GetLiveConfig()->preset);
+    if (VFXTest_IsNewFxNamed("STONE PILLAR")) return VFX_EarthSpikePreset_Name(VFX_EarthSpike_GetLiveConfig()->preset);
     if (VFXTest_IsNewFxNamed("SURFACE IMPACT")) return VFXTest_SurfaceImpactReceiverName(s_surfaceImpactFixtureSurface);
     return NULL;
 }
@@ -2561,6 +2613,16 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
             VFX_ComposeSeismicWaveEx(castSocket, guidedTarget, VFX_SeismicWave_GetLiveConfig());
             return false;
         }
+        if (s_testCategory == TEST_CAT_NEWFX && VFXTest_IsNewFxNamed("STONE PILLAR")) {
+            Vector3 castSocket = playerPos;
+            Vector3 guidedTarget = mouseTarget3D;
+            if (s_clickedOnUI) {
+                guidedTarget = Vector3Add(playerPos, (Vector3){3.5f, 0.0f, 1.5f});
+                guidedTarget.y = MapManager_GetGroundHeightAt(guidedTarget.x, guidedTarget.z);
+            }
+            VFX_ComposeEarthSpikeEx(castSocket, guidedTarget, VFX_EarthSpike_GetLiveConfig());
+            return false;
+        }
           if (!VFXTest_FireNewFx(s_testIndex, s_prefabStartPos)) {
               /* continuous — handled per-frame in VFXTest_Draw3D */
               switch (s_testIndex) {
@@ -2973,6 +3035,21 @@ void VFXTest_Draw3D(void)
                 }
             }
         }
+        else if (VFXTest_IsNewFxNamed("STONE PILLAR"))
+        {
+            if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))
+            {
+                int direction = IsKeyPressed(KEY_PERIOD) ? 1 : (IsKeyPressed(KEY_COMMA) ? -1 : 0);
+                if (direction != 0)
+                {
+                    VFX_EarthSpikeConfig *scfg = VFX_EarthSpike_GetLiveConfig();
+                    VFX_EarthSpikePreset nextPreset = (VFX_EarthSpikePreset)(((int)scfg->preset + direction + VFX_EARTH_SPIKE_PRESET_COUNT) % VFX_EARTH_SPIKE_PRESET_COUNT);
+                    VFX_EarthSpike_ApplyPreset(scfg, nextPreset);
+                    VFXTest_RefreshInspectorParams(true);
+                    TraceLog(LOG_INFO, "STONE PILLAR preset: %s (Shift+> next; Shift+< previous)", VFX_EarthSpikePreset_Name(scfg->preset));
+                }
+            }
+        }
         else if (VFXTest_IsNewFxNamed("WOOD VINE") || VFXTest_IsNewFxNamed("WOOD LEAVES") || VFXTest_IsNewFxNamed("WOOD FLOWER") || VFXTest_IsNewFxNamed("WOOD PETALS"))
         {
             if (IsKeyPressed(KEY_SEMICOLON))
@@ -3175,7 +3252,17 @@ void VFXTest_Draw3D(void)
                   break;
               }
               case 40: VFX_ComposeFissureStreak(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), 0.1f, progress, s_meshTime); break;
-              case 41: VFX_ComposeStonePillar(s_prefabStartPos, progress); break;
+              case 41: {
+                  static float s_earthSpikeAutoTimer = 0.0f;
+                  s_earthSpikeAutoTimer += GetFrameTime();
+                  if (s_earthSpikeAutoTimer >= 3.2f) {
+                      s_earthSpikeAutoTimer = 0.0f;
+                      Vector3 target = Vector3Add(s_prefabStartPos, (Vector3){3.5f, 0.0f, 1.5f});
+                      target.y = MapManager_GetGroundHeightAt(target.x, target.z);
+                      VFX_ComposeEarthSpikeEx(s_prefabStartPos, target, VFX_EarthSpike_GetLiveConfig());
+                  }
+                  break;
+              }
               case 42: VFX_ComposeFireEx(s_prefabStartPos, VFX_Fire_GetLiveConfig()); break;
               case 44: VFX_ComposeBlackHole(VC_MAT_FIRE, s_prefabStartPos, 1.5f, s_meshTime); break;
               case 47: VFX_ComposeWaterStream(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(Vector3Lerp(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), 0.33f), (Vector3){0.0f, 0.9f, 0.7f}), Vector3Add(Vector3Lerp(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), 0.66f), (Vector3){0.0f, 0.5f, -0.7f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), 1.5f, progress, s_meshTime); break;
@@ -3250,6 +3337,7 @@ void VFXTest_DrawShadowPass(void)
     VFX_WaterOrb_DrawShadowPass();
     VC_GuidedEarth_DrawShadowPass();
     VC_SeismicWave_DrawShadowPass();
+    VC_EarthSpike_DrawShadowPass();
 }
 
 void VFXTest_DrawHUD(void)
@@ -3340,6 +3428,12 @@ void VFXTest_SetRenderTarget(int newfxIndex, Vector3 spawnPos)
     if (envSeismicP && *envSeismicP) {
         int sp = (atoi(envSeismicP) % VFX_SEISMIC_PRESET_COUNT + VFX_SEISMIC_PRESET_COUNT) % VFX_SEISMIC_PRESET_COUNT;
         VFX_SeismicWave_ApplyPreset(VFX_SeismicWave_GetLiveConfig(), (VFX_SeismicWavePreset)sp);
+    }
+
+    const char *envSpikeP = getenv("WUXING_STONE_PILLAR_PRESET");
+    if (envSpikeP && *envSpikeP) {
+        int ep = (atoi(envSpikeP) % VFX_EARTH_SPIKE_PRESET_COUNT + VFX_EARTH_SPIKE_PRESET_COUNT) % VFX_EARTH_SPIKE_PRESET_COUNT;
+        VFX_EarthSpike_ApplyPreset(VFX_EarthSpike_GetLiveConfig(), (VFX_EarthSpikePreset)ep);
     }
     VFXTest_RefreshInspectorParams(true);
 

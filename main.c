@@ -299,11 +299,29 @@ static void CompositeScreenSpaceVFX(Camera3D camera)
   if (hasLiquid) LiquidSurface_Capture(camera);
   if (hasMetaballs) MetaballFX_Prepare(camera, ELEMENT_COLOR_WATER, 0.3f, 0.12f);
   if (hasGas) GasSystem_Prepare(camera);
+
+  rlDrawRenderBatchActive();
+  rlViewport(0, 0, SceneTargets_GetWidth(), SceneTargets_GetHeight());
+  rlMatrixMode(RL_PROJECTION);
+  rlPushMatrix();
+  rlLoadIdentity();
+  rlOrtho(0, SceneTargets_GetWidth(), SceneTargets_GetHeight(), 0, 0.0f, 1.0f);
+  rlMatrixMode(RL_MODELVIEW);
+  rlPushMatrix();
+  rlLoadIdentity();
+
   VFXRender_BeginPass(VFX_RENDER_PASS_BODY);
   if (hasLiquid) LiquidSurface_Composite();
   if (hasMetaballs) MetaballFX_Composite();
   if (hasGas) GasSystem_Composite();
   VFXRender_EndPass();
+
+  rlDrawRenderBatchActive();
+  rlMatrixMode(RL_PROJECTION);
+  rlPopMatrix();
+  rlMatrixMode(RL_MODELVIEW);
+  rlPopMatrix();
+  rlViewport(0, 0, GetRenderWidth(), GetRenderHeight());
 }
 
 int main(int argc, char **argv) {

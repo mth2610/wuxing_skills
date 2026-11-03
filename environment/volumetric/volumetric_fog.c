@@ -470,6 +470,16 @@ void VolumetricFog_Render(Camera3D camera) {
     // --- PASS 2: Depth-Aware Bilateral Upsample & Composite into Scene Target ---
     SceneTargets_BeginVFXBody();
 
+    rlDrawRenderBatchActive();
+    rlViewport(0, 0, SceneTargets_GetWidth(), SceneTargets_GetHeight());
+    rlMatrixMode(RL_PROJECTION);
+    rlPushMatrix();
+    rlLoadIdentity();
+    rlOrtho(0, SceneTargets_GetWidth(), SceneTargets_GetHeight(), 0, 0.0f, 1.0f);
+    rlMatrixMode(RL_MODELVIEW);
+    rlPushMatrix();
+    rlLoadIdentity();
+
     BeginBlendMode(BLEND_ALPHA_PREMULTIPLY);
     BeginShaderMode(s_compositeShader);
 
@@ -492,6 +502,13 @@ void VolumetricFog_Render(Camera3D camera) {
 
     EndShaderMode();
     EndBlendMode();
+
+    rlDrawRenderBatchActive();
+    rlMatrixMode(RL_PROJECTION);
+    rlPopMatrix();
+    rlMatrixMode(RL_MODELVIEW);
+    rlPopMatrix();
+    rlViewport(0, 0, GetRenderWidth(), GetRenderHeight());
 
     SceneTargets_EndVFXLayer();
 }

@@ -173,20 +173,18 @@ void VFX_ComposeLiquidOrbEx(const VFX_LiquidOrbConfig *config)
 
     // Ballistic trajectory simulation to find ground contact time
     float tGround = targetReachTime;
-    bool foundGround = false;
-    for (float t = 0.06f; t <= targetReachTime + 2.5f; t += 0.04f) {
+    float orbRad = config->radius > 0.05f ? config->radius : 0.44f;
+    for (float t = 0.04f; t < targetReachTime - 0.02f; t += 0.02f) {
         float px = config->start.x + dirXZ.x * speedXZ * t;
         float pz = config->start.z + dirXZ.z * speedXZ * t;
         float py = config->start.y + vY0 * t - 0.5f * gravity * t * t;
         float gy = MapManager_GetGroundHeightAt(px, pz);
-        if (py <= gy + (config->radius > 0.05f ? config->radius : 0.44f) * 0.45f) {
+        if (py <= gy + orbRad * 0.25f) {
             tGround = t;
-            foundGround = true;
             break;
         }
     }
-    if (!foundGround) tGround = targetReachTime;
-    float travelTime = fmaxf(tGround, 0.20f);
+    float travelTime = fmaxf(tGround, 0.15f);
 
     *orb = (WaterOrb){.start = config->start, .target = config->target, .center = config->start,
         .velocity = (Vector3){dirXZ.x * speedXZ, vY0, dirXZ.z * speedXZ}, .travelTime = travelTime,
@@ -219,7 +217,7 @@ void VFX_ComposeLiquidOrbEx(const VFX_LiquidOrbConfig *config)
         .axis = flight,
         .path = &orb->flightPath,
         .radiusM = orb->radius * 1.85f,
-        .speedMps = speed,
+        .speedMps = (orb->flightPath.length > 0.01f) ? (orb->flightPath.length / travelTime) : speed,
         .swirlSpeedMps = config->swirlSpeed,
         .turbulenceSpeedMps = config->turbulenceSpeed,
         .maxForceNewtons = config->pullForce,
@@ -271,10 +269,10 @@ void VFX_ComposeLiquidOrbEx(const VFX_LiquidOrbConfig *config)
         Color startCol = (Color){0, 0, 0, 0};
         s_waterOrbSpawn[i] = (ParticleConfig){
             .position = Vector3Add(config->start, offset),
-            .velocity = Vector3Scale(dir, speed * 0.90f),
+            .velocity = orb->velocity,
             .colorStart = startCol,
             .colorEnd = (Color){0, 0, 0, 0},
-            .radius = orb->config.blobRadius > 0.01f ? orb->config.blobRadius : (orb->radius * 0.25f),
+            .radius = orb->config.blobRadius > 0.01f ? orb->config.blobRadius : (orb->radius * 0.20f),
             .lifetime = orb->travelTime + orb->crownDuration + orb->settleDuration + 0.6f,
             .forceField = &orb->field,
             .forceAxisOrigin = config->target,
@@ -336,11 +334,12 @@ static void WaterOrb_Update(float dt)
         orb->age += dt;
 
         if (orb->phase == WATER_ORB_FLIGHT) {
-            float traveled = fminf(orb->age * orb->config.speed, orb->flightPath.length);
+            float progress = Clamp(orb->age / orb->travelTime, 0.0f, 1.0f);
+            float traveled = progress * orb->flightPath.length;
             MotionPathSample samp = MotionPath_Sample(&orb->flightPath, traveled);
             orb->center = (orb->flightPath.length > 0.001f)
                 ? Vector3Add(orb->start, samp.position)
-                : Vector3Lerp(orb->start, orb->target, Clamp(orb->age / orb->travelTime, 0.0f, 1.0f));
+                : Vector3Lerp(orb->start, orb->target, progress);
 
             orb->field.layers[0].origin = orb->center;
             orb->field.layers[1].origin = orb->center;
@@ -360,17 +359,21 @@ static void WaterOrb_Update(float dt)
                 }
             }
 
-            // 2. Collision with terrain / ground
+            // 2. Collision with terrain / ground or destination reached
             float groundY = MapManager_GetGroundHeightAt(orb->center.x, orb->center.z);
-            if (!hit && (orb->center.y <= groundY + orb->radius * 0.45f || orb->age >= orb->travelTime)) {
+            if (!hit && (orb->center.y <= groundY + orb->radius * 0.35f || progress >= 1.0f)) {
                 hit = true;
-                orb->center.y = groundY + orb->radius * 0.20f;
-                float eps = 0.25f;
-                float hL = MapManager_GetGroundHeightAt(orb->center.x - eps, orb->center.z);
-                float hR = MapManager_GetGroundHeightAt(orb->center.x + eps, orb->center.z);
-                float hD = MapManager_GetGroundHeightAt(orb->center.x, orb->center.z - eps);
-                float hU = MapManager_GetGroundHeightAt(orb->center.x, orb->center.z + eps);
-                hitNormal = Vector3Normalize((Vector3){(hL - hR) / (2.0f * eps), 1.0f, (hD - hU) / (2.0f * eps)});
+                if (orb->center.y <= groundY + orb->radius * 0.35f) {
+                    orb->center.y = groundY + orb->radius * 0.15f;
+                    float eps = 0.25f;
+                    float hL = MapManager_GetGroundHeightAt(orb->center.x - eps, orb->center.z);
+                    float hR = MapManager_GetGroundHeightAt(orb->center.x + eps, orb->center.z);
+                    float hD = MapManager_GetGroundHeightAt(orb->center.x, orb->center.z - eps);
+                    float hU = MapManager_GetGroundHeightAt(orb->center.x, orb->center.z + eps);
+                    hitNormal = Vector3Normalize((Vector3){(hL - hR) / (2.0f * eps), 1.0f, (hD - hU) / (2.0f * eps)});
+                } else {
+                    orb->center = orb->target;
+                }
             }
 
             if (hit) {
