@@ -64,6 +64,11 @@ static void Nature_AddCurvedBladeTip(Mesh *mesh, int *cursor, Vector3 p0, Vector
     Nature_SetUv2(mesh, base + 2, 0.0f, 1.0f); // Tip apex is center spine (u = 0.0)
 }
 
+static inline unsigned char Nature_ClampByte(int v)
+{
+    return (unsigned char)(v < 0 ? 0 : (v > 255 ? 255 : v));
+}
+
 static Model Nature_BuildMeadowShadowChunk(const MapMeadowPlacement *placements, int count,
                                            float minX, float maxX, float minZ, float maxZ)
 {
@@ -134,40 +139,50 @@ int MapProp_GenerateMeadowPlacements(MapMeadowPlacement *outPlacements, int maxC
     int count = 0;
     unsigned int accepted = 0;
     unsigned int selectionRng = rng ^ 0xa511e9b3u;
+    const float jitterXScale = distribution.spacing * distribution.jitter;
+    const float jitterZScale = rowSpacing * distribution.jitter;
+    const float radiusSpan = distribution.maxRadius - distribution.minRadius;
+    const float heightSpan = distribution.maxHeight - distribution.minHeight;
+    const bool sampleGround = (ground != NULL && ground->ready);
+
     for (int row = 0; row < rows; row++)
     {
         float rowOffset = (row & 1) ? (distribution.spacing * 0.5f) : 0.0f;
+        float baseZ = distribution.minBounds.y + ((float)row + 0.5f) * rowSpacing;
         for (int column = 0; column < columns; column++)
         {
-            float jx = (Nature_Random01(&rng) - 0.5f) * distribution.spacing * distribution.jitter;
-            float jz = (Nature_Random01(&rng) - 0.5f) * rowSpacing * distribution.jitter;
-            float x = distribution.minBounds.x + column * distribution.spacing + rowOffset + jx;
-            float z = distribution.minBounds.y + (row + 0.5f) * rowSpacing + jz;
+            float jx = (Nature_Random01(&rng) - 0.5f) * jitterXScale;
+            float jz = (Nature_Random01(&rng) - 0.5f) * jitterZScale;
+            float x = distribution.minBounds.x + (float)column * distribution.spacing + rowOffset + jx;
+            float z = baseZ + jz;
             float density = densityFn ? densityFn(x, z, userData) : 1.0f;
-            if (density < 0.0f)
-                density = 0.0f;
-            if (density > 1.0f)
-                density = 1.0f;
-            if (Nature_Random01(&rng) > density)
+            if (density <= 0.0f)
+            {
+                (void)Nature_NextRandom(&rng);
                 continue;
+            }
+            if (density < 1.0f && Nature_Random01(&rng) > density)
+                continue;
+            else if (density >= 1.0f)
+                (void)Nature_NextRandom(&rng);
 
-            float y = groundCenter.y;
-            if (ground && ground->ready)
-                y = MapProp_SampleGroundHeight(ground, groundCenter, x, z);
+            float y = sampleGround ? MapProp_SampleGroundHeight(ground, groundCenter, x, z) : groundCenter.y;
             MapMeadowPlacement candidate;
-            MapMeadowPlacement *placement = &candidate;
-            placement->position = (Vector3){x, y + distribution.yOffset, z};
-            placement->radius = distribution.minRadius + (distribution.maxRadius - distribution.minRadius) * Nature_Random01(&rng);
-            placement->height = distribution.minHeight + (distribution.maxHeight - distribution.minHeight) * Nature_Random01(&rng);
-            placement->rotationDeg = Nature_Random01(&rng) * 360.0f;
-            placement->phase = Nature_Random01(&rng);
+            candidate.position = (Vector3){x, y + distribution.yOffset, z};
+            candidate.radius = distribution.minRadius + radiusSpan * Nature_Random01(&rng);
+            candidate.height = distribution.minHeight + heightSpan * Nature_Random01(&rng);
+            candidate.rotationDeg = Nature_Random01(&rng) * 360.0f;
+            candidate.phase = Nature_Random01(&rng);
             accepted++;
             if (count < maxCount)
+            {
                 outPlacements[count++] = candidate;
+            }
             else
             {
-                unsigned int slot = (unsigned int)((double)Nature_NextRandom(&selectionRng) *
-                                                   (double)accepted / 4294967296.0);
+                unsigned int slot = (unsigned int)(((uint64_t)Nature_NextRandom(&selectionRng) *
+                                                    (uint64_t)accepted) >>
+                                                   32);
                 if (slot < (unsigned int)maxCount)
                     outPlacements[slot] = candidate;
             }
@@ -234,8 +249,8 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
     float bHash2 = Nature_Random01(&bladeSeed);
     float bHash3 = Nature_Random01(&bladeSeed);
 
-    float flowX = cosf(clumpAngle);
-    float flowZ = sinf(clumpAngle);
+    float flowX, flowZ;
+    Nature_FastSinCos(clumpAngle, &flowZ, &flowX);
 
     float height = 0.0f;
     float width = 0.0f;
@@ -252,23 +267,23 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
     {
         float baseAngle = (float)blade * (2.0f * PI / (float)bladesPerClump);
         float bladeAzimuth = baseAngle + (bHash - 0.5f) * 0.95f;
-        float radX = cosf(bladeAzimuth);
-        float radZ = sinf(bladeAzimuth);
+        float radX, radZ;
+        Nature_FastSinCos(bladeAzimuth, &radZ, &radX);
 
-        float windWeight = 0.65f;
-        float radWeight = 1.0f - windWeight;
+        const float windWeight = 0.65f;
+        const float radWeight = 1.0f - windWeight;
         float combX = radX * radWeight + flowX * windWeight;
         float combZ = radZ * radWeight + flowZ * windWeight;
-        float combLen = sqrtf(combX * combX + combZ * combZ);
+        float combLenSq = combX * combX + combZ * combZ;
         float dirX, dirZ;
-        if (combLen < 0.01f)
+        if (combLenSq < 1e-4f)
         {
             dirX = flowX;
             dirZ = flowZ;
         }
         else
         {
-            float invLen = 1.0f / combLen;
+            float invLen = 1.0f / sqrtf(combLenSq);
             dirX = combX * invLen;
             dirZ = combZ * invLen;
         }
@@ -314,15 +329,25 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
     else if (isPampas)
     {
         float baseAzimuth = clumpAngle + (float)bladeId * golden + (bHash - 0.5f) * 0.65f;
-        float radX = cosf(baseAzimuth);
-        float radZ = sinf(baseAzimuth);
+        float radX, radZ;
+        Nature_FastSinCos(baseAzimuth, &radZ, &radX);
 
         float windWeight = (bladeId < 2) ? 0.38f : 0.25f;
         float combX = radX * (1.0f - windWeight) + flowX * windWeight;
         float combZ = radZ * (1.0f - windWeight) + flowZ * windWeight;
-        float combLen = sqrtf(combX * combX + combZ * combZ);
-        float dirX = (combLen > 0.01f) ? (combX / combLen) : flowX;
-        float dirZ = (combLen > 0.01f) ? (combZ / combLen) : flowZ;
+        float combLenSq = combX * combX + combZ * combZ;
+        float dirX, dirZ;
+        if (combLenSq > 1e-4f)
+        {
+            float invLen = 1.0f / sqrtf(combLenSq);
+            dirX = combX * invLen;
+            dirZ = combZ * invLen;
+        }
+        else
+        {
+            dirX = flowX;
+            dirZ = flowZ;
+        }
         bladeLeanAngle = atan2f(dirZ, dirX);
 
         float collarRadius = clump->radius * ((bladeId < 2) ? 0.12f : (0.24f + 0.12f * bHash3));
@@ -366,13 +391,16 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
     {
         float splay = bladesPerClump == 1 ? 0.0f : (blade == 0 ? -0.26f : 0.26f);
         bladeLeanAngle = clumpAngle + splay + (bHash - 0.5f) * 0.22f;
-        float dirX = cosf(bladeLeanAngle);
-        float dirZ = sinf(bladeLeanAngle);
-        float diskFrac = ((float)bladeId + 0.5f) / (float)fmax(style.bladesPerClump, 1);
+        float dirX, dirZ;
+        Nature_FastSinCos(bladeLeanAngle, &dirZ, &dirX);
+        int denomBlades = style.bladesPerClump > 1 ? style.bladesPerClump : 1;
+        float diskFrac = ((float)bladeId + 0.5f) / (float)denomBlades;
         float collarRadius = clump->radius * (0.20f + 0.72f * sqrtf(diskFrac)) * (0.86f + 0.26f * bHash3);
         float rootAzimuth = clumpAngle + (float)bladeId * golden + (bHash3 - 0.5f) * 0.50f;
-        float bx = clump->position.x + cosf(rootAzimuth) * collarRadius;
-        float bz = clump->position.z + sinf(rootAzimuth) * collarRadius;
+        float radX, radZ;
+        Nature_FastSinCos(rootAzimuth, &radZ, &radX);
+        float bx = clump->position.x + radX * collarRadius;
+        float bz = clump->position.z + radZ * collarRadius;
 
         height = clump->height * (0.94f + 0.18f * bHash2);
         width = clump->radius * style.bladeWidthScale * widthMultiplier * 0.94f;
@@ -390,9 +418,10 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
     else
     {
         float rootAzimuth = clumpAngle + (float)bladeId * golden + (bHash - 0.5f) * 0.55f;
-        float radX = cosf(rootAzimuth);
-        float radZ = sinf(rootAzimuth);
-        float diskFrac = ((float)bladeId + 0.5f) / (float)fmax(style.bladesPerClump, 1);
+        float radX, radZ;
+        Nature_FastSinCos(rootAzimuth, &radZ, &radX);
+        int denomBlades = style.bladesPerClump > 1 ? style.bladesPerClump : 1;
+        float diskFrac = ((float)bladeId + 0.5f) / (float)denomBlades;
         float collarRadius = clump->radius * (0.20f + 0.74f * sqrtf(diskFrac)) * (0.86f + 0.28f * bHash3);
         float bx = clump->position.x + radX * collarRadius;
         float bz = clump->position.z + radZ * collarRadius;
@@ -402,16 +431,12 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
                                           : (bladeId < 4 ? (0.46f + 0.12f * bHash) : (0.64f + 0.14f * bHash));
         float splayX = radX * splayWeight + flowX * (1.0f - splayWeight);
         float splayZ = radZ * splayWeight + flowZ * (1.0f - splayWeight);
-        float splayLen = sqrtf(splayX * splayX + splayZ * splayZ);
-        if (splayLen > 0.01f)
+        float splayLenSq = splayX * splayX + splayZ * splayZ;
+        if (splayLenSq > 1e-4f)
         {
-            dirX = splayX / splayLen;
-            dirZ = splayZ / splayLen;
-        }
-        else
-        {
-            dirX = flowX;
-            dirZ = flowZ;
+            float invSplayLen = 1.0f / sqrtf(splayLenSq);
+            dirX = splayX * invSplayLen;
+            dirZ = splayZ * invSplayLen;
         }
         bladeLeanAngle = atan2f(dirZ, dirX);
 
@@ -505,12 +530,8 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
             tG = (int)(tG * 0.95f);
             tB = (int)(tB * 0.92f);
         }
-        bladeRoot = (Color){(unsigned char)fminf(255, fmaxf(0, rR)),
-                            (unsigned char)fminf(255, fmaxf(0, rG)),
-                            (unsigned char)fminf(255, fmaxf(0, rB)), 255};
-        bladeTip = (Color){(unsigned char)fminf(255, fmaxf(0, tR)),
-                           (unsigned char)fminf(255, fmaxf(0, tG)),
-                           (unsigned char)fminf(255, fmaxf(0, tB)), 255};
+        bladeRoot = (Color){Nature_ClampByte(rR), Nature_ClampByte(rG), Nature_ClampByte(rB), 255};
+        bladeTip = (Color){Nature_ClampByte(tR), Nature_ClampByte(tG), Nature_ClampByte(tB), 255};
     }
     if (!isReed && !isPampas && style.botanicalVariation > 0.0f)
     {
@@ -535,7 +556,21 @@ typedef struct
     Color color;
 } NatureBladeKnot;
 
+typedef struct
+{
+    float tk;
+    float occ;
+    float sCurve;
+    float reedProfile;
+    float grassProfile;
+    float foldScale;
+    float terrainBlend;
+    float edgeSpread;
+    float normalLerp;
+} NatureKnotPrecomp;
+
 // [TỐI ƯU KHỞI TẠO]: Xây dựng Mesh trực tiếp từ danh sách chỉ số đã phân vùng sẵn (O(chunkCount) thay vì O(N))
+// kết hợp tiền tính toán bảng hằng số đốt lá (NatureKnotPrecomp) خارج vòng lặp bụi cỏ.
 static Model Nature_BuildMeadowChunkFromIndices(const MapMeadowPlacement *placements,
                                                 const int *indices, int indexCount,
                                                 MapMeadowStyle style, int sampleStride,
@@ -561,6 +596,31 @@ static Model Nature_BuildMeadowChunkFromIndices(const MapMeadowPlacement *placem
     const float tipStart = (bladeSegments == 2) ? 0.54f : (bladeSegments > 2 ? 0.76f : 0.0f);
     const float invSegMinus1 = (bladeSegments > 1) ? (1.0f / (float)(bladeSegments - 1)) : 0.0f;
 
+    // Tiền tính toán seluruh tham số phụ thuộc vào đốt k (0 .. bladeSegments) một lần duy nhất cho cả chunk
+    NatureKnotPrecomp knotTable[7];
+    for (int k = 0; k <= bladeSegments; k++)
+    {
+        float tk = (k == bladeSegments) ? 1.0f : (tipStart * (float)k * invSegMinus1);
+        float uk = 1.0f - tk;
+        float tk2 = tk * tk;
+        float fastPow18 = tk2 * (0.82f + 0.18f * tk);
+        float sheath = fminf(1.0f, 0.65f + 2.5f * tk);
+        float body = 0.82f + 0.32f * sinf(PI * fminf(tk * 1.35f, 1.0f));
+        float tipT = fmaxf(0.0f, (tk - 0.35f) * (1.0f / 0.65f));
+        float taper = fmaxf(0.0f, 1.0f - tipT * tipT);
+        float groundAnchor = fmaxf(0.0f, 1.0f - tk * 2.5f);
+
+        knotTable[k].tk = tk;
+        knotTable[k].occ = (tk < 0.25f) ? (0.90f + 0.40f * tk) : 1.0f;
+        knotTable[k].sCurve = tk2 * (3.0f - 2.0f * tk);
+        knotTable[k].reedProfile = 0.5f * (0.78f + 0.36f * sinf(PI * tk)) * (1.0f - fastPow18);
+        knotTable[k].grassProfile = 0.5f * sheath * body * taper;
+        knotTable[k].foldScale = 0.055f * (4.0f * tk * uk);
+        knotTable[k].terrainBlend = 0.52f + 0.34f * groundAnchor;
+        knotTable[k].edgeSpread = 0.18f * (1.0f - 0.35f * groundAnchor);
+        knotTable[k].normalLerp = 0.58f + 0.24f * groundAnchor;
+    }
+
     for (int idx = 0; idx < indexCount; idx += sampleStride)
     {
         int i = indices[idx];
@@ -575,30 +635,36 @@ static Model Nature_BuildMeadowChunkFromIndices(const MapMeadowPlacement *placem
             float width = desc.width, bladeLeanAngle = desc.leanAngle;
             Vector3 pBase = desc.p0, pP1 = desc.p1, pP2 = desc.p2, pP3 = desc.p3;
             Color bladeRoot = desc.rootColor, bladeTip = desc.tipColor;
-            Vector3 baseSide = {-sinf(bladeLeanAngle), 0.0f, cosf(bladeLeanAngle)};
+            float sinLean, cosLean;
+            Nature_FastSinCos(bladeLeanAngle, &sinLean, &cosLean);
+            Vector3 baseSide = {-sinLean, 0.0f, cosLean};
 
             NatureBladeKnot knots[7];
             for (int k = 0; k <= bladeSegments; k++)
             {
-                float tk = (k == bladeSegments) ? 1.0f : (tipStart * (float)k * invSegMinus1);
+                const NatureKnotPrecomp *kp = &knotTable[k];
+                float tk = kp->tk;
                 knots[k].t = tk;
                 Vector3 center = Nature_EvalCubicBezier(pBase, pP1, pP2, pP3, tk);
                 knots[k].center = center;
 
                 Vector3 T = Vector3Normalize(Nature_EvalCubicBezierTangent(pBase, pP1, pP2, pP3, tk));
-                Vector3 crossS = Vector3CrossProduct(T, terrainNormal);
-                float lenS = Vector3Length(crossS);
-                Vector3 S = (lenS > 0.001f) ? Vector3Scale(crossS, 1.0f / lenS) : baseSide;
+                Vector3 crossS = {T.y * terrainNormal.z - T.z * terrainNormal.y,
+                                  0.0f,
+                                  T.x * terrainNormal.y - T.y * terrainNormal.x};
+                float lenSSq = crossS.x * crossS.x + crossS.z * crossS.z;
+                Vector3 S = (lenSSq > 1e-6f) ? Vector3Scale(crossS, 1.0f / sqrtf(lenSSq)) : baseSide;
 
-                Vector3 Ngeo = Vector3Normalize(Vector3CrossProduct(S, T));
+                Vector3 Ngeo = Vector3CrossProduct(S, T);
                 if (Ngeo.y < 0.0f)
                     Ngeo = Vector3Negate(Ngeo);
-                Ngeo.y = fmaxf(Ngeo.y, 0.30f);
-                Ngeo = Vector3Normalize(Ngeo);
+                if (Ngeo.y < 0.30f)
+                {
+                    Ngeo.y = 0.30f;
+                    Ngeo = Vector3Normalize(Ngeo);
+                }
 
-                float occ = (tk < 0.25f) ? (0.90f + 0.40f * tk) : 1.0f;
-                float sCurve = tk * tk * (3.0f - 2.0f * tk);
-                knots[k].color = Nature_ScaleColor(Nature_LerpColor(bladeRoot, bladeTip, sCurve), occ);
+                knots[k].color = Nature_ScaleColor(Nature_LerpColor(bladeRoot, bladeTip, kp->sCurve), kp->occ);
 
                 if (k == bladeSegments)
                 {
@@ -608,45 +674,27 @@ static Model Nature_BuildMeadowChunkFromIndices(const MapMeadowPlacement *placem
                 }
                 else
                 {
-                    float uk = 1.0f - tk;
-                    float profile;
-                    if (isReed)
-                    {
-                        float tk2 = tk * tk;
-                        float fastPow18 = tk2 * (0.82f + 0.18f * tk);
-                        profile = (0.78f + 0.36f * sinf(PI * tk)) * (1.0f - fastPow18);
-                    }
-                    else
-                    {
-                        float sheath = fminf(1.0f, 0.65f + 2.5f * tk);
-                        float body = 0.82f + 0.32f * sinf(PI * fminf(tk * 1.35f, 1.0f));
-                        float tipT = fmaxf(0.0f, (tk - 0.35f) * (1.0f / 0.65f));
-                        float taper = fmaxf(0.0f, 1.0f - tipT * tipT);
-                        profile = sheath * body * taper;
-                    }
-                    float halfW = (width * 0.5f) * profile;
-                    Vector3 fold = Vector3Scale(Ngeo, width * 0.055f * (4.0f * tk * uk));
+                    float halfW = width * (isReed ? kp->reedProfile : kp->grassProfile);
+                    Vector3 fold = Vector3Scale(Ngeo, width * kp->foldScale);
+                    Vector3 offsetS = Vector3Scale(S, halfW);
 
-                    Vector3 pL = Vector3Add(Vector3Subtract(center, Vector3Scale(S, halfW)), fold);
-                    Vector3 pR = Vector3Add(Vector3Add(center, Vector3Scale(S, halfW)), fold);
+                    Vector3 pL = Vector3Add(Vector3Subtract(center, offsetS), fold);
+                    Vector3 pR = Vector3Add(Vector3Add(center, offsetS), fold);
                     knots[k].pL = pL;
                     knots[k].pR = pR;
 
                     Vector3 dSphereL = Vector3Normalize(Vector3Subtract(pL, clumpSphereCenter));
                     Vector3 dSphereR = Vector3Normalize(Vector3Subtract(pR, clumpSphereCenter));
 
-                    float groundAnchor = fmaxf(0.0f, 1.0f - tk * 2.5f);
-                    float terrainBlend = 0.52f + 0.34f * groundAnchor;
-                    Vector3 nTargetL = Vector3Normalize(Vector3Lerp(dSphereL, terrainNormal, terrainBlend));
-                    Vector3 nTargetR = Vector3Normalize(Vector3Lerp(dSphereR, terrainNormal, terrainBlend));
+                    Vector3 nTargetL = Vector3Normalize(Vector3Lerp(dSphereL, terrainNormal, kp->terrainBlend));
+                    Vector3 nTargetR = Vector3Normalize(Vector3Lerp(dSphereR, terrainNormal, kp->terrainBlend));
 
-                    float edgeSpread = 0.18f * (1.0f - 0.35f * groundAnchor);
-                    Vector3 nMeshL = Vector3Normalize(Vector3Subtract(Ngeo, Vector3Scale(S, edgeSpread)));
-                    Vector3 nMeshR = Vector3Normalize(Vector3Add(Ngeo, Vector3Scale(S, edgeSpread)));
+                    Vector3 spreadVec = Vector3Scale(S, kp->edgeSpread);
+                    Vector3 nMeshL = Vector3Normalize(Vector3Subtract(Ngeo, spreadVec));
+                    Vector3 nMeshR = Vector3Normalize(Vector3Add(Ngeo, spreadVec));
 
-                    float normalLerp = 0.58f + 0.24f * groundAnchor;
-                    knots[k].nL = Vector3Normalize(Vector3Lerp(nMeshL, nTargetL, normalLerp));
-                    knots[k].nR = Vector3Normalize(Vector3Lerp(nMeshR, nTargetR, normalLerp));
+                    knots[k].nL = Vector3Normalize(Vector3Lerp(nMeshL, nTargetL, kp->normalLerp));
+                    knots[k].nR = Vector3Normalize(Vector3Lerp(nMeshR, nTargetR, kp->normalLerp));
                 }
             }
 
@@ -675,29 +723,30 @@ static Model Nature_BuildMeadowChunkFromIndices(const MapMeadowPlacement *placem
             float caneHeight = clump->height * 1.35f;
             float caneAngle = clump->rotationDeg * DEG2RAD + 0.22f * sinf((float)i * 1.7f);
             float caneLean = caneHeight * 0.32f;
+            float sinCane, cosCane;
+            Nature_FastSinCos(caneAngle, &sinCane, &cosCane);
             Vector3 caneP0 = {clump->position.x, clump->position.y, clump->position.z};
-            Vector3 caneP1 = {clump->position.x + cosf(caneAngle) * caneLean * 0.45f,
+            Vector3 caneP1 = {clump->position.x + cosCane * caneLean * 0.45f,
                               clump->position.y + caneHeight * 0.55f,
-                              clump->position.z + sinf(caneAngle) * caneLean * 0.45f};
-            Vector3 caneP2 = {clump->position.x + cosf(caneAngle) * caneLean,
+                              clump->position.z + sinCane * caneLean * 0.45f};
+            Vector3 caneP2 = {clump->position.x + cosCane * caneLean,
                               clump->position.y + caneHeight,
-                              clump->position.z + sinf(caneAngle) * caneLean};
+                              clump->position.z + sinCane * caneLean};
 
-            float tKnots[4] = {0.65f, 0.78f, 0.90f, 1.00f};
+            const float tKnots[4] = {0.65f, 0.78f, 0.90f, 1.00f};
             Vector3 plPts[4];
             for (int k = 0; k < 4; k++)
             {
                 float tk = tKnots[k];
                 float omtk = 1.0f - tk;
                 plPts[k] = (Vector3){
-                    omtk * omtk * caneP0.x + 2 * omtk * tk * caneP1.x + tk * tk * caneP2.x,
-                    omtk * omtk * caneP0.y + 2 * omtk * tk * caneP1.y + tk * tk * caneP2.y,
-                    omtk * omtk * caneP0.z + 2 * omtk * tk * caneP1.z + tk * tk * caneP2.z};
+                    omtk * omtk * caneP0.x + 2.0f * omtk * tk * caneP1.x + tk * tk * caneP2.x,
+                    omtk * omtk * caneP0.y + 2.0f * omtk * tk * caneP1.y + tk * tk * caneP2.y,
+                    omtk * omtk * caneP0.z + 2.0f * omtk * tk * caneP1.z + tk * tk * caneP2.z};
             }
 
-            float stripAngle = caneAngle + 1.5707963f;
-            Vector3 side = {-sinf(stripAngle), 0.0f, cosf(stripAngle)};
-            Vector3 norm = Vector3Normalize((Vector3){cosf(stripAngle), 0.25f, sinf(stripAngle)});
+            Vector3 side = {-cosCane, 0.0f, -sinCane};
+            Vector3 norm = Vector3Normalize((Vector3){-sinCane, 0.25f, cosCane});
 
             Vector3 qBase = plPts[0];
             Vector3 qTip = plPts[3];
@@ -724,34 +773,36 @@ static Model Nature_BuildMeadowChunkFromIndices(const MapMeadowPlacement *placem
                                           clump->phase, 0.52f, 1.0f, c0, c1);
             }
 
-            float tL0 = 0.32f, tL1 = 0.52f;
-            float omtL0 = 1.0f - tL0, omtL1 = 1.0f - tL1;
+            const float tL0 = 0.32f, tL1 = 0.52f;
+            const float omtL0 = 1.0f - tL0, omtL1 = 1.0f - tL1;
             Vector3 leafRoot0 = {
-                omtL0 * omtL0 * caneP0.x + 2 * omtL0 * tL0 * caneP1.x + tL0 * tL0 * caneP2.x,
-                omtL0 * omtL0 * caneP0.y + 2 * omtL0 * tL0 * caneP1.y + tL0 * tL0 * caneP2.y,
-                omtL0 * omtL0 * caneP0.z + 2 * omtL0 * tL0 * caneP1.z + tL0 * tL0 * caneP2.z};
+                omtL0 * omtL0 * caneP0.x + 2.0f * omtL0 * tL0 * caneP1.x + tL0 * tL0 * caneP2.x,
+                omtL0 * omtL0 * caneP0.y + 2.0f * omtL0 * tL0 * caneP1.y + tL0 * tL0 * caneP2.y,
+                omtL0 * omtL0 * caneP0.z + 2.0f * omtL0 * tL0 * caneP1.z + tL0 * tL0 * caneP2.z};
             Vector3 leafRoot1 = {
-                omtL1 * omtL1 * caneP0.x + 2 * omtL1 * tL1 * caneP1.x + tL1 * tL1 * caneP2.x,
-                omtL1 * omtL1 * caneP0.y + 2 * omtL1 * tL1 * caneP1.y + tL1 * tL1 * caneP2.y,
-                omtL1 * omtL1 * caneP0.z + 2 * omtL1 * tL1 * caneP1.z + tL1 * tL1 * caneP2.z};
-            float lAng0 = caneAngle + 1.42f;
-            float lAng1 = caneAngle - 1.42f;
-            Vector3 lDir0 = {cosf(lAng0), 0.0f, sinf(lAng0)};
-            Vector3 lDir1 = {cosf(lAng1), 0.0f, sinf(lAng1)};
+                omtL1 * omtL1 * caneP0.x + 2.0f * omtL1 * tL1 * caneP1.x + tL1 * tL1 * caneP2.x,
+                omtL1 * omtL1 * caneP0.y + 2.0f * omtL1 * tL1 * caneP1.y + tL1 * tL1 * caneP2.y,
+                omtL1 * omtL1 * caneP0.z + 2.0f * omtL1 * tL1 * caneP1.z + tL1 * tL1 * caneP2.z};
+            float sinL0, cosL0, sinL1, cosL1;
+            Nature_FastSinCos(caneAngle + 1.42f, &sinL0, &cosL0);
+            Nature_FastSinCos(caneAngle - 1.42f, &sinL1, &cosL1);
+            Vector3 lDir0 = {cosL0, 0.0f, sinL0};
+            Vector3 lDir1 = {cosL1, 0.0f, sinL1};
             Vector3 lSide0 = {-lDir0.z * 0.024f, 0.0f, lDir0.x * 0.024f};
             Vector3 lSide1 = {-lDir1.z * 0.022f, 0.0f, lDir1.x * 0.022f};
             Vector3 lTip0 = {leafRoot0.x + lDir0.x * 0.45f, leafRoot0.y - 0.12f, leafRoot0.z + lDir0.z * 0.45f};
             Vector3 lTip1 = {leafRoot1.x + lDir1.x * 0.40f, leafRoot1.y - 0.10f, leafRoot1.z + lDir1.z * 0.40f};
             Color leafCol = {88, 122, 50, 255};
+            Color leafTipCol = Nature_ScaleColor(leafCol, 1.15f);
             Vector3 upN = {0.0f, 1.0f, 0.0f};
             Nature_AddCurvedBladeQuad(&mesh, &cursor,
                                       Vector3Subtract(leafRoot0, lSide0), Vector3Add(leafRoot0, lSide0),
                                       Vector3Add(lTip0, Vector3Scale(lSide0, 0.15f)), Vector3Subtract(lTip0, Vector3Scale(lSide0, 0.15f)),
-                                      upN, upN, upN, upN, clump->phase, 0.3f, 0.5f, leafCol, Nature_ScaleColor(leafCol, 1.15f));
+                                      upN, upN, upN, upN, clump->phase, 0.3f, 0.5f, leafCol, leafTipCol);
             Nature_AddCurvedBladeQuad(&mesh, &cursor,
                                       Vector3Subtract(leafRoot1, lSide1), Vector3Add(leafRoot1, lSide1),
                                       Vector3Add(lTip1, Vector3Scale(lSide1, 0.15f)), Vector3Subtract(lTip1, Vector3Scale(lSide1, 0.15f)),
-                                      upN, upN, upN, upN, clump->phase, 0.4f, 0.6f, leafCol, Nature_ScaleColor(leafCol, 1.15f));
+                                      upN, upN, upN, upN, clump->phase, 0.4f, 0.6f, leafCol, leafTipCol);
         }
     }
     if (!style.hasPlumes && bladeSegments > 1)
@@ -779,6 +830,12 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
         return (Model){0};
     }
     int *indices = (int *)MemAlloc((unsigned int)matchCount * sizeof(int));
+    if (!indices)
+    {
+        if (outPlacementCount)
+            *outPlacementCount = 0;
+        return (Model){0};
+    }
     int cursor = 0;
     for (int i = 0; i < count; i++)
     {
@@ -874,12 +931,29 @@ MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int 
         rows = 1;
     int capacity = columns * rows;
 
-    // [TỐI ƯU KHỞI TẠO O(N)]: Gom nhóm 98.000 placements vào các giỏ chunk chỉ trong 1 lượt đếm!
+    // [TỐI ƯU KHỞI TẠO O(N)]: Gom nhóm placements vào các giỏ chunk chỉ trong 1 lượt đếm!
     float invChunkSize = 1.0f / style.chunkSize;
     int *bucketCounts = (int *)MemAlloc((unsigned int)capacity * sizeof(int));
     int *bucketOffsets = (int *)MemAlloc((unsigned int)(capacity + 1) * sizeof(int));
     int *sortedIndices = (int *)MemAlloc((unsigned int)count * sizeof(int));
     int *placementCell = (int *)MemAlloc((unsigned int)count * sizeof(int));
+    meadow.chunks = (MapMeadowChunk *)MemAlloc((unsigned int)capacity * sizeof(MapMeadowChunk));
+
+    if (!bucketCounts || !bucketOffsets || !sortedIndices || !placementCell || !meadow.chunks)
+    {
+        if (bucketCounts)
+            MemFree(bucketCounts);
+        if (bucketOffsets)
+            MemFree(bucketOffsets);
+        if (sortedIndices)
+            MemFree(sortedIndices);
+        if (placementCell)
+            MemFree(placementCell);
+        if (meadow.chunks)
+            MemFree(meadow.chunks);
+        meadow.chunks = NULL;
+        return (MapMeadowSurface){0};
+    }
 
     for (int i = 0; i < count; i++)
     {
@@ -915,7 +989,6 @@ MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int 
     }
     MemFree(placementCell);
 
-    meadow.chunks = MemAlloc((unsigned int)capacity * sizeof(MapMeadowChunk));
     meadow.lodDistance = style.lodDistance;
     meadow.midLodDistance = style.midLodDistance > 0.0f ? style.midLodDistance
                                                         : (style.lodDistance > 0.0f ? style.lodDistance * 0.48f : 0.0f);
@@ -1064,6 +1137,8 @@ typedef struct
     Vector3 up;
     float fovy;
     int projection;
+    int screenW;
+    int screenH;
     Vector3 forward;
     Vector3 right;
     Vector3 viewUp;
@@ -1079,6 +1154,8 @@ static NatureFrustumCache s_natureFrustumCache = {0};
 
 static inline void Nature_RefreshFrustumCache(void)
 {
+    int sw = GetScreenWidth();
+    int sh = GetScreenHeight();
     if (s_natureFrustumCache.valid &&
         s_natureFrustumCache.pos.x == camera.position.x &&
         s_natureFrustumCache.pos.y == camera.position.y &&
@@ -1090,7 +1167,9 @@ static inline void Nature_RefreshFrustumCache(void)
         s_natureFrustumCache.up.y == camera.up.y &&
         s_natureFrustumCache.up.z == camera.up.z &&
         s_natureFrustumCache.fovy == camera.fovy &&
-        s_natureFrustumCache.projection == camera.projection)
+        s_natureFrustumCache.projection == camera.projection &&
+        s_natureFrustumCache.screenW == sw &&
+        s_natureFrustumCache.screenH == sh)
     {
         return;
     }
@@ -1100,6 +1179,8 @@ static inline void Nature_RefreshFrustumCache(void)
     s_natureFrustumCache.up = camera.up;
     s_natureFrustumCache.fovy = camera.fovy;
     s_natureFrustumCache.projection = camera.projection;
+    s_natureFrustumCache.screenW = sw;
+    s_natureFrustumCache.screenH = sh;
     s_natureFrustumCache.valid = true;
 
     Vector3 forward = Vector3Subtract(camera.target, camera.position);
@@ -1121,7 +1202,7 @@ static inline void Nature_RefreshFrustumCache(void)
     right = Vector3Scale(right, 1.0f / rightLength);
     Vector3 viewUp = Vector3Normalize(Vector3CrossProduct(right, forward));
 
-    float aspect = (float)GetScreenWidth() / (float)fmaxf((float)GetScreenHeight(), 1.0f);
+    float aspect = (float)sw / (float)(sh > 1 ? sh : 1);
     s_natureFrustumCache.forward = forward;
     s_natureFrustumCache.right = right;
     s_natureFrustumCache.viewUp = viewUp;
@@ -1228,6 +1309,7 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
     NatureMeadowView view = NatureParametric_View(meadow);
     float lodScale = view.lodScale, zoomFactor = view.zoomFactor;
     float lodDistance = view.lodDistance, drawDistance = view.drawDistance;
+    Vector4 tuftBands = view.bands;
 
     Nature_RefreshFrustumCache();
 
@@ -1238,6 +1320,12 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
 
     NatureParametricMeadow *ordered = meadow->parametric;
     bool useParametricOrder = (ordered && ordered->nearFirst);
+    bool alreadyPrepared = ordered && (ordered->compact || ordered->nearFirst) &&
+                           NatureParametric_IsPrepared(meadow, worldOffset, tuftBands);
+
+    static int *s_fallbackOrder = NULL;
+    static float *s_fallbackDepth = NULL;
+    static int s_fallbackCapacity = 0;
 
     int drawCount = 0;
     int localOrder[256];
@@ -1248,8 +1336,18 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
 
     if (!useParametricOrder && meadow->chunkCount > 256)
     {
-        drawOrder = (int *)MemAlloc((unsigned int)meadow->chunkCount * sizeof(int));
-        drawDepth = (float *)MemAlloc((unsigned int)meadow->chunkCount * sizeof(float));
+        if (meadow->chunkCount > s_fallbackCapacity)
+        {
+            int *grownOrder = (int *)RL_REALLOC(s_fallbackOrder, (size_t)meadow->chunkCount * sizeof(int));
+            float *grownDepth = (float *)RL_REALLOC(s_fallbackDepth, (size_t)meadow->chunkCount * sizeof(float));
+            if (!grownOrder || !grownDepth)
+                return;
+            s_fallbackOrder = grownOrder;
+            s_fallbackDepth = grownDepth;
+            s_fallbackCapacity = meadow->chunkCount;
+        }
+        drawOrder = s_fallbackOrder;
+        drawDepth = s_fallbackDepth;
     }
 
     float baseFarDist = focalDist + lodDistance * lodScale * zoomFactor;
@@ -1258,103 +1356,124 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
                             : 0.0f;
     float hysteresis = quality >= GFX_HIGH ? 1.1f : 1.8f;
 
-    // [TỐI ƯU 1 LƯỢT DUYỆT]: Vừa kiểm tra Frustum + Cự ly, vừa chọn LOD bằng bình phương khoảng cách
-    // (không tốn sqrtf), vừa sắp xếp Front-to-Back (Early-Z) ngay trong cùng 1 vòng lặp!
-    for (int i = 0; i < meadow->chunkCount; i++)
+    if (alreadyPrepared)
     {
-        MapMeadowChunk *chunk = &meadow->chunks[i];
-        chunk->visibleThisFrame = false;
-        s_natureRenderStats.meadowChunksTested++;
-        Vector3 center = Vector3Add(chunk->center, worldOffset);
-
-        float dx = camera.position.x - center.x;
-        float dz = camera.position.z - center.z;
-        float distanceSqXZ = dx * dx + dz * dz;
-        float maxDrawDist = drawDistance + chunk->radius;
-        if (drawDistance > 0.0f && distanceSqXZ > maxDrawDist * maxDrawDist)
+        s_natureRenderStats.meadowChunksTested += meadow->chunkCount;
+        s_natureRenderStats.meadowChunksVisible += ordered->drawCount;
+        for (int i = 0; i < meadow->chunkCount; i++)
         {
-            s_natureRenderStats.meadowDistanceCulled++;
-            continue;
-        }
-        if (!Nature_IsChunkVisible(center, chunk->radius))
-        {
-            s_natureRenderStats.meadowFrustumCulled++;
-            continue;
-        }
-
-        s_natureRenderStats.meadowChunksVisible++;
-        chunk->visibleThisFrame = true;
-        if (chunk->shadowReady)
-            hasAnyContactShadow = true;
-
-        float dy = camera.position.y - center.y;
-        float distSq3D = distanceSqXZ + dy * dy;
-
-        if (!meadow->parametric)
-        {
-            if (lodDistance > 0.0f)
+            if (meadow->chunks[i].visibleThisFrame && meadow->chunks[i].shadowReady)
             {
-                float hSeed = chunk->center.x * 0.1031f + chunk->center.z * 0.3183f;
-                float spatialHash = hSeed - floorf(hSeed) - 0.5f;
-                float farThreshold = baseFarDist + spatialHash * 4.0f;
-                float midThreshold = (baseMidDist > 0.0f && chunk->midReady)
-                                         ? (baseMidDist + spatialHash * 2.5f)
-                                         : 0.0f;
+                hasAnyContactShadow = true;
+                break;
+            }
+        }
+    }
+    else
+    {
+        // [TỐI ƯU 1 LƯỢT DUYỆT]: Vừa kiểm tra Frustum + Cự ly, vừa chọn LOD bằng bình phương khoảng cách
+        // (không tốn sqrtf), vừa sắp xếp Front-to-Back (Early-Z) ngay trong cùng 1 vòng lặp!
+        for (int i = 0; i < meadow->chunkCount; i++)
+        {
+            MapMeadowChunk *chunk = &meadow->chunks[i];
+            chunk->visibleThisFrame = false;
+            s_natureRenderStats.meadowChunksTested++;
+            Vector3 center = Vector3Add(chunk->center, worldOffset);
 
-                if (midThreshold > 0.0f)
+            float dx = camera.position.x - center.x;
+            float dz = camera.position.z - center.z;
+            float distanceSqXZ = dx * dx + dz * dz;
+            float maxDrawDist = drawDistance + chunk->radius;
+            if (drawDistance > 0.0f && distanceSqXZ > maxDrawDist * maxDrawDist)
+            {
+                s_natureRenderStats.meadowDistanceCulled++;
+                continue;
+            }
+            if (!Nature_IsChunkVisible(center, chunk->radius))
+            {
+                s_natureRenderStats.meadowFrustumCulled++;
+                continue;
+            }
+
+            s_natureRenderStats.meadowChunksVisible++;
+            chunk->visibleThisFrame = true;
+            if (chunk->shadowReady)
+                hasAnyContactShadow = true;
+
+            float dy = camera.position.y - center.y;
+            float distSq3D = distanceSqXZ + dy * dy;
+
+            if (!meadow->parametric)
+            {
+                if (lodDistance > 0.0f)
                 {
-                    if (chunk->lodLevel == 2)
+                    float hSeed = chunk->center.x * 0.1031f + chunk->center.z * 0.3183f;
+                    float spatialHash = hSeed - floorf(hSeed) - 0.5f;
+                    float farThreshold = baseFarDist + spatialHash * 4.0f;
+                    float midThreshold = (baseMidDist > 0.0f && chunk->midReady)
+                                             ? (baseMidDist + spatialHash * 2.5f)
+                                             : 0.0f;
+
+                    if (midThreshold > 0.0f)
                     {
-                        if (distSq3D < Nature_SquarePositive(farThreshold - hysteresis))
-                            chunk->lodLevel = (distSq3D < Nature_SquarePositive(midThreshold - hysteresis)) ? 0 : 1;
-                    }
-                    else if (chunk->lodLevel == 1)
-                    {
-                        if (distSq3D > Nature_SquarePositive(farThreshold + hysteresis))
-                            chunk->lodLevel = 2;
-                        else if (distSq3D < Nature_SquarePositive(midThreshold - hysteresis))
-                            chunk->lodLevel = 0;
+                        if (chunk->lodLevel == 2)
+                        {
+                            if (distSq3D < Nature_SquarePositive(farThreshold - hysteresis))
+                                chunk->lodLevel = (distSq3D < Nature_SquarePositive(midThreshold - hysteresis)) ? 0 : 1;
+                        }
+                        else if (chunk->lodLevel == 1)
+                        {
+                            if (distSq3D > Nature_SquarePositive(farThreshold + hysteresis))
+                                chunk->lodLevel = 2;
+                            else if (distSq3D < Nature_SquarePositive(midThreshold - hysteresis))
+                                chunk->lodLevel = 0;
+                        }
+                        else
+                        {
+                            if (distSq3D > Nature_SquarePositive(farThreshold + hysteresis))
+                                chunk->lodLevel = 2;
+                            else if (distSq3D > Nature_SquarePositive(midThreshold + hysteresis))
+                                chunk->lodLevel = 1;
+                        }
                     }
                     else
                     {
-                        if (distSq3D > Nature_SquarePositive(farThreshold + hysteresis))
+                        if (chunk->lodLevel == 2)
+                        {
+                            if (distSq3D < Nature_SquarePositive(farThreshold - hysteresis))
+                                chunk->lodLevel = 0;
+                        }
+                        else if (distSq3D > Nature_SquarePositive(farThreshold + hysteresis))
+                        {
                             chunk->lodLevel = 2;
-                        else if (distSq3D > Nature_SquarePositive(midThreshold + hysteresis))
-                            chunk->lodLevel = 1;
+                        }
                     }
+                    chunk->farLod = (chunk->lodLevel == 2);
                 }
                 else
                 {
-                    if (chunk->lodLevel == 2)
-                    {
-                        if (distSq3D < Nature_SquarePositive(farThreshold - hysteresis))
-                            chunk->lodLevel = 0;
-                    }
-                    else if (distSq3D > Nature_SquarePositive(farThreshold + hysteresis))
-                    {
-                        chunk->lodLevel = 2;
-                    }
+                    chunk->lodLevel = 0;
+                    chunk->farLod = false;
                 }
-                chunk->farLod = (chunk->lodLevel == 2);
             }
-            else
+
+            if (!useParametricOrder)
             {
-                chunk->lodLevel = 0;
-                chunk->farLod = false;
+                int slot = drawCount++;
+                while (slot > 0 && drawDepth[slot - 1] > distSq3D)
+                {
+                    drawOrder[slot] = drawOrder[slot - 1];
+                    drawDepth[slot] = drawDepth[slot - 1];
+                    slot--;
+                }
+                drawOrder[slot] = i;
+                drawDepth[slot] = distSq3D;
             }
         }
 
-        if (!useParametricOrder)
+        if (ordered && (ordered->compact || ordered->nearFirst))
         {
-            int slot = drawCount++;
-            while (slot > 0 && drawDepth[slot - 1] > distSq3D)
-            {
-                drawOrder[slot] = drawOrder[slot - 1];
-                drawDepth[slot] = drawDepth[slot - 1];
-                slot--;
-            }
-            drawOrder[slot] = i;
-            drawDepth[slot] = distSq3D;
+            NatureParametric_PrepareVisible(meadow, worldOffset, tuftBands);
         }
     }
 
@@ -1400,13 +1519,9 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
         rlEnableDepthMask();
     }
 
-    Vector4 tuftBands = view.bands;
-    bool compactNow = false;
-    {
-        NatureParametricMeadow *parametricData = meadow->parametric;
-        compactNow = parametricData && parametricData->compact &&
-                     NatureParametric_IsPrepared(meadow, worldOffset, tuftBands);
-    }
+    bool compactNow = ordered && ordered->compact &&
+                      NatureParametric_IsPrepared(meadow, worldOffset, tuftBands);
+
     Shader shader = meadow->parametric ? NatureParametric_Shader(false)
                                        : Nature_GetShader(meadow->textured);
     Nature_BeginWindReceiverShader(shader);
@@ -1456,23 +1571,14 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
             continue;
         if (meadow->parametric)
         {
-            float d;
-            if (hasPrecomputedDepth)
-            {
-                d = sqrtf(drawDepth[draw]);
-            }
-            else
-            {
-                Vector3 center = Vector3Add(chunk->center, worldOffset);
-                d = Vector3Distance(camera.position, center);
-            }
+            NatureParametricMeadow *data = meadow->parametric;
+            float d = hasPrecomputedDepth ? sqrtf(drawDepth[draw]) : data->chunkDistCache[i];
             float minDistance = fmaxf(0.0f, d - chunk->radius);
             float maxDistance = d + chunk->radius;
             for (int lod = 0; lod < 3; lod++)
             {
                 if (!NatureParametric_LodIntersectsSphere(lod, minDistance, maxDistance, tuftBands))
                     continue;
-                NatureParametricMeadow *data = meadow->parametric;
                 if (compactNow && data->ranges[i].visibleCount[lod] == 0)
                     continue;
                 NatureParametric_DrawChunk(meadow, i, lod, shader, worldOffset, compactNow);
@@ -1502,11 +1608,6 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
         }
     }
 
-    if (!useParametricOrder && drawOrder != localOrder)
-    {
-        MemFree(drawOrder);
-        MemFree(drawDepth);
-    }
     if (meadow->parametric)
         NatureParametric_EndReceivers();
     Nature_EndWindReceiverShader();
@@ -1542,6 +1643,9 @@ void MapProp_DrawMeadowShadowCasters(MapMeadowSurface *meadow, Vector3 worldOffs
     float qualityDistScale = (quality >= GFX_HIGH) ? 1.0f : 0.80f;
     float maxDist = fminf(meadow->shadowDistance * qualityDistScale + 4.0f, halfExtent + 4.0f);
     bool filterActive = Nature_ShadowCasterFilterActive();
+    // Dịch nhẹ tâm cầu kiểm tra Frustum theo hướng bóng đổ để các bụi cỏ sát rìa ngoài màn hình
+    // vẫn đổ bóng liền mạch vào trong khung hình mà không bị pop bóng khi quay camera.
+    Vector3 shadowSweepOffset = {sunDir.x * 1.8f, 0.0f, sunDir.z * 1.8f};
 
     for (int i = 0; i < meadow->chunkCount; i++)
     {
@@ -1555,7 +1659,8 @@ void MapProp_DrawMeadowShadowCasters(MapMeadowSurface *meadow, Vector3 worldOffs
         float limit = fminf(maxDist + chunk->radius * 0.35f, halfExtent + 2.0f);
         if (distSq > limit * limit)
             continue;
-        if (!Nature_IsChunkVisible(center, chunk->radius + 3.5f))
+        Vector3 sweptCenter = Vector3Add(center, shadowSweepOffset);
+        if (!Nature_IsChunkVisible(sweptCenter, chunk->radius + 6.0f))
             continue;
         if (!filterActive)
         {
