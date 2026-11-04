@@ -28,12 +28,18 @@
 
 static inline void TilePlaneUVs(Mesh *mesh, float worldWidth, float worldLength, float tileSize)
 {
-    float repeatU = worldWidth / tileSize;
-    float repeatV = worldLength / tileSize;
-    for (int i = 0; i < mesh->vertexCount; i++)
+    if (mesh == NULL || mesh->texcoords == NULL || tileSize <= 1e-6f)
+        return;
+
+    const float invTile = 1.0f / tileSize;
+    const float repeatU = worldWidth * invTile;
+    const float repeatV = worldLength * invTile;
+    float *uv = mesh->texcoords;
+    const int count = mesh->vertexCount;
+    for (int i = 0; i < count; i++)
     {
-        mesh->texcoords[i * 2 + 0] *= repeatU;
-        mesh->texcoords[i * 2 + 1] *= repeatV;
+        uv[i * 2 + 0] *= repeatU;
+        uv[i * 2 + 1] *= repeatV;
     }
 }
 
@@ -43,9 +49,11 @@ static inline unsigned int Nature_NextRandom(unsigned int *state)
     return *state;
 }
 
+// Trả về giá trị trong nửa khoảng [0.0f, 1.0f) bằng nhân lũy thừa 2 (0x1.0p-24f),
+// ngăn lỗi tràn chỉ số mảng (idx == count) khi dùng trực tiếp làm hệ số chọn phần tử.
 static inline float Nature_Random01(unsigned int *state)
 {
-    return (float)(Nature_NextRandom(state) & 0x00ffffffu) / 16777215.0f;
+    return (float)(Nature_NextRandom(state) & 0x00ffffffu) * (1.0f / 16777216.0f);
 }
 
 // Băm số nguyên cực nhanh phục vụ chọn loài hoa, góc xoay và tỉa mật độ LOD ở cự ly xa
@@ -61,13 +69,32 @@ static inline unsigned int Nature_HashU32(unsigned int x)
 
 static inline float Nature_Hash01(unsigned int x)
 {
-    return (float)(Nature_HashU32(x) & 0x00ffffffu) * (1.0f / 16777215.0f);
+    return (float)(Nature_HashU32(x) & 0x00ffffffu) * (1.0f / 16777216.0f);
 }
 
+// Tính đồng thời sin và cos với phép rút gọn miền [-pi/2, pi/2] và đa thức minimax bậc cao
+// giúp tăng tốc khởi tạo/cập nhật hàng trăm nghìn bụi cỏ mà vẫn giữ độ chính xác float32.
 static inline void Nature_FastSinCos(float angleRad, float *outSin, float *outCos)
 {
-    *outSin = sinf(angleRad);
-    *outCos = cosf(angleRad);
+    const float kInvPi = 0.31830988618379067f;
+    const float kPiHi = 3.14159250259399414f;
+    const float kPiLo = 1.5099579909783764e-7f;
+
+    float qf = floorf(angleRad * kInvPi + 0.5f);
+    int q = (int)qf;
+    float x = (angleRad - qf * kPiHi) - qf * kPiLo;
+    float x2 = x * x;
+
+    float s = ((-0.00019840874f * x2 + 0.0083333310f) * x2 - 0.16666667f) * (x * x2) + x;
+    float c = ((-0.0013888378f * x2 + 0.041666638f) * x2 - 0.5f) * x2 + 1.0f;
+
+    if (q & 1)
+    {
+        s = -s;
+        c = -c;
+    }
+    *outSin = s;
+    *outCos = c;
 }
 
 #include "maps/toolkit/map_props_texture.inl"

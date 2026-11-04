@@ -8,30 +8,26 @@
 #include "rlgl.h"
 #include <stddef.h>
 
-Shader PropLit_GetShader(void) {
+static unsigned int s_cachedShaderId = 0;
+static int s_locCloudWorldFromShader = -1;
+static int s_locLightDir = -1;
+static int s_locLightColor = -1;
+static int s_locAmbientColor = -1;
+static int s_locViewPos = -1;
+
+Shader PropLit_GetShader(void)
+{
   Shader shader = ResourceManager_LoadShader("maps/toolkit/shaders/prop_lit.vs",
-                                              "maps/toolkit/shaders/prop_lit.fs");
+                                             "maps/toolkit/shaders/prop_lit.fs");
 
   // CORE_ISSUES.md Item 36 gotcha: LoadShaderFromMemory (what
   // ResourceManager_LoadShader wraps) only auto-binds a small fixed set of
   // default uniform/attribute names, and "matModel" is confirmed NOT among
-  // them (see the comment in SkillManager_BeginShader, core/skill_manager.c
-  // around line 1068). Every other custom shader in this codebase is bound
-  // via SkillManager_BeginShader + immediate-mode/DrawMesh-adjacent draws
-  // that either set matModel manually by name or never trigger raylib's
-  // internal DrawMesh()-side auto-upload path at all. prop_lit is the first
-  // shader here designed to be assigned straight into a Model's Material
-  // slot and drawn with plain DrawModel()/DrawModelEx() — so raylib's own
-  // DrawMesh() DOES read shader.locs[SHADER_LOC_MATRIX_MODEL] (and the
-  // vertex-attribute / material-map-texture locs below) directly to decide
-  // where to upload the model matrix / bind each texture unit. Leaving any
-  // of these at their zero-initialized RL_CALLOC default (a value that
-  // still passes a ">= 0" validity check without being the real uniform
-  // location) risks silently overwriting whatever uniform actually lives at
-  // that location. Fix all of them explicitly by name, once, rather than
-  // trust the incomplete default auto-bind list.
-  static bool s_locsFixed = false;
-  if (!s_locsFixed && shader.id != 0 && shader.locs != NULL) {
+  // them. Track by shader.id so hot-reloads or shader recreations re-bind
+  // all attribute, sampler, and cached uniform locations cleanly.
+  if (shader.id != 0 && shader.locs != NULL &&
+      (s_cachedShaderId != shader.id || shader.locs[SHADER_LOC_MATRIX_MODEL] < 0))
+  {
     shader.locs[SHADER_LOC_VERTEX_POSITION] =
         GetShaderLocationAttrib(shader, "vertexPosition");
     shader.locs[SHADER_LOC_VERTEX_TEXCOORD01] =
@@ -54,40 +50,49 @@ Shader PropLit_GetShader(void) {
         GetShaderLocation(shader, "texture3");
     shader.locs[SHADER_LOC_MAP_METALNESS] =
         GetShaderLocation(shader, "u_cloudNoise");
+
+    s_locCloudWorldFromShader = GetShaderLocation(shader, "u_cloudWorldFromShader");
+    s_locLightDir = GetShaderLocation(shader, "u_lightDir");
+    s_locLightColor = GetShaderLocation(shader, "u_lightColor");
+    s_locAmbientColor = GetShaderLocation(shader, "u_ambientColor");
+    s_locViewPos = GetShaderLocation(shader, "u_viewPos");
+
     MapShadow_ConfigureShader(shader);
 
-    // Đợt E / E2 — opt into the VFX point-light pool. Registration is all it
-    // needs: main.c's VFXLight_BindAll pushes the pool to every registered
-    // shader each frame, so there is no per-frame code here.
+    // Đợt E / E2 — opt into the VFX point-light pool.
     VFXLight_RegisterShader(shader);
 
-    s_locsFixed = true;
+    s_cachedShaderId = shader.id;
   }
   return shader;
 }
 
 Material PropLit_MakeMaterial(Texture2D diffuse, Texture2D normal,
-                               Texture2D roughness) {
-  // LoadMaterialDefault() gives a Material with a properly allocated
-  // maps[MAX_MATERIAL_MAPS] array (raylib-internal allocation, not ours —
-  // core's "no malloc" rule is about our own code, not raylib's own Load*
-  // APIs, same as ResourceManager_LoadTexture calling raylib's LoadTexture).
-  // A hand-built Material{0} would leave maps == NULL and crash the first
-  // time DrawMesh() indexes into it.
+                              Texture2D roughness)
+{
   Material mat = LoadMaterialDefault();
   mat.shader = PropLit_GetShader();
 
-  mat.maps[MATERIAL_MAP_DIFFUSE].texture = diffuse;
-  mat.maps[MATERIAL_MAP_DIFFUSE].color = WHITE; // colDiffuse base; DrawModelEx's tint multiplies into this per-draw
-  mat.maps[MATERIAL_MAP_NORMAL].texture = normal;
-  mat.maps[MATERIAL_MAP_ROUGHNESS].texture = roughness;
-  mat.maps[MATERIAL_MAP_METALNESS].texture = Environment_GetCloudShadowFrame().noiseTexture;
+  if (diffuse.id != 0)
+    mat.maps[MATERIAL_MAP_DIFFUSE].texture = diffuse;
+  mat.maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
+
+  if (normal.id != 0)
+    mat.maps[MATERIAL_MAP_NORMAL].texture = normal;
+  if (roughness.id != 0)
+    mat.maps[MATERIAL_MAP_ROUGHNESS].texture = roughness;
+
+  Texture2D cloudNoise = Environment_GetCloudShadowFrame().noiseTexture;
+  if (cloudNoise.id != 0)
+    mat.maps[MATERIAL_MAP_METALNESS].texture = cloudNoise;
+
   MapShadow_AttachMaterial(&mat);
 
   return mat;
 }
 
-void PropLit_UpdateLighting(void) {
+void PropLit_UpdateLighting(void)
+{
   Shader shader = PropLit_GetShader();
   if (shader.id == 0)
     return;
@@ -95,45 +100,48 @@ void PropLit_UpdateLighting(void) {
   rlDrawRenderBatchActive();
   BeginShaderMode(shader);
   Environment_BindCloudShadowShader(shader);
-  Matrix shaderFromWorld = rlGetMatrixTransform();
-  SetShaderValueMatrix(shader, GetShaderLocation(shader, "u_cloudWorldFromShader"),
-                       MatrixInvert(shaderFromWorld));
 
-  int lightDirLoc = GetShaderLocation(shader, "u_lightDir");
-  if (lightDirLoc >= 0) {
-    // Same negation convention as SkillManager_BeginShader (CORE_ISSUES.md
-    // Item 10): Environment_GetSunDirection() is the direction light
-    // TRAVELS (sky->ground, used for shadow-skew math); shaders' convention
-    // for dot(normal, lightDir) needs the opposite, surface->light
-    // direction.
-    Vector3 lightDir = Vector3Negate(Environment_GetSunDirection());
-    // DrawMesh's matModel includes the view transform here. Transform a
-    // direction without translation to match the shader's normals.
-    Vector3 shaderOrigin = Vector3Transform((Vector3){0}, shaderFromWorld);
-    lightDir = Vector3Normalize(Vector3Subtract(
-        Vector3Transform(lightDir, shaderFromWorld), shaderOrigin));
-    SetShaderValue(shader, lightDirLoc, &lightDir, SHADER_UNIFORM_VEC3);
+  Matrix shaderFromWorld = rlGetMatrixTransform();
+  if (s_locCloudWorldFromShader >= 0)
+  {
+    SetShaderValueMatrix(shader, s_locCloudWorldFromShader,
+                         MatrixInvert(shaderFromWorld));
   }
 
-  int lightColorLoc = GetShaderLocation(shader, "u_lightColor");
-  if (lightColorLoc >= 0) {
+  if (s_locLightDir >= 0)
+  {
+    // Environment_GetSunDirection() is the direction light TRAVELS (sky->ground);
+    // dot(normal, lightDir) requires the surface->light direction.
+    Vector3 lightDir = Vector3Negate(Environment_GetSunDirection());
+    // Transform direction vector by upper-left 3x3 of shaderFromWorld without translation
+    Vector3 viewLightDir = {
+        shaderFromWorld.m0 * lightDir.x + shaderFromWorld.m4 * lightDir.y + shaderFromWorld.m8 * lightDir.z,
+        shaderFromWorld.m1 * lightDir.x + shaderFromWorld.m5 * lightDir.y + shaderFromWorld.m9 * lightDir.z,
+        shaderFromWorld.m2 * lightDir.x + shaderFromWorld.m6 * lightDir.y + shaderFromWorld.m10 * lightDir.z};
+    viewLightDir = Vector3Normalize(viewLightDir);
+    SetShaderValue(shader, s_locLightDir, &viewLightDir, SHADER_UNIFORM_VEC3);
+  }
+
+  if (s_locLightColor >= 0)
+  {
     Vector4 c = ColorNormalize(Environment_GetSunColor());
     Vector3 rgb = Vector3Scale((Vector3){c.x, c.y, c.z}, Environment_GetSunIntensity());
-    SetShaderValue(shader, lightColorLoc, &rgb, SHADER_UNIFORM_VEC3);
+    SetShaderValue(shader, s_locLightColor, &rgb, SHADER_UNIFORM_VEC3);
   }
 
-  int ambientLoc = GetShaderLocation(shader, "u_ambientColor");
-  if (ambientLoc >= 0) {
+  if (s_locAmbientColor >= 0)
+  {
     Vector4 c = ColorNormalize(Environment_GetAmbientColor());
     Vector3 rgb = {c.x, c.y, c.z};
-    SetShaderValue(shader, ambientLoc, &rgb, SHADER_UNIFORM_VEC3);
+    SetShaderValue(shader, s_locAmbientColor, &rgb, SHADER_UNIFORM_VEC3);
   }
 
-  int viewPosLoc = GetShaderLocation(shader, "u_viewPos");
-  if (viewPosLoc >= 0) {
+  if (s_locViewPos >= 0)
+  {
     Vector3 viewPos = Vector3Transform(camera.position, shaderFromWorld);
-    SetShaderValue(shader, viewPosLoc, &viewPos, SHADER_UNIFORM_VEC3);
+    SetShaderValue(shader, s_locViewPos, &viewPos, SHADER_UNIFORM_VEC3);
   }
+
   MapShadow_UpdateShader(shader);
   EndShaderMode();
 }

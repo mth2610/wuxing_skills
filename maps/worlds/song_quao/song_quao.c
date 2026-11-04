@@ -107,8 +107,7 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
         float waterClearance = pos.y - surfaceY;
         if (waterClearance < 0.075f)
             return 0.0f;
-        float coveNoise = sinf(x * 0.14f + z * 0.11f) * 0.55f
-                        + cosf(z * 0.23f - x * 0.19f + 0.8f) * 0.45f;
+        float coveNoise = sinf(x * 0.14f + z * 0.11f) * 0.55f + cosf(z * 0.23f - x * 0.19f + 0.8f) * 0.45f;
         float minClearance = (coveNoise > 0.20f) ? 0.075f : (0.095f - coveNoise * 0.020f);
         if (waterClearance < minClearance)
             return 0.0f;

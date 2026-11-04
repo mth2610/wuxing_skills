@@ -65,6 +65,7 @@ static FlowerParametricTemplate s_flowerTemplates[FLOWER_PARAMETRIC_LODS] = {0};
 static bool s_flowerTemplatesReady = false;
 static Shader s_flowerParametricShader = {0};
 static Shader s_flowerParametricShadowShader = {0};
+static unsigned int s_flowerCachedShaderId[2] = {0, 0};
 static int s_flowerInstanceTexLoc[2] = {-1, -1};
 static int s_flowerSpeciesOverrideLoc[2] = {-1, -1};
 static int s_flowerLodStrideLoc[2] = {-1, -1};
@@ -74,33 +75,55 @@ static Shader FlowerParametric_GetShader(bool shadow)
 {
     Shader *shader = shadow ? &s_flowerParametricShadowShader : &s_flowerParametricShader;
     int pass = shadow ? 1 : 0;
-    if (shader->id == 0)
+    if (shader->id == 0 || s_flowerCachedShaderId[pass] != shader->id)
     {
-        *shader = ResourceManager_LoadShader(
-            shadow ? "maps/toolkit/shaders/flower_parametric_shadow.vs"
-                   : "maps/toolkit/shaders/flower_parametric.vs",
-            shadow ? "maps/toolkit/shaders/nature_shadow.fs"
-                   : "maps/toolkit/shaders/flower_parametric.fs");
-        shader->locs[SHADER_LOC_VERTEX_POSITION] = GetShaderLocationAttrib(*shader, "vertexPosition");
-        shader->locs[SHADER_LOC_MATRIX_MVP] = GetShaderLocation(*shader, "mvp");
-        shader->locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocation(*shader, "matModel");
-        shader->locs[SHADER_LOC_COLOR_DIFFUSE] = GetShaderLocation(*shader, "colDiffuse");
-        s_flowerInstanceTexLoc[pass] = GetShaderLocation(*shader, "u_flowerInstances");
-        s_flowerSpeciesOverrideLoc[pass] = GetShaderLocation(*shader, "u_speciesOverride");
-        s_flowerLodStrideLoc[pass] = GetShaderLocation(*shader, "u_lodStride");
-        s_flowerWorldOffsetLoc[pass] = GetShaderLocation(*shader, "u_worldOffset");
-        if (!shadow)
+        if (shader->id == 0)
         {
-            MapShadow_ConfigureShader(*shader);
-            VFXLight_RegisterShader(*shader);
+            *shader = ResourceManager_LoadShader(
+                shadow ? "maps/toolkit/shaders/flower_parametric_shadow.vs"
+                       : "maps/toolkit/shaders/flower_parametric.vs",
+                shadow ? "maps/toolkit/shaders/nature_shadow.fs"
+                       : "maps/toolkit/shaders/flower_parametric.fs");
         }
-        (void)Nature_GetCachedLocs(*shader);
+        if (shader->id != 0 && shader->locs != NULL)
+        {
+            shader->locs[SHADER_LOC_VERTEX_POSITION] = GetShaderLocationAttrib(*shader, "vertexPosition");
+            shader->locs[SHADER_LOC_MATRIX_MVP] = GetShaderLocation(*shader, "mvp");
+            shader->locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocation(*shader, "matModel");
+            shader->locs[SHADER_LOC_COLOR_DIFFUSE] = GetShaderLocation(*shader, "colDiffuse");
+            s_flowerInstanceTexLoc[pass] = GetShaderLocation(*shader, "u_flowerInstances");
+            s_flowerSpeciesOverrideLoc[pass] = GetShaderLocation(*shader, "u_speciesOverride");
+            s_flowerLodStrideLoc[pass] = GetShaderLocation(*shader, "u_lodStride");
+            s_flowerWorldOffsetLoc[pass] = GetShaderLocation(*shader, "u_worldOffset");
+            if (!shadow)
+            {
+                MapShadow_ConfigureShader(*shader);
+                VFXLight_RegisterShader(*shader);
+            }
+            (void)Nature_GetCachedLocs(*shader);
+            s_flowerCachedShaderId[pass] = shader->id;
+        }
     }
     return *shader;
 }
 
+static void FlowerParametric_UnloadTemplate(FlowerParametricTemplate *tmpl)
+{
+    if (!tmpl)
+        return;
+    if (tmpl->vao)
+        rlUnloadVertexArray(tmpl->vao);
+    if (tmpl->vertices)
+        rlUnloadVertexBuffer(tmpl->vertices);
+    if (tmpl->indices)
+        rlUnloadVertexBuffer(tmpl->indices);
+    *tmpl = (FlowerParametricTemplate){0};
+}
+
 static bool FlowerParametric_BuildTemplate(FlowerParametricTemplate *tmpl, int lod)
 {
+    FlowerParametric_UnloadTemplate(tmpl);
+
     Vector3 verts[FLOWER_TEMPLATE_MAX_VERTS];
     unsigned short indices[FLOWER_TEMPLATE_MAX_INDICES];
     int vCount = 0, iCount = 0;
@@ -115,9 +138,15 @@ static bool FlowerParametric_BuildTemplate(FlowerParametricTemplate *tmpl, int l
         verts[vCount++] = (Vector3){tagStem, 0.0f, 0.5f};
         verts[vCount++] = (Vector3){tagStem, 1.0f, 0.5f};
         verts[vCount++] = (Vector3){tagStem, 0.5f, 1.0f};
-        indices[iCount++] = b + 0; indices[iCount++] = b + 1; indices[iCount++] = b + 2;
-        indices[iCount++] = b + 1; indices[iCount++] = b + 3; indices[iCount++] = b + 2;
-        indices[iCount++] = b + 2; indices[iCount++] = b + 3; indices[iCount++] = b + 4;
+        indices[iCount++] = b + 0;
+        indices[iCount++] = b + 1;
+        indices[iCount++] = b + 2;
+        indices[iCount++] = b + 1;
+        indices[iCount++] = b + 3;
+        indices[iCount++] = b + 2;
+        indices[iCount++] = b + 2;
+        indices[iCount++] = b + 3;
+        indices[iCount++] = b + 4;
     }
     else
     {
@@ -125,7 +154,9 @@ static bool FlowerParametric_BuildTemplate(FlowerParametricTemplate *tmpl, int l
         verts[vCount++] = (Vector3){tagStem, 0.0f, 0.0f};
         verts[vCount++] = (Vector3){tagStem, 1.0f, 0.0f};
         verts[vCount++] = (Vector3){tagStem, 0.5f, 1.0f};
-        indices[iCount++] = b + 0; indices[iCount++] = b + 1; indices[iCount++] = b + 2;
+        indices[iCount++] = b + 0;
+        indices[iCount++] = b + 1;
+        indices[iCount++] = b + 2;
     }
 
     // 1. Basal Sword Leaves (part = 1): 2 diamond leaves on LOD0
@@ -139,8 +170,12 @@ static bool FlowerParametric_BuildTemplate(FlowerParametricTemplate *tmpl, int l
             verts[vCount++] = (Vector3){tagLeaf, 1.0f, 0.38f};
             verts[vCount++] = (Vector3){tagLeaf, 0.5f, 1.0f};
             verts[vCount++] = (Vector3){tagLeaf, 0.0f, 0.38f};
-            indices[iCount++] = b + 0; indices[iCount++] = b + 1; indices[iCount++] = b + 2;
-            indices[iCount++] = b + 0; indices[iCount++] = b + 2; indices[iCount++] = b + 3;
+            indices[iCount++] = b + 0;
+            indices[iCount++] = b + 1;
+            indices[iCount++] = b + 2;
+            indices[iCount++] = b + 0;
+            indices[iCount++] = b + 2;
+            indices[iCount++] = b + 3;
         }
     }
 
@@ -156,15 +191,21 @@ static bool FlowerParametric_BuildTemplate(FlowerParametricTemplate *tmpl, int l
             verts[vCount++] = (Vector3){tagPetal, 1.0f, 0.45f};
             verts[vCount++] = (Vector3){tagPetal, 0.5f, 1.0f};
             verts[vCount++] = (Vector3){tagPetal, 0.0f, 0.45f};
-            indices[iCount++] = b + 0; indices[iCount++] = b + 1; indices[iCount++] = b + 2;
-            indices[iCount++] = b + 0; indices[iCount++] = b + 2; indices[iCount++] = b + 3;
+            indices[iCount++] = b + 0;
+            indices[iCount++] = b + 1;
+            indices[iCount++] = b + 2;
+            indices[iCount++] = b + 0;
+            indices[iCount++] = b + 2;
+            indices[iCount++] = b + 3;
         }
         else
         {
             verts[vCount++] = (Vector3){tagPetal, 0.5f, 0.0f};
             verts[vCount++] = (Vector3){tagPetal, 1.0f, 0.88f};
             verts[vCount++] = (Vector3){tagPetal, 0.0f, 0.88f};
-            indices[iCount++] = b + 0; indices[iCount++] = b + 1; indices[iCount++] = b + 2;
+            indices[iCount++] = b + 0;
+            indices[iCount++] = b + 1;
+            indices[iCount++] = b + 2;
         }
     }
 
@@ -177,12 +218,17 @@ static bool FlowerParametric_BuildTemplate(FlowerParametricTemplate *tmpl, int l
         verts[vCount++] = (Vector3){tagInner, 0.5f, 0.0f};
         verts[vCount++] = (Vector3){tagInner, 1.0f, 0.78f};
         verts[vCount++] = (Vector3){tagInner, 0.0f, 0.78f};
-        indices[iCount++] = b + 0; indices[iCount++] = b + 1; indices[iCount++] = b + 2;
+        indices[iCount++] = b + 0;
+        indices[iCount++] = b + 1;
+        indices[iCount++] = b + 2;
     }
 
     tmpl->vao = rlLoadVertexArray();
     if (!tmpl->vao || !rlEnableVertexArray(tmpl->vao))
+    {
+        FlowerParametric_UnloadTemplate(tmpl);
         return false;
+    }
     tmpl->vertices = rlLoadVertexBuffer(verts, vCount * (int)sizeof(Vector3), false);
     rlSetVertexAttribute(0, 3, RL_FLOAT, false, sizeof(Vector3), 0);
     rlEnableVertexAttribute(0);
@@ -190,7 +236,12 @@ static bool FlowerParametric_BuildTemplate(FlowerParametricTemplate *tmpl, int l
     rlDisableVertexArray();
     tmpl->vertexCount = vCount;
     tmpl->indexCount = iCount;
-    return tmpl->vao != 0 && tmpl->vertices != 0 && tmpl->indices != 0;
+    if (tmpl->vao == 0 || tmpl->vertices == 0 || tmpl->indices == 0)
+    {
+        FlowerParametric_UnloadTemplate(tmpl);
+        return false;
+    }
+    return true;
 }
 
 static bool FlowerParametric_Init(void)
@@ -211,7 +262,11 @@ static bool FlowerParametric_Init(void)
     for (int lod = 0; lod < FLOWER_PARAMETRIC_LODS; lod++)
     {
         if (!FlowerParametric_BuildTemplate(&s_flowerTemplates[lod], lod))
+        {
+            for (int j = 0; j < lod; j++)
+                FlowerParametric_UnloadTemplate(&s_flowerTemplates[j]);
             return false;
+        }
     }
     s_flowerTemplatesReady = true;
     return true;
@@ -253,9 +308,12 @@ static Model Nature_BuildFlowerShadowModel(const MapFlowerPlacement *placements,
 
 static inline bool Nature_KeepFarFlower(const MapFlowerPlacement *flower)
 {
-    float h = flower->position.x * 12.9898f + flower->position.z * 78.233f + flower->phase * 37.719f;
-    float hash = sinf(h) * 43758.5453f;
-    return (hash - floorf(hash)) < 0.80f;
+    unsigned int ux, uz, up;
+    memcpy(&ux, &flower->position.x, sizeof(ux));
+    memcpy(&uz, &flower->position.z, sizeof(uz));
+    memcpy(&up, &flower->phase, sizeof(up));
+    unsigned int seed = (ux * 73856093u) ^ (uz * 19349663u) ^ (up * 83492791u);
+    return Nature_Hash01(seed) < 0.80f;
 }
 
 static Color Nature_GetSpeciesCenterColor(int variant)
@@ -318,12 +376,20 @@ static Model Nature_BuildFlowerFarModel(const MapFlowerPlacement *placements, in
         Vector3 base = flower->position;
         float leanAngle = flower->rotationDeg * DEG2RAD * 0.73f + phase * 3.14f;
         float lean = h * 0.22f;
-        Vector3 head = {base.x + cosf(leanAngle) * lean, base.y + h * 0.94f,
-                        base.z + sinf(leanAngle) * lean};
+        float sinLean, cosLean;
+        Nature_FastSinCos(leanAngle, &sinLean, &cosLean);
+        Vector3 head = {base.x + cosLean * lean, base.y + h * 0.94f,
+                        base.z + sinLean * lean};
+
         float stemAngle = flower->rotationDeg * DEG2RAD;
-        float tiltAmount = 0.22f + 0.08f * sinf(phase * 6.28f);
-        Vector3 headNormal = Vector3Normalize((Vector3){cosf(leanAngle) * tiltAmount, 0.96f, sinf(leanAngle) * tiltAmount});
-        Vector3 refRight = {cosf(stemAngle), 0.0f, sinf(stemAngle)};
+        float sinStem, cosStem;
+        Nature_FastSinCos(stemAngle, &sinStem, &cosStem);
+        float sinPhase, cosPhase;
+        Nature_FastSinCos(phase * 6.28f, &sinPhase, &cosPhase);
+        float tiltAmount = 0.22f + 0.08f * sinPhase;
+
+        Vector3 headNormal = Vector3Normalize((Vector3){cosLean * tiltAmount, 0.96f, sinLean * tiltAmount});
+        Vector3 refRight = {cosStem, 0.0f, sinStem};
         Vector3 right = Vector3Normalize(Vector3Subtract(refRight, Vector3Scale(headNormal, Vector3DotProduct(refRight, headNormal))));
         Vector3 forward = Vector3CrossProduct(headNormal, right);
         float petalScale = flower->petalLengthScale > 0.0f ? flower->petalLengthScale : 1.0f;
@@ -355,9 +421,10 @@ static Model Nature_BuildFlowerFarModel(const MapFlowerPlacement *placements, in
             // 1. Tam giác cuống hoa (3 đỉnh) giúp hoa ở xa và bóng đổ Shadow Map có thân liền mạch
             float stemHalfW = fmaxf(0.012f, flower->bloomRadius * 0.16f);
             Vector3 stemSide = Vector3Scale(right, stemHalfW);
+            Color rootStemCol = Nature_ScaleColor(stemColor, 0.78f);
             int stemIdx = cursor;
-            Nature_SetVertex(&mesh, cursor++, Vector3Subtract(base, stemSide), right, phase, 0.0f, Nature_ScaleColor(stemColor, 0.78f));
-            Nature_SetVertex(&mesh, cursor++, Vector3Add(base, stemSide), right, phase, 0.0f, Nature_ScaleColor(stemColor, 0.78f));
+            Nature_SetVertex(&mesh, cursor++, Vector3Subtract(base, stemSide), right, phase, 0.0f, rootStemCol);
+            Nature_SetVertex(&mesh, cursor++, Vector3Add(base, stemSide), right, phase, 0.0f, rootStemCol);
             Nature_SetVertex(&mesh, cursor++, head, headNormal, phase, 0.90f, stemColor);
             Nature_SetUv2(&mesh, stemIdx + 0, -1.0f, 0.0f);
             Nature_SetUv2(&mesh, stemIdx + 1, 1.0f, 0.0f);
@@ -367,15 +434,17 @@ static Model Nature_BuildFlowerFarModel(const MapFlowerPlacement *placements, in
             Color cCore = Nature_LerpColor(centerCol, petalCol, 0.45f);
             Color cTip = Nature_ScaleColor(petalCol, 1.08f);
             float cupLift = (variant == 5) ? (-radius * 0.25f) : (radius * 0.28f);
+            Vector3 normalLift = Vector3Scale(headNormal, cupLift);
             for (int p = 0; p < 3; p++)
             {
                 float aMid = stemAngle + (float)p * 2.0943951f;
-                float aL = aMid - 0.72f;
-                float aR = aMid + 0.72f;
-                Vector3 dL = Vector3Add(Vector3Scale(right, cosf(aL) * radius), Vector3Scale(forward, sinf(aL) * radius));
-                Vector3 dR = Vector3Add(Vector3Scale(right, cosf(aR) * radius), Vector3Scale(forward, sinf(aR) * radius));
-                Vector3 pL = Vector3Add(head, Vector3Add(dL, Vector3Scale(headNormal, cupLift)));
-                Vector3 pR = Vector3Add(head, Vector3Add(dR, Vector3Scale(headNormal, cupLift)));
+                float sinL, cosL, sinR, cosR;
+                Nature_FastSinCos(aMid - 0.72f, &sinL, &cosL);
+                Nature_FastSinCos(aMid + 0.72f, &sinR, &cosR);
+                Vector3 dL = Vector3Add(Vector3Scale(right, cosL * radius), Vector3Scale(forward, sinL * radius));
+                Vector3 dR = Vector3Add(Vector3Scale(right, cosR * radius), Vector3Scale(forward, sinR * radius));
+                Vector3 pL = Vector3Add(head, Vector3Add(dL, normalLift));
+                Vector3 pR = Vector3Add(head, Vector3Add(dR, normalLift));
                 Vector3 nPetal = Vector3Normalize(Vector3Add(headNormal, Vector3Scale(Vector3Add(dL, dR), 0.35f)));
 
                 int baseIdx = cursor;
@@ -448,17 +517,17 @@ static inline float Nature_EvalPetalWidth(float t, const PetalParams *p)
     case PETAL_SHAPE_OVAL:
     {
         float s = sinf(PI * powf(t, 0.55f));
-        if (s < 0.0f)
-            s = 0.0f;
+        if (s <= 0.0f)
+            return 0.0f;
         float n = p->exponent > 0.0f ? p->exponent : 0.60f;
-        float baseTaper = fminf(1.0f, t / 0.15f);
+        float baseTaper = fminf(1.0f, t * (1.0f / 0.15f));
         return p->wMax * powf(s, n) * baseTaper;
     }
     case PETAL_SHAPE_LANCEOLATE:
     {
         float tPeak = p->tPeak > 0.05f ? p->tPeak : 0.30f;
         if (t < tPeak)
-            return p->wMax * powf(t / tPeak, 0.50f);
+            return p->wMax * sqrtf(t / tPeak);
         else
             return p->wMax * powf((1.0f - t) / (1.0f - tPeak), 1.80f);
     }
@@ -471,7 +540,7 @@ static inline float Nature_EvalPetalWidth(float t, const PetalParams *p)
         float notch = 0.0f;
         if (t > 0.80f)
         {
-            float dt = (t - 1.0f) / 0.08f;
+            float dt = (t - 1.0f) * (1.0f / 0.08f);
             float depth = p->notchDepth > 0.0f ? p->notchDepth : p->wMax * 0.40f;
             notch = depth * expf(-0.5f * dt * dt);
         }
@@ -493,8 +562,9 @@ static inline float Nature_EvalPetalWidth(float t, const PetalParams *p)
 static inline float Nature_EvalPetalElevation(float t, const PetalParams *p)
 {
     float s = sinf(t * 1.5707963f);
-    float conical = p->length * 0.26f * (t * 0.85f + 0.15f * t * t);
-    return conical + p->curveAmount * (s * 1.25f - 0.25f * t * t);
+    float t2 = t * t;
+    float conical = p->length * 0.26f * (t * 0.85f + 0.15f * t2);
+    return conical + p->curveAmount * (s * 1.25f - 0.25f * t2);
 }
 
 // Dựng cánh hoa 3D 2 đốt khum lòng chảo (12 đỉnh = 4 tam giác) kèm tọa độ (u, v) chuẩn cho SSS & Gân hoa
@@ -503,10 +573,10 @@ static void Nature_AddParametricPetal(Mesh *mesh, int *cursor,
                                       const PetalParams *p, float phase,
                                       Color cBase, Color cMid, Color cTip)
 {
-    float len = p->length;
-    float t0 = 0.05f;
-    float t1 = 0.48f;
-    float t2 = 0.84f;
+    const float len = p->length;
+    const float t0 = 0.05f;
+    const float t1 = 0.48f;
+    const float t2 = 0.84f;
 
     float w0 = Nature_EvalPetalWidth(t0, p);
     float dy0 = Nature_EvalPetalElevation(t0, p);
@@ -523,10 +593,11 @@ static void Nature_AddParametricPetal(Mesh *mesh, int *cursor,
     Vector3 side2 = side;
     if (fabsf(p->twistAmount) > 0.001f)
     {
-        float phi1 = p->twistAmount * t1;
-        float phi2 = p->twistAmount * t2;
-        side1 = Vector3Add(Vector3Scale(side, cosf(phi1)), Vector3Scale(headNormal, sinf(phi1) * len * 0.12f));
-        side2 = Vector3Add(Vector3Scale(side, cosf(phi2)), Vector3Scale(headNormal, sinf(phi2) * len * 0.16f));
+        float sin1, cos1, sin2, cos2;
+        Nature_FastSinCos(p->twistAmount * t1, &sin1, &cos1);
+        Nature_FastSinCos(p->twistAmount * t2, &sin2, &cos2);
+        side1 = Vector3Add(Vector3Scale(side, cos1), Vector3Scale(headNormal, sin1 * len * 0.12f));
+        side2 = Vector3Add(Vector3Scale(side, cos2), Vector3Scale(headNormal, sin2 * len * 0.16f));
     }
 
     Vector3 p0 = Vector3Add(head, Vector3Add(Vector3Scale(dir, len * t0), Vector3Scale(headNormal, dy0 + 0.003f)));
@@ -546,10 +617,16 @@ static void Nature_AddParametricPetal(Mesh *mesh, int *cursor,
 
     Vector3 s1 = Vector3Add(Vector3Add(p2, Vector3Scale(side2, w2)), Vector3Scale(headNormal, cup2));
 
-    Vector3 nL0 = Vector3Normalize(Vector3Add(Vector3Add(Vector3Scale(dir, 0.22f), Vector3Scale(side, 0.40f)), Vector3Scale(headNormal, 0.86f)));
-    Vector3 nR0 = Vector3Normalize(Vector3Add(Vector3Subtract(Vector3Scale(dir, 0.22f), Vector3Scale(side, 0.40f)), Vector3Scale(headNormal, 0.86f)));
-    Vector3 nL1 = Vector3Normalize(Vector3Add(Vector3Add(Vector3Scale(dir, 0.45f), Vector3Scale(side1, 0.44f)), Vector3Scale(headNormal, 0.76f)));
-    Vector3 nR1 = Vector3Normalize(Vector3Add(Vector3Subtract(Vector3Scale(dir, 0.45f), Vector3Scale(side1, 0.44f)), Vector3Scale(headNormal, 0.76f)));
+    Vector3 baseN0 = Vector3Add(Vector3Scale(dir, 0.22f), Vector3Scale(headNormal, 0.86f));
+    Vector3 sideN0 = Vector3Scale(side, 0.40f);
+    Vector3 nL0 = Vector3Normalize(Vector3Add(baseN0, sideN0));
+    Vector3 nR0 = Vector3Normalize(Vector3Subtract(baseN0, sideN0));
+
+    Vector3 baseN1 = Vector3Add(Vector3Scale(dir, 0.45f), Vector3Scale(headNormal, 0.76f));
+    Vector3 sideN1 = Vector3Scale(side1, 0.44f);
+    Vector3 nL1 = Vector3Normalize(Vector3Add(baseN1, sideN1));
+    Vector3 nR1 = Vector3Normalize(Vector3Subtract(baseN1, sideN1));
+
     Vector3 nTip = Vector3Normalize(Vector3Add(Vector3Scale(dir, 0.72f), Vector3Scale(headNormal, 0.64f)));
 
     int baseIdx = *cursor;
@@ -592,23 +669,27 @@ static void Nature_AddFlowerCenterDome(Mesh *mesh, int *cursor,
                                        Vector3 headRight, Vector3 headForward,
                                        float cR, float cHeight, float phase, Color centerColor)
 {
+    static const float kQuadCos[5] = {1.0f, 0.0f, -1.0f, 0.0f, 1.0f};
+    static const float kQuadSin[5] = {0.0f, 1.0f, 0.0f, -1.0f, 0.0f};
+    static const float kMidCos[4] = {0.70710678f, -0.70710678f, -0.70710678f, 0.70710678f};
+    static const float kMidSin[4] = {0.70710678f, 0.70710678f, -0.70710678f, -0.70710678f};
+
     Vector3 apex = Vector3Add(head, Vector3Scale(headNormal, cHeight * 1.45f));
+    Vector3 rimLift = Vector3Add(head, Vector3Scale(headNormal, 0.004f));
     Color apexColor = Nature_ScaleColor(centerColor, 1.25f);
     Color rimColor = Nature_ScaleColor(centerColor, 0.52f);
+
     for (int s = 0; s < 4; s++)
     {
-        float a0 = (float)s * 1.5707963f;
-        float a1 = (float)(s + 1) * 1.5707963f;
-        Vector3 rad0 = Vector3Add(Vector3Scale(headRight, cosf(a0) * cR),
-                                  Vector3Scale(headForward, sinf(a0) * cR));
-        Vector3 rad1 = Vector3Add(Vector3Scale(headRight, cosf(a1) * cR),
-                                  Vector3Scale(headForward, sinf(a1) * cR));
-        Vector3 r0 = Vector3Add(head, Vector3Add(rad0, Vector3Scale(headNormal, 0.004f)));
-        Vector3 r1 = Vector3Add(head, Vector3Add(rad1, Vector3Scale(headNormal, 0.004f)));
+        Vector3 rad0 = Vector3Add(Vector3Scale(headRight, kQuadCos[s] * cR),
+                                  Vector3Scale(headForward, kQuadSin[s] * cR));
+        Vector3 rad1 = Vector3Add(Vector3Scale(headRight, kQuadCos[s + 1] * cR),
+                                  Vector3Scale(headForward, kQuadSin[s + 1] * cR));
+        Vector3 r0 = Vector3Add(rimLift, rad0);
+        Vector3 r1 = Vector3Add(rimLift, rad1);
 
-        float midA = (a0 + a1) * 0.5f;
-        Vector3 midRad = Vector3Add(Vector3Scale(headRight, cosf(midA) * 0.55f),
-                                    Vector3Scale(headForward, sinf(midA) * 0.55f));
+        Vector3 midRad = Vector3Add(Vector3Scale(headRight, kMidCos[s] * 0.55f),
+                                    Vector3Scale(headForward, kMidSin[s] * 0.55f));
         Vector3 norm = Vector3Normalize(Vector3Add(midRad, Vector3Scale(headNormal, 0.84f)));
 
         int baseIdx = *cursor;
@@ -738,17 +819,18 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
         Vector3 base = flower->position;
         float petalScale = flower->petalLengthScale > 0.0f ? flower->petalLengthScale : 1.0f;
         float r = flower->bloomRadius * petalScale;
+        float stemAngle = flower->rotationDeg * DEG2RAD;
 
         // 1. Basal leaf blades: 2 lá kiếm vươn đối xứng ở gốc (6 đỉnh = 2 tam giác nhọn)
-        // Bỉ Ngạn Hoa (variant == 2): "Hoa nở không thấy lá" -> thu nhỏ lá sát gốc
-        // U Lan Linh Thảo (variant == 3): Lá kiếm vươn dài thanh tao (1.42x)
         float basalScale = (variant == 2) ? 0.12f : ((variant == 3) ? 1.42f : 1.0f);
         Color basalRoot = {34, 58, 24, 255};
         Color basalTip = {66, 112, 44, 255};
         for (int b = 0; b < 2; b++)
         {
-            float bAngle = flower->rotationDeg * DEG2RAD + (float)b * PI + 0.42f;
-            Vector3 bDir = {cosf(bAngle), 0.0f, sinf(bAngle)};
+            float bAngle = stemAngle + (float)b * PI + 0.42f;
+            float sinB, cosB;
+            Nature_FastSinCos(bAngle, &sinB, &cosB);
+            Vector3 bDir = {cosB, 0.0f, sinB};
             Vector3 bSide = {-bDir.z * 0.024f * basalScale, 0.0f, bDir.x * 0.024f * basalScale};
             float bLen = fmaxf(0.090f, flower->bloomRadius * 1.20f) * basalScale;
             Vector3 r0 = {base.x - bSide.x, base.y + 0.002f, base.z - bSide.z};
@@ -765,18 +847,19 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
 
         // 2. Cuống hoa cong mềm mại 2 đoạn (12 đỉnh)
         float stemWidth = fmaxf(0.0052f, flower->bloomRadius * 0.078f);
-        float stemLeanAngle = flower->rotationDeg * DEG2RAD * 0.73f + phase * 3.14f;
+        float stemLeanAngle = stemAngle * 0.73f + phase * 3.14f;
         float stemLean = h * 0.22f;
-        float stemDirX = cosf(stemLeanAngle);
-        float stemDirZ = sinf(stemLeanAngle);
+        float stemDirZ, stemDirX;
+        Nature_FastSinCos(stemLeanAngle, &stemDirZ, &stemDirX);
         Vector3 stemP0 = base;
         Vector3 midStem = (Vector3){base.x + stemDirX * (stemLean * 0.38f), base.y + h * 0.52f, base.z + stemDirZ * (stemLean * 0.38f)};
         Vector3 head = (Vector3){base.x + stemDirX * stemLean, base.y + h * 0.94f, base.z + stemDirZ * stemLean};
 
         Color effStemCol = (variant == 2) ? (Color){78, 36, 38, 255} : stemColor;
-        float stemAngle = flower->rotationDeg * DEG2RAD;
-        Vector3 sideA = {cosf(stemAngle) * stemWidth, 0.0f, sinf(stemAngle) * stemWidth};
-        Vector3 normA = {-sinf(stemAngle), 0.15f, cosf(stemAngle)};
+        float sinStem, cosStem;
+        Nature_FastSinCos(stemAngle, &sinStem, &cosStem);
+        Vector3 sideA = {cosStem * stemWidth, 0.0f, sinStem * stemWidth};
+        Vector3 normA = {-sinStem, 0.15f, cosStem};
 
         Vector3 s0_0 = Vector3Subtract(stemP0, sideA);
         Vector3 s0_1 = Vector3Add(stemP0, sideA);
@@ -798,7 +881,9 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
         {
             float rootT = leaf == 0 ? 0.42f : 0.68f;
             float leafAngle = stemLeanAngle + (leaf == 0 ? 1.45f : -1.45f);
-            Vector3 lDir = {cosf(leafAngle), 0.0f, sinf(leafAngle)};
+            float sinL, cosL;
+            Nature_FastSinCos(leafAngle, &sinL, &cosL);
+            Vector3 lDir = {cosL, 0.0f, sinL};
             Vector3 lSide = {-lDir.z * 0.015f * stemLeafScale, 0.0f, lDir.x * 0.015f * stemLeafScale};
             float lLen = fmaxf(0.054f, flower->bloomRadius * 0.82f) * stemLeafScale;
             Vector3 lRoot = Vector3Lerp(stemP0, head, rootT);
@@ -814,26 +899,31 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
 
         float calyxLen = r * 0.48f;
         Color calyxColor = Nature_ScaleColor(effStemCol, 0.88f);
+        Color calyxTipColor = Nature_ScaleColor(calyxColor, 1.2f);
         for (int c = 0; c < 2; c++)
         {
             float cAngle = stemAngle + (float)c * PI + 0.785398f;
-            Vector3 cDir = {cosf(cAngle), 0.0f, sinf(cAngle)};
+            float sinC, cosC;
+            Nature_FastSinCos(cAngle, &sinC, &cosC);
+            Vector3 cDir = {cosC, 0.0f, sinC};
             Vector3 cSide = {-cDir.z * calyxLen * 0.35f, 0.0f, cDir.x * calyxLen * 0.35f};
             Vector3 cBasePt = {head.x, head.y - stemWidth * 0.5f, head.z};
             Vector3 cTipPt = {head.x + cDir.x * calyxLen, head.y + stemWidth * 0.2f, head.z + cDir.z * calyxLen};
             int cIdx = cursor;
             Nature_SetVertex(&mesh, cursor++, Vector3Subtract(cBasePt, cSide), (Vector3){0, 1, 0}, phase, 0.86f, calyxColor);
             Nature_SetVertex(&mesh, cursor++, Vector3Add(cBasePt, cSide), (Vector3){0, 1, 0}, phase, 0.86f, calyxColor);
-            Nature_SetVertex(&mesh, cursor++, cTipPt, (Vector3){0, 1, 0}, phase, 0.92f, Nature_ScaleColor(calyxColor, 1.2f));
+            Nature_SetVertex(&mesh, cursor++, cTipPt, (Vector3){0, 1, 0}, phase, 0.92f, calyxTipColor);
             Nature_SetUv2(&mesh, cIdx + 0, -0.8f, 0.0f);
             Nature_SetUv2(&mesh, cIdx + 1, 0.8f, 0.0f);
             Nature_SetUv2(&mesh, cIdx + 2, 0.0f, 0.4f);
         }
 
         // 4. Lắp ráp Đài Hoa 3D theo từng loài đặc trưng Tiên Hiệp – Kiếm Hiệp
-        float tiltAmount = 0.22f + 0.08f * sinf(phase * 6.28f);
+        float sinPhase, cosPhase;
+        Nature_FastSinCos(phase * 6.28f, &sinPhase, &cosPhase);
+        float tiltAmount = 0.22f + 0.08f * sinPhase;
         Vector3 headNormal = Vector3Normalize((Vector3){stemDirX * tiltAmount, 0.96f, stemDirZ * tiltAmount});
-        Vector3 refRight = {cosf(stemAngle), 0.0f, sinf(stemAngle)};
+        Vector3 refRight = {cosStem, 0.0f, sinStem};
         Vector3 headRight = Vector3Normalize(Vector3Subtract(refRight, Vector3Scale(headNormal, Vector3DotProduct(refRight, headNormal))));
         Vector3 headForward = Vector3CrossProduct(headNormal, headRight);
         Color effCenterColor = Nature_GetSpeciesCenterColor(variant);
@@ -865,8 +955,10 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
                                     phase, petalColor, uvRect);
 
             float a1 = stemAngle + 0.785398f;
-            Vector3 r1 = {cosf(a1) * r, 0.0f, sinf(a1) * r};
-            Vector3 f1 = {-sinf(a1) * r, 0.0f, cosf(a1) * r};
+            float sinA1, cosA1;
+            Nature_FastSinCos(a1, &sinA1, &cosA1);
+            Vector3 r1 = {cosA1 * r, 0.0f, sinA1 * r};
+            Vector3 f1 = {-sinA1 * r, 0.0f, cosA1 * r};
             float vH = r * 0.75f;
             Vector3 q0 = {head.x - r1.x, head.y - vH * 0.15f, head.z - r1.z};
             Vector3 q1 = {head.x + r1.x, head.y - vH * 0.15f, head.z + r1.z};
@@ -909,7 +1001,9 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
                 for (int k = 0; k < 5; k++)
                 {
                     float angle = (float)k * 1.256637f;
-                    Vector3 dir = Vector3Add(Vector3Scale(headRight, cosf(angle)), Vector3Scale(headForward, sinf(angle)));
+                    float sinK, cosK;
+                    Nature_FastSinCos(angle, &sinK, &cosK);
+                    Vector3 dir = Vector3Add(Vector3Scale(headRight, cosK), Vector3Scale(headForward, sinK));
                     Vector3 side = Vector3CrossProduct(headNormal, dir);
                     Nature_AddParametricPetal(&mesh, &cursor, head, headNormal, dir, side, &pOuter,
                                               phase, cBase, cMid, cTip);
@@ -928,7 +1022,9 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
                 for (int k = 0; k < 3; k++)
                 {
                     float angle = 0.628318f + (float)k * 2.094395f;
-                    Vector3 dir = Vector3Add(Vector3Scale(headRight, cosf(angle)), Vector3Scale(headForward, sinf(angle)));
+                    float sinK, cosK;
+                    Nature_FastSinCos(angle, &sinK, &cosK);
+                    Vector3 dir = Vector3Add(Vector3Scale(headRight, cosK), Vector3Scale(headForward, sinK));
                     Vector3 side = Vector3CrossProduct(headNormal, dir);
                     Nature_AddParametricPetal(&mesh, &cursor, head, headNormal, dir, side, &pInner,
                                               phase, cInBase, cInMid, cTip);
@@ -949,7 +1045,9 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
                 for (int k = 0; k < 7; k++)
                 {
                     float angle = (float)k * 0.8975979f;
-                    Vector3 dir = Vector3Add(Vector3Scale(headRight, cosf(angle)), Vector3Scale(headForward, sinf(angle)));
+                    float sinK, cosK;
+                    Nature_FastSinCos(angle, &sinK, &cosK);
+                    Vector3 dir = Vector3Add(Vector3Scale(headRight, cosK), Vector3Scale(headForward, sinK));
                     Vector3 side = Vector3CrossProduct(headNormal, dir);
                     Nature_AddParametricPetal(&mesh, &cursor, head, headNormal, dir, side, &pDaisy,
                                               phase, cBase, cMid, cTip);
@@ -970,7 +1068,9 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
                 for (int k = 0; k < 6; k++)
                 {
                     float angle = (float)k * 1.04719755f;
-                    Vector3 dir = Vector3Add(Vector3Scale(headRight, cosf(angle)), Vector3Scale(headForward, sinf(angle)));
+                    float sinK, cosK;
+                    Nature_FastSinCos(angle, &sinK, &cosK);
+                    Vector3 dir = Vector3Add(Vector3Scale(headRight, cosK), Vector3Scale(headForward, sinK));
                     Vector3 side = Vector3CrossProduct(headNormal, dir);
                     Nature_AddParametricPetal(&mesh, &cursor, head, headNormal, dir, side, &pSpider,
                                               phase, cBase, cMid, cTip);
@@ -983,7 +1083,9 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
                 for (int k = 0; k < 6; k++)
                 {
                     float angle = 0.5235988f + (float)k * 1.04719755f;
-                    Vector3 dir = Vector3Add(Vector3Scale(headRight, cosf(angle)), Vector3Scale(headForward, sinf(angle)));
+                    float sinK, cosK;
+                    Nature_FastSinCos(angle, &sinK, &cosK);
+                    Vector3 dir = Vector3Add(Vector3Scale(headRight, cosK), Vector3Scale(headForward, sinK));
                     Vector3 side = Vector3Scale(Vector3CrossProduct(headNormal, dir), r * 0.055f);
                     Vector3 sL = Vector3Subtract(head, side);
                     Vector3 sR = Vector3Add(head, side);
@@ -1020,7 +1122,7 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
                 {
                     float s = 0.24f + (float)k * 0.32f;
                     Vector3 tierHead = Vector3Add(head, Vector3Scale(headNormal, spH * s));
-                    float bloomFactor = (s < 0.68f) ? 1.0f : fmaxf(0.48f, 1.0f - (s - 0.68f) / 0.35f);
+                    float bloomFactor = (s < 0.68f) ? 1.0f : fmaxf(0.48f, 1.0f - (s - 0.68f) * (1.0f / 0.35f));
                     PetalParams pFloret = {
                         .shape = PETAL_SHAPE_OVAL,
                         .wMax = r * 0.28f * bloomFactor,
@@ -1032,7 +1134,9 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
                     for (int j = 0; j < 2; j++)
                     {
                         float angle = (float)k * phaseSpiral + (float)j * PI;
-                        Vector3 dir = Vector3Add(Vector3Scale(headRight, cosf(angle)), Vector3Scale(headForward, sinf(angle)));
+                        float sinJ, cosJ;
+                        Nature_FastSinCos(angle, &sinJ, &cosJ);
+                        Vector3 dir = Vector3Add(Vector3Scale(headRight, cosJ), Vector3Scale(headForward, sinJ));
                         Vector3 side = Vector3CrossProduct(headNormal, dir);
                         Nature_AddParametricPetal(&mesh, &cursor, tierHead, headNormal, dir, side, &pFloret,
                                                   phase, cBase, cMid, cTip);
@@ -1056,7 +1160,9 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
                 for (int k = 0; k < 6; k++)
                 {
                     float angle = (float)k * 1.04719755f;
-                    Vector3 dir = Vector3Add(Vector3Scale(headRight, cosf(angle)), Vector3Scale(headForward, sinf(angle)));
+                    float sinK, cosK;
+                    Nature_FastSinCos(angle, &sinK, &cosK);
+                    Vector3 dir = Vector3Add(Vector3Scale(headRight, cosK), Vector3Scale(headForward, sinK));
                     Vector3 side = Vector3CrossProduct(headNormal, dir);
                     Nature_AddParametricPetal(&mesh, &cursor, head, headNormal, dir, side, &pOrchid,
                                               phase, cBase, cMid, cTip);
@@ -1128,13 +1234,16 @@ void MapProp_DrawFlowerFieldBatch(MapFlowerField *fields, int fieldCount, Vector
     if (fieldCount > s_batchCapacity)
     {
         unsigned char *grownFlags = (unsigned char *)RL_REALLOC(s_batchFlags, (size_t)fieldCount);
+        if (grownFlags)
+            s_batchFlags = grownFlags;
         int *grownOrder = (int *)RL_REALLOC(s_batchOrder, (size_t)fieldCount * sizeof(int));
+        if (grownOrder)
+            s_batchOrder = grownOrder;
         float *grownDepth = (float *)RL_REALLOC(s_batchDepth, (size_t)fieldCount * sizeof(float));
+        if (grownDepth)
+            s_batchDepth = grownDepth;
         if (!grownFlags || !grownOrder || !grownDepth)
             return;
-        s_batchFlags = grownFlags;
-        s_batchOrder = grownOrder;
-        s_batchDepth = grownDepth;
         s_batchCapacity = fieldCount;
     }
     unsigned char *flags = s_batchFlags;
@@ -1492,6 +1601,8 @@ void MapProp_DrawFlowerFieldShadowCasterBatch(MapFlowerField *fields, int fieldC
 
     Shader shader = NatureShadow_GetShader();
     bool shaderBound = false;
+    bool lastTextured = false;
+    float lastAlpha = -1.0f;
 
     for (int i = 0; i < fieldCount; i++)
     {
@@ -1515,14 +1626,19 @@ void MapProp_DrawFlowerFieldShadowCasterBatch(MapFlowerField *fields, int fieldC
                 continue;
         }
 
-        if (!shaderBound)
+        if (!shaderBound || field->textured != lastTextured || field->alphaCutoff != lastAlpha)
         {
+            if (shaderBound)
+                Nature_EndWindReceiverShader();
             Nature_BeginWindReceiverShader(shader);
             Nature_UpdateShadowShader(shader, time, windDirection, windStrength,
                                       field->textured, field->alphaCutoff,
                                       NATURE_WIND_RESPONSE_FLOWER);
-            rlDisableBackfaceCulling();
+            if (!shaderBound)
+                rlDisableBackfaceCulling();
             shaderBound = true;
+            lastTextured = field->textured;
+            lastAlpha = field->alphaCutoff;
         }
 
         Model *castModel = (!filterActive && field->farReady && !field->textured)

@@ -38,7 +38,12 @@ static inline float MeadowHabitat(float x, float z)
  * habitat resolves to the first / last band exactly like the shader does. */
 static inline float MeadowSmoothstep(float edge0, float edge1, float x)
 {
-    float t = fminf(1.0f, fmaxf(0.0f, (x - edge0) / (edge1 - edge0)));
+    float denom = edge1 - edge0;
+    if (!(denom > 1e-6f))
+        return (x >= edge1) ? 1.0f : 0.0f;
+    float t = (x - edge0) / denom;
+    /* !(t > 0.0f) catches both t <= 0.0f and IEEE-754 NaN without libm fminf/fmaxf overhead */
+    t = (t > 0.0f) ? ((t < 1.0f) ? t : 1.0f) : 0.0f;
     return t * t * (3.0f - 2.0f * t);
 }
 
