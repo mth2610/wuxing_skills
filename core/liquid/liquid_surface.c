@@ -68,6 +68,12 @@ static int s_pointLightCountLoc, s_pointLightPosLoc, s_pointLightColorLoc;
 static int s_materialBodyLoc, s_materialGlowLoc, s_materialSoftLoc, s_materialOpticsLoc;
 static int s_timeLoc;
 static int s_compositeKernelRadiusLoc;
+static int s_compositeMultiLoc, s_compositeSingleLoc;
+/* Material topology of the frame being composited. `u_multipleMaterials == 0`
+ * lets the composite skip the 8-24 tap identity search entirely: with one
+ * participant every fringe pixel belongs to that participant by construction. */
+static int s_frameMultipleMaterials;
+static int s_frameSingleMaterial;
 static Matrix s_fluidView, s_fluidProjection, s_fluidInverseProjection, s_fluidViewToWorld;
 static Color s_materialBody = {41, 128, 185, 255};
 static Color s_materialGlow = {80, 180, 255, 255};
@@ -326,7 +332,14 @@ void LiquidSurface_Init(int width, int height)
     const char *roi = getenv("WUXING_LIQUID_OCCUPANCY");
     s_captureBatch = !batch || atoi(batch) != 0;
     s_cpuImpostor = (!cpu || atoi(cpu) != 0) && LiquidCaptureCPU_Init();
-    s_useOccupancy = !roi || atoi(roi) != 0;
+    /* Occupancy tiles are OFF unless asked for. The 8x8 tile pass is 1/64 of the
+     * screen in pixels, but on MoltenVK the extra render pass + barrier costs
+     * more than the tiles it lets the depth filter skip: measured on the
+     * LIQUID BENCH (5 bodies, 1280x720) at 19.0 ms/frame with tiles vs 14.4 ms
+     * without, and on a single WATER ORB at 20.0 ms vs 16.3 ms. It never pays
+     * for itself here, so it is an opt-in diagnostic (WUXING_LIQUID_OCCUPANCY=1),
+     * not a default. */
+    s_useOccupancy = roi && atoi(roi) != 0;
     const char *profile = getenv("WUXING_LIQUID_PROFILE");
     s_profile = profile && atoi(profile) != 0;
     const char *capScale = getenv("WUXING_LIQUID_CAPTURE_SCALE");
@@ -377,6 +390,8 @@ void LiquidSurface_Init(int width, int height)
     s_smoothMultiLoc = GetShaderLocation(s_smooth, "u_multipleMaterials");
     s_smoothSourceMaterialLoc = GetShaderLocation(s_smooth, "u_sourceCarriesMaterial");
     s_compositeKernelsLoc = GetShaderLocation(s_composite, "u_materialKernels");
+    s_compositeMultiLoc = GetShaderLocation(s_composite, "u_multipleMaterials");
+    s_compositeSingleLoc = GetShaderLocation(s_composite, "u_singleMaterial");
     s_filterRadiusLoc = GetShaderLocation(s_smooth, "u_filterRadius");
     s_filter2DLoc = GetShaderLocation(s_smooth, "u_filter2D");
     s_resolveBackLoc = GetShaderLocation(s_thicknessResolve, "u_backDepthTex");
@@ -830,10 +845,17 @@ void LiquidSurface_Capture(Camera3D camera)
             s_materialKernel[slot] = fmaxf(s_materialKernel[slot], LiquidPBDGPU_GetReconstructionRadius());
     }
     int materialParticipants = 0;
+    int singleMaterial = 0;
     for (int slot = 0; slot < LIQUID_SURFACE_MATERIAL_SLOTS; slot++)
         if (s_materialKernel[slot] > 0.0f)
+        {
+            if (materialParticipants == 0)
+                singleMaterial = slot;
             materialParticipants++;
+        }
     int multipleMaterials = materialParticipants > 1;
+    s_frameMultipleMaterials = multipleMaterials;
+    s_frameSingleMaterial = singleMaterial;
     for (int slot = 0; slot < LIQUID_SURFACE_MATERIAL_SLOTS; slot++)
         if (s_materialKernel[slot] <= 0.0f)
             s_materialKernel[slot] = s_reconstructionRadius;
@@ -1260,6 +1282,10 @@ void LiquidSurface_Composite(void)
     SetShaderValue(s_composite, s_qualityTierLoc, &qualityTier, SHADER_UNIFORM_INT);
     SetShaderValue(s_composite, s_compositeKernelRadiusLoc, &s_reconstructionRadius, SHADER_UNIFORM_FLOAT);
     SetShaderValueV(s_composite, s_compositeKernelsLoc, s_materialKernel, SHADER_UNIFORM_FLOAT, LIQUID_SURFACE_MATERIAL_SLOTS);
+    if (s_compositeMultiLoc >= 0)
+        SetShaderValue(s_composite, s_compositeMultiLoc, &s_frameMultipleMaterials, SHADER_UNIFORM_INT);
+    if (s_compositeSingleLoc >= 0)
+        SetShaderValue(s_composite, s_compositeSingleLoc, &s_frameSingleMaterial, SHADER_UNIFORM_INT);
     SetShaderValue(s_composite, s_sunDirectionLoc, &sunDirectionView, SHADER_UNIFORM_VEC3);
     SetShaderValue(s_composite, s_sunColorLoc, &sunColor, SHADER_UNIFORM_VEC3);
     SetShaderValue(s_composite, s_skyAmbientLoc, &skyAmbient, SHADER_UNIFORM_VEC3);

@@ -20,6 +20,11 @@ uniform int u_qualityTier;
 // World-space radius of one reconstruction kernel (LiquidSurface_SetReconstructionRadius).
 uniform float u_kernelRadius;
 uniform float u_materialKernels[6];
+/* Material topology of this frame (set by LiquidSurface_Capture). With one
+ * participant the identity search below is dead work: every fringe pixel can
+ * only belong to that one slot, so it is resolved without a single fetch. */
+uniform int u_multipleMaterials;
+uniform int u_singleMaterial;
 
 uniform mat4 u_projection;
 uniform mat4 u_inverseProjection;
@@ -191,28 +196,33 @@ void main() {
     }
 
     /* Two-ring material identity search: check 3x3 ring first (8 taps), and only
-     * expand to the outer 5x5 ring if the 3x3 ring missed. */
-    vec4 identity = texture(u_materialIdTex, fragTexCoord);
-    if (identity.r >= 0.99999) {
-        float nearest = 1.0;
-        for (int y = -1; y <= 1; y++) {
-            for (int x = -1; x <= 1; x++) {
-                if (x == 0 && y == 0) continue;
-                vec4 candidate = texture(u_materialIdTex, fragTexCoord + vec2(x, y) * u_texel);
-                if (candidate.r < nearest) { nearest = candidate.r; identity = candidate; }
-            }
-        }
-        if (nearest >= 0.99999) {
-            for (int y = -2; y <= 2; y++) {
-                for (int x = -2; x <= 2; x++) {
-                    if (abs(x) <= 1 && abs(y) <= 1) continue;
+     * expand to the outer 5x5 ring if the 3x3 ring missed. Single-material
+     * frames skip it: there is exactly one possible answer. */
+    vec4 identity;
+    float rawSlot = float(u_singleMaterial);
+    if (u_multipleMaterials != 0) {
+        identity = texture(u_materialIdTex, fragTexCoord);
+        if (identity.r >= 0.99999) {
+            float nearest = 1.0;
+            for (int y = -1; y <= 1; y++) {
+                for (int x = -1; x <= 1; x++) {
+                    if (x == 0 && y == 0) continue;
                     vec4 candidate = texture(u_materialIdTex, fragTexCoord + vec2(x, y) * u_texel);
                     if (candidate.r < nearest) { nearest = candidate.r; identity = candidate; }
                 }
             }
+            if (nearest >= 0.99999) {
+                for (int y = -2; y <= 2; y++) {
+                    for (int x = -2; x <= 2; x++) {
+                        if (abs(x) <= 1 && abs(y) <= 1) continue;
+                        vec4 candidate = texture(u_materialIdTex, fragTexCoord + vec2(x, y) * u_texel);
+                        if (candidate.r < nearest) { nearest = candidate.r; identity = candidate; }
+                    }
+                }
+            }
         }
+        rawSlot = identity.b;
     }
-    float rawSlot = identity.b;
     int slot = clamp(int(rawSlot + 0.5), 0, LIQUID_MATERIAL_SLOTS - 1);
     float kernelRadius = u_materialKernels[slot] > 0.0 ? u_materialKernels[slot] : u_kernelRadius;
     vec3 materialBody = u_materialBody[slot].rgb;

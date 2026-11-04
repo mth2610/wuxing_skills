@@ -4444,3 +4444,52 @@ with `pos.y ≈ 0.13-0.18`, and a `GLQ` trace measured a downward contact accele
 - Sample local terrain height per-vertex at each vertex's actual $(X, Z)$ coordinate (`ya0 = MapManager_GetGroundHeightAt(a0_x, a0_z) - dispA`) rather than assuming flat ground across the fracture width.
 - Offset crack vertices slightly above the terrain surface ($+2\text{ mm}$ for chasm floor, $+8\text{--}12\text{ mm} + \text{heave}$ for rock shoulders) so they pass depth testing against the solid ground mesh ($Z_{\text{crack}} \le Z_{\text{ground}}$) while remaining far below the vegetation canopy ($Z_{\text{foliage}} \ll Z_{\text{crack}}$).
 - Emit radial wind shockwaves (`Wind_SpawnRadialBlast`) along the active needle tip and opened fissure to dynamically part grass blades and wildflowers away from the chasm.
+
+---
+
+## SSF occupancy tiles cost more than they save on MoltenVK (04/11/2026)
+
+**Symptom.** The screen-space liquid surface carried an 8x8 occupancy-tile pass whose whole purpose is to
+skip the expensive 2D narrow-range depth filter on empty tiles, yet turning it on made the frame *slower*:
+the 5-body `WUXING_LIQUID_BENCH=1` fixture at 1280x720 went from 14.4 ms to 19.0 ms, and a single
+`WATER ORB` from 16.3 ms to 20.0 ms. Interleaved A/B on a loaded machine still ordered the same way every
+pair (15.7/16.1/21.2 ms without tiles vs 20.0/21.4/24.4 ms with them).
+
+**Cause.** Tiles are 1/64 of the screen in pixels, but on MoltenVK the tile pass is a separate render pass
+plus a barrier and a second binding of the tile texture. The fixed cost of that round trip is larger than
+the per-pixel filter work it removes, and liquid bodies are small on screen anyway (a 0.45 m orb covers
+~2% of a 720p frame), so most tiles were already empty and cheap.
+
+**Rule.**
+- Keep occupancy tiles **off by default**; they are an opt-in diagnostic (`WUXING_LIQUID_OCCUPANCY=1`),
+  not an optimization. Re-enable them only after measuring an interleaved A/B on the target backend —
+  never from the pixel fraction alone.
+- Measure a pass that adds a render pass or a barrier by its *whole* round trip, not by the work it
+  removes. On MoltenVK, "skip 98% of the taps" can still be a net loss.
+- Related dead end, same file: sparse (concentric-ring) sampling of the filter disc is forbidden —
+  `core/tests/liquid_filter_2d_test.c` records that it printed a visible dot grid. Taps must stay dense.
+
+---
+
+## A raymarched liquid body's thickness is not a fraction of the AABB chord (04/11/2026)
+
+**Symptom.** The metaball 3D branch (`core/liquid/shaders/liquid_metaball3d.fs`) rendered every body as a
+flat saturated balloon: the silhouette edge was as opaque as the core, and grazing rays — which pass
+through a few millimetres of water — were shaded as if they had crossed a metre of it.
+
+**Cause.** Thickness was estimated as `(tEnd - tHit) * 0.50 + interiorField * 0.80`. `tEnd` is the exit of
+the *padded AABB*, not the exit of the isosurface, so the estimate grows with the box, not with the water.
+Beer-Lambert absorption (`exp(-absorption * opticalPath)`), the refraction displacement, the
+sub-surface term and `edgeCoverage = smoothstep(0.0, 0.025, thickness)` all read that number, so a wrong
+thickness makes the whole body uniformly opaque — and no amount of extra specular or fresnel can recover
+a silhouette that has no thin edge.
+
+**Rule.**
+- Walk the exit instead of estimating it: step inward from `tEnd` to the first isosurface crossing, then
+  bisect 3 times. The exit is normally 1-3 steps from `tEnd`, so cap the loop (12 steps here) and keep the
+  per-step blob evaluation loop identical to the raymarch's.
+- Use the measured span for every downstream optical term. Do not mix a measured hit with an estimated
+  span; the mismatch shows up as a hard rim on a body whose interior is transparent.
+- The cost is in the noise on the orb fixture (28 blobs, min-of-3 pairs: 9.84/9.81/7.76 ms before vs
+  9.79/8.41/8.71 ms after), because `activeCount` per pixel is only the handful of blobs the ray crosses.
+  Verify with an interleaved A/B before assuming the extra loop needs a lower quality tier.

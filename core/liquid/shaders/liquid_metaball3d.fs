@@ -242,10 +242,8 @@ void main() {
         intersectionFade = smoothstep(-0.005, 0.018, depthDiff);
     }
 
-    // Exact analytical gradient evaluated ONLY on active blobs + simultaneous in-flight thickness sample
+    // Exact analytical gradient evaluated ONLY on active blobs.
     vec3 grad = vec3(0.0);
-    float interiorField = 0.0;
-    float tSample = tHit + 0.35;
     for (int k = 0; k < MAX_ACTIVE; k++) {
         if (k >= activeCount) break;
         vec3 ab = activeBlob[k];
@@ -255,19 +253,69 @@ void main() {
             vec3 center = u_blobs[activeIdx[k]].xyz;
             grad += (-6.0 * q * q * ab.z) * (hitPos - center);
         }
-        float dtc2 = tSample - ab.x;
-        float q2 = ab.y - dtc2 * dtc2 * ab.z;
-        if (q2 > 0.0) interiorField += q2 * q2 * q2;
     }
 
     float gradMag = length(grad);
     vec3 normal = (gradMag > 1e-5) ? (-grad / gradMag) : vec3(0.0, 1.0, 0.0);
 
+    /* MEASURED EXIT SURFACE. Thickness used to be a fraction of the bounding
+     * chord (`(tEnd - tHit) * 0.5 + field * 0.8`), which is not the body: tEnd
+     * is the padded AABB exit, so a grazing ray reported a metre of water and a
+     * ray through the core reported too little. Beer-Lambert absorption, the
+     * refraction displacement and the silhouette's thin-film falloff are all
+     * driven by this number, so it is walked instead of estimated: step inward
+     * from the far end of the chord to the first isosurface crossing. The exit
+     * is normally 1-3 steps from tEnd, so the loop breaks almost immediately;
+     * the step count is capped so a pathological chord cannot pay for it. */
+    int backSteps = min(clamp(u_stepCount, 10, 36), 12);
+    float backStep = (tEnd - tHit) / float(backSteps);
+    float tBack = tEnd;
+    bool exitFound = false;
+    {
+        float t = tEnd;
+        for (int s = 0; s < 12; s++) {
+            if (s >= backSteps) break;
+            float phi = 0.0;
+            for (int k = 0; k < MAX_ACTIVE; k++) {
+                if (k >= activeCount) break;
+                vec3 ab = activeBlob[k];
+                float dtc = t - ab.x;
+                float q = ab.y - dtc * dtc * ab.z;
+                if (q > 0.0) phi += q * q * q;
+            }
+            if (phi >= u_threshold) {
+                /* 3-step bisection between the last outside sample and this one */
+                float tA = t + backStep;
+                float tB = t;
+                for (int b = 0; b < 3; b++) {
+                    float tMid = (tA + tB) * 0.5;
+                    float fMid = 0.0;
+                    for (int k = 0; k < MAX_ACTIVE; k++) {
+                        if (k >= activeCount) break;
+                        vec3 ab = activeBlob[k];
+                        float dtc = tMid - ab.x;
+                        float q = ab.y - dtc * dtc * ab.z;
+                        if (q > 0.0) fMid += q * q * q;
+                    }
+                    if (fMid >= u_threshold) tB = tMid;
+                    else tA = tMid;
+                }
+                tBack = (tA + tB) * 0.5;
+                exitFound = true;
+                break;
+            }
+            t -= backStep;
+            if (t <= tHit) break;
+        }
+    }
+    float measuredSpan = max(tBack - tHit, 0.0);
+    if (!exitFound) measuredSpan = max(tEnd - tHit, 0.0);
+
     float thickness;
     if (u_liquidClass == 2 || u_opacityPerMeter > 36.0) {
-        thickness = max(min((tEnd - tHit) * 0.25, 0.08), 0.02);
+        thickness = max(min(measuredSpan * 0.25, 0.08), 0.02);
     } else {
-        thickness = clamp((tEnd - tHit) * 0.50 + interiorField * 0.80, 0.02, 3.0);
+        thickness = clamp(measuredSpan, 0.02, 3.0);
     }
 
     // Tendril bridge factor: low gradient magnitude on isosurface marks a stretched fluid neck
