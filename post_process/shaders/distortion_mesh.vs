@@ -14,7 +14,9 @@ out vec4 v_clipPos;
 
 void main() {
     fragTexCoord = vertexTexCoord;
-    fragNormal   = normalize(vec3(matModel * vec4(vertexNormal, 0.0)));
+    vec3 worldN  = mat3(matModel) * vertexNormal;
+    float nLenSq = dot(worldN, worldN);
+    fragNormal   = (nLenSq > 1e-8) ? (worldN * inversesqrt(nLenSq)) : vec3(0.0, 1.0, 0.0);
     fragPosition = vec3(matModel * vec4(vertexPosition, 1.0));
     v_clipPos    = mvp * vec4(vertexPosition, 1.0);
     gl_Position  = v_clipPos;

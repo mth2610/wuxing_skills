@@ -74,6 +74,9 @@ void ScreenDistort_Unload(void)
 
 void ScreenDistort_Add(Vector3 worldPos, float radius, float strength, float lifetime, float speed)
 {
+  if (lifetime <= 0.0001f || radius <= 0.0f || strength <= 0.0f)
+    return;
+
   if (activeSourcesCount >= MAX_DISTORTION_SOURCES)
   {
     int minIdx = 0;
@@ -113,14 +116,26 @@ void ScreenDistort_Update(float dt)
 
 void ScreenDistort_Draw(Camera3D camera)
 {
+  Texture2D sceneTex = SceneTargets_GetSceneTexture();
+  if (sceneTex.id == 0 || sceneTex.width <= 0 || sceneTex.height <= 0)
+    return;
+
   float screenWidth = (float)GetScreenWidth();
   float screenHeight = (float)GetScreenHeight();
   if (screenWidth <= 0.0f || screenHeight <= 0.0f)
-    return;
+  {
+    screenWidth = (float)sceneTex.width;
+    screenHeight = (float)sceneTex.height;
+  }
 
   float invScreenWidth = 1.0f / screenWidth;
   float invScreenHeight = 1.0f / screenHeight;
   float aspect = screenWidth * invScreenHeight;
+
+  Vector3 camFwd = {
+      camera.target.x - camera.position.x,
+      camera.target.y - camera.position.y,
+      camera.target.z - camera.position.z};
 
   static Vector2 centers[MAX_DISTORTION_SOURCES];
   static float radii[MAX_DISTORTION_SOURCES];
@@ -131,6 +146,17 @@ void ScreenDistort_Draw(Camera3D camera)
   for (int i = 0; i < activeSourcesCount; i++)
   {
     const DistortionSource *src = &sources[i];
+    if (src->maxLifetime <= 0.0001f)
+      continue;
+
+    // Loại bỏ các nguồn nổ nằm phía sau mặt phẳng camera để tránh phóng chiếu ngược
+    Vector3 toSrc = {
+        src->worldPos.x - camera.position.x,
+        src->worldPos.y - camera.position.y,
+        src->worldPos.z - camera.position.z};
+    if (camFwd.x * toSrc.x + camFwd.y * toSrc.y + camFwd.z * toSrc.z <= 0.01f)
+      continue;
+
     Vector2 screenPos = GetWorldToScreen(src->worldPos, camera);
 
     if (screenPos.x < -200.0f || screenPos.x > screenWidth + 200.0f ||
@@ -144,12 +170,11 @@ void ScreenDistort_Draw(Camera3D camera)
 
     radii[validCount] = src->radius * invScreenWidth;
     strengths[validCount] = src->strength;
-    progress[validCount] = 1.0f - (src->lifetime / src->maxLifetime);
+    float p = 1.0f - (src->lifetime / src->maxLifetime);
+    progress[validCount] = fmaxf(0.0f, fminf(1.0f, p));
 
     validCount++;
   }
-
-  Texture2D sceneTex = SceneTargets_GetSceneTexture();
 
   BeginShaderMode(distortShader);
   SetShaderValue(distortShader, aspectLoc, &aspect, SHADER_UNIFORM_FLOAT);
@@ -163,7 +188,6 @@ void ScreenDistort_Draw(Camera3D camera)
     SetShaderValueV(distortShader, progressLoc, progress, SHADER_UNIFORM_FLOAT, validCount);
   }
 
-  // [TỐI ƯU HÓA & FIX ALPHA HDR]: Vô hiệu hóa blend khi copy sceneTex sang mainRenderTex
   rlDisableColorBlend();
   DrawTexturePro(sceneTex,
                  (Rectangle){0, 0, (float)sceneTex.width, -(float)sceneTex.height},
@@ -199,9 +223,14 @@ void ScreenDistort_BeginMeshPass(Texture2D flowMap, float strength, Vector2 flow
   BeginShaderMode(meshDistortShader);
 
   SetShaderValue(meshDistortShader, meshLocHasScene, &hasScene, SHADER_UNIFORM_INT);
-  if (hasScene)
+  if (meshLocSceneTex >= 0)
   {
-    SetShaderValueTexture(meshDistortShader, meshLocSceneTex, snapshot);
+    // Luôn bind một texture hợp lệ (snapshot hoặc default 1x1) để tránh dangling descriptor
+    // sau khi s_sceneSnapshot bị hủy trong SceneTargets_Resize().
+    Texture2D safeSceneTex = hasScene
+                                 ? snapshot
+                                 : (Texture2D){rlGetTextureIdDefault(), 1, 1, 1, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8};
+    SetShaderValueTexture(meshDistortShader, meshLocSceneTex, safeSceneTex);
   }
 
   SetShaderValue(meshDistortShader, meshLocStrength, &strength, SHADER_UNIFORM_FLOAT);
@@ -237,6 +266,5 @@ void ScreenDistort_EndMeshPass(void)
   EndShaderMode();
   rlEnableColorBlend();
   rlEnableDepthMask();
-  rlDrawRenderBatchActive();
   SceneTargets_EndVFXLayer();
 }

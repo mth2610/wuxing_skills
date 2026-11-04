@@ -13,6 +13,7 @@
 static RenderTexture2D renderTex;
 static Rectangle s_softDepthRegion;
 static bool s_softDepthRegionValid;
+static bool s_inScenePass = false;
 
 // --- Soft particles: previous-frame depth snapshot ---
 static RenderTexture2D prevDepthTex;
@@ -95,8 +96,6 @@ static RenderTexture2D LoadRenderTextureWithDepthTexture(int width, int height, 
   return target;
 }
 
-/* [TỐI ƯU HÓA FBO]: Target chỉ chứa Color attachment, không gắn Depth Texture 24-bit
- * dư thừa cho các pass 2D như s_bgLuma và s_exposure. */
 static RenderTexture2D LoadColorOnlyTarget(int width, int height, int colorFormat)
 {
   RenderTexture2D target = {0};
@@ -161,6 +160,47 @@ int SceneTargets_GetSceneSamples(void) { return s_sceneSamples; }
 
 static int s_targetWidth = 0;
 static int s_targetHeight = 0;
+
+/* Chuyển trực tiếp sang FBO phụ mà không gọi EndTextureMode() khi đang ở giữa
+ * SceneTargets_Begin()..End(), tránh kích hoạt swapchain RenderPass rỗng trên rlvk
+ * và giữ nguyên cờ useRenderTexture của Raylib. */
+static void SceneTargets_BeginAuxTarget(RenderTexture2D target)
+{
+  if (s_inScenePass)
+  {
+    rlDrawRenderBatchActive();
+    rlEnableFramebuffer(target.id);
+    rlViewport(0, 0, target.texture.width, target.texture.height);
+    rlMatrixMode(RL_PROJECTION);
+    rlLoadIdentity();
+    rlOrtho(0.0, (double)target.texture.width, (double)target.texture.height, 0.0, 0.0, 1.0);
+    rlMatrixMode(RL_MODELVIEW);
+    rlLoadIdentity();
+  }
+  else
+  {
+    BeginTextureMode(target);
+  }
+}
+
+static void SceneTargets_EndAuxTarget(void)
+{
+  if (s_inScenePass)
+  {
+    rlDrawRenderBatchActive();
+    rlEnableFramebuffer(renderTex.id);
+    rlViewport(0, 0, s_targetWidth, s_targetHeight);
+    rlMatrixMode(RL_PROJECTION);
+    rlLoadIdentity();
+    rlOrtho(0.0, (double)s_targetWidth, (double)s_targetHeight, 0.0, 0.0, 1.0);
+    rlMatrixMode(RL_MODELVIEW);
+    rlLoadIdentity();
+  }
+  else
+  {
+    EndTextureMode();
+  }
+}
 
 static void SceneTargets_PrimeTarget(RenderTexture2D target)
 {
@@ -285,6 +325,7 @@ static void SceneTargets_CreateSizedTargets(int width, int height)
 void SceneTargets_Init(int width, int height)
 {
   s_depthSampleOnDemand = false;
+  s_inScenePass = false;
   s_targetWidth = width;
   s_targetHeight = height;
   SceneTargets_CreateSizedTargets(width, height);
@@ -351,6 +392,7 @@ bool SceneTargets_IsHDR(void) { return s_hdrActive; }
 
 void SceneTargets_Unload(void)
 {
+  s_inScenePass = false;
   SceneTargets_DestroySizedTargets();
   for (int i = 0; i < 2; i++)
   {
@@ -380,11 +422,13 @@ void SceneTargets_Unload(void)
 void SceneTargets_Begin(void)
 {
   BeginTextureMode(renderTex);
+  s_inScenePass = true;
   s_softDepthRegionValid = false;
 }
 
 void SceneTargets_End(void)
 {
+  s_inScenePass = false;
   EndTextureMode();
   if (RenderTargetProbe_MatchesFrame(s_probeFrame))
     RenderTargetProbe_Dump(renderTex, "scene", true);
@@ -399,16 +443,19 @@ void SceneTargets_BeginVFXBody(void)
 {
   rlDrawRenderBatchActive();
   rlEnableFramebuffer(renderTex.id);
+  rlViewport(0, 0, s_targetWidth, s_targetHeight);
 }
 void SceneTargets_BeginVFXEmission(void)
 {
   rlDrawRenderBatchActive();
   rlEnableFramebuffer(renderTex.id);
+  rlViewport(0, 0, s_targetWidth, s_targetHeight);
 }
 void SceneTargets_EndVFXLayer(void)
 {
   rlDrawRenderBatchActive();
   rlEnableFramebuffer(renderTex.id);
+  rlViewport(0, 0, s_targetWidth, s_targetHeight);
 }
 
 void SceneTargets_BeginWorldRefraction(void)
@@ -418,10 +465,13 @@ void SceneTargets_BeginWorldRefraction(void)
   rlViewport(0, 0, s_targetWidth, s_targetHeight);
 }
 
+/* [FIX VIEWPORT BUG]: Khôi phục về kích thước thực của renderTex (s_targetWidth x s_targetHeight)
+ * thay vì GetRenderWidth() x GetRenderHeight() khi RenderScale < 1.0 đang bật. */
 void SceneTargets_EndWorldRefraction(void)
 {
   rlDrawRenderBatchActive();
-  rlViewport(0, 0, GetRenderWidth(), GetRenderHeight());
+  rlEnableFramebuffer(renderTex.id);
+  rlViewport(0, 0, s_targetWidth, s_targetHeight);
 }
 
 void VFXRender_BeginPass(VFXRenderPass pass)
@@ -536,10 +586,13 @@ void SceneTargets_RequestSoftDepthRegion(Rectangle screenRegion)
   if (screenRegion.width <= 0.0f || screenRegion.height <= 0.0f || maxW <= 0.0f || maxH <= 0.0f)
     return;
   const float margin = 48.0f;
-  float x0 = fmaxf(0.0f, screenRegion.x - margin);
-  float y0 = fmaxf(0.0f, screenRegion.y - margin);
-  float x1 = fminf(maxW, screenRegion.x + screenRegion.width + margin);
-  float y1 = fminf(maxH, screenRegion.y + screenRegion.height + margin);
+  const float align = (float)SOFT_DEPTH_DOWNSCALE;
+  float x0 = floorf(fmaxf(0.0f, screenRegion.x - margin) / align) * align;
+  float y0 = floorf(fmaxf(0.0f, screenRegion.y - margin) / align) * align;
+  float x1 = ceilf(fminf(maxW, screenRegion.x + screenRegion.width + margin) / align) * align;
+  float y1 = ceilf(fminf(maxH, screenRegion.y + screenRegion.height + margin) / align) * align;
+  x1 = fminf(maxW, x1);
+  y1 = fminf(maxH, y1);
   if (x1 <= x0 || y1 <= y0)
     return;
   if (!s_softDepthRegionValid)
@@ -598,21 +651,17 @@ void SceneTargets_SnapshotScene(void)
   if (s_sceneSnapshot.id == 0)
     return;
 
-  BeginTextureMode(s_sceneSnapshot);
+  SceneTargets_BeginAuxTarget(s_sceneSnapshot);
   rlDisableColorBlend();
   DrawTextureRec(renderTex.texture,
                  (Rectangle){0, 0, (float)w, -(float)h}, (Vector2){0, 0}, WHITE);
   rlDrawRenderBatchActive();
   rlEnableColorBlend();
-  EndTextureMode();
+  SceneTargets_EndAuxTarget();
 }
 
 Texture2D SceneTargets_GetSceneSnapshotTexture(void) { return s_sceneSnapshot.texture; }
 
-/* [TỐI ƯU HÓA NGẮT RENDERPASS]: Chỉ chụp s_bgLuma khi có hệ thống yêu cầu
- * (VFX gọi GetBackgroundLuma, AutoExposure gọi GetExposureTexture, frame đầu
- * tiên sau khi khởi tạo/resize, hoặc frame đang chạy RenderTargetProbe).
- * Khi không có VFX nào cần, tránh đóng/mở lại renderTex giữa chừng! */
 bool SceneTargets_NeedsBackgroundLuma(void)
 {
   if (s_bgLuma.id == 0 || s_bgLumaShader.id == 0)
@@ -637,23 +686,27 @@ void SceneTargets_CaptureBackgroundLuma(void)
   {
     if (s_bgLumaIdleFrames > BG_LUMA_KEEPALIVE_FRAMES)
     {
-      // Đảm bảo framebuffer và viewport vẫn trỏ về renderTex cho phần còn lại của frame
-      rlEnableFramebuffer(renderTex.id);
-      rlViewport(0, 0, sw, sh);
+      if (s_inScenePass)
+      {
+        rlEnableFramebuffer(renderTex.id);
+        rlViewport(0, 0, sw, sh);
+      }
       return;
     }
     s_bgLumaIdleFrames++;
-    // Khi đang active (nhưng không phải frame probe), cập nhật cách nhịp 2 frame/lần
     s_bgLumaThrottle = (s_bgLumaThrottle + 1) & 1;
     if (s_bgLumaThrottle != 0)
     {
-      rlEnableFramebuffer(renderTex.id);
-      rlViewport(0, 0, sw, sh);
+      if (s_inScenePass)
+      {
+        rlEnableFramebuffer(renderTex.id);
+        rlViewport(0, 0, sw, sh);
+      }
       return;
     }
   }
 
-  BeginTextureMode(s_bgLuma);
+  SceneTargets_BeginAuxTarget(s_bgLuma);
   BeginShaderMode(s_bgLumaShader);
   if (s_bgLumaTexelLoc >= 0)
   {
@@ -668,10 +721,8 @@ void SceneTargets_CaptureBackgroundLuma(void)
   rlDrawRenderBatchActive();
   rlEnableColorBlend();
   EndShaderMode();
-  EndTextureMode();
+  SceneTargets_EndAuxTarget();
 
-  rlEnableFramebuffer(renderTex.id);
-  rlViewport(0, 0, sw, sh);
   s_bgLumaValid = true;
 }
 
@@ -691,9 +742,11 @@ void SceneTargets_UpdateExposure(float dt, float targetGrey, float minExposure,
   if (s_exposureReady && !probeActive && s_bgLumaIdleFrames > BG_LUMA_KEEPALIVE_FRAMES)
     return;
 
+  // Kẹp dt để tránh nhảy sáng đột ngột sau khi khựng frame hoặc chuyển map
+  float safeDt = fmaxf(0.0f, fminf(dt, 0.1f));
   const int dst = 1 - s_exposureCur;
 
-  BeginTextureMode(s_exposure[dst]);
+  SceneTargets_BeginAuxTarget(s_exposure[dst]);
   BeginShaderMode(s_exposureShader);
   float sz[2] = {(float)s_bgLuma.texture.width, (float)s_bgLuma.texture.height};
   if (s_expLocLuma >= 0)
@@ -701,7 +754,7 @@ void SceneTargets_UpdateExposure(float dt, float targetGrey, float minExposure,
   if (s_expLocSize >= 0)
     SetShaderValue(s_exposureShader, s_expLocSize, sz, SHADER_UNIFORM_VEC2);
   if (s_expLocDt >= 0)
-    SetShaderValue(s_exposureShader, s_expLocDt, &dt, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(s_exposureShader, s_expLocDt, &safeDt, SHADER_UNIFORM_FLOAT);
   if (s_expLocGrey >= 0)
     SetShaderValue(s_exposureShader, s_expLocGrey, &targetGrey, SHADER_UNIFORM_FLOAT);
   if (s_expLocMin >= 0)
@@ -717,7 +770,7 @@ void SceneTargets_UpdateExposure(float dt, float targetGrey, float minExposure,
   rlDrawRenderBatchActive();
   rlEnableColorBlend();
   EndShaderMode();
-  EndTextureMode();
+  SceneTargets_EndAuxTarget();
 
   s_exposureCur = dst;
   s_exposureReady = true;
@@ -737,9 +790,11 @@ void SceneTargets_SnapshotDepth(void)
     return;
   if (!s_softDepthRegionValid)
     return;
+  if (!SceneTargets_PrepareRawDepth())
+    return;
   s_softDepthIdleFrames++;
 
-  BeginTextureMode(prevDepthTex);
+  SceneTargets_BeginAuxTarget(prevDepthTex);
   BeginShaderMode(depthCopyShader);
   const float regionBottom = s_softDepthRegion.y + s_softDepthRegion.height;
   const float mirroredY = (float)renderTex.texture.height - regionBottom;
@@ -754,7 +809,7 @@ void SceneTargets_SnapshotDepth(void)
   rlDrawRenderBatchActive();
   rlEnableColorBlend();
   EndShaderMode();
-  EndTextureMode();
+  SceneTargets_EndAuxTarget();
 }
 
 Texture2D SceneTargets_GetDepthTexture(void) { return prevDepthTex.texture; }

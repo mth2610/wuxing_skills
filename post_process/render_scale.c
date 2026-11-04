@@ -10,17 +10,18 @@
 static const float kLadder[] = {1.00f, 0.92f, 0.85f, 0.78f, 0.72f, 0.68f};
 #define LADDER_COUNT ((int)(sizeof(kLadder) / sizeof(kLadder[0])))
 
-#define START_RUNG 0        /* 1.00 — Native resolution by default; quality tiers are explicitly chosen via GfxQuality */
-#define WINDOW_FRAMES 20    /* ~0.33 s at 60 Hz */
-#define SETTLE_WINDOWS 6    /* ~2 s ổn định đầu map */
-#define UP_WINDOWS 12       /* ~4 s dư dả hiệu năng rõ rệt trước khi nâng scale */
-#define UP_MS 12.2f         /* Nâng lên 0.85 khi thực sự nhẹ (< 12.2 ms) */
-#define COMFORT_MS 14.2f    /* Ngưỡng an toàn để xóa bộ đếm quá tải */
-#define EMERGENCY_MS 16.0f  /* Vượt ngưỡng này sẽ rớt khỏi mốc 60 Hz */
-#define EMERGENCY_WINDOWS 4 /* ~1.3 s quá tải liên tục là hạ ngay để cứu FPS */
-#define EMERGENCY_LIMIT 5   /* Đủ để đi hết thang xuống mức sàn */
-#define UP_LIMIT 1          /* Tối đa 1 lần nâng mỗi map */
-#define FLOOR_DEFAULT 0.68f /* Mở sàn xuống 0.68 khi bật WUXING_RENDER_SCALE_ADAPTIVE=1 */
+#define START_RUNG 0                /* 1.00 — Native resolution by default; quality tiers are explicitly chosen via GfxQuality */
+#define WINDOW_FRAMES 20            /* ~0.33 s at 60 Hz */
+#define SETTLE_WINDOWS 6            /* ~2 s ổn định đầu map */
+#define UP_WINDOWS 12               /* ~4 s dư dả hiệu năng rõ rệt trước khi nâng scale */
+#define UP_MS 12.2f                 /* Nâng bậc khi thực sự nhẹ (< 12.2 ms) */
+#define COMFORT_MS 14.2f            /* Ngưỡng an toàn để xóa bộ đếm quá tải */
+#define EMERGENCY_MS 16.0f          /* Vượt ngưỡng này sẽ rớt khỏi mốc 60 Hz */
+#define EMERGENCY_WINDOWS 4         /* ~1.3 s quá tải liên tục là hạ ngay để cứu FPS */
+#define EMERGENCY_LIMIT 5           /* Đủ để đi hết thang xuống mức sàn */
+#define UP_LIMIT (LADDER_COUNT - 1) /* Cho phép hồi phục lại đủ các bậc khi tải nặng đã qua */
+#define FLOOR_DEFAULT 0.68f         /* Mở sàn xuống 0.68 khi bật WUXING_RENDER_SCALE_ADAPTIVE=1 */
+#define MAX_SAMPLE_SPIKE_MS 33.3f   /* Chặn 1-frame OS/IO hitch làm sai lệch trung bình 20 frames */
 
 static int s_level = START_RUNG;
 static int s_floorLevel = LADDER_COUNT - 1;
@@ -47,13 +48,21 @@ static int ClampToDisplay(float scale, int displayW, int displayH, int *outW, in
     displayW = 16;
   if (displayH < 16)
     displayH = 16;
+
+  if (scale >= 0.999f)
+  {
+    *outW = displayW;
+    *outH = displayH;
+    return displayW * displayH;
+  }
+
   // Làm tròn về bội số của 4 để tương thích tốt nhất với tháp Bloom (1/4) và alignment GPU
   int w = ((int)lroundf((float)displayW * scale) + 2) & ~3;
   int h = ((int)lroundf((float)displayH * scale) + 2) & ~3;
   if (w > displayW)
-    w = displayW;
+    w = displayW & ~3;
   if (h > displayH)
-    h = displayH;
+    h = displayH & ~3;
   if (w < 16)
     w = 16;
   if (h < 16)
@@ -182,8 +191,6 @@ void RenderScale_NotifyMapChange(void)
 
 void RenderScale_Frame(float submitMs, float intervalMs, int displayW, int displayH)
 {
-  (void)intervalMs;
-
   if (displayW > 0 && displayH > 0 &&
       (displayW != s_displayW || displayH != s_displayH))
   {
@@ -192,10 +199,21 @@ void RenderScale_Frame(float submitMs, float intervalMs, int displayW, int displ
     Publish(s_displayW, s_displayH);
   }
 
-  if (!s_adaptive)
+  if (!s_adaptive || submitMs <= 0.0f)
     return;
 
-  s_accumMs += (double)submitMs;
+  // Kết hợp intervalMs khi bị stall GPU thực sự (vượt chu kỳ VSync 60Hz > 18.0ms)
+  float effectiveMs = submitMs;
+  if (intervalMs > 18.0f && intervalMs < 100.0f)
+  {
+    float stallEstimate = intervalMs * 0.94f;
+    if (stallEstimate > effectiveMs)
+      effectiveMs = stallEstimate;
+  }
+  if (effectiveMs > MAX_SAMPLE_SPIKE_MS)
+    effectiveMs = MAX_SAMPLE_SPIKE_MS;
+
+  s_accumMs += (double)effectiveMs;
   if (++s_windowFrames < WINDOW_FRAMES)
     return;
 
@@ -210,8 +228,8 @@ void RenderScale_Frame(float submitMs, float intervalMs, int displayW, int displ
 
   if (avgMs > EMERGENCY_MS)
   {
-    // Nếu frame quá nặng (> 24 ms ~ dưới 42 FPS), tăng tốc độ hạ bậc thêm 1 đơn vị
-    s_overWindows += (avgMs > 24.0f) ? 2 : 1;
+    // Nếu frame quá nặng (> 22 ms ~ dưới 45 FPS), tăng tốc độ hạ bậc thêm 1 đơn vị
+    s_overWindows += (avgMs > 22.0f) ? 2 : 1;
     s_underWindows = 0;
   }
   else if (!settling && avgMs < UP_MS)

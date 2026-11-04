@@ -1,10 +1,6 @@
 #version 330
 
-// FXAA 3.11 with Subpixel Quality and Adaptive Sharpening on LDR image.
-//
-// Runs on the tone-mapped LDR buffer. Antialiases high-contrast geometric silhouettes
-// (grass blade edges, character boundaries, rock ridges) that otherwise staircase
-// with binary coverage on offscreen render targets.
+// FXAA 3.11 with Subpixel Quality and Contrast-Adaptive Sharpening on LDR image.
 
 in vec2 fragTexCoord;
 out vec4 finalColor;
@@ -13,7 +9,6 @@ uniform sampler2D texture0;
 uniform vec2 u_texel;       // 1/width, 1/height of texture0
 uniform float u_sharpen;    // Luma unsharp mask strength
 
-// Perceptual luma weights for post-tonemapped image
 float fxaaLuma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
 
 void main()
@@ -21,35 +16,40 @@ void main()
     vec2 uv = fragTexCoord;
     vec4 sampM = texture(texture0, uv);
     vec3 rgbM  = sampM.rgb;
+    float lM   = sampM.a;
 
-    float lM  = sampM.a;
-    float lNW = texture(texture0, uv + vec2(-1.0, -1.0) * u_texel).a;
-    float lNE = texture(texture0, uv + vec2( 1.0, -1.0) * u_texel).a;
-    float lSW = texture(texture0, uv + vec2(-1.0,  1.0) * u_texel).a;
-    float lSE = texture(texture0, uv + vec2( 1.0,  1.0) * u_texel).a;
+    vec4 d = u_texel.xyxy * vec4(-1.0, -1.0, 1.0, 1.0);
+    float lNW = texture(texture0, uv + d.xy).a;
+    float lNE = texture(texture0, uv + d.zy).a;
+    float lSW = texture(texture0, uv + d.xw).a;
+    float lSE = texture(texture0, uv + d.zw).a;
 
     float lMin = min(lM, min(min(lNW, lNE), min(lSW, lSE)));
     float lMax = max(lM, max(max(lNW, lNE), max(lSW, lSE)));
     float range = lMax - lMin;
 
-    // FidelityFX CAS-inspired (Contrast-Adaptive Sharpening) weight:
-    // Maximizes micro-detail recovery on low/medium-contrast ground and distant turf,
-    // while automatically tapering to zero on high-contrast grass blade silhouettes
-    // and bright flower/pampas tips to prevent white stipple halos.
+    // FidelityFX CAS-inspired weight: tapers at both dark shadows and bright highlights
+    // so sharpening never causes black-crush rings or white specular stipple halos.
+    float diagAvg = (lNW + lNE + lSW + lSE) * 0.25;
     float casHeadroom = clamp(sqrt(min(lMin, 1.0 - lMax) / max(lMax, 1e-4)), 0.0, 1.0);
-    float lap = clamp(4.0 * lM - (lNW + lNE + lSW + lSE), -0.14, 0.14) * casHeadroom;
+    float sharpDelta = clamp(lM - diagAvg, -0.035, 0.035) * (4.0 * u_sharpen * casHeadroom);
 
-    // Early exit on low-contrast areas (avoids smearing smooth bloom halos, skies, and gradients)
+    // Early exit on low-contrast areas
     if (range < max(lMax * (1.0 / 16.0), 1.0 / 32.0))
     {
-        finalColor = vec4(clamp(rgbM + u_sharpen * lap, 0.0, 1.0), 1.0);
+        finalColor = vec4(clamp(rgbM + sharpDelta, 0.0, 1.0), 1.0);
         return;
     }
+
+    // Subpixel aliasing metric (helps thin grass blades and distant sword silhouettes)
+    float subpix = clamp(abs(diagAvg - lM) / max(range, 1e-4), 0.0, 1.0);
+    subpix = smoothstep(0.0, 1.0, subpix);
+    subpix = subpix * subpix * 0.25;
 
     // Direct edge direction from Sobel-like luma gradient
     vec2 dir = vec2(-((lNW + lNE) - (lSW + lSE)),
                      ((lNW + lSW) - (lNE + lSE)));
-    float dirReduce = max((lNW + lNE + lSW + lSE) * 0.25 * (1.0 / 8.0), 1.0 / 128.0);
+    float dirReduce = max(diagAvg * (1.0 / 8.0), 1.0 / 128.0);
     float rcpDirMin = 1.0 / (min(abs(dir.x), abs(dir.y)) + dirReduce);
     dir = clamp(dir * rcpDirMin, vec2(-8.0), vec2(8.0)) * u_texel;
 
@@ -63,7 +63,9 @@ void main()
     // Guard against luminance overshoot on thin bright features
     float lB = fxaaLuma(rgbB);
     vec3 aa = (lB < lMin || lB > lMax) ? rgbA : rgbB;
+    aa = mix(aa, rgbB, subpix);
 
-    // Apply contrast-adaptive sharpening to keep high-frequency textures crisp
-    finalColor = vec4(clamp(aa + u_sharpen * lap, 0.0, 1.0), 1.0);
+    // Giảm làm nét trực tiếp trên đúng cạnh vừa được khử răng cưa để không làm gắt lại răng cưa
+    float edgeAtten = 1.0 - clamp(range * 1.5, 0.0, 0.75);
+    finalColor = vec4(clamp(aa + sharpDelta * edgeAtten, 0.0, 1.0), 1.0);
 }

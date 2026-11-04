@@ -7,6 +7,7 @@
 #include "post_process/post_fx_debug_internal.inl"
 #include "rlgl.h"
 #include "post_process/render_scale.h"
+#include <math.h>
 #include <string.h>
 
 static RenderTexture2D mainRenderTex;
@@ -27,8 +28,8 @@ static bool s_hdrActive = false;
 /* Set for ONE frame by PostFX_UseDirectSource, and consumed by PostFX_Draw. */
 static Texture2D s_directSource = {0};
 
-// Bloom pyramid below the 1/4 bright-pass target: dfTex[0]=1/8 … dfTex[4]=1/128.
-#define DUAL_FILTER_LEVELS 5
+// Bloom pyramid below the 1/4 bright-pass target: dfTex[0]=1/8 … dfTex[3]=1/64.
+#define DUAL_FILTER_LEVELS 4
 static RenderTexture2D dfTex[DUAL_FILTER_LEVELS];
 static int s_dfLevels = 0;
 
@@ -113,6 +114,9 @@ static int dsKarisLoc;
 static int usTexSizeLoc;
 static int usScatterLoc;
 
+// Track bound texture IDs to avoid dangling Vulkan descriptors after resize
+static unsigned int s_boundBloomTexId = 0;
+
 #define BLOOM_SCATTER_DEFAULT 0.65f
 
 static RenderTexture2D LoadRenderTextureWithFormat(int width, int height, int format)
@@ -149,10 +153,7 @@ static void PostFX_PrimeTarget(RenderTexture2D target)
   EndTextureMode();
 }
 
-/* [TỐI ƯU HÓA VRAM & RESIZE]: Chỉ cấp phát mainRenderTex khi thực sự có pass
- * ScreenDistort gọi PostFX_Begin(). Khi đi qua PostFX_UseDirectSource (99% thời
- * gian không có sóng xung kích), ta tiết kiệm toàn bộ 1 FBO HDR full-screen
- * (~7.5 MB ở 720p) và giảm thời gian khựng khi RenderScale thay đổi. */
+/* Chỉ cấp phát mainRenderTex khi thực sự có pass ScreenDistort gọi PostFX_Begin(). */
 static void PostFX_EnsureMainTarget(void)
 {
   if (mainRenderTex.id != 0 || s_targetWidth <= 0 || s_targetHeight <= 0)
@@ -164,6 +165,18 @@ static void PostFX_EnsureMainTarget(void)
   SetTextureFilter(mainRenderTex.texture, TEXTURE_FILTER_BILINEAR);
   SetTextureWrap(mainRenderTex.texture, TEXTURE_WRAP_CLAMP);
   PostFX_PrimeTarget(mainRenderTex);
+}
+
+/* Cấp phát lười cho ldrTex (chỉ tạo khi FXAA bật) để tiết kiệm VRAM và thời gian resize. */
+static void PostFX_EnsureLdrTarget(void)
+{
+  if (ldrTex.id != 0 || s_targetWidth <= 0 || s_targetHeight <= 0)
+    return;
+  const int ldrFmt = RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
+  ldrTex = LoadRenderTextureWithFormat(s_targetWidth, s_targetHeight, ldrFmt);
+  SetTextureFilter(ldrTex.texture, TEXTURE_FILTER_BILINEAR);
+  SetTextureWrap(ldrTex.texture, TEXTURE_WRAP_CLAMP);
+  PostFX_PrimeTarget(ldrTex);
 }
 
 static void PostFX_DestroySizedTargets(void)
@@ -181,6 +194,7 @@ static void PostFX_DestroySizedTargets(void)
   for (int i = 0; i < s_dfLevels; i++)
     UnloadRenderTexture(dfTex[i]);
   s_dfLevels = 0;
+  s_boundBloomTexId = 0;
 }
 
 static void PostFX_CreateSizedTargets(int width, int height)
@@ -200,10 +214,8 @@ static void PostFX_CreateSizedTargets(int width, int height)
   SetTextureWrap(bloomTex.texture, TEXTURE_WRAP_CLAMP);
   PostFX_PrimeTarget(bloomTex);
 
-  ldrTex = LoadRenderTextureWithFormat(width, height, ldrFmt);
-  SetTextureFilter(ldrTex.texture, TEXTURE_FILTER_BILINEAR);
-  SetTextureWrap(ldrTex.texture, TEXTURE_WRAP_CLAMP);
-  PostFX_PrimeTarget(ldrTex);
+  if (s_fxaa > 0.5f)
+    PostFX_EnsureLdrTarget();
 
   int w = bw, h = bh;
   s_dfLevels = 0;
@@ -354,7 +366,9 @@ static void DualFilterPass(Shader sh, int texSizeLoc, Texture2D src,
   Vector2 ts = {1.0f / (float)srcW, 1.0f / (float)srcH};
   SetShaderValue(sh, texSizeLoc, &ts, SHADER_UNIFORM_VEC2);
 
-  Rectangle srcRect = {0, 0, (float)srcW, (float)srcH};
+  // [FIX VISUAL]: Truyền -(float)srcH để đồng nhất chiều dọc UV giữa mọi tầng FBO
+  // của tháp Bloom, tránh lỗi các tầng lẻ bị lật ngược đỉnh-đáy khi blend upsample.
+  Rectangle srcRect = {0, 0, (float)srcW, -(float)srcH};
   Rectangle dstRect = {0, 0, (float)dstW, (float)dstH};
 
   if (mixAlpha > 0.0f)
@@ -391,6 +405,7 @@ void PostFX_RadialBurst(Vector3 worldPos, float strength, float duration)
   s_burstDuration = duration;
   s_burstElapsed = 0.0f;
   s_burstCurrent = strength;
+  s_burstUV = (Vector2){0.5f, 0.5f};
 }
 
 void PostFX_UpdateTransient(Camera3D cam, float dt)
@@ -406,14 +421,41 @@ void PostFX_UpdateTransient(Camera3D cam, float dt)
     return;
   }
 
+  // Kiểm tra điểm nổ có nằm phía trước mặt phẳng camera không để tránh lỗi lật tâm
+  // khi chia phối cảnh w < 0 trong GetWorldToScreen.
+  Vector3 camFwd = {
+      cam.target.x - cam.position.x,
+      cam.target.y - cam.position.y,
+      cam.target.z - cam.position.z};
+  Vector3 toBurst = {
+      s_burstWorldPos.x - cam.position.x,
+      s_burstWorldPos.y - cam.position.y,
+      s_burstWorldPos.z - cam.position.z};
+  float fwdDot = camFwd.x * toBurst.x + camFwd.y * toBurst.y + camFwd.z * toBurst.z;
+  if (fwdDot <= 0.01f)
+  {
+    s_burstCurrent = 0.0f;
+    return;
+  }
+
   float k = 1.0f - (s_burstElapsed / s_burstDuration);
-  s_burstCurrent = s_burstStrength * k * k;
+  float baseStrength = s_burstStrength * k * k;
 
   Vector2 sp = GetWorldToScreen(s_burstWorldPos, cam);
   float sw = (float)GetScreenWidth();
   float sh_ = (float)GetScreenHeight();
-  s_burstUV.x = (sw > 0.0f) ? (sp.x / sw) : 0.5f;
-  s_burstUV.y = (sh_ > 0.0f) ? (1.0f - sp.y / sh_) : 0.5f;
+  float ux = (sw > 0.0f) ? (sp.x / sw) : 0.5f;
+  float uy = (sh_ > 0.0f) ? (1.0f - sp.y / sh_) : 0.5f;
+
+  // Giảm dần cường độ khi tâm nổ trôi ra ngoài biên màn hình và kẹp UV an toàn
+  float dx = (ux < 0.0f) ? -ux : ((ux > 1.0f) ? (ux - 1.0f) : 0.0f);
+  float dy = (uy < 0.0f) ? -uy : ((uy > 1.0f) ? (uy - 1.0f) : 0.0f);
+  float offDist = sqrtf(dx * dx + dy * dy);
+  float edgeFade = 1.0f - fminf(1.0f, offDist * 2.0f);
+
+  s_burstUV.x = fmaxf(-0.25f, fminf(1.25f, ux));
+  s_burstUV.y = fmaxf(-0.25f, fminf(1.25f, uy));
+  s_burstCurrent = baseStrength * edgeFade;
 }
 
 bool PostFX_HasTransient(void)
@@ -500,12 +542,10 @@ static void PostFX_ApplyQualityTier(PostFXConfig *c)
   }
 }
 
-/* [TỐI ƯU HÓA BLOOM PYRAMID]: Giới hạn độ sâu tháp Bloom dựa theo GfxQuality
- * để giảm số lần đóng/mở FBO (RenderPass overhead) trên các thiết bị yếu. */
 static int PostFX_GetActiveBloomLevels(void)
 {
   GfxQuality q = GfxQuality_Get();
-  int maxLv = (q >= GFX_ULTRA) ? 3 : 2;
+  int maxLv = (q >= GFX_ULTRA) ? 4 : ((q >= GFX_HIGH) ? 3 : 2);
   return (s_dfLevels < maxLv) ? s_dfLevels : maxLv;
 }
 
@@ -527,6 +567,8 @@ static void PostFX_PerfSample(const PostFXConfig *c, int width, int height, int 
   static double s_last = 0.0;
 
   double now = GetTime();
+  if (s_last == 0.0)
+    s_last = now;
   s_accum += (double)GetFrameTime();
   s_frames++;
   if (now - s_last < 1.0 || s_frames == 0)
@@ -546,11 +588,6 @@ static void PostFX_PerfSample(const PostFXConfig *c, int width, int height, int 
   s_last = now;
 }
 
-// Switch directly between offscreen RenderTextures without calling EndTextureMode()
-// in between. Calling EndTextureMode() after every bloom/downsample/upsample stage
-// forces rlDisableFramebuffer() to open a 1280x720 swapchain renderPass (with
-// LOAD_OP_LOAD on color+depth) that immediately closes with 0 draws on the next
-// BeginTextureMode().
 static void PostFX_BeginOrSwitchTarget(RenderTexture2D target, bool *inTextureMode)
 {
   if (!*inTextureMode)
@@ -573,6 +610,9 @@ static void PostFX_BeginOrSwitchTarget(RenderTexture2D target, bool *inTextureMo
 
 void PostFX_Draw(const PostFXConfig *config)
 {
+  if (config == NULL)
+    return;
+
   PostFXConfig local = *config;
   if (PostFX_HasTransient())
     PostFX_ApplyTransient(&local);
@@ -600,11 +640,18 @@ void PostFX_Draw(const PostFXConfig *config)
   }
   config = &local;
 
-  const Texture2D srcTex = (s_directSource.id != 0) ? s_directSource
-                                                    : mainRenderTex.texture;
+  Texture2D srcTex = (s_directSource.id != 0) ? s_directSource : mainRenderTex.texture;
   s_directSource = (Texture2D){0};
+  if (srcTex.id == 0)
+    srcTex = SceneTargets_GetSceneTexture();
+  if (srcTex.id == 0 || srcTex.width <= 0 || srcTex.height <= 0)
+    return;
+
   int width = srcTex.width;
   int height = srcTex.height;
+  if (width != s_targetWidth || height != s_targetHeight)
+    PostFX_Resize(width, height);
+
   const int activeLevels = PostFX_GetActiveBloomLevels();
   bool inTextureMode = false;
 
@@ -640,8 +687,7 @@ void PostFX_Draw(const PostFXConfig *config)
 
     EndShaderMode();
 
-    // DOWNSAMPLE chain: đã loại bỏ các lệnh SetShaderValue nằm ngoài BeginShaderMode
-    // để tránh ghi đè nhầm shader đang active trên backend rlvk.
+    // DOWNSAMPLE chain
     Texture2D prevTex = bloomTex.texture;
     int prevW = bloomTex.texture.width, prevH = bloomTex.texture.height;
 
@@ -651,7 +697,7 @@ void PostFX_Draw(const PostFXConfig *config)
       float karis = (i == 0) ? s_bloomKaris : 0.0f;
       PostFX_BeginOrSwitchTarget(dfTex[i], &inTextureMode);
       DualFilterPass(dsShader, dsTexSizeLoc, prevTex, prevW, prevH, dstW, dstH,
-                     config, karis, -1.0f);
+                     (i == 0) ? config : NULL, karis, -1.0f);
       prevTex = dfTex[i].texture;
       prevW = dstW;
       prevH = dstH;
@@ -680,6 +726,8 @@ void PostFX_Draw(const PostFXConfig *config)
   }
 
   // PASS 6: Composite → screen (hoặc ldrTex nếu bật FXAA)
+  if (s_fxaa > 0.5f)
+    PostFX_EnsureLdrTarget();
   const bool useFxaa = (s_fxaa > 0.5f) && fxaaShader.id != 0 && ldrTex.id != 0;
   if (useFxaa)
   {
@@ -695,9 +743,13 @@ void PostFX_Draw(const PostFXConfig *config)
 
   float bloomEnabledVal = (float)config->bloomEnabled;
   SetShaderValue(compositeShader, bloomEnabledLoc, &bloomEnabledVal, SHADER_UNIFORM_FLOAT);
-  if (config->bloomEnabled)
+  if (bloomTex.texture.id != 0 && (config->bloomEnabled || s_boundBloomTexId != bloomTex.texture.id))
   {
     SetShaderValueTexture(compositeShader, bloomTexLoc, bloomTex.texture);
+    s_boundBloomTexId = bloomTex.texture.id;
+  }
+  if (config->bloomEnabled)
+  {
     float bloomI = (s_bloomIntensityOverride > 0.0f) ? s_bloomIntensityOverride
                                                      : config->bloomIntensity;
     SetShaderValue(compositeShader, bloomIntensityLoc, &bloomI, SHADER_UNIFORM_FLOAT);
@@ -729,9 +781,6 @@ void PostFX_Draw(const PostFXConfig *config)
   if (colorGradeEnabledVal > 0.5f)
   {
     float rawSat = config->colorGradeEnabled ? config->saturation : 1.0f;
-    // [TỐI ƯU VISUAL]: Giảm nhẹ hiện tượng cháy màu vàng-xanh trên cỏ của map ban ngày
-    // khi caller truyền saturation = 1.55 từ cấu hình cũ của cảnh tối. Nếu người dùng
-    // chủ động set postfx_saturation trong tuning.cfg thì dùng nguyên giá trị đó.
     if (s_saturationOverride <= 0.0f && rawSat > 1.26f)
     {
       rawSat = 1.26f + (rawSat - 1.26f) * 0.25f;
@@ -768,8 +817,6 @@ void PostFX_Draw(const PostFXConfig *config)
   SetShaderValue(compositeShader, exposureLoc, &exposureVal, SHADER_UNIFORM_FLOAT);
   SetShaderValue(compositeShader, autoExposureLoc, &s_autoExposure, SHADER_UNIFORM_FLOAT);
 
-  // [TỐI ƯU HIỆU NĂNG]: Chỉ truy vấn và bind exposureTex khi autoExposure thực sự bật,
-  // tránh đánh thức chuỗi tính toán luma/exposure mỗi frame khi s_autoExposure == 0.
   if (s_autoExposure > 0.001f && exposureTexLoc >= 0)
   {
     Texture2D et = SceneTargets_GetExposureTexture();
@@ -815,8 +862,8 @@ void PostFX_Draw(const PostFXConfig *config)
     SetShaderValue(compositeShader, radialBlurFalloffLoc, &radialFalloff, SHADER_UNIFORM_FLOAT);
   }
 
-  const float outW = useFxaa ? (float)width : (float)GetRenderWidth();
-  const float outH = useFxaa ? (float)height : (float)GetRenderHeight();
+  const float outW = useFxaa ? (float)ldrTex.texture.width : (float)GetRenderWidth();
+  const float outH = useFxaa ? (float)ldrTex.texture.height : (float)GetRenderHeight();
   rlDisableColorBlend();
   DrawTexturePro(srcTex,
                  (Rectangle){0, 0, (float)width, -(float)height},

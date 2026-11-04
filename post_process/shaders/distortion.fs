@@ -1,10 +1,8 @@
 #version 330
 
-// Input attributes from vertex shader
 in vec2 fragTexCoord;
 in vec4 fragColor;
 
-// Input uniforms
 uniform sampler2D texture0; // Cảnh nền đã render (RenderTexture)
 uniform vec4 colDiffuse;
 
@@ -22,61 +20,43 @@ void main() {
     vec2 uv = fragTexCoord;
     vec2 totalOffset = vec2(0.0);
 
-    // FIX 1: Chặn đứng lỗi tràn mảng (Out-Of-Bounds)
-    int safeCount = min(u_count, 8); 
-
-    // [TỐI ƯU 1]: Tính trước nghịch đảo để thay thế phép chia (division) bằng phép nhân (multiplication).
-    // GPU thực hiện phép nhân nhanh hơn phép chia rất nhiều.
-    float invAspect = 1.0 / u_aspectRatio;
+    int safeCount = clamp(u_count, 0, 8);
+    float aspect = max(u_aspectRatio, 0.0001);
+    float invAspect = 1.0 / aspect;
 
     for (int i = 0; i < safeCount; i++) {
-        vec2 diff = uv - u_centers[i];
-        diff.y *= invAspect; // Tối ưu 1 áp dụng
-        
-        float dist = length(diff);
-        
-        // Trích xuất biến mảng để compiler dễ dàng tối ưu cache
         float rad = u_radii[i];
-        float prog = u_progress[i];
-        
+        float prog = clamp(u_progress[i], 0.0, 1.0);
         float currentRadius = rad * prog;
-        float innerEdge = currentRadius - (rad * 0.15);
-        
-        // VẪN GIỮ LỆNH IF NÀY: Mặc dù rẽ nhánh (branching) thường gây chậm shader, 
-        // nhưng đây là "Spatial Branch". Nó giúp GPU bỏ qua tính toán cho 95% pixel 
-        // không nằm trong diện tích của vòng sóng. Việc này có lợi hơn rất nhiều.
-        if (dist < currentRadius && dist > innerEdge) {
-            
-            // [TỐI ƯU 2]: Khử phép chia cho biến động (Variable Division).
-            // Thay vì tính halfRing = rad * 0.075 rồi lấy (dist - mid) / halfRing (rất tốn kém),
-            // Ta có: 1 / 0.075 = 13.333333. Nghịch đảo của halfRing luôn là 13.333333 / rad.
-            float invHalfRing = 13.3333333 / rad; 
-            
-            // [TỐI ƯU 3]: Rút gọn đại số công thức tìm x. Tiết kiệm 1 biến trung gian (mid) 
-            // và giảm số lượng lệnh cộng trừ.
-            float x = (dist - currentRadius) * invHalfRing + 1.0; 
-            
-            // Gom các hằng số không phụ thuộc vào tọa độ uv lại thành một cụm nhân trước.
+        if (currentRadius <= 0.0001) continue;
+
+        vec2 diff = uv - u_centers[i];
+        diff.y *= invAspect;
+
+        // So sánh bình phương khoảng cách trước để 95% pixel ngoài vòng sóng không phải tính sqrt()
+        float distSq = dot(diff, diff);
+        float innerEdge = max(currentRadius - (rad * 0.15), 0.0);
+
+        if (distSq < currentRadius * currentRadius && distSq > innerEdge * innerEdge) {
+            float dist = sqrt(distSq);
+            float invHalfRing = 13.3333333 / max(rad, 0.0001);
+            float x = clamp((dist - currentRadius) * invHalfRing + 1.0, -1.0, 1.0);
+
             float strengthFactor = u_strengths[i] * (1.0 - prog) * 0.05;
-            
             float wave = sin(x * 3.14159265);
-            float fade = 1.0 - abs(x);
-            
-            // [TỐI ƯU 4]: Triệt tiêu nhánh lồng nhau (Nested Branch) `if (dist > 0.0001)`.
-            // Rẽ nhánh lồng nhau gây lỗi Divergence trên các Warp/Wavefront của GPU.
-            // Dùng hàm max() được hỗ trợ thẳng từ phần cứng (1 chu kỳ clock) để tránh chia cho 0.
-            vec2 dir = diff / max(dist, 0.00001); 
-            
+            // Hàm envelope bậc hai (1 - x^2) đạo hàm liên tục C1, xóa vết gãy khúc xạ ở tâm và rìa sóng
+            float fade = 1.0 - x * x;
+
+            vec2 dir = diff / max(dist, 0.00001);
+            // Quy đổi độ lệch trục Y về lại không gian UV của màn hình
+            dir.y *= aspect;
+
             totalOffset += dir * (wave * fade * strengthFactor);
         }
     }
 
-    vec2 sampleUv = uv + totalOffset;
-    // VFX are already IN the scene target: the separate body/emission layers
-    // and this composite were retired after measurement showed the round trip
-    // (accumulate into a cleared buffer, divide by alpha, multiply back) is
-    // exactly the alpha-over that drawing straight into the scene performs.
+    vec2 sampleUv = clamp(uv + totalOffset, vec2(0.001), vec2(0.999));
     vec4 scene = texture(texture0, sampleUv);
-    vec3 hdr = min(scene.rgb, vec3(64.0));
+    vec3 hdr = clamp(scene.rgb, vec3(0.0), vec3(64.0));
     finalColor = vec4(hdr * colDiffuse.rgb, 1.0);
 }

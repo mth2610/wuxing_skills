@@ -14,41 +14,56 @@ out vec4 finalColor;
 
 void main() {
     float expVal = max(u_exposure, 0.0001);
-    // Quy đổi ngưỡng về không gian trước phơi sáng để tránh nhân expVal 16 lần trong vòng lặp
     float rawThreshold = u_threshold / expVal;
+    float knee = (u_knee > 0.0) ? u_knee : 0.15;
+    float rawKneeFloor = max(0.0, (u_threshold - knee) / expVal);
 
-    vec3 col = vec3(0.0);
-    float bestRawBrightness = -1.0;
+    vec3 peakCol = vec3(0.0);
+    vec3 weightedCol = vec3(0.0);
+    float weightSum = 0.0;
+    float bestRawBrightness = 0.0;
     float brightCount = 0.0;
 
-    // 9-tap (3x3) bilinear-assisted brightest-sample prefilter across the 4x4 source cell:
-    // preserves 1-pixel hot HDR emitters (Landmine #6) while cutting texture fetches by 44% (16 -> 9).
+    // 9-tap (3x3) bilinear-assisted prefilter across the 4x4 source cell:
+    // preserves 1-pixel hot HDR emitters while blending bright neighbors to prevent
+    // sub-pixel hue/intensity snapping during camera movement.
     for (int y = -1; y <= 1; ++y) {
         float offsetY = float(y) * 1.15 * u_sourceTexelSize.y;
         for (int x = -1; x <= 1; ++x) {
             vec2 cellOffset = vec2(float(x) * 1.15 * u_sourceTexelSize.x, offsetY);
-            vec3 sampleColor = texture(texture0, fragTexCoord + cellOffset).rgb;
-            float rawBrightness = max(sampleColor.r, max(sampleColor.g, sampleColor.b));
+            vec3 sampleColor = clamp(texture(texture0, fragTexCoord + cellOffset).rgb,
+                                     vec3(0.0), vec3(65000.0));
+
+            float maxComp = max(sampleColor.r, max(sampleColor.g, sampleColor.b));
+            float luma = dot(sampleColor, vec3(0.2126, 0.7152, 0.0722));
+            float rawBrightness = mix(maxComp, luma, 0.2);
+
             if (rawBrightness > bestRawBrightness) {
                 bestRawBrightness = rawBrightness;
-                col = sampleColor;
+                peakCol = sampleColor;
             }
+
+            float tapExcess = max(0.0, rawBrightness - rawKneeFloor);
+            // Karis-style damping on accumulation so a single firefly doesn't skew hue
+            float tapWeight = tapExcess / (1.0 + rawBrightness * 0.25);
+            weightedCol += sampleColor * tapWeight;
+            weightSum += tapWeight;
+
             brightCount += step(rawThreshold, rawBrightness);
         }
     }
 
-    // 1. Độ sáng lớn nhất đã tìm được từ vòng lặp, không cần tính lại max(col.r, ...)
     float brightness = bestRawBrightness * expVal;
-
-    // 2. Kiểm tra ngưỡng Knee và thoát sớm TRƯỚC khi gọi hàm căn bậc hai sqrt()
-    float knee = (u_knee > 0.0) ? u_knee : 0.15;
     float soft = brightness - u_threshold + knee;
     if (soft <= 0.0) {
         finalColor = vec4(0.0, 0.0, 0.0, 1.0);
         return;
     }
 
-    // Chỉ những pixel thực sự vượt ngưỡng mới tính sqrt() (chuẩn hóa cho 9 mẫu: 1/9 = 0.111111)
+    // Pha trộn giữa màu đỉnh (giữ độ nảy cho tia lửa 1-pixel) và màu trung bình vùng sáng (mượt biên)
+    vec3 avgBrightCol = (weightSum > 1e-5) ? (weightedCol / weightSum) : peakCol;
+    vec3 col = mix(avgBrightCol, peakCol, 0.65);
+
     float coverage = sqrt(max(brightCount * 0.111111, 0.0625));
 
     soft = clamp(soft, 0.0, 2.0 * knee);
@@ -56,7 +71,7 @@ void main() {
 
     float weight = max(soft, brightness - u_threshold) / max(brightness, 0.00001);
 
-    // 3. Soft ceiling (Reinhard-shaped asymptote)
+    // Soft ceiling (Reinhard-shaped asymptote)
     vec3 brightColor = col * (weight * 2.2 * coverage);
     float maxEnergy = (u_maxEnergy > 0.0) ? u_maxEnergy : 12.0;
     float energy = max(brightColor.r, max(brightColor.g, brightColor.b));

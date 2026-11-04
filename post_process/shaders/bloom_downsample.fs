@@ -16,29 +16,39 @@ out vec4 finalColor;
 
 float Luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 
+vec3 SafeTap(vec2 uv) {
+    return clamp(texture(texture0, uv).rgb, vec3(0.0), vec3(65000.0));
+}
+
+vec3 StreakTap(vec2 uv) {
+    vec3 c = SafeTap(uv);
+    // Nén nhẹ các điểm quá chói để vệt anamorphic mượt, không tạo đốm rời rạc
+    return c / (1.0 + Luma(c) * 0.15);
+}
+
 void main() {
     vec2 uv = fragTexCoord;
     vec2 t = u_texelSize;
     vec2 t2 = t * 2.0;
 
     // Core 5-tap Dual-Kawase samples (center + 4 inner bilinear diagonals)
-    vec3 e = texture(texture0, uv                     ).rgb;
-    vec3 j = texture(texture0, uv + vec2( -t.x,   t.y)).rgb;
-    vec3 k = texture(texture0, uv + vec2(  t.x,   t.y)).rgb;
-    vec3 l = texture(texture0, uv + vec2( -t.x,  -t.y)).rgb;
-    vec3 m = texture(texture0, uv + vec2(  t.x,  -t.y)).rgb;
+    vec3 e = SafeTap(uv);
+    vec3 j = SafeTap(uv + vec2( -t.x,   t.y));
+    vec3 k = SafeTap(uv + vec2(  t.x,   t.y));
+    vec3 l = SafeTap(uv + vec2( -t.x,  -t.y));
+    vec3 m = SafeTap(uv + vec2(  t.x,  -t.y));
 
     vec3 roundCol;
     if (u_karis > 0.5) {
         // Full 13-tap Jimenez + Karis firefly control (chỉ bật ở mip đầu tiên)
-        vec3 a = texture(texture0, uv + vec2(-t2.x,  t2.y)).rgb;
-        vec3 b = texture(texture0, uv + vec2(  0.0,  t2.y)).rgb;
-        vec3 c = texture(texture0, uv + vec2( t2.x,  t2.y)).rgb;
-        vec3 d = texture(texture0, uv + vec2(-t2.x,   0.0)).rgb;
-        vec3 f = texture(texture0, uv + vec2( t2.x,   0.0)).rgb;
-        vec3 g = texture(texture0, uv + vec2(-t2.x, -t2.y)).rgb;
-        vec3 h = texture(texture0, uv + vec2(  0.0, -t2.y)).rgb;
-        vec3 i = texture(texture0, uv + vec2( t2.x, -t2.y)).rgb;
+        vec3 a = SafeTap(uv + vec2(-t2.x,  t2.y));
+        vec3 b = SafeTap(uv + vec2(  0.0,  t2.y));
+        vec3 c = SafeTap(uv + vec2( t2.x,  t2.y));
+        vec3 d = SafeTap(uv + vec2(-t2.x,   0.0));
+        vec3 f = SafeTap(uv + vec2( t2.x,   0.0));
+        vec3 g = SafeTap(uv + vec2(-t2.x, -t2.y));
+        vec3 h = SafeTap(uv + vec2(  0.0, -t2.y));
+        vec3 i = SafeTap(uv + vec2( t2.x, -t2.y));
 
         vec3 g0 = (j + k + l + m) * 0.25;
         vec3 g1 = (a + b + d + e) * 0.25;
@@ -55,7 +65,7 @@ void main() {
         float invWSum = 1.0 / max(w0 + w1 + w2 + w3 + w4, 1e-5);
         roundCol = (g0 * w0 + g1 * w1 + g2 * w2 + g3 * w3 + g4 * w4) * invWSum;
     } else {
-        // Fast 5-tap Dual-Kawase downsample cho các tầng mip tiếp theo (giảm 61.5% texture fetches)
+        // Fast 5-tap Dual-Kawase downsample cho các tầng mip tiếp theo
         roundCol = e * 0.5 + (j + k + l + m) * 0.125;
     }
 
@@ -63,17 +73,16 @@ void main() {
         vec2 dir  = vec2(cos(u_streakAngle), sin(u_streakAngle));
         vec2 perp = vec2(-dir.y, dir.x);
         vec2 baseUV = uv + (perp * 0.25) * t;
-        vec2 stepUV = (dir * 4.0) * t;
+        vec2 stepUV = (dir * 2.5) * t;
 
-        vec3 streak = texture(texture0, baseUV - stepUV * 3.0).rgb
-                    + texture(texture0, baseUV - stepUV * 2.0).rgb
-                    + texture(texture0, baseUV - stepUV      ).rgb
-                    + texture(texture0, baseUV               ).rgb
-                    + texture(texture0, baseUV + stepUV      ).rgb
-                    + texture(texture0, baseUV + stepUV * 2.0).rgb
-                    + texture(texture0, baseUV + stepUV * 3.0).rgb;
+        // Trọng số Gaussian giảm dần từ tâm (tổng = 0.22 + 2*(0.18 + 0.13 + 0.08) = 1.0)
+        // giúp tia sáng liền mạch, loại bỏ hiện tượng đứt hạt (beading) của box filter.
+        vec3 streak = StreakTap(baseUV) * 0.22
+                    + (StreakTap(baseUV - stepUV)       + StreakTap(baseUV + stepUV))       * 0.18
+                    + (StreakTap(baseUV - stepUV * 2.0) + StreakTap(baseUV + stepUV * 2.0)) * 0.13
+                    + (StreakTap(baseUV - stepUV * 3.0) + StreakTap(baseUV + stepUV * 3.0)) * 0.08;
 
-        roundCol = mix(roundCol, streak * (1.0 / 7.0), u_streakStrength);
+        roundCol = mix(roundCol, streak, clamp(u_streakStrength, 0.0, 1.0));
     }
 
     finalColor = vec4(roundCol, 1.0);

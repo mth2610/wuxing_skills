@@ -8,14 +8,11 @@ uniform float u_near;
 uniform float u_far;
 
 // Snapshot the scene depth as a LINEARIZED world-space distance, stored in a
-// single-channel R32F target. Storing raw NDC depth in 8-bit color crushed
-// all far depths (near=0.1, far=15000) to 255, making scene vs particle
-// depth indistinguishable. Linearizing + float storage preserves the real
-// per-pixel distances the soft-particle fade needs.
+// single-channel R32F target.
 void main() {
-    float ndcDepth = texture(texture0, fragTexCoord).r;
+    float ndcDepth = clamp(texture(texture0, fragTexCoord).r, 0.0, 1.0);
     float ndc = ndcDepth * 2.0 - 1.0;
-    float linear = (2.0 * u_near * u_far) /
-                   (u_far + u_near - ndc * (u_far - u_near));
+    float denom = max(u_far + u_near - ndc * (u_far - u_near), 1e-5);
+    float linear = clamp((2.0 * u_near * u_far) / denom, u_near, u_far);
     finalColor = vec4(linear, 0.0, 0.0, 1.0);
 }
