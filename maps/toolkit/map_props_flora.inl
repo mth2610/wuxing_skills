@@ -119,8 +119,8 @@ void MapFlora_GenerateFlowerPlacements(
             int colony = localIndex % 3;
             if (Nature_Random01(&rng) < 0.18f)
                 colony = (colony + 1) % 3;
-            // Cohesive painterly drifts (88% clustered in ribbons, 12% soft satellite blooms)
-            bool isColony = Nature_Random01(&rng) < 0.88f;
+            // Cohesive painterly drifts (90% clustered in ribbons, 10% soft satellite blooms)
+            bool isColony = Nature_Random01(&rng) < 0.90f;
 
             float x = cl->center.x;
             float z = cl->center.z;
@@ -138,8 +138,8 @@ void MapFlora_GenerateFlowerPlacements(
                 if (isColony && attempt < 16)
                 {
                     int tryColony = (colony + (attempt >> 2)) % 3;
-                    float along = cosA * rVal * 0.38f;
-                    float across = sinA * rVal * 0.20f;
+                    float along = cosA * rVal * 0.36f;
+                    float across = sinA * rVal * 0.19f;
                     float dxNorm = epicenters[tryColony].x + (cosFlow * along - sinFlow * across);
                     float dzNorm = epicenters[tryColony].y + (sinFlow * along + cosFlow * across);
                     x = cl->center.x + dxNorm * rx;
@@ -147,7 +147,7 @@ void MapFlora_GenerateFlowerPlacements(
                 }
                 else
                 {
-                    float fallbackScale = (attempt < 24) ? (0.20f + 0.45f * rVal) : (0.05f + 0.18f * rVal);
+                    float fallbackScale = (attempt < 24) ? (0.18f + 0.42f * rVal) : (0.05f + 0.16f * rVal);
                     x = cl->center.x + cosA * rx * fallbackScale;
                     z = cl->center.z + sinA * rz * fallbackScale;
                 }
@@ -208,16 +208,17 @@ void MapFlora_GenerateFlowerPlacements(
                 variant = speciesOverride & 7;
 
             bool tallAccent = (variant == 2 || variant == 4 || variant == 6);
-            float coreLift = isColony ? (1.0f - 0.12f * radialNorm) : 0.88f;
-            float driftHeightBase = tallAccent ? 0.52f : 0.45f;
-            outPlacements[outIdx].height = (driftHeightBase + (Nature_Random01(&rng) * 0.08f - 0.03f)) * coreLift;
+            float coreLift = isColony ? (1.0f - 0.10f * radialNorm) : 0.90f;
+            // Nâng nhẹ chiều cao cuống và mở rộng bán kính đài hoa (+25%) để bông hoa vươn lên rõ nét trên thảm cỏ
+            float driftHeightBase = tallAccent ? 0.56f : 0.48f;
+            outPlacements[outIdx].height = (driftHeightBase + (Nature_Random01(&rng) * 0.09f - 0.03f)) * coreLift;
 
-            float baseBloomRadius = tallAccent ? 0.098f : 0.086f;
-            outPlacements[outIdx].bloomRadius = baseBloomRadius * (0.92f + Nature_Random01(&rng) * 0.18f) * (0.90f + 0.12f * coreLift);
+            float baseBloomRadius = tallAccent ? 0.122f : 0.108f;
+            outPlacements[outIdx].bloomRadius = baseBloomRadius * (0.94f + Nature_Random01(&rng) * 0.20f) * (0.92f + 0.10f * coreLift);
             outPlacements[outIdx].petalColor = MapProp_GetFlowerSpeciesColor(variant, Nature_Random01(&rng) > 0.74f);
             outPlacements[outIdx].petalCount = (unsigned char)(5 + (variant % 3));
             outPlacements[outIdx].bloomVariant = (unsigned char)variant;
-            outPlacements[outIdx].petalLengthScale = 0.98f + Nature_Random01(&rng) * 0.22f;
+            outPlacements[outIdx].petalLengthScale = 1.04f + Nature_Random01(&rng) * 0.24f;
         }
     }
 }
@@ -231,8 +232,7 @@ float MapFlora_EvaluateFlowerUnderstorey(
         return 1.0f;
 
     MapFlora_EnsureEpicenterCache();
-    // Epicenters have max radial reach 0.44 and max influence radius 0.45 -> tight norm bound is 0.89
-    float globalMinEpiDistSq = 0.45f * 0.45f;
+    float globalMinEpiDistSq = 0.42f * 0.42f;
     bool hitAny = false;
 
     for (int c = 0; c < clusterCount; c++)
@@ -240,16 +240,16 @@ float MapFlora_EvaluateFlowerUnderstorey(
         const MapFloraFlowerCluster *cl = &clusters[c];
         float rx = (cl->radius.x > 0.1f) ? cl->radius.x : 10.0f;
         float rawDx = x - cl->center.x;
-        if (rawDx > rx * 0.90f || rawDx < -rx * 0.90f)
+        if (rawDx > rx * 0.88f || rawDx < -rx * 0.88f)
             continue;
         float rz = (cl->radius.y > 0.1f) ? cl->radius.y : rx;
         float rawDz = z - cl->center.z;
-        if (rawDz > rz * 0.90f || rawDz < -rz * 0.90f)
+        if (rawDz > rz * 0.88f || rawDz < -rz * 0.88f)
             continue;
 
         float dx = rawDx / rx;
         float dz = rawDz / rz;
-        if (dx * dx + dz * dz > 0.81f)
+        if (dx * dx + dz * dz > 0.78f)
             continue;
 
         Vector2 epicenters[3];
@@ -272,8 +272,9 @@ float MapFlora_EvaluateFlowerUnderstorey(
         return 1.0f;
 
     float epiDist = sqrtf(globalMinEpiDistSq);
-    float weight = 1.0f - MapMath_SmoothStep01(0.04f, 0.45f, epiDist);
-    return 1.0f - 0.58f * weight;
+    float weight = 1.0f - MapMath_SmoothStep01(0.05f, 0.42f, epiDist);
+    // Giữ chiều cao lớp cỏ nền ở mức 66% dưới chân khóm hoa để che kín nền đất nhưng nhường phần ngọn cho đài hoa
+    return 1.0f - 0.34f * weight;
 }
 
 float MapFlora_EvaluateFlowerSuppression(
@@ -285,8 +286,8 @@ float MapFlora_EvaluateFlowerSuppression(
         return 1.0f;
 
     MapFlora_EnsureEpicenterCache();
-    // Epicenters have max radial reach 0.44 and suppression radius 0.38 -> tight norm bound is 0.82
-    float globalMinEpiDistSq = 0.38f * 0.38f;
+    // Chỉ tỉa nhẹ 12% mật độ cỏ ở đúng lõi khóm hoa (0.24) để không bao giờ tạo mảng đất trống "hói cỏ" dưới cụm hoa
+    float globalMinEpiDistSq = 0.24f * 0.24f;
     bool hitAny = false;
 
     for (int c = 0; c < clusterCount; c++)
@@ -294,16 +295,16 @@ float MapFlora_EvaluateFlowerSuppression(
         const MapFloraFlowerCluster *cl = &clusters[c];
         float rx = (cl->radius.x > 0.1f) ? cl->radius.x : 10.0f;
         float rawDx = x - cl->center.x;
-        if (rawDx > rx * 0.84f || rawDx < -rx * 0.84f)
+        if (rawDx > rx * 0.70f || rawDx < -rx * 0.70f)
             continue;
         float rz = (cl->radius.y > 0.1f) ? cl->radius.y : rx;
         float rawDz = z - cl->center.z;
-        if (rawDz > rz * 0.84f || rawDz < -rz * 0.84f)
+        if (rawDz > rz * 0.70f || rawDz < -rz * 0.70f)
             continue;
 
         float dx = rawDx / rx;
         float dz = rawDz / rz;
-        if (dx * dx + dz * dz > 0.70f)
+        if (dx * dx + dz * dz > 0.49f)
             continue;
 
         Vector2 epicenters[3];
@@ -326,8 +327,8 @@ float MapFlora_EvaluateFlowerSuppression(
         return 1.0f;
 
     float epiDist = sqrtf(globalMinEpiDistSq);
-    float weight = 1.0f - MapMath_SmoothStep01(0.02f, 0.38f, epiDist);
-    return 1.0f - 0.52f * weight;
+    float weight = 1.0f - MapMath_SmoothStep01(0.02f, 0.24f, epiDist);
+    return 1.0f - 0.12f * weight;
 }
 
 int MapFlora_GenerateMeadowPlacements(
@@ -350,10 +351,10 @@ int MapFlora_GenerateMeadowPlacements(
             .maxBounds = config.maxBounds,
             .spacing = spacing,
             .jitter = 0.92f,
-            .minRadius = 0.24f,
-            .maxRadius = 0.32f,
-            .minHeight = 0.34f,
-            .maxHeight = 0.54f,
+            .minRadius = 0.27f,
+            .maxRadius = 0.36f,
+            .minHeight = 0.35f,
+            .maxHeight = 0.56f,
             .yOffset = 0.016f,
             .seed = seed,
         },
@@ -437,11 +438,11 @@ int MapFlora_GenerateMeadowPlacements(
                               cosf(cz * 0.060f - cx * 0.035f + 1.2f) * 0.30f +
                               sinf(cx * 0.11f + cz * 0.08f) * 0.15f;
         float tierFactor = 0.5f + 0.5f * macroTierWave;
-        float tieredBase = 0.30f + 0.28f * (tierFactor * tierFactor * (3.0f - 2.0f * tierFactor));
+        float tieredBase = 0.32f + 0.28f * (tierFactor * tierFactor * (3.0f - 2.0f * tierFactor));
         float highTypePatch = (patchHash2 > 0.58f) ? (0.12f * clumpCore) : (-0.05f * clumpCore);
-        float heightNorm = (localHeight - 0.34f) * 5.0f;
+        float heightNorm = (localHeight - 0.35f) * (1.0f / 0.21f);
         clump->height = (tieredBase + heightNorm * 0.14f + highTypePatch) * (0.88f + 0.20f * growth);
-        clump->height *= 0.84f + 0.16f * coverage;
+        clump->height *= 0.85f + 0.15f * coverage;
 
         if (config.flowerClusters && config.flowerClusterCount > 0)
         {
@@ -450,15 +451,16 @@ int MapFlora_GenerateMeadowPlacements(
             clump->height *= understorey;
         }
 
-        clump->radius = 0.26f + biome * 0.08f;
-        clump->radius *= 0.94f + 0.16f * (localRadius - 0.24f) * 12.5f;
+        // Mở rộng bán kính xòe của từng bụi cỏ để các tán lá đan lồng vào nhau không lộ khe đất
+        clump->radius = 0.29f + biome * 0.09f;
+        clump->radius *= 0.94f + 0.16f * (localRadius - 0.27f) * (1.0f / 0.09f);
 
         if (config.edgeTaperFn)
         {
             float taper = config.edgeTaperFn(cx, cz, config.edgeTaperUserData);
-            taper = fminf(1.0f, fmaxf(0.48f, taper));
+            taper = fminf(1.0f, fmaxf(0.28f, taper));
             clump->height *= taper;
-            clump->radius *= (1.16f - 0.16f * taper);
+            clump->radius *= (1.24f - 0.24f * taper);
         }
     }
 
@@ -482,10 +484,10 @@ int MapFlora_GenerateReedPlacements(
     float minSlopeNormalY = config.minSlopeNormalY > 0.0f ? config.minSlopeNormalY : 0.70f;
     float minGroundY = config.minGroundY != 0.0f ? config.minGroundY : -2.40f;
     float clusterDist = config.minClusterDistance != 0.0f ? config.minClusterDistance : -0.15f;
-    float minRad = config.minRadius > 0.0f ? config.minRadius : 0.24f;
-    float maxRad = config.maxRadius > 0.0f ? config.maxRadius : 0.32f;
-    float minH = config.minHeight > 0.0f ? config.minHeight : 0.44f;
-    float maxH = config.maxHeight > 0.0f ? config.maxHeight : 0.62f;
+    float minRad = config.minRadius > 0.0f ? config.minRadius : 0.26f;
+    float maxRad = config.maxRadius > 0.0f ? config.maxRadius : 0.34f;
+    float minH = config.minHeight > 0.0f ? config.minHeight : 0.46f;
+    float maxH = config.maxHeight > 0.0f ? config.maxHeight : 0.64f;
 
     float effSpanX = spanX * 0.92f;
     float effSpanZ = spanZ * 0.92f;
@@ -559,16 +561,16 @@ int MapFlora_GeneratePampasPlacements(
     float spanZ = config.span.y > 0.0f ? config.span.y : (ground->boundary.rect.w > 0.0f ? ground->boundary.rect.w * 0.32f : 96.0f);
     float clearingRadius = config.clearingRadius > 0.0f ? config.clearingRadius : 11.5f;
     float clearingSq = clearingRadius * clearingRadius;
-    float minSlopeNormalY = config.minSlopeNormalY > 0.0f ? config.minSlopeNormalY : 0.54f;
-    float minGroundY = config.minGroundY != 0.0f ? config.minGroundY : -1.20f;
+    float minSlopeNormalY = config.minSlopeNormalY > 0.0f ? config.minSlopeNormalY : 0.68f;
+    float minGroundY = config.minGroundY != 0.0f ? config.minGroundY : -0.85f;
     float minClearance = config.minWaterClearance > 0.0f ? config.minWaterClearance : 0.85f;
-    unsigned char maxRockG = config.maxRockSplatGreen > 0 ? config.maxRockSplatGreen : 190;
+    unsigned char maxRockG = config.maxRockSplatGreen > 0 ? config.maxRockSplatGreen : 165;
     float driftThreshold = config.driftThreshold > 0.0f ? config.driftThreshold : 0.30f;
-    float minRad = config.minRadius > 0.0f ? config.minRadius : 0.30f;
-    float maxRad = config.maxRadius > 0.0f ? config.maxRadius : 0.40f;
+    float minRad = config.minRadius > 0.0f ? config.minRadius : 0.32f;
+    float maxRad = config.maxRadius > 0.0f ? config.maxRadius : 0.42f;
     if (maxRad < minRad)
         maxRad = minRad;
-    float baseH = config.baseHeight > 0.0f ? config.baseHeight : 0.48f;
+    float baseH = config.baseHeight > 0.0f ? config.baseHeight : 0.50f;
 
     float effSpanX = spanX * 0.86f;
     float effSpanZ = spanZ * 0.86f;
@@ -660,15 +662,15 @@ MapFloraSystem MapProp_CreateFloraSystem(
         float midDist = (style.midLodDistance > 0.0f) ? style.midLodDistance : (lodDist * 0.52f);
         flora.valleyMeadow = MapProp_CreateMeadow(grassPlacements, grassCount,
                                                   (MapMeadowStyle){
-                                                      .rootColor = (style.grassRootColor.a > 0) ? style.grassRootColor : (Color){24, 38, 16, 255},
-                                                      .tipColor = (style.grassTipColor.a > 0) ? style.grassTipColor : (Color){142, 192, 64, 255},
+                                                      .rootColor = (style.grassRootColor.a > 0) ? style.grassRootColor : (Color){28, 48, 20, 255},
+                                                      .tipColor = (style.grassTipColor.a > 0) ? style.grassTipColor : (Color){126, 178, 66, 255},
                                                       .bladesPerClump = (style.bladesPerClump > 0) ? style.bladesPerClump : 5,
                                                       .bladeSegments = (style.bladeSegments > 0) ? style.bladeSegments : 3,
-                                                      .bladeWidthScale = (style.bladeWidthScale > 0.0f) ? style.bladeWidthScale : 0.128f,
+                                                      .bladeWidthScale = (style.bladeWidthScale > 0.0f) ? style.bladeWidthScale : 0.136f,
                                                       .chunkSize = 18.0f,
                                                       .lodDistance = lodDist,
                                                       .midLodDistance = midDist,
-                                                      .drawDistance = (style.drawDistance > 0.0f) ? style.drawDistance : 36.0f,
+                                                      .drawDistance = (style.drawDistance > 0.0f) ? style.drawDistance : 38.0f,
                                                       .shadowDistance = (style.shadowDistance < 0.0f) ? 0.0f : ((style.shadowDistance > 0.0f) ? style.shadowDistance : 10.0f),
                                                       .texturePath = NULL,
                                                       .botanicalVariation = style.botanicalVariation,
@@ -689,7 +691,7 @@ MapFloraSystem MapProp_CreateFloraSystem(
                                                     .tipColor = (style.reedTipColor.a > 0) ? style.reedTipColor : (Color){126, 168, 72, 255},
                                                     .bladesPerClump = 5,
                                                     .bladeSegments = 3,
-                                                    .bladeWidthScale = 0.132f,
+                                                    .bladeWidthScale = 0.136f,
                                                     .chunkSize = 20.0f,
                                                     .lodDistance = 13.5f,
                                                     .midLodDistance = 7.0f,
@@ -711,11 +713,11 @@ MapFloraSystem MapProp_CreateFloraSystem(
                                                       .tipColor = (style.pampasTipColor.a > 0) ? style.pampasTipColor : (Color){194, 188, 134, 255},
                                                       .bladesPerClump = 5,
                                                       .bladeSegments = 3,
-                                                      .bladeWidthScale = 0.105f,
+                                                      .bladeWidthScale = 0.112f,
                                                       .chunkSize = 20.0f,
                                                       .lodDistance = 13.5f,
                                                       .midLodDistance = 7.0f,
-                                                      .drawDistance = 22.0f,
+                                                      .drawDistance = 24.0f,
                                                       .shadowDistance = (style.shadowDistance < 0.0f) ? 0.0f : ((style.shadowDistance > 0.0f) ? fminf(style.shadowDistance, 7.5f) : 7.5f),
                                                       .texturePath = NULL,
                                                       .growthForm = MAP_MEADOW_GROWTH_PAMPAS,
@@ -741,7 +743,7 @@ MapFloraSystem MapProp_CreateFloraSystem(
                     continue;
                 }
 
-                Color stemColor = (Color){68, 98, 44, 255};
+                Color stemColor = (Color){54, 86, 36, 255};
                 Color centerColor = (cl->discalCenterColor.a > 0) ? cl->discalCenterColor
                                                                   : (Color){248, 196, 38, 255};
 
@@ -750,9 +752,9 @@ MapFloraSystem MapProp_CreateFloraSystem(
                     stemColor, centerColor,
                     NULL, 0.0f, 1, 1);
 
-                // High-fidelity LOD: near 3D petals to 20m, far drift to 44m, shadow casters to 14m
-                MapProp_SetFlowerFieldLod(&flora.flowerFields[i], 20.0f, 14.0f);
-                MapProp_SetFlowerFieldDrawDistance(&flora.flowerFields[i], 44.0f);
+                // High-fidelity LOD: near 3D petals to 22m, far drift to 48m, shadow casters to 14m
+                MapProp_SetFlowerFieldLod(&flora.flowerFields[i], 22.0f, 14.0f);
+                MapProp_SetFlowerFieldDrawDistance(&flora.flowerFields[i], 48.0f);
                 placementOffset += count;
             }
         }

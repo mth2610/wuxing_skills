@@ -53,20 +53,49 @@ uniform float u_waterSubmerged;
 
 uniform vec4 u_rippleRings[4];
 uniform vec4 u_rippleParams[4];
+uniform vec4 u_obstacle0;
+uniform vec4 u_obstacle1;
+uniform vec4 u_obstacle2;
+uniform vec4 u_obstacle3;
 
 out vec4 finalColor;
+
+void EvaluateObstacleWake(vec4 obs, vec2 worldXZ, vec2 flowDir, float time,
+                          inout vec2 ioSlope, inout float ioFoam)
+{
+    if (obs.z <= 0.01) return;
+    vec2 toFrag = worldXZ - obs.xy;
+    float d2 = dot(toFrag, toFrag);
+    float maxReach = obs.z * 2.35;
+    if (d2 >= maxReach * maxReach || d2 < 1e-6) return;
+
+    float invD = inversesqrt(d2);
+    float d = d2 * invD;
+    vec2 dir = toFrag * invD;
+
+    // Band around stone perimeter (d ~ 0.70 * r .. 1.95 * r)
+    float normR = d / obs.z;
+    if (normR < 0.55) return;
+
+    float collar = (1.0 - smoothstep(0.75, 1.85, normR)) * smoothstep(0.55, 0.85, normR);
+    float downstream = dot(dir, flowDir);
+    float wakeV = sin((normR - 0.85) * 14.0 - time * 3.8 + abs(downstream) * 2.5);
+    float strength = clamp(obs.w, 0.2, 1.5);
+
+    ioSlope += dir * (wakeV * collar * 0.22 * strength);
+    float stoneFoam = collar * (0.55 + 0.45 * max(wakeV, 0.0)) * (0.75 + 0.25 * max(-downstream, 0.0));
+    ioFoam = max(ioFoam, stoneFoam * 0.65 * strength);
+}
 
 void main()
 {
     // [VULKAN / SPIR-V FIX]: Tính toàn bộ đạo hàm không gian màn hình (dFdx/dFdy) ở đầu hàm main()
-    // trong luồng đồng nhất (uniform control flow) để truyền vào textureGrad cho mọi nhánh động bên dưới,
-    // triệt tiêu hoàn toàn lỗi chọn sai mipmap tại biên 35m, rìa bọt sóng và bờ hồ trên Vulkan.
+    // trong luồng đồng nhất (uniform control flow) trước mọi lệnh rẽ nhánh / discard.
     vec2 xzDx = dFdx(fragWorldXZ);
     vec2 xzDy = dFdy(fragWorldXZ);
     vec2 lakeDx = dFdx(fragLakeCoord) * 0.5;
     vec2 lakeDy = dFdy(fragLakeCoord) * 0.5;
 
-    // Giữ pha thời gian trong miền float32 chính xác cao, đồng bộ với water_surface.vs
     float t = mod(u_time * u_waveSpeed, 6283.185307);
 
     // Continuous analytical radial bathymetry and shoreline damping
@@ -88,7 +117,6 @@ void main()
             float shoreFine  = textureGrad(texture0, fragWorldXZ * 2.1,  xzDx * 2.1,  xzDy * 2.1).r;
             float shoreBreakup = (shoreNoise - 0.5) * 0.045 + (shoreFine - 0.5) * 0.012;
             radialEdgeFade = 1.0 - smoothstep(0.91 + shoreBreakup, 1.0, radial);
-            // Early-out discard cho các pixel nằm ngoài đường viền hồ tròn
             if (radialEdgeFade < 0.002) discard;
         }
         shoreFade = 1.0 - smoothstep(0.75, 0.98, radial);
@@ -100,14 +128,14 @@ void main()
     const vec2 d2 = vec2(0.866, -0.500);
     const vec2 d3 = vec2(-0.382, -0.924);
 
-    // Subtle natural downstream drift for terrain rivers when u_flowVelocity is unset
     vec2 effectiveFlow = u_flowVelocity;
     if (u_waterShape == 3 && dot(effectiveFlow, effectiveFlow) < 0.000025) {
         effectiveFlow = vec2(0.14, 0.22);
     }
+    float effFlowLenSq = dot(effectiveFlow, effectiveFlow);
+    vec2 normFlowDir = (effFlowLenSq > 1e-6) ? (effectiveFlow * inversesqrt(effFlowLenSq)) : vec2(0.55, 0.83);
     vec2 pFlow = fragWorldXZ - effectiveFlow * mod(u_time * 0.45, 4096.0);
 
-    // Non-linear domain warping breaks parallel sinusoidal stripes into organic meandering eddy ripples
     vec2 warp = vec2(sin(pFlow.y * 0.55 + t * 0.35), cos(pFlow.x * 0.55 - t * 0.28)) * 0.45;
     vec2 pw = pFlow + warp;
 
@@ -124,14 +152,11 @@ void main()
     vec2 slope = (d0 * (cosP.x * 0.38) + d1 * (cosP.y * 0.32) + d2 * (cosP.z * 0.20) + d3 * (cosP.w * 0.15))
                * (u_waveScale * u_waveHeight * 1.75 * shoreFade);
 
-    // Distance attenuation factor for micro-details to prevent far-field aliasing
     vec3 viewVec = u_viewPos - fragPosition;
     float distSq = dot(viewVec, viewVec);
     float detailDistFade = 1.0 / (1.0 + distSq * 0.0015);
-    // [VISUAL FIX]: Hệ số chuyển mượt từ 28m -> 35m (distSq 784 -> 1225) để xóa sổ vệt cắt bậc tại 35m
     float dualDetailFade = 1.0 - smoothstep(784.0, 1225.0, distSq);
 
-    // Distance-gated Microdetail sampling với textureGrad an toàn trong nhánh động
     float flowSpeedSq = dot(u_flowVelocity, u_flowVelocity);
     vec2 detailSlope = vec2(0.0);
     const vec2 eps = vec2(0.006, 0.0);
@@ -206,7 +231,40 @@ void main()
         dynamicWakeFoam = clamp((wakeCrestHighlight * 1.6 + max(0.0, waveCurvature) * 0.22 - 0.12) * shoreFade * gridFade, 0.0, 0.65);
     }
 
-    // Direct player/entity water interactor wake: gentle non-oscillatory bow displacement
+    // Evaluate analytical expanding ripple rings (u_rippleRings[0..3])
+    for (int r = 0; r < 4; r++) {
+        vec4 ring = u_rippleRings[r];
+        vec4 rParam = u_rippleParams[r];
+        if (ring.z > 0.05 && rParam.x > 0.001) {
+            vec2 toRing = fragWorldXZ - ring.xy;
+            float rDistSq = dot(toRing, toRing);
+            float maxR = ring.z;
+            if (rDistSq < maxR * maxR && rDistSq > 1e-6) {
+                float invR = inversesqrt(rDistSq);
+                float rDist = rDistSq * invR;
+                float band = abs(rDist - ring.w);
+                float wl = max(rParam.y, 0.15);
+                if (band < wl * 1.8) {
+                    float env = (1.0 - band / (wl * 1.8)) * rParam.x;
+                    float wavePhase = (rDist - ring.w) * (6.2831853 / wl);
+                    interactSlope += (toRing * invR) * (cos(wavePhase) * env * 0.35);
+                    dynamicWakeFoam = max(dynamicWakeFoam, max(sin(wavePhase), 0.0) * env * 0.28);
+                }
+            }
+        }
+    }
+
+    // Evaluate river stone obstacles (u_obstacle0..3)
+    float obstacleFoam = 0.0;
+    if (distSq < 2500.0) {
+        EvaluateObstacleWake(u_obstacle0, fragWorldXZ, normFlowDir, t, interactSlope, obstacleFoam);
+        EvaluateObstacleWake(u_obstacle1, fragWorldXZ, normFlowDir, t, interactSlope, obstacleFoam);
+        EvaluateObstacleWake(u_obstacle2, fragWorldXZ, normFlowDir, t, interactSlope, obstacleFoam);
+        EvaluateObstacleWake(u_obstacle3, fragWorldXZ, normFlowDir, t, interactSlope, obstacleFoam);
+        dynamicWakeFoam = max(dynamicWakeFoam, obstacleFoam * shoreFade);
+    }
+
+    // Direct player/entity water interactor wake
     float submerged = (u_waterSubmerged > 0.0) ? u_waterSubmerged : u_waterInteractor.y;
     if (u_waterRadius > 0.01 && submerged > 0.01) {
         vec2 toInteractor = fragWorldXZ - u_waterInteractor.xz;
@@ -220,8 +278,6 @@ void main()
             float speed = length(u_waterVelocity.xz);
             float speedFactor = clamp(speed * 0.35 + 0.15, 0.0, 1.0);
 
-            // [SPIR-V FIX]: Sửa lỗi smoothstep(2.4, 1.2, normDist) và smoothstep(1.2, 0.3, normDist)
-            // (undefined behavior khi edge0 > edge1 trên Vulkan) thành (1.0 - smoothstep(edge1, edge0, normDist))
             float outerWakeFade = 1.0 - smoothstep(1.2, 2.4, normDist);
             float innerFoamFade = 1.0 - smoothstep(0.3, 1.2, normDist);
             float bowEnv = exp(-normDist * 1.5) * speedFactor * clamp(submerged, 0.0, 1.5) * outerWakeFade;
@@ -237,26 +293,33 @@ void main()
 
     // ── 2. DEPTH & BATHYMETRY ESTIMATION (h <= 1.5m) ─────────────────────────
     float waterDepth = 0.0;
-    bool hasValidDepth = (u_waterShape == 3);
-    if (hasValidDepth) waterDepth = max(0.0, fragWaterDepth);
+    bool hasValidDepth = false;
 
-    if (u_waterShape == 0) {
-        // Fast polynomial for 1.0 - pow(radial, 1.6)
+    if (u_waterShape == 3) {
+        waterDepth = max(0.0, fragWaterDepth);
+        hasValidDepth = true;
+    } else if (u_waterShape == 0) {
         float rad16 = radial * mix(1.0, radial, 0.6);
         waterDepth = u_maxDepth * (1.0 - rad16) + 0.015;
         hasValidDepth = true;
     }
 
-    // Hardware scene depth buffer refinement (used only for analytic rect/strip shapes)
-    if (!hasValidDepth && u_hasDepthTex > 0 && u_resolution.x > 1.0 && u_resolution.y > 1.0) {
+    // Hardware scene depth buffer refinement (detects submerged stepping stones & exact bank contact)
+    if (u_hasDepthTex > 0 && u_resolution.x > 1.0 && u_resolution.y > 1.0) {
         vec2 screenUV = gl_FragCoord.xy / u_resolution;
         float sceneLinear = textureLod(u_cameraDepthTex, screenUV, 0.0).r;
         float ndc = gl_FragCoord.z * 2.0 - 1.0;
         float fragLinear = 2000.0 / max(1001.0 - ndc * 999.0, 0.001);
 
-        if (sceneLinear > 1.01 && sceneLinear >= fragLinear - 0.05) {
-            waterDepth = clamp(sceneLinear - fragLinear, 0.0, u_maxDepth);
-            hasValidDepth = true;
+        if (sceneLinear > 1.01 && sceneLinear >= fragLinear - 0.04) {
+            float hwDepth = clamp(sceneLinear - fragLinear, 0.0, u_maxDepth);
+            if (hasValidDepth) {
+                // Combine vertex bathymetry with hardware depth so submerged rocks & banks shallow the water
+                waterDepth = min(waterDepth, hwDepth);
+            } else {
+                waterDepth = hwDepth;
+                hasValidDepth = true;
+            }
         }
     }
 
@@ -274,7 +337,6 @@ void main()
     vec3 viewDir = viewVec * inversesqrt(max(distSq, 1e-8));
     float lLenSq = dot(u_lightDir, u_lightDir);
     vec3 L = (lLenSq > 1e-8) ? (u_lightDir * inversesqrt(lLenSq)) : vec3(0.0, 1.0, 0.0);
-    // Zenith irradiance compensation + HDR soft-knee so water never washes out
     float zenithDamp = 1.0 / (1.0 + max(L.y - 0.36, 0.0) * 0.85);
     vec3 effectiveLight = u_lightColor * zenithDamp;
     float lightPeak = max(max(effectiveLight.r, effectiveLight.g), effectiveLight.b);
@@ -283,14 +345,14 @@ void main()
     }
 
     float NdotV = max(dot(normal, viewDir), 0.001);
-    float opticalPath = waterDepth / max(NdotV, 0.28);
+    float opticalPath = waterDepth / max(NdotV, 0.32);
 
     // Beer-Lambert spectral attenuation
-    vec3 absorptionCoeff = max(u_absorption, vec3(0.48, 0.16, 0.10));
+    vec3 absorptionCoeff = max(u_absorption, vec3(0.52, 0.18, 0.10));
     vec3 transmittance = exp(-absorptionCoeff * opticalPath);
 
     // ── 4. WATER CAUSTICS (Refracted Dual-Layer Photon Focusing) ─────────────
-    float depthFadeCaustic = smoothstep(0.006, 0.10, waterDepth) * (1.0 - smoothstep(0.85, 1.45, waterDepth) * 0.45);
+    float depthFadeCaustic = smoothstep(0.008, 0.12, waterDepth) * (1.0 - smoothstep(0.75, 1.45, waterDepth) * 0.50);
     vec3 causticLight = vec3(0.0);
     if (depthFadeCaustic * u_causticsStrength > 0.001) {
         vec2 causticRefract = normal.xz * clamp(waterDepth * 0.25, 0.015, 0.18);
@@ -304,8 +366,8 @@ void main()
         float causticMin = min(c0, c1) * 2.2;
         float causticWave = causticMin * sqrt(max(causticMin, 0.0));
 
-        float causticIntensity = smoothstep(0.50, 0.88, causticWave) *
-                                 u_causticsStrength * 0.068 * depthFadeCaustic;
+        float causticIntensity = smoothstep(0.46, 0.86, causticWave) *
+                                 u_causticsStrength * 0.095 * depthFadeCaustic;
         causticLight = effectiveLight * (causticIntensity * transmittance);
     }
 
@@ -315,9 +377,9 @@ void main()
     vec3 scatterLightDir = rawScatterDir * inversesqrt(max(dot(rawScatterDir, rawScatterDir), 1e-8));
     float backlight = max(0.0, dot(viewDir, -vec3(scatterLightDir.x, scatterLightDir.y * 0.25, scatterLightDir.z)));
     float bl2 = backlight * backlight;
-    float sssFactor = (bl2 * backlight * 0.78 + 0.18) * u_scatterCoeff;
+    float sssFactor = (bl2 * backlight * 0.78 + 0.14) * u_scatterCoeff;
     float crestThickness = clamp((1.0 - normal.y * 0.88) + max(0.0, waveFacet) * 0.32 + wakeCrestHighlight * 0.75, 0.0, 1.0);
-    vec3 sssLight = effectiveLight * u_scatterColor * (sssFactor * (1.0 - exp(-2.2 * waterDepth)) * crestThickness);
+    vec3 sssLight = effectiveLight * u_scatterColor * (sssFactor * (1.0 - exp(-2.0 * waterDepth)) * crestThickness * 0.75);
 
     // ── 6. HYBRID FRESNEL & ENVIRONMENT REFLECTION (Energy-Conserving) ───────
     const float F0 = 0.02;
@@ -327,30 +389,24 @@ void main()
 
     vec3 reflectDir = reflect(-viewDir, normal);
     float skyAngle = clamp(reflectDir.y * 0.85 + 0.15, 0.0, 1.0);
-    // Crystalline mountain-valley sky reflection (luminous azure to horizon pearl)
-    vec3 skyZenith  = vec3(0.18, 0.44, 0.74) * (0.80 + u_ambientColor.b * 0.32);
-    vec3 skyHorizon = vec3(0.42, 0.62, 0.76) * (0.75 + u_ambientColor.g * 0.25);
+    vec3 skyZenith  = vec3(0.16, 0.38, 0.64) * (0.80 + u_ambientColor.b * 0.30);
+    vec3 skyHorizon = vec3(0.36, 0.54, 0.66) * (0.75 + u_ambientColor.g * 0.22);
     vec3 reflectedSky = mix(skyHorizon, skyZenith, skyAngle);
 
-    if (u_waterShape != 3) {
-        // Subtle green-emerald riverbank canopy reflection for static lake basins
-        vec3 bankCanopyReflect = vec3(0.12, 0.22, 0.10) * (0.65 + u_ambientColor.g * 0.45);
-        float bankReflectMask = (1.0 - smoothstep(0.02, 0.55, waterDepth)) * (1.0 - skyAngle * 0.65);
-        reflectedSky = mix(reflectedSky, bankCanopyReflect, bankReflectMask * 0.72);
-    }
+    // Subtle green-emerald riverbank canopy reflection near shallow edges on all water types
+    vec3 bankCanopyReflect = vec3(0.13, 0.23, 0.10) * (0.68 + u_ambientColor.g * 0.42);
+    float bankReflectMask = (1.0 - smoothstep(0.02, 0.48, waterDepth)) * (1.0 - skyAngle * 0.55);
+    reflectedSky = mix(reflectedSky, bankCanopyReflect, bankReflectMask * 0.58);
 
-    // Restrained atmospheric sun-glow on horizon reflection
     float sunReflect = max(0.0, dot(reflectDir, L));
     float sr2 = sunReflect * sunReflect;
     float sr4 = sr2 * sr2;
     float sr8 = sr4 * sr4;
     reflectedSky += effectiveLight * (sr8 * sr8 * 0.10);
 
-    // Facet wave glints
     float crest = smoothstep(0.48, 0.92, waveFacet) * 0.045;
     vec3 waveHighlight = reflectedSky * (max(waveFacet, 0.0) * 0.038 + crest + wakeCrestHighlight * 0.42);
 
-    // Crisp multi-scale specular sun glint (chuẩn hóa an toàn cho halfDir)
     vec3 halfSum = L + viewDir;
     vec3 halfDir = halfSum * inversesqrt(max(dot(halfSum, halfSum), 1e-6));
     float NdotH = max(dot(normal, halfDir), 0.0);
@@ -363,92 +419,89 @@ void main()
     float nh64  = nh32 * nh32;
     float nh96  = nh64 * nh32;
     float nh128 = nh64 * nh64;
-    float glintSharp = nh128 * nh128; // NdotH^256 crisp sun diamond
-    // Modulate mid-glint by wave slope energy (tái sử dụng slopeLenSq đã tính ở trên)
-    float waveSlopeEnergy = clamp(sqrt(slopeLenSq) * 14.0, 0.12, 1.0);
+    float glintSharp = nh128 * nh128;
+    float waveSlopeEnergy = clamp(sqrt(slopeLenSq) * 14.0, 0.14, 1.0);
     float glintMid = (nh96 * 0.28 + nh64 * 0.12) * waveSlopeEnergy;
 
-    vec3 sunGlint = effectiveLight * (glintSharp * 2.8 + glintMid * 0.65) * (0.20 + fresnel * 0.80) * detailDistFade;
+    vec3 sunGlint = effectiveLight * (glintSharp * 2.8 + glintMid * 0.65) * (0.22 + fresnel * 0.78) * detailDistFade;
     float disturbance = clamp(length(interactSlope) * 2.2, 0.0, 1.0);
     vec3 waveReflection = reflectedSky * (nh12 * disturbance * 0.38);
 
-    // Crisp wave-slope contrast across all sun angles (chuẩn hóa an toàn cho horizAzimuth)
     vec2 rawAzimuth = L.xz + vec2(0.42, -0.34);
     vec2 horizAzimuth = rawAzimuth * inversesqrt(max(dot(rawAzimuth, rawAzimuth), 1e-8));
     float waveSlopeContrast = dot(normal.xz, horizAzimuth) * 2.2;
-    vec3 waveLighting = effectiveLight * clamp(waveSlopeContrast + (dot(normal, L) - L.y), -0.22, 0.24) * 0.28;
+    vec3 waveLighting = effectiveLight * clamp(waveSlopeContrast + (dot(normal, L) - L.y), -0.20, 0.22) * 0.24;
 
     // ── 7. SHORELINE & SUBMERGED CONTACT WATERLINE MENISCUS ──────────────────
-    float foamDist = max(u_foamThreshold, 0.15);
+    float foamDist = max(u_foamThreshold, 0.12);
     float contactMask = clamp(1.0 - waterDepth / foamDist, 0.0, 1.0);
     float brokenFoam = 0.0;
 
     if (contactMask > 0.001 || dynamicWakeFoam > 0.001) {
-        float meniscusLip = smoothstep(0.001, 0.016, waterDepth) * (1.0 - smoothstep(0.016, 0.065, waterDepth));
-        vec2 foamUV = fragWorldXZ * 0.45 + fract(vec2(t * 0.022, -t * 0.016));
-        float foamNoise = textureGrad(texture0, foamUV, xzDx * 0.45, xzDy * 0.45).r;
-        float contactRipple = sin(waterDepth * 36.0 - t * 4.8) * exp(-waterDepth * 6.5);
+        float meniscusLip = smoothstep(0.002, 0.020, waterDepth) * (1.0 - smoothstep(0.020, 0.085, waterDepth));
+        vec2 foamUV = fragWorldXZ * 0.48 + fract(vec2(t * 0.022, -t * 0.016));
+        float foamNoise = textureGrad(texture0, foamUV, xzDx * 0.48, xzDy * 0.48).r;
+        float contactRipple = sin(waterDepth * 38.0 - t * 4.6) * exp(-waterDepth * 7.0);
 
-        brokenFoam = smoothstep(0.49, 0.80, contactMask * 0.58 + (foamNoise - 0.5) * 0.72);
-        brokenFoam = max(brokenFoam, meniscusLip * 0.18 * smoothstep(0.38, 0.68, foamNoise));
-        brokenFoam += max(contactRipple, 0.0) * 0.09 * contactMask;
-
+        float wakeFoamTex = dynamicWakeFoam * smoothstep(0.30, 0.76, foamNoise + dynamicWakeFoam * 0.38);
         if (u_waterShape == 3) {
-            // Mountain stream: crystal-clear freshwater edge without artificial white surf ribbons
-            // Foam only arises from active dynamic wake disturbances (swimmers / crossing entities)
-            brokenFoam = dynamicWakeFoam * smoothstep(0.32, 0.78, foamNoise + dynamicWakeFoam * 0.35);
+            // Subtle organic meniscus foam along shallow banks & around submerged stepping stones
+            float streamLipFoam = meniscusLip * 0.26 * smoothstep(0.42, 0.74, foamNoise)
+                                + max(contactRipple, 0.0) * 0.08 * contactMask * smoothstep(0.45, 0.75, foamNoise);
+            brokenFoam = clamp(max(streamLipFoam, wakeFoamTex), 0.0, 0.85);
         } else {
-            float wakeFoamTex = dynamicWakeFoam * smoothstep(0.32, 0.78, foamNoise + dynamicWakeFoam * 0.35);
+            brokenFoam = smoothstep(0.49, 0.80, contactMask * 0.58 + (foamNoise - 0.5) * 0.72);
+            brokenFoam = max(brokenFoam, meniscusLip * 0.22 * smoothstep(0.38, 0.68, foamNoise));
+            brokenFoam += max(contactRipple, 0.0) * 0.09 * contactMask;
             brokenFoam = clamp(max(brokenFoam, wakeFoamTex), 0.0, 1.0);
         }
     }
 
     // ── 8. CRYSTAL CLEAR SEE-THROUGH WATER TRANSPARENCY ──────────────────────
-    // Crystalline shallow mountain stream water: translucent clarity revealing 3D riverbed
+    // Shallow water is crystal-clear (alpha ~0.05..0.22) so the sandy bed & stepping stone bases show through;
+    // deeper channel transitions smoothly into rich jade-teal depth.
+    float depthOpacity = 1.0 - exp(-1.85 * waterDepth);
     float waterColumnAlpha = (u_waterShape == 3)
-        ? clamp(0.24 + 0.50 * (1.0 - exp(-2.6 * waterDepth)), 0.0, 0.78)
-        : (0.12 + 0.36 * (1.0 - exp(-1.8 * waterDepth)));
+        ? clamp(0.05 + 0.62 * depthOpacity * depthOpacity, 0.0, 0.74)
+        : (0.10 + 0.42 * depthOpacity);
     float glintAlphaBoost = clamp(glintSharp * 0.35, 0.0, 0.22);
-    float surfaceAlpha = (fresnel * 0.65) + waterColumnAlpha + glintAlphaBoost;
+    float surfaceAlpha = (fresnel * 0.54) + waterColumnAlpha + glintAlphaBoost;
 
-    // Smooth analytical shoreline edge feathering (dissolves to 0 alpha within 3.5cm of shoreline)
     float shoreEdgeFade = radialEdgeFade;
     if (u_waterShape == 3) {
-        shoreEdgeFade = smoothstep(0.001, 0.035, waterDepth);
+        shoreEdgeFade = smoothstep(0.001, 0.042, waterDepth);
     } else if (u_waterShape != 0) {
-        shoreEdgeFade = smoothstep(0.002, 0.035, waterDepth);
+        shoreEdgeFade = smoothstep(0.002, 0.038, waterDepth);
     }
     surfaceAlpha *= shoreEdgeFade;
 
-    float alpha = clamp(surfaceAlpha + brokenFoam * 0.22 * shoreEdgeFade, 0.0, 0.90);
+    float alpha = clamp(surfaceAlpha + brokenFoam * 0.32 * shoreEdgeFade, 0.0, 0.88);
     if (alpha < 0.002) discard;
 
     // ── 9. ENERGY-CONSERVING COMPOSITION ─────────────────────────────────────
-    vec3 shallowTint = (u_waterShape == 3) ? u_shallowColor : mix(u_shallowColor, vec3(0.14, 0.52, 0.50), 0.45);
-    vec3 deepTint    = (u_waterShape == 3) ? u_deepColor    : mix(u_deepColor,    vec3(0.04, 0.26, 0.34), 0.52);
+    vec3 shallowTint = mix(u_shallowColor, vec3(0.16, 0.48, 0.44), 0.52);
+    vec3 deepTint    = mix(u_deepColor,    vec3(0.04, 0.22, 0.28), 0.55);
 
-    vec3 depthBlend = clamp(mix(vec3(1.0 - smoothstep(0.04, 0.82, waterDepth)), transmittance, 0.60), 0.0, 1.0);
+    vec3 depthBlend = clamp(mix(vec3(1.0 - smoothstep(0.06, 0.95, waterDepth)), transmittance, 0.65), 0.0, 1.0);
     vec3 waterVolumeColor = mix(deepTint, shallowTint, depthBlend);
-    waterVolumeColor *= (0.88 + u_ambientColor * 0.38 + effectiveLight * 0.28);
+    waterVolumeColor *= (0.72 + u_ambientColor * 0.28 + effectiveLight * 0.18);
 
-    // Smooth optical dissolve near the 0-depth contact lip (eliminates sharp sky-reflection boundary)
-    float shoreFadeOptical = (u_waterShape == 3) ? smoothstep(0.003, 0.055, waterDepth) : 1.0;
+    float shoreFadeOptical = (u_waterShape == 3) ? smoothstep(0.004, 0.085, waterDepth) : 1.0;
 
-    // Energy-conserving Fresnel blend: water surface reflects the luminous sky
     float reflectWeight = (u_waterShape == 3)
-        ? clamp((fresnel * 0.65 + 0.18) * shoreFadeOptical, 0.0, 0.88)
-        : clamp(fresnel * 0.72 + 0.08, 0.0, 0.88);
+        ? clamp((fresnel * 0.58 + 0.08) * shoreFadeOptical, 0.0, 0.78)
+        : clamp(fresnel * 0.68 + 0.06, 0.0, 0.82);
     vec3 underwaterTerms = waterVolumeColor + causticLight + sssLight + waveLighting;
     vec3 color = mix(underwaterTerms, reflectedSky, reflectWeight);
 
     color += waveHighlight + sunGlint + waveReflection;
     color += effectiveLight * vec3(0.62, 0.76, 0.84) * clamp(waveCurvature, -0.20, 0.20);
 
-    vec3 frothColor = mix(u_foamColor, vec3(0.95, 0.98, 1.0), 0.25) * (0.68 + effectiveLight * 0.20);
-    color = mix(color, frothColor, brokenFoam * 0.45);
+    vec3 frothColor = mix(u_foamColor, vec3(0.96, 0.98, 1.0), 0.30) * (0.72 + effectiveLight * 0.22);
+    color = mix(color, frothColor, brokenFoam * 0.62);
 
     // VFX Point Light response
-    color += VFXLights_Accumulate(fragPosition, normal, u_shallowColor) * 0.65;
+    color += VFXLights_Accumulate(fragPosition, normal, shallowTint) * 0.65;
 
     finalColor = vec4(color, alpha);
 }

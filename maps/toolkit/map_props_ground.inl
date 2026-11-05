@@ -337,13 +337,17 @@ static MapGroundSurface SetupGroundMaterial(Mesh mesh, float width, float depth,
     if (ground.model.meshCount > 0)
         GroundLookup_Build(&ground.lookup, &ground.model.meshes[0]);
 
-    // 1. Load Textures
+    // 1. Load Textures with Anisotropic filtering to keep oblique terrain crisp at Tilt 36 deg
     Texture2D texSplat = ResourceManager_LoadTexture(splatMapPath);
     Texture2D texGrass = MapLoadMippedTexture(grassTexPath, TEXTURE_WRAP_REPEAT);
     Texture2D texPath = MapLoadMippedTexture(pathTexPath, TEXTURE_WRAP_REPEAT);
 
     SetTextureFilter(texSplat, TEXTURE_FILTER_BILINEAR);
     SetTextureWrap(texSplat, TEXTURE_WRAP_CLAMP);
+    if (texGrass.id != 0)
+        SetTextureFilter(texGrass, TEXTURE_FILTER_ANISOTROPIC_8X);
+    if (texPath.id != 0)
+        SetTextureFilter(texPath, TEXTURE_FILTER_ANISOTROPIC_8X);
 
     // 2. Initialize Shader & cache all uniform locations once (re-bind if shader is reloaded)
     groundShader = ResourceManager_LoadShader("maps/toolkit/shaders/ground_splat.vs",
@@ -684,35 +688,14 @@ void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter)
     rlEnableTexture((rockEnabled && ground->rockNormalTexture.id) ? ground->rockNormalTexture.id : defaultTexId);
     rlActiveTextureSlot(0);
 
-    int reliefSlot = GROUND_RELIEF_TEXTURE_SLOT;
     int reliefEnabled = (ground->reliefTexture.id != 0) ? 1 : 0;
-    if (locGroundReliefSampler >= 0)
-        SetShaderValue(groundShader, locGroundReliefSampler, &reliefSlot, SHADER_UNIFORM_INT);
     if (locGroundReliefEnabled >= 0)
         SetShaderValue(groundShader, locGroundReliefEnabled, &reliefEnabled, SHADER_UNIFORM_INT);
-    int debrisSlot = GROUND_DEBRIS_TEXTURE_SLOT;
     int debrisEnabled = (ground->debrisTexture.id != 0) ? 1 : 0;
-    if (locGroundDebrisSampler >= 0)
-        SetShaderValue(groundShader, locGroundDebrisSampler, &debrisSlot, SHADER_UNIFORM_INT);
     if (locGroundDebrisEnabled >= 0)
         SetShaderValue(groundShader, locGroundDebrisEnabled, &debrisEnabled, SHADER_UNIFORM_INT);
-    int rockSlot = GROUND_ROCK_TEXTURE_SLOT;
-    if (locGroundRockSampler >= 0)
-        SetShaderValue(groundShader, locGroundRockSampler, &rockSlot, SHADER_UNIFORM_INT);
-    int rockNormSlot = GROUND_ROCK_NORMAL_SLOT;
-    if (locGroundRockNormalSampler >= 0)
-        SetShaderValue(groundShader, locGroundRockNormalSampler, &rockNormSlot, SHADER_UNIFORM_INT);
     if (locGroundRockEnabled >= 0)
         SetShaderValue(groundShader, locGroundRockEnabled, &rockEnabled, SHADER_UNIFORM_INT);
-    int ecoSlot = GROUND_ECOLOGY_TEXTURE_SLOT;
-    if (locEcologySampler >= 0)
-        SetShaderValue(groundShader, locEcologySampler, &ecoSlot, SHADER_UNIFORM_INT);
-    int ecoDistSlot = GROUND_ECOLOGY_DIST_TEXTURE_SLOT;
-    if (locEcologyDistanceSampler >= 0)
-        SetShaderValue(groundShader, locEcologyDistanceSampler, &ecoDistSlot, SHADER_UNIFORM_INT);
-    int cloudSlot = GROUND_CLOUD_TEXTURE_SLOT;
-    if (locGroundCloudNoise >= 0)
-        SetShaderValue(groundShader, locGroundCloudNoise, &cloudSlot, SHADER_UNIFORM_INT);
     if (locGroundTiling >= 0)
         SetShaderValue(groundShader, locGroundTiling, &ground->tiling, SHADER_UNIFORM_VEC2);
     if (locGroundCloudUV >= 0)
@@ -773,12 +756,13 @@ void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter)
         SetShaderValue(groundShader, locSeismicParams, &seismicParams, SHADER_UNIFORM_VEC4);
     if (locSeismicProfile >= 0)
         SetShaderValue(groundShader, locSeismicProfile, &seismicProfile, SHADER_UNIFORM_VEC4);
-    // Restrained thinShadowBoost (0.30 on HIGH, 0.15 on MED) keeps grass shadow silhouettes soft
-    // and natural rather than dilating them into harsh dark bars or dropping them on MED.
+
+    // [VISUAL FIX]: Hạ thinShadowBoost xuống 0.04f (HIGH) / 0.02f (MED) để bóng lá cỏ trên mặt cát
+    // và sườn đồi giữ được độ tán xạ mềm tự nhiên, triệt tiêu hiện tượng vệt bóng răng lược đen.
     if (locThinShadowBoost >= 0)
     {
         GfxQuality q = GfxQuality_Get();
-        float thinShadowBoost = (q >= GFX_HIGH) ? 0.30f : ((q >= GFX_MED) ? 0.15f : 0.0f);
+        float thinShadowBoost = (q >= GFX_HIGH) ? 0.04f : ((q >= GFX_MED) ? 0.02f : 0.0f);
         SetShaderValue(groundShader, locThinShadowBoost, &thinShadowBoost, SHADER_UNIFORM_FLOAT);
     }
 
@@ -859,6 +843,10 @@ void MapProp_SetGroundSurfaceMaps(MapGroundSurface *ground,
         return;
     Texture2D grassMaterial = MapLoadMippedTexture(grassMaterialPath, TEXTURE_WRAP_REPEAT);
     Texture2D soilMaterial = MapLoadMippedTexture(soilMaterialPath, TEXTURE_WRAP_REPEAT);
+    if (grassMaterial.id != 0)
+        SetTextureFilter(grassMaterial, TEXTURE_FILTER_ANISOTROPIC_8X);
+    if (soilMaterial.id != 0)
+        SetTextureFilter(soilMaterial, TEXTURE_FILTER_ANISOTROPIC_8X);
 
     ground->model.materials[0].maps[MATERIAL_MAP_ROUGHNESS].texture = grassMaterial;
     ground->model.materials[0].maps[MATERIAL_MAP_EMISSION].texture = soilMaterial;
@@ -872,6 +860,10 @@ void MapProp_SetGroundRockMaps(MapGroundSurface *ground,
         return;
     ground->rockTexture = diffusePath ? MapLoadMippedTexture(diffusePath, TEXTURE_WRAP_REPEAT) : (Texture2D){0};
     ground->rockNormalTexture = normalPath ? MapLoadMippedTexture(normalPath, TEXTURE_WRAP_REPEAT) : (Texture2D){0};
+    if (ground->rockTexture.id != 0)
+        SetTextureFilter(ground->rockTexture, TEXTURE_FILTER_ANISOTROPIC_8X);
+    if (ground->rockNormalTexture.id != 0)
+        SetTextureFilter(ground->rockNormalTexture, TEXTURE_FILTER_ANISOTROPIC_8X);
 }
 
 void MapProp_UnloadGround(MapGroundSurface *ground)
@@ -902,6 +894,8 @@ void MapProp_SetGroundReliefMap(MapGroundSurface *ground, const char *reliefPath
     if (!ground || !ground->ready)
         return;
     ground->reliefTexture = reliefPath ? MapLoadMippedTexture(reliefPath, TEXTURE_WRAP_REPEAT) : (Texture2D){0};
+    if (ground->reliefTexture.id != 0)
+        SetTextureFilter(ground->reliefTexture, TEXTURE_FILTER_ANISOTROPIC_8X);
 }
 
 void MapProp_SetGroundDebrisMap(MapGroundSurface *ground, const char *debrisMapPath)

@@ -106,9 +106,9 @@ vec4 NatureBladeParameter(int blade, int column)
 void NatureApplyCanonicalLod(vec4 p0, inout vec4 p1, inout vec4 p2, inout vec4 p3)
 {
     if (u_canonicalBladeData != 0 && u_geometryLod > 0) {
-        // [TỐI ƯU ALU]: Thay hàm pow() đắt đỏ bằng sqrt() + hệ số bù bề rộng cho LOD 1 & LOD 2
+        // Bù bề rộng mượt cho LOD 1 & LOD 2 để giữ nguyên độ phủ dày của thảm cỏ ở xa
         float bladeRatio = max(float(max(u_canonicalBlades, 1)) / float(max(u_bladesPerTuft, 1)), 1.0);
-        float widthBoost = (u_geometryLod == 2) ? 1.48 : 1.18;
+        float widthBoost = (u_geometryLod == 2) ? 1.56 : 1.24;
         p1.w *= sqrt(bladeRatio) * widthBoost;
     }
 }
@@ -126,7 +126,6 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     vec4 p3 = texelFetch(u_bladeParameters, ivec2(baseCoord.x + 3, baseCoord.y), 0);
 
 #ifdef NATURE_BLADE_POSITION_ONLY
-    // Trong lượt đổ bóng (Shadow Pass), không cần đọc texel thứ 5 (clump) trừ khi tangent suy biến thẳng đứng
     s_cachedClumpTexel = vec4(p0.xyz, 0.0);
     s_hasCachedClumpTexel = true;
 #else
@@ -190,54 +189,52 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
         viewSide3D *= inversesqrt(vsLenSq);
         if (dot(side, viewSide3D) < 0.0) viewSide3D = -viewSide3D;
         if (u_geometryLod < 2) {
-            // Vì side và tangent đều là vector đơn vị trực giao, cross(side, tangent) đã có độ dài = 1.0
             vec3 naturalNormal = cross(side, tangent);
             vec3 viewDir = toCamVec * invDistToCam;
             float edgeOn = 1.0 - abs(dot(naturalNormal, viewDir));
-            float viewAssist = mix(0.36, 0.50, clamp(distToCam * 0.04, 0.0, 1.0));
-            viewAssist = mix(viewAssist, 0.82, edgeOn * edgeOn);
+            float viewAssist = mix(0.44, 0.58, clamp(distToCam * 0.04, 0.0, 1.0));
+            viewAssist = mix(viewAssist, 0.86, edgeOn * edgeOn);
             vec3 mixedSide = mix(side, viewSide3D, viewAssist);
             side = mixedSide * inversesqrt(max(dot(mixedSide, mixedSide), 1e-8));
         } else {
-            // Fast-path hướng mặt lá cho cỏ xa (LOD 2)
-            vec3 mixedSide = mix(side, viewSide3D, 0.52);
+            vec3 mixedSide = mix(side, viewSide3D, 0.58);
             side = mixedSide * inversesqrt(max(dot(mixedSide, mixedSide), 1e-8));
         }
     }
 #endif
 
-    // Vì cả side và viewSide3D đều vuông góc với tangent nên tổ hợp chuẩn hóa của chúng
-    // vẫn vuông góc tuyệt đối với tangent -> cross(side, tangent) là vector đơn vị!
     vec3 geometricNormal = cross(side, tangent);
     if (geometricNormal.y < 0.0) geometricNormal = -geometricNormal;
-    if (geometricNormal.y < 0.25) {
-        geometricNormal.y = 0.25;
+    if (geometricNormal.y < 0.28) {
+        geometricNormal.y = 0.28;
         geometricNormal *= inversesqrt(dot(geometricNormal, geometricNormal));
     }
 
     float sinPiT = 4.0 * ut;
     float profile;
     if (p2.w > 0.5) {
-        profile = (0.78 + 0.36 * sinPiT) * (1.0 - t2 * (0.72 + 0.24 * t));
+        profile = (0.82 + 0.36 * sinPiT) * (1.0 - t2 * (0.68 + 0.24 * t));
     } else if (p3.w > 0.5) {
-        float stalk = min(1.0, 0.50 + 1.4 * t);
-        float tasselTaper = (t > 0.75) ? max(0.2, 1.0 - (t - 0.75) * 3.2) : 1.0;
+        float stalk = min(1.0, 0.54 + 1.35 * t);
+        float tasselTaper = (t > 0.75) ? max(0.22, 1.0 - (t - 0.75) * 3.1) : 1.0;
         profile = stalk * tasselTaper;
     } else {
-        float sheath = 0.90 + 0.10 * smoothstep(0.0, 0.15, t);
-        float taper = max(0.0, 1.0 - 0.56 * t - 0.38 * t2);
+        // [VISUAL UPGRADE]: Giữ bụng lá cỏ đầy đặn ở 2/3 thân dưới và vuốt thon mượt ở đầu lá,
+        // xóa bỏ hoàn toàn hình dáng "bàn chông / tăm nhọn" (spiky needles).
+        float sheath = 0.92 + 0.14 * smoothstep(0.0, 0.22, t);
+        float taper = max(0.0, 1.0 - 0.28 * t - 0.66 * (t2 * t));
         profile = sheath * taper;
     }
-    float halfWidth = p1.w * 0.5 * profile;
+    float halfWidth = p1.w * 0.54 * profile;
 
     float fadeAlpha = 1.0;
 #ifdef NATURE_VISIBLE_TUFT_LOD
-    float farAntiAlias = clamp((distToCam - 8.0) * 0.04, 0.0, 1.0);
-    float minPxHalfWidth = farAntiAlias * distToCam * 0.00062 * (1.0 - 0.72 * t);
+    float farAntiAlias = clamp((distToCam - 7.0) * 0.04, 0.0, 1.0);
+    float minPxHalfWidth = farAntiAlias * distToCam * 0.00068 * (1.0 - 0.68 * t);
     halfWidth = max(halfWidth, minPxHalfWidth);
 #endif
 
-    float spineArch = p1.w * 0.08 * sinPiT;
+    float spineArch = p1.w * 0.105 * sinPiT;
     s_cachedTangent = tangent;
     s_cachedSide = side;
     s_cachedHalfWidth = halfWidth;
@@ -263,39 +260,38 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     if (u_geometryLod < 2) {
         vec3 rawSphere = position - vec3(clump.x, clump.y - 0.04, clump.z);
         vec3 sphereDirection = rawSphere * inversesqrt(max(dot(rawSphere, rawSphere), 1e-8));
-        float upBlend = mix(0.42, 0.54, t);
+        float upBlend = mix(0.46, 0.58, t);
         vec3 rawTarget = mix(sphereDirection, vec3(0.0, 1.0, 0.0), upBlend);
         vec3 target = rawTarget * inversesqrt(max(dot(rawTarget, rawTarget), 1e-8));
-        float edgeTilt = sideSign * (0.34 * (1.0 - 0.35 * t));
+        float edgeTilt = sideSign * (0.30 * (1.0 - 0.35 * t));
         vec3 meshNormal = (geometricNormal + side * edgeTilt) * inversesqrt(1.0 + edgeTilt * edgeTilt);
-        vec3 rawFinalN = mix(meshNormal, target, mix(0.44, 0.54, t));
+        vec3 rawFinalN = mix(meshNormal, target, mix(0.48, 0.58, t));
         normal = rawFinalN * inversesqrt(max(dot(rawFinalN, rawFinalN), 1e-8));
     } else {
-        // [TỐI ƯU ALU]: Ở LOD 2 (> 22m), rút gọn 4 phép chuẩn hóa vector cầu về 1 phép pha mượt
-        vec3 rawFastN = mix(geometricNormal, vec3(0.0, 1.0, 0.0), 0.52);
+        vec3 rawFastN = mix(geometricNormal, vec3(0.0, 1.0, 0.0), 0.56);
         normal = rawFastN * inversesqrt(max(dot(rawFastN, rawFastN), 1e-8));
     }
 
     float bladeHash = fract(float(localBlade) * 0.6180339 + p0.w * 1.73205);
-    float tierShade = (localBlade < 2) ? 1.04 : ((localBlade < 4) ? 0.99 : 0.93);
-    float bladeTone = (0.94 + 0.12 * bladeHash) * tierShade;
+    float tierShade = (localBlade < 2) ? 1.04 : ((localBlade < 4) ? 0.99 : 0.94);
+    float bladeTone = (0.95 + 0.10 * bladeHash) * tierShade;
 
     vec3 rootNorm = rootColor * (1.0 / 255.0);
     vec3 tipNorm  = tipColor  * (1.0 / 255.0);
     vec3 hueVar = mix(vec3(0.95, 1.02, 0.96), vec3(1.06, 1.02, 0.86), bladeHash);
     tipNorm *= hueVar;
-    vec3 viridianMid = mix(rootNorm, tipNorm, 0.54) * vec3(0.94, 1.04, 0.90);
+    vec3 viridianMid = mix(rootNorm, tipNorm, 0.56) * vec3(0.94, 1.04, 0.90);
 
-    float lowerMix = smoothstep(0.0, 0.40, t);
-    float upperMix = smoothstep(0.30, 0.88, t);
+    float lowerMix = smoothstep(0.0, 0.38, t);
+    float upperMix = smoothstep(0.28, 0.86, t);
     vec3 gradCol = mix(mix(rootNorm, viridianMid, lowerMix), tipNorm, upperMix);
 
-    float baseOcclusion = mix(0.76, 1.0, smoothstep(0.0, 0.32, t));
+    float baseOcclusion = mix(0.82, 1.0, smoothstep(0.0, 0.28, t));
     vec3 smoothCol = clamp(gradCol * (baseOcclusion * bladeTone), 0.0, 1.0);
     if (p3.w > 0.5 && t > 0.70) {
         float plumeT = smoothstep(0.70, 0.88, t);
-        vec3 plumeSilk = mix(tipNorm, vec3(0.82, 0.80, 0.62), 0.55);
-        smoothCol = mix(smoothCol, plumeSilk * bladeTone, plumeT * 0.65);
+        vec3 plumeSilk = mix(tipNorm, vec3(0.84, 0.82, 0.65), 0.58);
+        smoothCol = mix(smoothCol, plumeSilk * bladeTone, plumeT * 0.68);
     }
 
     color = vec4(smoothCol, fadeAlpha);

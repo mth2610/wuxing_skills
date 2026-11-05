@@ -3,7 +3,7 @@
 // Đợt E / E2 — VFX point lights.
 #include "core/shaders/common/vfx_lights.glsl"
 // Dynamic PCF penumbra radius for smooth, natural shadow edges on terrain and submerged riverbed.
-#define MAP_DYNAMIC_SHADOW_RADIUS 1.45
+#define MAP_DYNAMIC_SHADOW_RADIUS 1.55
 
 #include "maps/toolkit/shaders/map_shadow.glsl"
 #include "environment/shaders/cloud_shadow.glsl"
@@ -11,12 +11,12 @@
 #include "maps/toolkit/shaders/meadow_palette.glsl"
 
 // ---- Look knobs ( tinh chỉnh hài hòa màu cỏ & nền đất cho song_quao ) ----
-#define GS_DISTANT_CANOPY_GAIN 0.68
+#define GS_DISTANT_CANOPY_GAIN 0.72
 #define GS_CREST_COOL vec3(0.92, 0.99, 0.94)
 #define GS_CREST_WARM vec3(1.04, 1.03, 0.95)
 #define GS_GRASS_CHROMA 0.96
 #define GS_NEAR_DETAIL_BOOST 0.22
-#define GS_FAR_CANOPY_SHADE 0.14
+#define GS_FAR_CANOPY_SHADE 0.16
 
 uniform sampler2D u_cloudNoise;
 uniform sampler2D u_groundRelief;
@@ -75,7 +75,8 @@ void main()
     vec3 wpDx3 = dFdx(fragWorldPos), wpDy3 = dFdy(fragWorldPos);
     vec2 wpDx = wpDx3.xz, wpDy = wpDy3.xz;
     float pixelMetersSq = max(dot(wpDx, wpDx), dot(wpDy, wpDy));
-    float detailResolve = 1.0 - smoothstep(0.000225, 0.0049, pixelMetersSq);
+    // Mở rộng phạm vi giữ chi tiết vi mô lên tới ~45m để địa hình trung/hậu cảnh không bị bệt phẳng
+    float detailResolve = 1.0 - smoothstep(0.0004, 0.0160, pixelMetersSq);
 
     // ---- 1. Splat Fetch ----
     vec4 splatSample = textureLod(texture0, fragTexCoord, 0.0);
@@ -107,8 +108,7 @@ void main()
 
     vec3 viewVec = viewPos - fragWorldPos;
     float camDistSqXZ = dot(viewVec.xz, viewVec.xz);
-    bool nearDualScale = (camDistSqXZ < 289.0); // Trong vòng 17m mới đọc texture xoay lớp thứ 2
-    // Hệ số chuyển mượt từ 14m -> 17m để xóa sổ đường viền nhảy bậc (LOD pop ring) tại 17m
+    bool nearDualScale = (camDistSqXZ < 289.0);
     float dualScaleFade = 1.0 - smoothstep(196.0, 289.0, camDistSqXZ);
 
     // ---- 3. Distance to Path & Continuous 16-bit Shoreline ----
@@ -122,24 +122,22 @@ void main()
         vec2 ecoUV = clamp((fragWorldPos.xz - u_ecologyRect.xy) / max(u_ecologyRect.zw, vec2(0.0001)), vec2(0.0), vec2(1.0));
         ecology = textureLod(u_ecology, ecoUV, 0.0);
 
-        // Hardware bilinear sample of pre-decoded monotonic 8-bit RG (2cm precision over active ranges)
         vec2 decodedDist = textureLod(u_ecologyDistance, ecoUV, 0.0).rg;
         distToPath = decodedDist.r * 5.1 - 0.5;
         float signedShore = decodedDist.g * 5.5 - 3.1;
 
-        // Multi-scale organic shoreline domain warp: breaks up any residual grid linearity into natural coves
-        float shoreWarp = sin(fragWorldPos.x * 0.42 + fragWorldPos.z * 0.31) * 0.22
-                        + cos(fragWorldPos.z * 0.88 - fragWorldPos.x * 0.64) * 0.12
-                        + sin(fragWorldPos.x * 2.15 + fragWorldPos.z * 1.75) * 0.055;
+        // Multi-scale organic shoreline domain warp
+        float shoreWarp = sin(fragWorldPos.x * 0.34 + fragWorldPos.z * 0.27) * 0.26
+                        + cos(fragWorldPos.z * 0.76 - fragWorldPos.x * 0.58) * 0.14
+                        + sin(fragWorldPos.x * 1.85 + fragWorldPos.z * 1.55) * 0.06;
         smoothSignedShore = signedShore + shoreWarp;
         if (smoothSignedShore < 0.0) {
             lakeDepthFactor = clamp(-smoothSignedShore * (1.0 / 2.6), 0.0, 1.0);
             shoreFactor = 1.0;
         } else {
-            // Soft continuous moisture gradient: wet waterline sand into damp beach
-            float wetCore = 1.0 - smoothstep(0.0, 0.35, smoothSignedShore);
-            float dampFringe = 1.0 - smoothstep(0.12, 1.45, smoothSignedShore);
-            shoreFactor = max(wetCore, dampFringe * 0.48);
+            float wetCore = 1.0 - smoothstep(0.0, 0.32, smoothSignedShore);
+            float dampFringe = 1.0 - smoothstep(0.10, 1.15, smoothSignedShore);
+            shoreFactor = max(wetCore, dampFringe * 0.44);
         }
     } else if (u_pathSegCount > 0) {
         float minDistSq = 1000000.0;
@@ -173,13 +171,13 @@ void main()
     vec3 geomNormal = fragNormal * inversesqrt(max(dot(fragNormal, fragNormal), 1e-8));
     float slope = clamp(1.0 - geomNormal.y, 0.0, 1.0);
 
-    // ---- 6. Soil Detail (Tightened gate skips dirt fetches on pure meadow turf) ----
+    // ---- 6. Soil Detail ----
     bool soilPossible = distToPath < PATH_INFLUENCE
                      || shoreFactor > 0.015
                      || streamWet > 0.45
-                     || slope > 0.24
-                     || rockScree > 0.62
-                     || fragWorldPos.y < -1.15;
+                     || slope > 0.22
+                     || rockScree > 0.58
+                     || fragWorldPos.y < -0.95;
     vec4 colorDirt = vec4(0.5, 0.5, 0.5, 1.0);
     vec3 dirtDetail = vec3(0.5);
     if (soilPossible) {
@@ -219,23 +217,23 @@ void main()
             wWetSoil = mix(wWetSoil, 1.0, clamp(lakeDepthFactor * 2.0, 0.0, 1.0));
         }
 
-        // Transition steeper terrain banks and outer cliff rims into rock strata & scree
-        float wSlope = smoothstep(0.24, 0.46, slope);
-        float outerAbyssMask = (1.0 - smoothstep(-2.40, -0.40, fragWorldPos.y)) * smoothstep(0.08, 0.28, slope);
-        float rockCliff = smoothstep(0.35, 0.75, rockScree) * smoothstep(0.12, 0.32, slope);
+        float wSlope = smoothstep(0.22, 0.44, slope);
+        float outerAbyssMask = (1.0 - smoothstep(-2.20, -0.45, fragWorldPos.y)) * smoothstep(0.08, 0.26, slope);
+        float rockCliff = smoothstep(0.32, 0.72, rockScree) * smoothstep(0.12, 0.30, slope);
         wCliff = clamp(max(wSlope, max(rockCliff, outerAbyssMask)), 0.0, 1.0);
 
+        // Thu gọn dải cát chuyển tiếp ven bờ (0.02m -> 0.95m) để thảm cỏ có thể lan sát mép nước tự nhiên
         if (u_ecologyEnabled != 0 && smoothSignedShore >= -0.10) {
-            riparianSandMargin = (1.0 - smoothstep(0.05, 1.35, smoothSignedShore)) * 0.58;
+            riparianSandMargin = (1.0 - smoothstep(0.02, 0.95, smoothSignedShore)) * 0.42;
         }
 
         wDrySoil = clamp(max(max(wPathMargin * 0.78, wCliff), riparianSandMargin), 0.0, 1.0)
                        * (1.0 - wWetSoil * 0.75) * (1.0 - wPath * 0.85);
         wGrass = clamp(1.0 - wPath - wWetSoil - wDrySoil, 0.0, 1.0);
 
-        if (u_ecologyEnabled != 0 && smoothSignedShore >= -0.25 && smoothSignedShore < 1.85) {
-            float grassGrain = (dirtDetail.r - 0.5) * 0.22;
-            float grassTaper = smoothstep(0.18, 1.45, smoothSignedShore + grassGrain);
+        if (u_ecologyEnabled != 0 && smoothSignedShore >= -0.25 && smoothSignedShore < 1.35) {
+            float grassGrain = (dirtDetail.r - 0.5) * 0.24;
+            float grassTaper = smoothstep(0.08, 0.95, smoothSignedShore + grassGrain);
             wGrass *= grassTaper;
             wDrySoil = clamp(1.0 - wPath - wWetSoil - wGrass, 0.0, 1.0);
         }
@@ -275,10 +273,12 @@ void main()
     bool hasGrass = wGrass > LAYER_EPS;
     bool hasSoil  = soilWeight > LAYER_EPS;
 
-    // ---- 8. Grass Layer (Hài hòa màu nền cỏ & giảm đốm loang ở xa) ----
+    // ---- 8. Grass Layer & Distant 3D Faux-Canopy Relief ----
     vec3 grassAlbedo = vec3(0.0);
     float fineGrassLuma = 0.5;
     vec4 grassMaterial = vec4(0.5, 0.5, 1.0, 0.82);
+    float distantTuftRelief = 0.0;
+    vec2 distantTuftNormal = vec2(0.0);
 
     if (hasGrass) {
         vec4 colorGrass = textureGrad(texGrass, tiledUV, uvDx, uvDy);
@@ -290,9 +290,8 @@ void main()
                                           vec2(uvDy.y, -uvDy.x) * 0.38).rgb;
             blendedGrass = mix(colorGrass.rgb, broadGrass, 0.28 * dualScaleFade);
         }
-        // Chỉ đọc normal/roughness map của cỏ trong bán kính 32m và pha mượt về giá trị phẳng từ 28m -> 32m
-        if (camDistSqXZ < 1024.0) {
-            float grassMatFade = 1.0 - smoothstep(784.0, 1024.0, camDistSqXZ);
+        if (camDistSqXZ < 1225.0) {
+            float grassMatFade = 1.0 - smoothstep(900.0, 1225.0, camDistSqXZ);
             vec4 sampledGrassMat = textureGrad(texGrassMaterial, tiledUV, uvDx, uvDy);
             grassMaterial = mix(grassMaterial, sampledGrassMat, grassMatFade);
         }
@@ -341,7 +340,7 @@ void main()
         }
 
         vec3 targetCanopyColor = MeadowCanopyColor(habitatVal);
-        vec3 nearCanopySubstrate = targetCanopyColor * 0.58;
+        vec3 nearCanopySubstrate = targetCanopyColor * 0.60;
         grassAlbedo = mix(grassAlbedo,
                           nearCanopySubstrate * (1.0 + detailContrast * (0.68 + GS_NEAR_DETAIL_BOOST * detailResolve)),
                           0.56 - GS_NEAR_DETAIL_BOOST * 0.42 * detailResolve);
@@ -351,22 +350,33 @@ void main()
 
         if (camDistSqXZ > 64.0) {
             float camDist = camDistSqXZ * inversesqrt(camDistSqXZ);
-            float distantCanopyBlend = smoothstep(10.0, 36.0, camDist) * wGrass;
+            float distantCanopyBlend = smoothstep(12.0, 36.0, camDist) * wGrass;
             if (u_ecologyEnabled != 0)
                 distantCanopyBlend *= smoothstep(0.04, 0.48, ecology.r);
             if (distantCanopyBlend > 0.002) {
                 vec3 canopyColor = targetCanopyColor * GS_DISTANT_CANOPY_GAIN;
-                float tuftGrain = clamp(0.5 + (turfDetail - 0.22) * 0.55, 0.0, 1.0);
-                canopyColor *= mix(0.88, 1.10, tuftGrain);
+
+                // [VISUAL UPGRADE]: Giả lập cấu trúc khóm cỏ 3D (Faux-Tuft Canopy Relief) ở cự ly > 18m
+                // để mặt đất ngoài tầm vẽ cỏ 3D (38m) vẫn có độ xốp và gợn bóng như thảm cỏ thật!
+                vec2 wp = fragWorldPos.xz;
+                float tuftWaveA = sin(wp.x * 2.4 + sin(wp.y * 1.7) * 0.8);
+                float tuftWaveB = cos(wp.y * 2.8 - sin(wp.x * 1.9) * 0.8);
+                float fauxTuft = (tuftWaveA * 0.55 + tuftWaveB * 0.45) * 0.5 + 0.5;
+                float tuftGrain = clamp(mix(fauxTuft, 0.5 + (turfDetail - 0.22) * 0.85, 0.55), 0.0, 1.0);
+
+                distantTuftRelief = (tuftGrain - 0.48) * distantCanopyBlend * 0.34;
+                distantTuftNormal = vec2(cos(wp.x * 2.4) * 0.22, -sin(wp.y * 2.8) * 0.22) * distantCanopyBlend;
+
+                canopyColor *= mix(0.84, 1.14, tuftGrain);
 
                 float macroPatch = v_macroPatchAndField.x;
                 float warmShift = clamp(macroPatch * 0.5 + 0.5, 0.0, 1.0);
-                canopyColor *= mix(vec3(0.95, 1.03, 0.92), vec3(1.06, 1.04, 0.88), warmShift * 0.60);
+                canopyColor *= mix(vec3(0.95, 1.03, 0.92), vec3(1.06, 1.04, 0.88), warmShift * 0.65);
 
                 float windPhase = fract(u_time * 0.31830988) * 6.2831853;
                 float windWave = sin(dot(fragWorldPos.xz, vec2(0.26, 0.18)) - windPhase) * 0.5 + 0.5;
-                canopyColor *= mix(vec3(0.97, 0.99, 0.95), vec3(1.05, 1.04, 0.96), windWave * distantCanopyBlend);
-                grassAlbedo = mix(grassAlbedo, canopyColor, distantCanopyBlend * 0.92);
+                canopyColor *= mix(vec3(0.96, 0.99, 0.94), vec3(1.06, 1.05, 0.95), windWave * distantCanopyBlend);
+                grassAlbedo = mix(grassAlbedo, canopyColor, distantCanopyBlend * 0.94);
             }
         }
 
@@ -466,18 +476,16 @@ void main()
             }
             vec3 triRock = rockTexX * triWeights.x + rockTexY * triWeights.y + rockTexZ * triWeights.z;
 
-            // Authentic weathered rock tone matching boulder props (Color(142, 136, 128))
-            vec3 boulderTint = vec3(0.557, 0.533, 0.502);
+            vec3 boulderTint = vec3(0.585, 0.560, 0.525);
             float macroTone = sin(fragWorldPos.x * 0.035 + fragWorldPos.z * 0.026) * 0.5 + 0.5;
             vec3 stoneTint = mix(boulderTint * 0.94, boulderTint * 1.06, macroTone);
-            vec3 rockBase = triRock * stoneTint * 1.35;
+            vec3 rockBase = triRock * stoneTint * 1.38;
 
             // Velvet moss on upward-facing rock ledges near the plateau
             float ledgeFacing = clamp(geomNormal.y * 1.45 - 0.20, 0.0, 1.0);
-            vec3 ledgeMoss = mix(vec3(0.12, 0.20, 0.08), vec3(0.22, 0.34, 0.11), triRock.g);
-            cliffAlbedo = mix(rockBase, ledgeMoss, ledgeFacing * 0.65);
+            vec3 ledgeMoss = mix(vec3(0.14, 0.23, 0.09), vec3(0.24, 0.36, 0.12), triRock.g);
+            cliffAlbedo = mix(rockBase, ledgeMoss, ledgeFacing * 0.68);
 
-            // Amplify normal map relief for crisp 3D rock fractures and normalize once
             rockNormX.xy *= 1.45;
             rockNormY.xy *= 1.45;
             rockNormZ.xy *= 1.45;
@@ -488,9 +496,8 @@ void main()
             vec3 rawCliffN = worldNx * triWeights.x + worldNy * triWeights.y + worldNz * triWeights.z;
             cliffTriNormal = rawCliffN * inversesqrt(max(dot(rawCliffN, rawCliffN), 1e-8));
 
-            // Crevice ambient occlusion directly from normal map crevices
             float normCrevice = clamp(rockNormX.z * triWeights.x + rockNormY.z * triWeights.y + rockNormZ.z * triWeights.z, 0.35, 1.0);
-            cliffOcclusion = mix(0.70, 1.0, normCrevice);
+            cliffOcclusion = mix(0.72, 1.0, normCrevice);
             cliffRoughnessMod = (1.0 - normCrevice) * 0.12;
         }
 
@@ -500,31 +507,29 @@ void main()
         // ---- AAA Alluvial Riverbed Sand & Natural Fine River Gravel ----
         vec3 wetSoilColor = vec3(0.0);
         if (isRiparian > 0.01) {
-            // 1. Alluvial quartz/feldspar river sand with hydrodynamic current ripples
-            float x28 = fragWorldPos.x * 2.8;
-            float sinX28 = sin(x28);
-            float cosX28 = cos(x28);
-            float sandPhase1 = fragWorldPos.z * 8.5 + sinX28 * 1.4 + fragWorldPos.x * 1.1;
-            float sandPhase2 = fragWorldPos.x * 15.0 - fragWorldPos.z * 6.5;
+            // [VISUAL FIX]: Xóa sọc sóng cát tuần hoàn bằng nhiễu uốn miền (domain warp) nhẹ
+            float warpSand = sin(fragWorldPos.x * 0.75 + fragWorldPos.z * 0.55) * 2.2
+                           + cos(fragWorldPos.z * 1.15 - fragWorldPos.x * 0.85) * 1.4;
+            float sandPhase1 = (fragWorldPos.z + fragWorldPos.x * 0.65) * 4.2 + warpSand;
+            float sandPhase2 = (fragWorldPos.x - fragWorldPos.z * 0.55) * 6.8 - warpSand * 0.8;
             float sinP1 = sin(sandPhase1);
             float sinP2 = sin(sandPhase2);
-            float sandRipple = (sinP1 * 0.65 + sinP2 * 0.35) * 0.5 + 0.5;
+            float sandRipple = (sinP1 * 0.60 + sinP2 * 0.40) * 0.5 + 0.5;
 
-            vec3 drySand = mix(vec3(0.54, 0.48, 0.38), vec3(0.60, 0.54, 0.44), sandRipple * 0.22);
-            vec3 wetSand = mix(vec3(0.44, 0.39, 0.31), vec3(0.50, 0.44, 0.36), sandRipple * 0.22);
-            vec3 submergedSand = mix(vec3(0.40, 0.36, 0.29), vec3(0.46, 0.41, 0.34), sandRipple * 0.22);
+            vec3 drySand = mix(vec3(0.55, 0.49, 0.39), vec3(0.59, 0.53, 0.43), sandRipple * 0.12);
+            vec3 wetSand = mix(vec3(0.45, 0.40, 0.32), vec3(0.49, 0.44, 0.35), sandRipple * 0.12);
+            vec3 submergedSand = mix(vec3(0.41, 0.37, 0.30), vec3(0.45, 0.40, 0.33), sandRipple * 0.12);
 
             float wetLevel = clamp(shoreFactor * 0.85 + streamWet * 0.50, 0.0, 1.0);
             vec3 sandBase = mix(drySand, wetSand, wetLevel);
             sandBase = mix(sandBase, submergedSand, clamp(lakeDepthFactor * 1.20, 0.0, 1.0));
 
             vec3 microSediment = textureGrad(texPath, fragWorldPos.xz * 1.85, wpDx * 1.85, wpDy * 1.85).rgb;
-            sandBase *= (0.78 + 0.44 * microSediment.r) * (0.82 + 0.36 * colorDirt.rgb);
+            sandBase *= (0.80 + 0.40 * microSediment.r) * (0.84 + 0.32 * colorDirt.rgb);
 
-            float beachDryMix = clamp(shoreFactor * 0.85 + riparianSandMargin * 1.4, 0.0, 1.0);
-            drySoilColor = mix(drySoilColor, drySand * (0.82 + 0.36 * colorDirt.rgb), beachDryMix);
+            float beachDryMix = clamp(shoreFactor * 0.80 + riparianSandMargin * 1.35, 0.0, 1.0);
+            drySoilColor = mix(drySoilColor, drySand * (0.84 + 0.32 * colorDirt.rgb), beachDryMix);
 
-            // 2. High-resolution photographic river gravel & pebble shingle (~2-5cm, scanned)
             vec2 gravelUV = tiledUV * 3.4;
             vec2 grDx = uvDx * 3.4, grDy = uvDy * 3.4;
             vec3 fineGravelTex = textureGrad(texPath, gravelUV, grDx, grDy).rgb;
@@ -540,19 +545,17 @@ void main()
             vec3 pebbleMineral = mix(vec3(0.42, 0.40, 0.38), vec3(0.62, 0.58, 0.50), gravelHighlight);
             pebbleMineral = mix(pebbleMineral, vec3(0.54, 0.47, 0.38), fineGravelTex.g);
 
-            float gravelAO = 1.0 - pebbleCrevice * 0.22 * shingleBar;
-            vec3 riverbedBed = mix(sandBase, pebbleMineral, gravelHighlight * 0.65 * shingleBar) * gravelAO;
+            float gravelAO = 1.0 - pebbleCrevice * 0.18 * shingleBar;
+            vec3 riverbedBed = mix(sandBase, pebbleMineral, gravelHighlight * 0.58 * shingleBar) * gravelAO;
 
             if (camDistSqXZ < 625.0) {
                 float cosP1 = cos(sandPhase1);
                 float cosP2 = cos(sandPhase2);
-                float dRipX = cosP1 * (cosX28 * 3.92 + 1.1) * 0.30 + cosP2 * 2.25;
-                float dRipZ = cosP1 * 2.55 - cosP2 * 0.975;
-                vec2 rippleNorm = clamp(vec2(dRipX, dRipZ) * 0.040, vec2(-0.35), vec2(0.35));
+                vec2 rippleNorm = clamp(vec2(cosP1 + cosP2 * 0.6, cosP1 - cosP2 * 0.5) * 0.035, vec2(-0.18), vec2(0.18));
 
                 vec4 gravelMat = textureGrad(texSoilMaterial, gravelUV, grDx, grDy);
                 vec2 gNorm = (gravelMat.rg * 2.0 - 1.0);
-                proceduralPebbleNormal = (gNorm * (0.35 * shingleBar + 0.18) + rippleNorm * (1.0 - shingleBar * 0.5)) * detailResolve;
+                proceduralPebbleNormal = (gNorm * (0.30 * shingleBar + 0.14) + rippleNorm * (1.0 - shingleBar * 0.5)) * detailResolve;
             }
 
             float sandDominance = clamp(shoreFactor * 1.25 + streamWet * 1.35 + lakeDepthFactor * 2.0, 0.0, 1.0);
@@ -571,10 +574,9 @@ void main()
                        + pathMarginColor * wPath;
     }
 
-    // Natural capillary dampening (gentle ~6% darkening, perfectly smooth without harsh dark band)
     float riparianSaturation = clamp(shoreFactor * 0.85 + lakeDepthFactor * 1.0, 0.0, 1.0);
-    float wetCapillaryDarken = riparianSaturation * 0.06;
-    blendedAlbedo *= (1.0 - clamp(wetCapillaryDarken, 0.0, 0.10));
+    float wetCapillaryDarken = riparianSaturation * 0.05;
+    blendedAlbedo *= (1.0 - clamp(wetCapillaryDarken, 0.0, 0.08));
 
     if (u_groundDebrisEnabled != 0 && camDistSqXZ < 1024.0) {
         float debrisDistFade = 1.0 - smoothstep(576.0, 1024.0, camDistSqXZ);
@@ -622,7 +624,7 @@ void main()
     }
 
     vec3 normal = geomNormal;
-    if (camDistSqXZ < 1024.0 || soilWeight > 0.01 || wCliff > 0.01 || isRiparian > 0.01) {
+    if (camDistSqXZ < 3600.0 || soilWeight > 0.01 || wCliff > 0.01 || isRiparian > 0.01) {
         vec3 rawMicro = mix(grassMaterial.rgb, soilMaterial.rgb, soilWeight) * 2.0 - 1.0;
         vec3 microNormal = rawMicro * inversesqrt(max(dot(rawMicro, rawMicro), 1e-8));
         vec3 refAxis = (abs(geomNormal.z) < 0.999) ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0);
@@ -631,11 +633,14 @@ void main()
         vec3 bitangent = cross(geomNormal, tangent);
 
         float puddleFlatten = 1.0 - smoothstep(0.60, 0.95, wWetSoil) * 0.45;
-        float microStrength = mix(0.26, 0.52, max(soilWeight, wCliff)) * puddleFlatten * (0.45 + 0.55 * detailResolve);
+        float microStrength = mix(0.28, 0.52, max(soilWeight, wCliff)) * puddleFlatten * (0.45 + 0.55 * detailResolve);
         vec3 nRaw = geomNormal * (0.66 + 0.34 * microNormal.z)
                   + (tangent * microNormal.x + bitangent * microNormal.y) * microStrength;
+        if (wGrass > 0.05) {
+            nRaw += (tangent * distantTuftNormal.x + bitangent * distantTuftNormal.y) * wGrass;
+        }
         if (isRiparian > 0.01) {
-            nRaw += (tangent * proceduralPebbleNormal.x + bitangent * proceduralPebbleNormal.y) * (isRiparian * 0.70 * puddleFlatten);
+            nRaw += (tangent * proceduralPebbleNormal.x + bitangent * proceduralPebbleNormal.y) * (isRiparian * 0.58 * puddleFlatten);
         }
         if (wCliff > 0.01) {
             float cliffBlend = smoothstep(0.04, 0.40, wCliff);
@@ -652,32 +657,34 @@ void main()
     roughness = clamp(roughness, 0.22, 0.98);
 
     float nearCanopyMask = 1.0 - smoothstep(324.0, 1800.0, camDistSqXZ);
-    float canopyContactAO = mix(1.0, 0.76 + 0.18 * fineGrassLuma, wGrass * nearCanopyMask);
+    float canopyContactAO = mix(1.0, 0.78 + 0.18 * fineGrassLuma, wGrass * nearCanopyMask);
     float cliffCreviceAO = mix(1.0, cliffOcclusion, smoothstep(0.04, 0.35, wCliff));
-    float cavityAO = mix(0.86 + 0.14 * fineGrassLuma,
-                         0.72 + 0.28 * pebbleRelief, soilWeight) * reliefShadow * cliffCreviceAO * canopyContactAO;
+    float cavityAO = mix(0.86 + 0.14 * fineGrassLuma + distantTuftRelief * 0.35,
+                         0.74 + 0.26 * pebbleRelief, soilWeight) * reliefShadow * cliffCreviceAO * canopyContactAO;
+    cavityAO = clamp(cavityAO, 0.65, 1.08);
 
     // ---- 11. Physically Based Lighting & Soft Grass/Soil Shadows ----
     float rawNdotL = dot(normal, light);
     float soilWrapNdotL = max((rawNdotL + 0.34) * (1.0 / 1.34), 0.0);
-    float grassWrapNdotL = max((rawNdotL + 0.40) * (1.0 / 1.40), 0.0);
+    float grassWrapNdotL = max((rawNdotL + 0.42) * (1.0 / 1.42), 0.0);
     float horizonEnvelope = smoothstep(0.02, 0.38, max(light.y, 0.0)) * 0.66 + 0.34;
-    float effectiveNdotL = mix(soilWrapNdotL * horizonEnvelope, grassWrapNdotL * horizonEnvelope, wGrass * 0.72) * (0.85 + 0.15 * cavityAO);
+    float effectiveNdotL = mix(soilWrapNdotL * horizonEnvelope, grassWrapNdotL * horizonEnvelope, wGrass * 0.76) * (0.85 + 0.15 * cavityAO);
 
     float dynShadowCoverage;
     float rawShadow = MapShadowVisibilityCovLS(v_lightSpace, v_staticLightSpace, normal, light, dynShadowCoverage);
     float canopyFarField = wGrass * (1.0 - dynShadowCoverage)
-                         * (1.0 - smoothstep(900.0, 1764.0, camDistSqXZ))
+                         * (1.0 - smoothstep(900.0, 2025.0, camDistSqXZ))
                          * smoothstep(0.08, 0.60, ecology.r);
     rawShadow *= 1.0 - GS_FAR_CANOPY_SHADE * canopyFarField;
 
-    float turfShadowVis = rawShadow * mix(rawShadow, 1.0, 0.45);
-    float resolvedShadow = mix(rawShadow, turfShadowVis, wGrass);
-    float shadowFloor = mix(0.48, 0.62, wGrass);
+    // [VISUAL FIX]: Làm mềm bóng đổ trên cả thảm cỏ lẫn bãi cát ven sông (xóa vệt bóng răng lược đen)
+    float softShadowVis = rawShadow * mix(rawShadow, 1.0, 0.48);
+    float resolvedShadow = mix(rawShadow, softShadowVis, max(wGrass, isRiparian * 0.85));
+    float shadowFloor = mix(0.56, 0.65, max(wGrass, isRiparian * 0.65));
     float shadow = mix(shadowFloor, 1.0, resolvedShadow);
     float sunVisibility = (shadow > 0.001) ? shadow * Environment_CloudVisibility(u_cloudNoise, fragWorldPos) : 0.0;
 
-    float ambientShadowMod = mix(mix(0.88, 0.94, wGrass), 1.0, resolvedShadow);
+    float ambientShadowMod = mix(mix(0.90, 0.95, wGrass), 1.0, resolvedShadow);
     vec3 ambient = Environment_HemisphereIrradiance(normal, actualAmbient) * (cavityAO * ambientShadowMod);
 
     vec3 totalLight = ambient + actualLight * effectiveNdotL * sunVisibility;
@@ -690,7 +697,7 @@ void main()
 
     if (wGrass > 0.05 && sunVisibility > 0.01) {
         float backScatter = max(dot(viewDir, -light), 0.0);
-        float sssFactor = (backScatter * backScatter * backScatter) * wGrass * sunVisibility * horizonEnvelope * 0.14;
+        float sssFactor = (backScatter * backScatter * backScatter) * wGrass * sunVisibility * horizonEnvelope * 0.16;
         groundLit += grassAlbedo * actualLight * vec3(0.94, 1.32, 0.62) * sssFactor;
     }
 
@@ -736,8 +743,6 @@ void main()
         groundLit = mix(groundLit, cloudVeilColor, veil);
     }
 
-    // [SPIR-V FIX]: Sửa smoothstep(-1.80, -4.80, fragWorldPos.y) (undefined behavior khi edge0 > edge1)
-    // thành 1.0 - smoothstep(-4.80, -1.80, fragWorldPos.y)
     if (fragWorldPos.y < -1.80) {
         float cloudImmersion = 1.0 - smoothstep(-4.80, -1.80, fragWorldPos.y);
         vec3 cloudBaseTone = mix(vec3(0.56, 0.62, 0.72), vec3(0.95, 0.92, 0.86), 0.55);

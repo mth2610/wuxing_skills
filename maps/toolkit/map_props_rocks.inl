@@ -1054,22 +1054,23 @@ void MapProp_DrawRockSystem(const MapRockSystem *sys, bool drawShadows)
             }
         }
 
-        Color rockTint = (Color){142, 136, 128, 255};
+        // [VISUAL UPGRADE]: Sắc độ đá ấm bắt nắng chiều vàng (không bị sậm đen trên đồi cỏ)
+        Color rockTint = (Color){184, 176, 166, 255};
         if (p->archetype == MAP_ROCK_SANDSTONE)
         {
-            rockTint = (Color){168, 152, 125, 255};
+            rockTint = (Color){198, 180, 148, 255};
         }
         else if (p->archetype == MAP_ROCK_RIVER_STONE)
         {
-            rockTint = (Color){172, 165, 156, 250};
+            rockTint = (Color){192, 185, 175, 250};
         }
         else if (p->archetype == MAP_ROCK_SCREE)
         {
-            rockTint = (Color){132, 126, 118, 255};
+            rockTint = (Color){168, 160, 150, 255};
         }
         else if (p->archetype == MAP_ROCK_LIMESTONE || p->archetype == MAP_ROCK_CRAG)
         {
-            rockTint = (Color){165, 162, 155, 255};
+            rockTint = (Color){196, 192, 184, 255};
         }
 
         DrawModelEx(set->model, pos, rotAxis, p->rotationDeg, scale, rockTint);
@@ -1151,35 +1152,35 @@ void MapProp_PopulateRockItems(MapRockSystem *sys, const MapGroundSurface *groun
                 pos = item->position;
             }
         }
-        float sinkOffset = item->heightScale * 0.18f;
+        float sinkOffset = item->heightScale * 0.20f;
         switch (item->archetype)
         {
         case MAP_ROCK_BASALT:
         case MAP_ROCK_CRAG:
         case MAP_ROCK_LIMESTONE:
-            sinkOffset = item->heightScale * 0.08f;
-            break;
-        case MAP_ROCK_OBSIDIAN:
             sinkOffset = item->heightScale * 0.10f;
             break;
+        case MAP_ROCK_OBSIDIAN:
+            sinkOffset = item->heightScale * 0.12f;
+            break;
         case MAP_ROCK_SLATE:
-            sinkOffset = item->heightScale * 0.14f;
+            sinkOffset = item->heightScale * 0.15f;
             break;
         case MAP_ROCK_SANDSTONE:
-            sinkOffset = item->heightScale * 0.16f;
+            sinkOffset = item->heightScale * 0.18f;
             break;
         case MAP_ROCK_GRANITE:
         case MAP_ROCK_BOULDER:
-            sinkOffset = item->heightScale * 0.20f;
+            sinkOffset = item->heightScale * 0.22f;
             break;
         case MAP_ROCK_RIVER_STONE:
-            sinkOffset = item->heightScale * 0.12f;
+            sinkOffset = item->heightScale * 0.14f;
             break;
         case MAP_ROCK_SCREE:
-            sinkOffset = item->heightScale * 0.05f;
+            sinkOffset = item->heightScale * 0.06f;
             break;
         default:
-            sinkOffset = item->heightScale * 0.18f;
+            sinkOffset = item->heightScale * 0.20f;
             break;
         }
         float heightScale = item->heightScale;
@@ -1247,17 +1248,20 @@ float MapProp_EvaluateRockSuppression(float x, float z, const MapRockItem *items
             continue;
         float dx = x - items[i].position.x;
         float dz = z - items[i].position.z;
-        float maxR = r * 0.90f; // Tight boundary: meadow grass grows right up to the stone edge!
+        // [VISUAL FIX]: Thu hẹp bán kính cắt cỏ về 0.58 * r (lõi 0.42 * r) để cỏ mọc ôm sát vào
+        // gầm đá tảng, xóa bỏ hoàn toàn "vòng tròn hói cỏ" quanh chân đá!
+        float maxR = r * 0.58f;
         if (fabsf(dx) > maxR || fabsf(dz) > maxR)
             continue;
         float distSq = dx * dx + dz * dz;
         if (distSq > maxR * maxR)
             continue;
-        float coreR = r * 0.65f; // Solid stone core exclusion checked in squared space before sqrtf
+        float coreR = r * 0.42f;
         if (distSq <= coreR * coreR)
             return 0.0f;
         float dist = sqrtf(distSq);
-        float fade = (dist - coreR) / (r * 0.25f);
+        float t = (dist - coreR) / (r * 0.16f);
+        float fade = t * t * (3.0f - 2.0f * t);
         if (fade < suppression)
             suppression = fade;
     }

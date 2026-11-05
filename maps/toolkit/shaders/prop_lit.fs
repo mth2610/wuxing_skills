@@ -50,6 +50,9 @@ void main() {
     vec3 viewDir = toCam * invCamDist;
 
     vec4 albedo = textureGrad(texture0, fragTexCoord, uvDx, uvDy);
+    // Nâng sàn sáng khoáng vật đá granite để tảng đá không bị sậm đen như than dưới nắng chiều
+    albedo.rgb = mix(albedo.rgb, vec3(dot(albedo.rgb, vec3(0.3333333))), 0.14);
+    albedo.rgb = max(albedo.rgb, vec3(0.24, 0.23, 0.22)) * 1.22;
     albedo.rgb *= colDiffuse.rgb;
     vec3 normalSample = textureGrad(texture2, fragTexCoord, uvDx, uvDy).rgb * 2.0 - 1.0;
 
@@ -84,9 +87,8 @@ void main() {
     vec3 rawB = cross(smoothN, T);
     vec3 B = (dot(rawB, fragBitangent) < 0.0) ? -rawB : rawB;
 
-    normalSample.xy *= 1.35;
+    normalSample.xy *= 1.25;
     normalSample *= inversesqrt(max(dot(normalSample, normalSample), 1e-8));
-    // T, B, smoothN đôi một trực giao đơn vị và normalSample đã chuẩn hóa -> TBN * normalSample là vector đơn vị!
     vec3 normal = T * normalSample.x + B * normalSample.y + smoothN * normalSample.z;
     vec3 worldNormal = worldRot * normal;
 
@@ -102,48 +104,50 @@ void main() {
 
     // Warm mineral & geological strata variation while preserving true lithology tones
     float strataNoise = sin(worldPosition.y * 3.8 + worldPosition.x * 0.45 - worldPosition.z * 0.35) * 0.5 + 0.5;
-    vec3 rockAlbedo = albedo.rgb * mix(vec3(0.92, 0.92, 0.90), vec3(1.05, 1.02, 0.98), strataNoise);
+    vec3 rockAlbedo = albedo.rgb * mix(vec3(0.95, 0.94, 0.92), vec3(1.08, 1.04, 0.98), strataNoise);
 
-    // Top-surface moss & lichen colonization across meadow plateau
+    // Top-surface moss & lichen colonization harmonized with song_quao meadow palette
     float altitudeMoss = (1.0 - smoothstep(9.5, 13.5, worldPosition.y)) * 0.40 + 0.60;
-    float topMossMask = smoothstep(0.55, 0.82, worldNormal.y) * smoothstep(-0.15, 0.40, fragLocalY)
-                      * smoothstep(0.32, 0.75, albedo.g) * altitudeMoss;
+    float topMossMask = smoothstep(0.50, 0.80, worldNormal.y) * smoothstep(-0.18, 0.38, fragLocalY)
+                      * smoothstep(0.28, 0.72, albedo.g) * altitudeMoss;
     topMossMask *= (1.0 - isRiverStone * 0.95);
-    vec3 crownMossAlbedo = mix(vec3(0.12, 0.22, 0.07), vec3(0.22, 0.34, 0.10), albedo.r);
-    vec3 lichenTone = vec3(0.48, 0.42, 0.18);
-    crownMossAlbedo = mix(crownMossAlbedo, lichenTone, smoothstep(0.45, 0.85, albedo.r));
-    rockAlbedo = mix(rockAlbedo, crownMossAlbedo, topMossMask * 0.75);
+    vec3 crownMossAlbedo = mix(vec3(0.18, 0.32, 0.11), vec3(0.32, 0.48, 0.16), albedo.r);
+    vec3 lichenTone = vec3(0.52, 0.48, 0.20);
+    crownMossAlbedo = mix(crownMossAlbedo, lichenTone, smoothstep(0.48, 0.86, albedo.r));
+    rockAlbedo = mix(rockAlbedo, crownMossAlbedo, topMossMask * 0.78);
 
-    // Lower skirt earthy moss & turf grounding blend
-    float skirtMask = (1.0 - smoothstep(-0.45, 0.12, fragLocalY));
+    // Lower skirt earthy moss & turf grounding blend matching meadow roots
+    float skirtMask = (1.0 - smoothstep(-0.42, 0.16, fragLocalY));
     skirtMask *= (1.0 - isRiverStone * 0.90);
-    vec3 skirtMossAlbedo = vec3(0.14, 0.20, 0.08);
-    rockAlbedo = mix(rockAlbedo, skirtMossAlbedo, skirtMask * 0.72);
+    vec3 skirtMossAlbedo = mix(vec3(0.17, 0.28, 0.10), vec3(0.26, 0.40, 0.14), clamp(worldNormal.y, 0.0, 1.0));
+    rockAlbedo = mix(rockAlbedo, skirtMossAlbedo, skirtMask * 0.68);
 
-    // Deep soil capillary moisture & contact ambient occlusion at base
+    // Gentle contact shading at base without turning the bottom of the rock pitch-black
     float skirtContact = (isRiverStone > 0.5)
         ? 0.0
-        : (1.0 - smoothstep(-0.50, -0.05, fragLocalY));
-    rockAlbedo *= mix(1.0, 0.62, skirtContact * 0.55);
+        : (1.0 - smoothstep(-0.50, -0.08, fragLocalY));
+    rockAlbedo *= mix(1.0, 0.82, skirtContact * 0.40);
 
     // River stone & shoreline wetness darkening at water level
     float lakeWaterDamp = (1.0 - smoothstep(-0.05, 0.35, worldPosition.y))
                         * (1.0 - smoothstep(-0.85, -0.30, worldPosition.y));
-    rockAlbedo *= mix(1.0, 0.78, lakeWaterDamp * 0.45);
+    rockAlbedo *= mix(1.0, 0.82, lakeWaterDamp * 0.38);
 
     albedo.rgb = rockAlbedo;
     roughness = mix(roughness, 0.86, max(topMossMask, skirtMask) * 0.78);
     roughness = mix(roughness, 0.28, isRiverStone);
     roughness = mix(roughness, 0.20, lakeWaterDamp * 0.75);
 
-    // Preserve lateral facet contrast even when the sun is near zenith (12:00 Noon)
+    // Soft micro-wrap diffuse (0.15) brings out chiseled granite facets on the shaded side
     vec3 rawModelL = lightDir + vec3(0.32, -0.18, -0.26) * max(worldLightDir.y - 0.50, 0.0);
     vec3 modelLightDir = rawModelL * inversesqrt(max(dot(rawModelL, rawModelL), 1e-8));
-    float diff = calcDiffuse(normal, modelLightDir, 0.0);
+    float diff = calcDiffuse(normal, modelLightDir, 0.15);
 
     float shadow = MapShadowVisibility(fragPosition, normal, lightDir);
     if (isRiverStone > 0.5) {
-        shadow = max(shadow, 0.72);
+        shadow = max(shadow, 0.76);
+    } else {
+        shadow = mix(0.38, 1.0, shadow);
     }
     if (shadow > 0.001) {
         shadow *= Environment_CloudVisibility(u_cloudNoise, worldPosition);
@@ -152,20 +156,23 @@ void main() {
     float spec = 0.0;
     if (diff > 0.0 && shadow > 0.001) {
         float shininess    = mix(32.0, 8.0, roughness);
-        float specStrength = mix(0.03, 0.12, 1.0 - roughness);
-        specStrength = mix(specStrength, 0.16, max(lakeWaterDamp * 0.60, isRiverStone * 0.65));
+        float specStrength = mix(0.04, 0.14, 1.0 - roughness);
+        specStrength = mix(specStrength, 0.18, max(lakeWaterDamp * 0.60, isRiverStone * 0.65));
         spec = calcSpecular(normal, modelLightDir, viewDir, shininess) * specStrength;
     }
 
     vec3 ambient = Environment_HemisphereIrradiance(normal, actualAmbient);
+    // Warm meadow turf bounce into lower rock facets
+    vec3 turfBounce = vec3(0.20, 0.32, 0.12) * actualAmbient * max(-worldNormal.y * 0.5 + 0.5, 0.0) * 0.45;
+    ambient += turfBounce;
     if (isRiverStone > 0.5) {
         vec3 streamBounce = actualAmbient * 1.55 + actualLight * 0.18;
         ambient = mix(ambient, streamBounce, 0.45);
     }
-    float groundAO = clamp(0.76 + worldPosition.y * 0.30, 0.72, 1.0);
+    float groundAO = clamp(0.82 + worldPosition.y * 0.20, 0.78, 1.0);
     float skirtAO = (isRiverStone > 0.5)
         ? 1.0
-        : clamp(0.30 + 0.70 * smoothstep(-0.45, 0.18, fragLocalY), 0.28, 1.0);
+        : clamp(0.66 + 0.34 * smoothstep(-0.45, 0.18, fragLocalY), 0.66, 1.0);
     vec3 lit = albedo.rgb * (ambient * groundAO * skirtAO + diff * actualLight * shadow)
              + spec * actualLight * shadow;
 
