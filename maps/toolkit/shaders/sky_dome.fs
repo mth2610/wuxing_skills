@@ -17,9 +17,10 @@ void main()
 
     vec3 skyColor = MapSkyRadiance(skyRay, safeSunDir, u_skyAmbient, u_hazeColor, u_sunColor);
 
-    // [VISUAL UPGRADE]: Khử sọc chuyển sắc 8-bit (Color Banding) trên vòm trời bằng nhiễu Interleaved Gradient Noise
-    float ign = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
-    skyColor = max(skyColor + (ign - 0.5) * (1.0 / 255.0), vec3(0.0));
+    // Khử sọc chuyển sắc 8-bit (Color Banding) bằng nhiễu phân phối tam giác (Triangular-PDF IGN Dither)
+    float ign0 = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+    float ign1 = fract(52.9829189 * fract(dot(gl_FragCoord.xy + vec2(17.0, 31.0), vec2(0.06711056, 0.00583715))));
+    skyColor = max(skyColor + (ign0 - ign1) * (1.0 / 255.0), vec3(0.0));
 
     finalColor = vec4(skyColor, 1.0);
 }

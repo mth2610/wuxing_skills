@@ -38,8 +38,7 @@ void main() {
     float nLenSq = dot(rawN, rawN);
     fragNormal = (nLenSq > 1e-8) ? (rawN * inversesqrt(nLenSq)) : vec3(0.0, 1.0, 0.0);
 
-    // [BUG FIX]: Bảo vệ chống lỗi normalize(vec3(0.0)) -> NaN nếu mesh quên gọi GenMeshTangents()
-    // hoặc khi vertexTangent song song với vertexNormal
+    // Bảo vệ chống lỗi normalize(vec3(0.0)) -> NaN nếu mesh quên gọi GenMeshTangents()
     vec3 rawT = model3 * vertexTangent.xyz;
     rawT -= fragNormal * dot(fragNormal, rawT);
     float tLenSq = dot(rawT, rawT);
@@ -51,7 +50,7 @@ void main() {
         fragTangent = fallbackT * inversesqrt(max(dot(fallbackT, fallbackT), 1e-8));
     }
 
-    float handedness = (abs(vertexTangent.w) > 0.5) ? sign(vertexTangent.w) : 1.0;
+    float handedness = (vertexTangent.w < -0.5) ? -1.0 : 1.0;
     fragBitangent = cross(fragNormal, fragTangent) * handedness;
 
     gl_Position = mvp * vec4(vertexPosition, 1.0);

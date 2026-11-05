@@ -38,15 +38,11 @@ uniform mat4 u_cloudWorldFromShader;
 out vec4 finalColor;
 
 void main() {
-    // [VULKAN / SPIR-V FIX]: Tính trước đạo hàm không gian màn hình trong luồng đồng nhất
-    // để dùng cho textureGrad trong nhánh chi tiết cận cảnh (camDistSq < 324.0)
+    // [VULKAN / SPIR-V FIX]: Tính trước đạo hàm UV trong luồng đồng nhất
     vec2 uvDx = dFdx(fragTexCoord);
     vec2 uvDy = dFdy(fragTexCoord);
-    vec3 dPdx = dFdx(fragPosition);
-    vec3 dPdy = dFdy(fragPosition);
 
     // [TỐI ƯU ALU]: Tính khoảng cách và hướng nhìn camera chỉ với 1 lệnh inversesqrt duy nhất
-    // (loại bỏ 2 lần gọi normalize/length dư thừa ở cuối shader)
     vec3 toCam = u_viewPos - fragPosition;
     float camDistSq = max(dot(toCam, toCam), 1e-8);
     float invCamDist = inversesqrt(camDistSq);
@@ -64,18 +60,17 @@ void main() {
         vec2 detailDx = uvDx * 2.8;
         vec2 detailDy = uvDy * 2.8;
         vec3 detailNorm = textureGrad(texture2, detailUV, detailDx, detailDy).rgb * 2.0 - 1.0;
-        vec3 mixedNorm = mix(normalSample, detailNorm, detailWeight);
-        normalSample = mixedNorm * inversesqrt(max(dot(mixedNorm, mixedNorm), 1e-8));
+        normalSample = mix(normalSample, detailNorm, detailWeight);
         vec3 detailAlb = textureGrad(texture0, detailUV, detailDx, detailDy).rgb;
         albedo.rgb *= mix(vec3(1.0), detailAlb * 1.32, detailWeight * 0.38);
     }
 
+    mat3 worldRot = mat3(u_cloudWorldFromShader);
     vec3 worldPosition = vec3(u_cloudWorldFromShader * vec4(fragPosition, 1.0));
     vec3 smoothN = fragNormal * inversesqrt(max(dot(fragNormal, fragNormal), 1e-8));
     float isRiverStone = (colDiffuse.a < 0.985) ? 1.0 : smoothstep(0.01, 0.05, colDiffuse.b - colDiffuse.r);
 
-    // [BUG FIX]: Bảo vệ chống suy biến vector tiếp tuyến T (NaN) khi smoothN trùng phương với fragTangent
-    // hoặc khi mesh procedural quên gọi GenMeshTangents()
+    // Bảo vệ chống suy biến vector tiếp tuyến T (NaN) và bảo toàn chiều Bitangent (handedness)
     vec3 rawT = fragTangent - smoothN * dot(smoothN, fragTangent);
     float tLenSq = dot(rawT, rawT);
     vec3 T;
@@ -86,22 +81,21 @@ void main() {
         vec3 fallbackT = cross(refAxis, smoothN);
         T = fallbackT * inversesqrt(max(dot(fallbackT, fallbackT), 1e-8));
     }
-    vec3 B = cross(smoothN, T);
-    mat3 TBN = mat3(T, B, smoothN);
+    vec3 rawB = cross(smoothN, T);
+    vec3 B = (dot(rawB, fragBitangent) < 0.0) ? -rawB : rawB;
+
     normalSample.xy *= 1.35;
     normalSample *= inversesqrt(max(dot(normalSample, normalSample), 1e-8));
-    vec3 rawN = TBN * normalSample;
-    vec3 normal = rawN * inversesqrt(max(dot(rawN, rawN), 1e-8));
-    vec3 rawWorldN = mat3(u_cloudWorldFromShader) * normal;
-    vec3 worldNormal = rawWorldN * inversesqrt(max(dot(rawWorldN, rawWorldN), 1e-8));
+    // T, B, smoothN đôi một trực giao đơn vị và normalSample đã chuẩn hóa -> TBN * normalSample là vector đơn vị!
+    vec3 normal = T * normalSample.x + B * normalSample.y + smoothN * normalSample.z;
+    vec3 worldNormal = worldRot * normal;
 
     float roughness = clamp(textureGrad(texture3, fragTexCoord, uvDx, uvDy).r, 0.08, 1.0);
 
     // Safe fallback if a map forgot to push PropLit_UpdateLighting()
     float lightLenSq = dot(u_lightDir, u_lightDir);
     vec3 lightDir = (lightLenSq > 0.001) ? (u_lightDir * inversesqrt(lightLenSq)) : vec3(0.2923, 0.8770, -0.3812);
-    vec3 rawWorldL = mat3(u_cloudWorldFromShader) * lightDir;
-    vec3 worldLightDir = rawWorldL * inversesqrt(max(dot(rawWorldL, rawWorldL), 1e-8));
+    vec3 worldLightDir = worldRot * lightDir;
     vec3 actualLight = (dot(u_lightColor, u_lightColor) > 0.001) ? u_lightColor : vec3(1.0, 0.92, 0.80);
     actualLight *= 1.0 / (1.0 + max(worldLightDir.y - 0.36, 0.0) * 0.82);
     vec3 actualAmbient = (dot(u_ambientColor, u_ambientColor) > 0.001) ? u_ambientColor : vec3(0.36, 0.42, 0.50);
@@ -111,7 +105,6 @@ void main() {
     vec3 rockAlbedo = albedo.rgb * mix(vec3(0.92, 0.92, 0.90), vec3(1.05, 1.02, 0.98), strataNoise);
 
     // Top-surface moss & lichen colonization across meadow plateau
-    // Fades smoothly at extreme alpine heights (y > 11m)
     float altitudeMoss = (1.0 - smoothstep(9.5, 13.5, worldPosition.y)) * 0.40 + 0.60;
     float topMossMask = smoothstep(0.55, 0.82, worldNormal.y) * smoothstep(-0.15, 0.40, fragLocalY)
                       * smoothstep(0.32, 0.75, albedo.g) * altitudeMoss;
@@ -134,15 +127,12 @@ void main() {
     rockAlbedo *= mix(1.0, 0.62, skirtContact * 0.55);
 
     // River stone & shoreline wetness darkening at water level
-    // Lake water level dampness (near Y = 0.0m)
     float lakeWaterDamp = (1.0 - smoothstep(-0.05, 0.35, worldPosition.y))
                         * (1.0 - smoothstep(-0.85, -0.30, worldPosition.y));
     rockAlbedo *= mix(1.0, 0.78, lakeWaterDamp * 0.45);
 
     albedo.rgb = rockAlbedo;
     roughness = mix(roughness, 0.86, max(topMossMask, skirtMask) * 0.78);
-    // River stones have authentic water-worn smoothness (roughness ~0.28)
-    // Lake shoreline rocks get water sheen when submerged
     roughness = mix(roughness, 0.28, isRiverStone);
     roughness = mix(roughness, 0.20, lakeWaterDamp * 0.75);
 
@@ -150,23 +140,25 @@ void main() {
     vec3 rawModelL = lightDir + vec3(0.32, -0.18, -0.26) * max(worldLightDir.y - 0.50, 0.0);
     vec3 modelLightDir = rawModelL * inversesqrt(max(dot(rawModelL, rawModelL), 1e-8));
     float diff = calcDiffuse(normal, modelLightDir, 0.0);
-    float shininess    = mix(32.0, 8.0, roughness);
-    float specStrength = mix(0.03, 0.12, 1.0 - roughness);
-    specStrength = mix(specStrength, 0.16, max(lakeWaterDamp * 0.60, isRiverStone * 0.65));
-    float spec = calcSpecular(normal, modelLightDir, viewDir, shininess) * specStrength;
 
     float shadow = MapShadowVisibility(fragPosition, normal, lightDir);
     if (isRiverStone > 0.5) {
-        // River stones in open stream receive crisp sun glint & ambient bounce without self-shadow acne
         shadow = max(shadow, 0.72);
     }
     if (shadow > 0.001) {
         shadow *= Environment_CloudVisibility(u_cloudNoise, worldPosition);
     }
 
+    float spec = 0.0;
+    if (diff > 0.0 && shadow > 0.001) {
+        float shininess    = mix(32.0, 8.0, roughness);
+        float specStrength = mix(0.03, 0.12, 1.0 - roughness);
+        specStrength = mix(specStrength, 0.16, max(lakeWaterDamp * 0.60, isRiverStone * 0.65));
+        spec = calcSpecular(normal, modelLightDir, viewDir, shininess) * specStrength;
+    }
+
     vec3 ambient = Environment_HemisphereIrradiance(normal, actualAmbient);
     if (isRiverStone > 0.5) {
-        // Stream bounce & upward water irradiance fills pebble shadows with radiant clarity
         vec3 streamBounce = actualAmbient * 1.55 + actualLight * 0.18;
         ambient = mix(ambient, streamBounce, 0.45);
     }
@@ -179,7 +171,7 @@ void main() {
 
     lit += VFXLights_Accumulate(fragPosition, normal, albedo.rgb);
 
-    // Atmospheric aerial haze for distant mountain crags (tái sử dụng camDist đã tính ở đầu hàm)
+    // Atmospheric aerial haze for distant mountain crags
     float haze = smoothstep(38.0, 115.0, camDist) * 0.30;
     vec3 hazeColor = actualAmbient * 1.35;
     lit = mix(lit, hazeColor, haze);

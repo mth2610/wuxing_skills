@@ -22,14 +22,15 @@ vec2 NatureDominantWindImpact(vec3 worldPosition)
         float frontProgress = clamp(u_windImpactAge * 1.3333333, 0.0, 1.0); // 1.0 / 0.75
         float frontRadius = frontProgress * u_windImpactRadius;
         float bandWidth = max(0.45, u_windImpactRadius * 0.22);
+        float invBandWidth = 1.0 / bandWidth;
 
         // Asymmetric wave bounds: tighter leading shockfront, wider trailing wake
         float outerLimit = frontRadius + bandWidth;
         if (distSq >= outerLimit * outerLimit)
             return vec2(0.0);
 
-        float innerLimit = max(0.0, frontRadius - bandWidth * 1.35);
-        if (distSq <= innerLimit * innerLimit)
+        float innerLimit = frontRadius - bandWidth * 1.35;
+        if (innerLimit > 0.0 && distSq <= innerLimit * innerLimit)
             return vec2(0.0);
 
         float invDist = inversesqrt(max(distSq, 1e-8));
@@ -40,13 +41,12 @@ vec2 NatureDominantWindImpact(vec3 worldPosition)
 
         // Asymmetric Friedlander-style wave profile (sharp front, smooth trailing wake)
         float signedDist = distanceToImpact - frontRadius;
-        float normDist = signedDist / (signedDist >= 0.0 ? bandWidth : (bandWidth * 1.35));
+        float normDist = signedDist * invBandWidth * (signedDist >= 0.0 ? 1.0 : 0.74074074);
         float absNorm = abs(normDist);
         float wavefront = 1.0 - smoothstep(0.25, 1.0, absNorm);
 
-        // [VISUAL FIX]: Chuyển mượt pha hút ngược (trailing suction recoil) bằng smoothstep
-        // thay cho toán tử bậc thang (? -0.15 : 1.0) gây giật cục ngọn cỏ trong 1 frame
-        float trailingRecoil = mix(-0.15, 1.0, smoothstep(-bandWidth * 0.75, -bandWidth * 0.35, signedDist));
+        // Chuyển mượt pha hút ngược (trailing suction recoil) bằng smoothstep
+        float trailingRecoil = mix(-0.15, 1.0, smoothstep(-0.75, -0.35, signedDist * invBandWidth));
         float tailFade = 1.0 - smoothstep(0.70, 1.0, u_windImpactAge);
 
         return pushDirection * (u_windImpactStrength * wavefront * tailFade * trailingRecoil);
@@ -61,8 +61,8 @@ vec2 NatureDominantWindImpact(vec3 worldPosition)
         float t = 1.0 - distanceToImpact / u_windImpactRadius;
         float attenuation = t * t * (3.0 - 2.0 * t);
 
-        // [SPIR-V FIX]: Chuẩn hóa an toàn cho pushDirection tránh lỗi normalize(vec2(0.0)) -> NaN
-        vec2 radialDir = (distSq > 1e-8) ? (delta * invDist) : vec2(0.0);
+        // Chuẩn hóa an toàn cho pushDirection tránh lỗi normalize(vec2(0.0)) -> NaN
+        vec2 radialDir = (distSq > 1e-8) ? (delta * invDist) : vec2(1.0, 0.0);
         vec2 rawPush = u_windImpactDirection + radialDir * (0.22 * t);
         float pushLenSq = dot(rawPush, rawPush);
         vec2 pushDirection = (pushLenSq > 1e-8) ? (rawPush * inversesqrt(pushLenSq)) : radialDir;

@@ -23,13 +23,16 @@ void main()
     fragTexCoord = vertexTexCoord;
     fragPosition = vec3(matModel * vec4(vertexPosition, 1.0));
 
-    // Directly extract basis columns from matModel with safe normalization
+    // Directly extract basis columns from matModel with single dot() evaluation per axis
     vec3 col0 = matModel[0].xyz;
     vec3 col1 = matModel[1].xyz;
     vec3 col2 = matModel[2].xyz;
-    fragTangent   = (dot(col0, col0) > 1e-8) ? (col0 * inversesqrt(dot(col0, col0))) : vec3(1.0, 0.0, 0.0);
-    fragNormal    = (dot(col1, col1) > 1e-8) ? (col1 * inversesqrt(dot(col1, col1))) : vec3(0.0, 1.0, 0.0);
-    fragBitangent = (dot(col2, col2) > 1e-8) ? (col2 * inversesqrt(dot(col2, col2))) : vec3(0.0, 0.0, 1.0);
+    float lenSq0 = dot(col0, col0);
+    float lenSq1 = dot(col1, col1);
+    float lenSq2 = dot(col2, col2);
+    fragTangent   = (lenSq0 > 1e-8) ? (col0 * inversesqrt(lenSq0)) : vec3(1.0, 0.0, 0.0);
+    fragNormal    = (lenSq1 > 1e-8) ? (col1 * inversesqrt(lenSq1)) : vec3(0.0, 1.0, 0.0);
+    fragBitangent = (lenSq2 > 1e-8) ? (col2 * inversesqrt(lenSq2)) : vec3(0.0, 0.0, 1.0);
 
-    gl_Position  = mvp * vec4(vertexPosition, 1.0);
+    gl_Position = mvp * vec4(vertexPosition, 1.0);
 }

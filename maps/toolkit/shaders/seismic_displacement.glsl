@@ -32,84 +32,77 @@ float EvaluateSeismicDisplacement(vec2 worldXZ, out vec2 outSlope)
     float rippleCount = u_seismicProfile.z;
 
     float sRear = frontDist - pLen;
-    if (s > frontDist || s < sRear) return 0.0;
+    if (s >= frontDist || s <= sRear) return 0.0;
 
     float halfW = max(waveWidth * 0.5, 0.2);
     if (abs(w) >= halfW) return 0.0;
 
-    float p = (s - sRear) / pLen;
-    if (p <= 0.0 || p >= 1.0) return 0.0;
+    float invPLen = 1.0 / pLen;
+    float invHalfW = 1.0 / halfW;
+    float invWl = 1.0 / wl;
 
-    // Smooth bell envelope (strictly 0 at rear and 0 at front with zero derivative)
-    float sinP = sin(3.14159265 * p);
-    float envelope = sinP * sqrt(max(sinP, 0.0));
+    float p = (s - sRear) * invPLen;
 
-    // Lateral profile: smooth cosine taper
-    float q = w / halfW;
-    float latProfile = 0.5 * (1.0 + cos(3.14159265 * q));
+    // Smooth bell envelope: sin(pi * p)^1.5 and its analytical derivative
+    float piP = 3.14159265 * p;
+    float sinP = max(sin(piP), 0.0);
+    float cosP = cos(piP);
+    float sqrtSinP = sqrt(sinP);
+    float envelope = sinP * sqrtSinP;
+    float dEnvDs = (1.5 * 3.14159265 * invPLen) * sqrtSinP * cosP;
+
+    // Lateral profile: 0.5 * (1 + cos(pi * q)) and its analytical derivative
+    float piQ = 3.14159265 * (w * invHalfW);
+    float latProfile = 0.5 * (1.0 + cos(piQ));
+    float dLatDw = (-0.5 * 3.14159265 * invHalfW) * sin(piQ);
 
     // Longitudinal boundary fades
-    float sFade = clamp(s / 1.0, 0.0, 1.0);
-    float eFade = clamp((totalDist - s) / 0.6, 0.0, 1.0);
+    float sFade = clamp(s, 0.0, 1.0);
+    float eFade = clamp((totalDist - s) * 1.6666667, 0.0, 1.0);
+    float fadeProd = sFade * eFade;
 
-    // Wave shape within packet
-    float u = (frontDist - s) / wl;
-    float d0 = (u - 0.38) / 0.28;
+    // Wave shape within packet & exact analytical derivative d(waveShape)/ds
+    // For G(u) = A * exp(-0.5 * d^2) with d = (u - u0) * invSigma and u = (frontDist - s) / wl:
+    // dG/ds = (-1/wl) * dG/du = (1/wl) * G(u) * d * invSigma
+    float u = (frontDist - s) * invWl;
+
+    float d0 = (u - 0.38) * 3.5714286; // 1.0 / 0.28
     float crest0 = exp(-0.5 * d0 * d0);
+    float dShapeDu = -crest0 * d0 * 3.5714286;
 
     float crest1 = 0.0;
     if (rippleCount >= 1.5) {
-        float d1 = (u - 1.45) / 0.32;
+        float d1 = (u - 1.45) * 3.125; // 1.0 / 0.32
         crest1 = 0.58 * exp(-0.5 * d1 * d1);
+        dShapeDu -= crest1 * d1 * 3.125;
     }
     float crest2 = 0.0;
     if (rippleCount >= 2.5) {
-        float d2 = (u - 2.50) / 0.36;
+        float d2 = (u - 2.50) * 2.7777778; // 1.0 / 0.36
         crest2 = 0.34 * exp(-0.5 * d2 * d2);
+        dShapeDu -= crest2 * d2 * 2.7777778;
     }
-    float dt0 = (u - 0.92) / 0.26;
+    float dt0 = (u - 0.92) * 3.8461538; // 1.0 / 0.26
     float trough0 = -0.15 * exp(-0.5 * dt0 * dt0);
+    dShapeDu -= trough0 * dt0 * 3.8461538;
 
     float waveShape = crest0 + crest1 + crest2 + trough0;
+    float dShapeDs = -dShapeDu * invWl;
 
-    float dY = amp * waveShape * envelope * latProfile * sFade * eFade;
-    dY = max(dY, -0.12 * amp);
-
-    // Finite difference slope along forward (s) and lateral (w)
-    float ds = 0.18;
-    float sNext = s + ds;
-    if (sNext <= frontDist && sNext >= sRear) {
-        float pN = (sNext - sRear) / pLen;
-        float sinPN = sin(3.14159265 * pN);
-        float envN = sinPN * sqrt(max(sinPN, 0.0));
-        float uN = (frontDist - sNext) / wl;
-        float c0N = exp(-0.5 * ((uN - 0.38) / 0.28) * ((uN - 0.38) / 0.28));
-        float c1N = (rippleCount >= 1.5) ? (0.58 * exp(-0.5 * ((uN - 1.45) / 0.32) * ((uN - 1.45) / 0.32))) : 0.0;
-        float c2N = (rippleCount >= 2.5) ? (0.34 * exp(-0.5 * ((uN - 2.50) / 0.36) * ((uN - 2.50) / 0.36))) : 0.0;
-        float t0N = -0.15 * exp(-0.5 * ((uN - 0.92) / 0.26) * ((uN - 0.92) / 0.26));
-        float shapeN = c0N + c1N + c2N + t0N;
-        float sFadeN = clamp(sNext / 1.0, 0.0, 1.0);
-        float eFadeN = clamp((totalDist - sNext) / 0.6, 0.0, 1.0);
-        float dYN = max(amp * shapeN * envN * latProfile * sFadeN * eFadeN, -0.12 * amp);
-        outSlope.x = (dYN - dY) / ds;
+    float rawDY = amp * waveShape * envelope * latProfile * fadeProd;
+    float minFloor = -0.12 * amp;
+    if (rawDY <= minFloor) {
+        return minFloor;
     }
 
-    float dw = 0.18;
-    float wNext = abs(w) + dw;
-    if (wNext < halfW) {
-        float qN = wNext / halfW;
-        float latN = 0.5 * (1.0 + cos(3.14159265 * qN));
-        float dYW = max(amp * waveShape * envelope * latN * sFade * eFade, -0.12 * amp);
-        float signW = (w >= 0.0) ? 1.0 : -1.0;
-        outSlope.y = signW * (dYW - dY) / dw;
-    }
-
-    return dY;
+    outSlope.x = amp * latProfile * fadeProd * (dShapeDs * envelope + waveShape * dEnvDs);
+    outSlope.y = amp * waveShape * envelope * fadeProd * dLatDw;
+    return rawDY;
 }
 
 vec3 PerturbNormalWithSeismicWave(vec3 baseNormal, vec2 slope)
 {
-    if (abs(slope.x) < 0.001 && abs(slope.y) < 0.001) return baseNormal;
+    if (dot(slope, slope) < 1e-6) return baseNormal;
     vec2 fwd = u_seismicOriginDir.zw;
     vec2 right = vec2(-fwd.y, fwd.x);
 

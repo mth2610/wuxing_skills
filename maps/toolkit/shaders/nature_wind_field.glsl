@@ -51,27 +51,23 @@ vec2 NatureGlobalWindXZ(vec3 worldPosition, float time)
     if (u_windGustAmplitude <= 0.0001)
         return baseVelocity.xz;
 
-    // Fast height & bounding-box check BEFORE querying textureSize(u_windCacheMap, 0)
+    // Fast height & bounding-box check using fixed 32x32 macro grid half-texel margin (0.5 - 0.5/32 = 0.484375)
+    // to avoid per-vertex textureSize() descriptor queries on GPU.
     if (u_windCacheEnabled != 0 && u_windCacheRegion.z > 0.0001 && abs(worldPosition.y - u_windCacheRegion.w) < 2.0) {
-        // Apply Taylor's frozen-turbulence spatial shift when response lag is large
         float extraLag = max(0.0, u_natureWindResponse.x - 0.08);
         vec2 sampleXZ = worldPosition.xz - baseVelocity.xz * (extraLag * 0.45);
         vec2 uvOffset = (sampleXZ - u_windCacheRegion.xy) / u_windCacheRegion.z;
         float maxAxis = max(abs(uvOffset.x), abs(uvOffset.y));
 
-        if (maxAxis < 0.5) {
-            float texWidth = max(float(textureSize(u_windCacheMap, 0).x), 1.0);
-            float halfTexel = 0.5 / texWidth;
-            if (maxAxis <= (0.5 - halfTexel)) {
-                vec4 cached = textureLod(u_windCacheMap, uvOffset + 0.5, 0.0);
-                float fraction = clamp((time - u_windCacheTimeRange.x) / max(u_windCacheTimeRange.y, 0.0001), 0.0, 1.0);
-                vec2 velocity = mix(cached.rg, cached.ba, fraction);
-                return (velocity * 2.0 - 1.0) * u_windCacheScale;
-            }
+        if (maxAxis <= 0.484375) {
+            vec4 cached = textureLod(u_windCacheMap, uvOffset + 0.5, 0.0);
+            float fraction = clamp((time - u_windCacheTimeRange.x) / max(u_windCacheTimeRange.y, 0.0001), 0.0, 1.0);
+            vec2 velocity = mix(cached.rg, cached.ba, fraction);
+            return (velocity * 2.0 - 1.0) * u_windCacheScale;
         }
     }
 
-    float baseSpeed = sqrt(baseSpeedSq);
+    float baseSpeed = baseSpeedSq * inversesqrt(baseSpeedSq);
     float s = u_windNoiseScale;
     float speed = u_windNoiseSpeed;
     // Giữ ts trong miền float32 chính xác cao khi game chạy nhiều giờ liên tục
@@ -121,23 +117,20 @@ vec2 NatureVegetationWindBend(vec3 worldPosition, vec2 phaseUV,
     vec2 transverse = vec2(-windDirection.y, windDirection.x);
 
     // Dual-harmonic flutter using both phaseUV channels without extra trig calls
-    // Dùng mod(..., 6283.185307) (1000 * 2pi) để bảo toàn độ chính xác sin/cos khi u_time lớn
     float phase = mod(time * u_natureWindResponse.z, 6283.185307)
                 + dot(worldPosition.xz, vec2(0.55, -0.45))
                 + dot(phaseUV, vec2(6.2831853, 3.1415926));
     float s1 = sin(phase);
     float c1 = cos(phase);
-    float s2 = 2.0 * s1 * c1; // sin(2 * phase)
 
-    // Asymmetric spring recoil along wind direction + rich transverse flutter
-    float axialPulse = (s1 * 0.12 + s2 * 0.05) * u_natureWindResponse.y;
-    float lateralFlutter = (s1 * 0.78 + s2 * 0.22) * u_natureWindResponse.y;
+    // Factor s1 * u_natureWindResponse.y using sin(2*phase) = 2*s1*c1
+    float flutterScale = s1 * u_natureWindResponse.y;
+    float axialScale = bendLength * (1.0 + flutterScale * (0.12 + 0.10 * c1));
+    float lateralScale = bendLength * (flutterScale * (0.78 + 0.44 * c1));
 
-    vec2 bend = windDirection * (bendLength * (1.0 + axialPulse))
-              + transverse * (bendLength * lateralFlutter);
+    vec2 bend = windDirection * axialScale + transverse * lateralScale;
 
-    // [TỐI ƯU ALU]: Chỉ tính inversesqrt(dispSq) khi độ uốn thực sự vượt ngưỡng kneeStart (70% maxBend),
-    // giúp bỏ qua hoàn toàn căn bậc hai cho đa số đỉnh cỏ trong điều kiện gió bình thường.
+    // [TỐI ƯU ALU]: Chỉ tính inversesqrt(dispSq) khi độ uốn thực sự vượt ngưỡng kneeStart (70% maxBend)
     float dispSq = dot(bend, bend);
     float kneeStart = maxBend * 0.70;
     if (dispSq > kneeStart * kneeStart) {
