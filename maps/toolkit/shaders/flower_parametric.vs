@@ -24,36 +24,36 @@ uniform int u_lodStride;
 out vec3 fragPosition;
 out vec3 fragNormal;
 out vec2 v_uv;
-out float v_part;
-out float v_species;
-out float v_seed;
+flat out float v_part;
+flat out float v_species;
+flat out float v_seed;
 out float v_ao;
-out vec3 v_customTint;
+flat out vec3 v_customTint;
 out vec4 v_lightSpace;
 out vec4 v_staticLightSpace;
 
-mat3 FlowerBasisFromAxis(vec3 upAxis, float yaw)
+mat3 FlowerBasisFromAxis(vec3 upAxis, float cosYaw, float sinYaw)
 {
-    vec3 up = normalize(upAxis);
-    vec3 ref = vec3(cos(yaw), 0.0, sin(yaw));
-    vec3 right = normalize(ref - up * dot(ref, up));
+    float upLenSq = dot(upAxis, upAxis);
+    vec3 up = (upLenSq > 1e-8) ? (upAxis * inversesqrt(upLenSq)) : vec3(0.0, 1.0, 0.0);
+    vec3 ref = vec3(cosYaw, 0.0, sinYaw);
+    vec3 rawRight = ref - up * dot(ref, up);
+    float rLenSq = dot(rawRight, rawRight);
+    vec3 right = (rLenSq > 1e-6) ? (rawRight * inversesqrt(rLenSq)) : vec3(-sinYaw, 0.0, cosYaw);
     vec3 fwd = cross(up, right);
     return mat3(right, up, fwd);
 }
 
 void EvaluateFlowerGeometry(
-    vec3 rootPos, float stemH, float petalR, float yaw, float seed, int sp,
-    int part, int idx, vec2 uv, vec2 windBend, float flutter,
+    vec3 rootPos, float stemH, float petalR, float yaw, float cosYaw, float sinYaw,
+    float seed, int sp, int part, int idx, vec2 uv, vec2 windBend, float bendMag, float flutter,
     out vec3 outLocalPos, out vec3 outNormal, out float outAO)
 {
-    float bendMag = length(windBend);
-    vec2 bendDir = (bendMag > 1e-4) ? (windBend / bendMag) : vec2(cos(yaw), sin(yaw));
-
     float archCurve = (sp == 5) ? 0.34 : 0.14;
     vec3 tipOffset = vec3(
-        windBend.x + cos(yaw) * stemH * archCurve,
+        windBend.x + cosYaw * stemH * archCurve,
         stemH * max(0.76, 1.0 - bendMag * 0.28),
-        windBend.y + sin(yaw) * stemH * archCurve
+        windBend.y + sinYaw * stemH * archCurve
     );
     vec3 midOffset = vec3(
         tipOffset.x * 0.38,
@@ -64,12 +64,14 @@ void EvaluateFlowerGeometry(
     if (part == 0) {
         float h = uv.y;
         float om = 1.0 - h;
-        vec3 spine = om * om * vec3(0.0) + 2.0 * om * h * midOffset + h * h * tipOffset;
-        vec3 tang = normalize(2.0 * om * midOffset + 2.0 * h * (tipOffset - midOffset));
-        vec3 side = normalize(vec3(- sin(yaw), 0.0, cos(yaw)));
+        vec3 spine = (2.0 * om * h) * midOffset + (h * h) * tipOffset;
+        vec3 rawTang = 2.0 * om * midOffset + 2.0 * h * (tipOffset - midOffset);
+        vec3 tang = rawTang * inversesqrt(max(dot(rawTang, rawTang), 1e-8));
+        vec3 side = vec3(-sinYaw, 0.0, cosYaw);
         float w = mix(max(0.009, petalR * 0.11), max(0.0045, petalR * 0.055), h);
         outLocalPos = rootPos + spine + side * ((uv.x - 0.5) * 2.0 * w);
-        outNormal = normalize(cross(side, tang) + side * (uv.x - 0.5) * 0.65);
+        vec3 rawN = cross(side, tang) + side * ((uv.x - 0.5) * 0.65);
+        outNormal = rawN * inversesqrt(max(dot(rawN, rawN), 1e-8));
         outAO = mix(0.28, 0.92, h);
         return;
     }
@@ -85,25 +87,31 @@ void EvaluateFlowerGeometry(
         vec3 lPos = lDir * (t * leafLen * 0.72) + vec3(0.0, max(0.01, archY), 0.0);
         lPos.xz += windBend * (t * 0.45);
         outLocalPos = rootPos + lPos + lSide * ((uv.x - 0.5) * 2.0 * leafW);
-        outNormal = normalize(vec3(-lDir.x * 0.25, 0.88, -lDir.z * 0.25) + lSide * (uv.x - 0.5) * 0.55);
+        vec3 rawN = vec3(-lDir.x * 0.25, 0.88, -lDir.z * 0.25) + lSide * ((uv.x - 0.5) * 0.55);
+        outNormal = rawN * inversesqrt(max(dot(rawN, rawN), 1e-8));
         outAO = mix(0.32, 0.95, t);
         return;
     }
 
-    vec3 headAxis = normalize(tipOffset - midOffset);
-    if (sp == 5) {
-        headAxis = normalize(vec3(cos(yaw) * 0.48, -0.86, sin(yaw) * 0.48));
-    }
-    mat3 headBasis = FlowerBasisFromAxis(headAxis, yaw);
+    vec3 headAxis = (sp == 5)
+        ? vec3(cosYaw * 0.48, -0.86, sinYaw * 0.48)
+        : (tipOffset - midOffset);
+    mat3 headBasis = FlowerBasisFromAxis(headAxis, cosYaw, sinYaw);
     vec3 headPos = rootPos + tipOffset;
 
     bool isInner = (part == 3);
-    float pCount = (sp == 2 && !isInner) ? 6.0 : ((sp == 1 && !isInner) ? 6.0 : 6.0);
-    float baseAngle = (float(idx) / pCount) * 6.2831853 + (isInner ? 0.5235988 : 0.0) + seed * 6.2831853;
-    vec3 radial = headBasis[0] * cos(baseAngle) + headBasis[2] * sin(baseAngle);
-    vec3 tangent = -headBasis[0] * sin(baseAngle) + headBasis[2] * cos(baseAngle);
+    float baseAngle = float(idx) * 1.04719755 + (isInner ? 0.5235988 : 0.0) + seed * 6.2831853;
+    float cA = cos(baseAngle);
+    float sA = sin(baseAngle);
+    vec3 radial = headBasis[0] * cA + headBasis[2] * sA;
+    vec3 tangent = -headBasis[0] * sA + headBasis[2] * cA;
 
-    float t = uv.y;
+    float t = clamp(uv.y, 0.0, 1.0);
+    float t2 = t * t;
+    float sqrtT = sqrt(t);
+    float t075 = sqrt(t * sqrtT); // t^0.75 exact without pow()
+    float sinPiT = sin(t * 3.14159265);
+    float sinShaped = sin(t075 * 3.14159265);
     float s = (uv.x - 0.5) * 2.0;
 
     float len = petalR;
@@ -114,38 +122,38 @@ void EvaluateFlowerGeometry(
     if (sp == 2) {
         if (!isInner) {
             len = petalR * 1.18;
-            wid = petalR * 0.22 * sin(t * 3.14159265);
-            cupY = sin(t * 3.14159265) * (petalR * 0.42) - pow(t, 2.2) * (petalR * 0.52);
+            wid = petalR * 0.22 * sinPiT;
+            cupY = sinPiT * (petalR * 0.42) - (t2 * sqrt(sqrtT)) * (petalR * 0.52);
             radialDist = t * len + sin(t * 6.2831853) * (petalR * 0.06);
         } else {
             len = petalR * 1.42;
             wid = petalR * 0.065 * (1.0 - t * 0.72);
-            cupY = -t * (petalR * 0.16) + pow(t, 2.4) * (petalR * 0.68);
+            cupY = -t * (petalR * 0.16) + (t2 * sqrtT) * (petalR * 0.68);
             radialDist = t * len;
         }
     } else if (sp == 3) {
         len = petalR * (isInner ? 0.58 : 1.14);
-        wid = petalR * (isInner ? 0.28 : 0.42) * sin(pow(t, 0.75) * 3.14159265);
-        cupY = (isInner ? 0.28 : 0.16) * t * petalR + sin(t * 3.14159265) * (petalR * 0.18) - pow(t, 2.6) * (petalR * 0.24);
+        wid = petalR * (isInner ? 0.28 : 0.42) * sinShaped;
+        cupY = (isInner ? 0.28 : 0.16) * t * petalR + sinPiT * (petalR * 0.18) - (t2 * sqrtT) * (petalR * 0.24);
         radialDist = t * len;
     } else if (sp == 0 || sp == 7) {
         len = petalR * (isInner ? 0.68 : 1.02);
-        wid = petalR * (isInner ? 0.38 : 0.50) * sin(pow(t, 0.78) * 3.14159265);
-        cupY = pow(t, 1.35) * petalR * (isInner ? 0.68 : 0.44);
+        wid = petalR * (isInner ? 0.38 : 0.50) * sinShaped;
+        cupY = (t * sqrt(sqrtT)) * petalR * (isInner ? 0.68 : 0.44);
         radialDist = sin(t * 1.38) * len * (isInner ? 0.72 : 0.94);
     } else if (sp == 1) {
         len = petalR * (isInner ? 0.52 : 1.12);
-        wid = petalR * (isInner ? 0.22 : 0.28) * sin(t * 3.14159265);
-        cupY = pow(t, 1.6) * petalR * (isInner ? 0.36 : 0.46) + t * petalR * 0.08;
+        wid = petalR * (isInner ? 0.22 : 0.28) * sinPiT;
+        cupY = (t * sqrtT) * petalR * (isInner ? 0.36 : 0.46) + t * petalR * 0.08;
         radialDist = t * len;
     } else if (sp == 5 || sp == 6) {
         len = petalR * (isInner ? 0.55 : 0.96);
-        wid = petalR * (isInner ? 0.14 : 0.44) * sin(pow(t, 0.65) * 3.14159265);
+        wid = petalR * (isInner ? 0.14 : 0.44) * sinShaped;
         cupY = t * len * 0.92;
-        radialDist = sin(t * 1.65) * petalR * (isInner ? 0.18 : 0.54) + pow(t, 3.0) * petalR * 0.22;
+        radialDist = sin(t * 1.65) * petalR * (isInner ? 0.18 : 0.54) + (t2 * t) * petalR * 0.22;
     } else {
         len = petalR * (isInner ? 0.56 : 1.05);
-        wid = petalR * (isInner ? 0.26 : 0.48) * sin(pow(t, 0.72) * 3.14159265);
+        wid = petalR * (isInner ? 0.26 : 0.48) * sinShaped;
         cupY = sin(t * 2.1) * petalR * (isInner ? 0.34 : 0.26);
         radialDist = t * len;
     }
@@ -156,11 +164,10 @@ void EvaluateFlowerGeometry(
     vec3 localPetal = radial * radialDist + headBasis[1] * cupY + tangent * (s * wid);
     outLocalPos = headPos + localPetal;
 
-    vec3 pNorm = normalize(headBasis[1] * 0.82 - radial * (0.36 * t) + tangent * (s * 0.42));
-    if (sp == 5 || sp == 6) {
-        pNorm = normalize(radial * 0.85 - headBasis[1] * 0.32 + tangent * (s * 0.35));
-    }
-    outNormal = pNorm;
+    vec3 rawPNorm = (sp == 5 || sp == 6)
+        ? (radial * 0.85 - headBasis[1] * 0.32 + tangent * (s * 0.35))
+        : (headBasis[1] * 0.82 - radial * (0.36 * t) + tangent * (s * 0.42));
+    outNormal = rawPNorm * inversesqrt(max(dot(rawPNorm, rawPNorm), 1e-8));
     outAO = mix(0.46, 1.0, clamp(t * 1.15, 0.0, 1.0));
 }
 
@@ -174,19 +181,21 @@ void main()
     vec4 tex1 = texelFetch(u_flowerInstances, ivec2(col + 1, row), 0);
 
     vec3 rootLocal = tex0.xyz;
-    int rawSpecies = int(floor(tex0.w / 100.0 + 0.01));
+    int rawSpecies = int(floor(tex0.w * 0.01 + 0.01));
     float seed = clamp(tex0.w - float(rawSpecies) * 100.0, 0.0, 0.9999);
     int sp = (u_speciesOverride >= 0) ? (u_speciesOverride & 7) : (rawSpecies & 7);
 
     float stemH = max(tex1.x, 0.16);
     float petalR = max(tex1.y * 1.32, stemH * 0.32);
     float yaw = tex1.z;
+    float cosYaw = cos(yaw);
+    float sinYaw = sin(yaw);
 
     int packedColor = int(floor(tex1.w + 0.5));
     v_customTint = vec3(
-        float((packedColor >> 16) & 255) / 255.0,
-        float((packedColor >> 8) & 255) / 255.0,
-        float(packedColor & 255) / 255.0
+        float((packedColor >> 16) & 255) * (1.0 / 255.0),
+        float((packedColor >> 8) & 255) * (1.0 / 255.0),
+        float(packedColor & 255) * (1.0 / 255.0)
     );
 
     int encoded = int(floor(vertexPosition.x + 0.5));
@@ -214,17 +223,20 @@ void main()
     }
 
     float rawBendSq = dot(windBend, windBend);
-    if (rawBendSq > maxAllowedBend * maxAllowedBend) {
-        windBend *= maxAllowedBend * inversesqrt(rawBendSq);
+    float bendMag = (rawBendSq > 1e-10) ? (rawBendSq * inversesqrt(rawBendSq)) : 0.0;
+    if (bendMag > maxAllowedBend) {
+        windBend *= maxAllowedBend / bendMag;
+        bendMag = maxAllowedBend;
     }
 
-    float flutter = sin(u_time * 3.2 + seed * 6.2831853 + float(idx) * 1.047) * (0.04 + 0.08 * min(u_windStrength, 1.5));
+    float flutter = sin(mod(u_time * 3.2, 6283.185307) + seed * 6.2831853 + float(idx) * 1.047) *
+                    (0.04 + 0.08 * min(u_windStrength, 1.5));
 
     vec3 localPos, localNormal;
     float ao;
     EvaluateFlowerGeometry(
-        rootLocal, stemH, petalR, yaw, seed, sp,
-        part, idx, uv, windBend, flutter,
+        rootLocal, stemH, petalR, yaw, cosYaw, sinYaw,
+        seed, sp, part, idx, uv, windBend, bendMag, flutter,
         localPos, localNormal, ao);
 
     vec3 worldPos = localPos + u_worldOffset;
@@ -235,8 +247,16 @@ void main()
     v_species = float(sp);
     v_seed = seed;
     v_ao = ao;
-    v_lightSpace = u_lightVP * vec4(worldPos, 1.0);
-    v_staticLightSpace = u_staticLightVP * vec4(worldPos, 1.0);
+
+    vec3 toCam = worldPos - u_viewPos;
+    if (dot(toCam, toCam) <= 36.5 * 36.5) {
+        vec4 world4 = vec4(worldPos, 1.0);
+        v_lightSpace = u_lightVP * world4;
+        v_staticLightSpace = u_staticLightVP * world4;
+    } else {
+        v_lightSpace = vec4(0.0, 0.0, 0.0, -1.0);
+        v_staticLightSpace = vec4(0.0, 0.0, 0.0, -1.0);
+    }
 
     gl_Position = mvp * vec4(localPos, 1.0);
 }

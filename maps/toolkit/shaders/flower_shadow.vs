@@ -19,6 +19,20 @@ void main()
 {
     float along = vertexTexCoord.x;
     float across = vertexTexCoord.y * 2.0 - 1.0;
+
+    float horizonFade = (dot(u_lightTravel, u_lightTravel) > 1e-6)
+                      ? smoothstep(-0.05, 0.12, -u_lightTravel.y)
+                      : 1.0;
+    float distanceAtten = mix(1.0, 0.78, along);
+    float precomputedStrength = vertexColor.r * 0.76 * u_shadowStrength * distanceAtten * horizonFade;
+
+    // Cắt sớm toàn bộ tam giác nếu cường độ bóng bằng 0 (ví dụ khi mặt trời lặn dưới đường chân trời)
+    if (precomputedStrength <= 0.001) {
+        v_shadowData = vec3(0.0);
+        gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+        return;
+    }
+
     float plantHeight = vertexNormal.x;
     float shadowWidth = vertexNormal.y;
 
@@ -42,16 +56,8 @@ void main()
     float widthProfile = mix(1.0, max(u_tipWidth, 1.08), along) * u_widthScale;
     position.xz += perpendicular * (shadowWidth * across * widthProfile);
 
-    // [SLOPE & UNDERSTOREY GROUNDING FIX]:
-    // Nâng nhẹ độ cao Y dọc theo chiều dài bóng để tấm bóng không bị chìm xuống dưới mặt đất
-    // trên các sườn đồi dốc nhẹ và phủ êm lên lớp gốc cỏ thấp dưới chân khóm hoa.
+    // Nâng nhẹ độ cao Y dọc theo chiều dài bóng để tấm bóng phủ êm trên sườn đồi dốc
     position.y += 0.012 + along * 0.022;
-
-    float horizonFade = (dot(u_lightTravel, u_lightTravel) > 1e-6)
-                      ? smoothstep(-0.05, 0.12, -u_lightTravel.y)
-                      : 1.0;
-    float distanceAtten = mix(1.0, 0.78, along);
-    float precomputedStrength = vertexColor.r * 0.76 * u_shadowStrength * distanceAtten * horizonFade;
 
     v_shadowData = vec3(along, across, precomputedStrength);
     gl_Position = mvp * vec4(position, 1.0);

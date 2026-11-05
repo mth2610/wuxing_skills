@@ -11,7 +11,7 @@ uniform vec2 tiling;
 uniform float u_time;
 
 // Đóng gói 2 bộ UV vào 1 biến vec4 duy nhất để tiết kiệm thanh ghi nội suy (varying)
-out vec4 v_flowUVs; 
+out vec4 v_flowUVs;
 out vec3 v_viewVec;
 out vec3 v_normal;
 

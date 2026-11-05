@@ -13,7 +13,9 @@
 // .w = patchVariation (0.0..1.0 organic spatial patchiness)
 uniform vec4 u_grassStateParams;
 
-// Up to 8 localized fire burn zones: .xyz = world center, .w = radius (negative encodes <1 strength)
+// Up to 8 localized fire burn zones:
+// C API (MapProp_AddGrassBurnZone) packs: .xy = worldXZ, .z = radius, .w = scorchStrength
+// Legacy fallback supported when .w < 0.0: .xz = worldXZ, abs(.w) = radius
 uniform int u_grassBurnZoneCount;
 uniform vec4 u_grassBurnZones[8];
 
@@ -51,28 +53,32 @@ vec2 GrassEvaluateLocalState(vec3 worldPos)
     for (int i = 0; i < 8; i++) {
         if (i >= zoneCount) break;
         vec4 zone = u_grassBurnZones[i];
-        float radius = abs(zone.w);
+
+        // Hỗ trợ đồng thời chuẩn đóng gói từ C API (.xy = centerXZ, .z = radius, .w = strength)
+        // và quy ước dự phòng khi .w < 0 (.xz = centerXZ, abs(.w) = radius)
+        bool useLegacyLayout = (zone.w < 0.0 || zone.z <= 0.001);
+        vec2 zoneCenterXZ = useLegacyLayout ? zone.xz : zone.xy;
+        float radius = useLegacyLayout ? abs(zone.w) : zone.z;
         if (radius <= 0.001) continue;
 
-        vec2 dXZ = worldPos.xz - zone.xz;
+        vec2 dXZ = worldPos.xz - zoneCenterXZ;
         float distSq = dot(dXZ, dXZ);
 
-        // [TỐI ƯU HIỆU NĂNG]: Culling sớm bằng bình phương khoảng cách (tránh gọi sqrt() và phép chia
-        // đắt đỏ cho >95% đỉnh cỏ nằm ngoài bán kính ảnh hưởng nhiệt của vùng cháy)
+        // Culling sớm bằng bình phương khoảng cách
         float raggedRadius = radius * raggedScale;
         float maxHaloReach = raggedRadius * 1.40 + 0.08;
         if (distSq >= maxHaloReach * maxHaloReach) continue;
 
-        float dist = sqrt(distSq);
-        // Nếu zone.w âm, cho phép giảm nhẹ cường độ tâm cháy theo quy ước (<1 strength)
-        float strengthScale = (zone.w < 0.0) ? 0.78 : 1.0;
+        float dist = distSq * inversesqrt(max(distSq, 1e-8));
+        float strengthScale = useLegacyLayout ? ((zone.w < 0.0) ? 0.78 : 1.0) : clamp(zone.w, 0.0, 1.5);
+        float invRagged = 1.0 / max(raggedRadius, 0.09);
 
-        float zoneScorch = 1.0 - clamp((dist - raggedRadius * 0.45) / max(raggedRadius * 0.55, 0.05), 0.0, 1.0);
-        zoneScorch = zoneScorch * zoneScorch * (3.0 - 2.0 * zoneScorch) * strengthScale;
+        float zoneScorch = 1.0 - clamp((dist - raggedRadius * 0.45) * (invRagged * 1.8181818), 0.0, 1.0);
+        zoneScorch = zoneScorch * zoneScorch * (3.0 - 2.0 * zoneScorch) * min(strengthScale, 1.0);
 
         // Heat halo around the fire zone also dries & yellows adjacent grass
-        float heatHalo = 1.0 - clamp((dist - raggedRadius * 0.75) / max(raggedRadius * 0.65, 0.08), 0.0, 1.0);
-        dryness = max(dryness, heatHalo * 0.85 * strengthScale);
+        float heatHalo = 1.0 - clamp((dist - raggedRadius * 0.75) * (invRagged * 1.5384615), 0.0, 1.0);
+        dryness = max(dryness, min(heatHalo * 0.85 * strengthScale, 1.0));
         scorch = max(scorch, zoneScorch);
     }
 
@@ -91,7 +97,6 @@ void GrassApplyVertexMorphology(inout vec3 localPos, vec3 rootPos, float h,
     if (dryness <= 0.001 && scorch <= 0.001) return;
 
     // 1. Withered / Dry droop & inward margin curl:
-    // Giữ độ cao tối thiểu trên mặt đất (rootPos.y) để ngọn cỏ khô không bị xuyên thủng địa hình
     float h2 = h * h;
     float wiltDroop = dryness * (1.0 - 0.35 * dryness) * 0.14 * h2;
     localPos.y = max(localPos.y - wiltDroop, rootPos.y + 0.005 * h);
@@ -108,7 +113,6 @@ void GrassApplyVertexMorphology(inout vec3 localPos, vec3 rootPos, float h,
         float shrinkY  = 1.0 - scorch * (0.38 + 0.16 * h);
         vec3 rel = localPos - rootPos;
         localPos = rootPos + rel * vec3(shrinkXZ, shrinkY, shrinkXZ);
-        // Charred stalks are brittle and stiff
         windCompliance *= (1.0 - scorch * 0.82);
     }
 }

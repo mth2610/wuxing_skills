@@ -54,7 +54,7 @@ void main() {
         fragTangent = fallbackT * inversesqrt(max(dot(fallbackT, fallbackT), 1e-8));
     }
 
-    float handedness = (abs(vertexTangent.w) > 0.5) ? sign(vertexTangent.w) : 1.0;
+    float handedness = (vertexTangent.w < -0.5) ? -1.0 : 1.0;
     fragBitangent = cross(fragNormal, fragTangent) * handedness;
 
     gl_Position = mvp * vec4(vertexPosition, 1.0);

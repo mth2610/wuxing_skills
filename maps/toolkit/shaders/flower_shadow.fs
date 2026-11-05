@@ -10,31 +10,29 @@ void main()
     float along = clamp(v_shadowData.x, 0.0, 1.0);
     float across = v_shadowData.y;
 
-    // [VISUAL UPGRADE - BLOSSOM CROWN & STEM SHADOW PROFILE]:
-    // Tạo hình bóng đổ thực tế của một khóm hoa:
-    // - Gốc hoa (along < 0.25): Bóng tiếp xúc chân khóm hoa (Root Contact AO)
-    // - Thân cuống (along 0.25..0.55): Thắt gọn theo dáng cuống và lá non
-    // - Đài hoa (along 0.58..0.92): Phình tròn tạo bóng của tán cánh hoa trên mặt cỏ!
-    float rootLobe  = exp(-along * 5.0) * 0.55;
+    // [VISUAL UPGRADE & ALU OPTIMIZATION - BLOSSOM CROWN & STEM SHADOW PROFILE]:
+    // Dùng xấp xỉ hữu tỉ 1 / (1 + x + 0.48 * x^2) thay cho 2 lệnh exp()
+    float rArg = along * 5.0;
+    float rootLobe = 0.55 / (1.0 + rArg + 0.48 * rArg * rArg);
+
     float stemWaist = 0.48;
     float bloomDiff = (along - 0.74) * 3.85;
-    float bloomCrown = exp(-bloomDiff * bloomDiff) * 0.54;
+    float bArg = bloomDiff * bloomDiff;
+    float bloomCrown = 0.54 / (1.0 + bArg + 0.48 * bArg * bArg);
+
     float halfWidth = clamp(stemWaist + rootLobe + bloomCrown, 0.42, 0.98);
 
     float normAcross = abs(across) / halfWidth;
     float tipEnd = smoothstep(0.78, 1.0, along);
     float radialDistSq = normAcross * normAcross + tipEnd * tipEnd;
 
-    // Early-out nhanh trước khi gọi sqrt nếu điểm nằm ngoài bóng hoa
+    // Early-out nhanh trước khi tính căn bậc hai nếu điểm nằm ngoài bóng hoa
     if (radialDistSq >= 1.0) discard;
 
-    float radialDist = sqrt(radialDistSq);
-
-    // Contact Hardening: sắc nét ở gốc hoa và tâm đài hoa, tán xạ mềm ở rìa ngoài
+    // Contact Hardening trực tiếp trên miền bình phương khoảng cách (không cần gọi sqrt)
     float innerSoftness = mix(0.65, 0.28, along);
-    float coverage = 1.0 - smoothstep(innerSoftness, 1.0, radialDist);
+    float coverage = 1.0 - smoothstep(innerSoftness * innerSoftness, 1.0, radialDistSq);
 
-    // Tăng nhẹ độ đậm bóng tại vùng gốc hoa và vùng tâm đài hoa
     float densityProfile = mix(1.12, 0.85, along) + bloomCrown * 0.35;
     float finalAlpha = clamp(v_shadowData.z * coverage * densityProfile, 0.0, 0.88);
 
