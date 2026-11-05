@@ -1,3 +1,6 @@
+#ifndef MAP_ISLAND_BOUNDARY_GLSL
+#define MAP_ISLAND_BOUNDARY_GLSL
+
 float MapIslandDistance(vec2 worldXZ, vec4 rect, float radius)
 {
     vec2 halfSize = max(rect.zw * 0.5, vec2(0.0));
@@ -11,3 +14,5 @@ float MapIslandDistance(vec2 worldXZ, vec4 rect, float radius)
 
     return outsideDist + min(max(q.x, q.y), 0.0) - r;
 }
+
+#endif // MAP_ISLAND_BOUNDARY_GLSL

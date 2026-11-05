@@ -17,7 +17,6 @@ uniform mat4 mvp;
 uniform mat4 matModel;
 
 // Khai báo thêm các uniform tỉ lệ ở Vertex Shader để tính trước UV
-// (Raylib / OpenGL tự động chia sẻ chung vùng nhớ uniform trong cùng 1 Shader Program)
 uniform float u_baseTileSize;
 uniform float u_detailTileSize;
 uniform float u_maskNoiseScale;
@@ -30,19 +29,18 @@ out vec4 v_tileUVs;   // .xy = baseUV,      .zw = detailUV
 out vec4 v_noiseUVs;  // .xy = maskNoiseUV, .zw = colorVarUV
 
 void main() {
-    fragPosition = vec3(matModel * vec4(vertexPosition, 1.0));
+    vec4 worldPos4 = vec4(vertexPosition, 1.0);
+    fragPosition = vec3(matModel * worldPos4);
     vec3 worldNormal = mat3(matModel) * vertexNormal;
     float nLenSq = dot(worldNormal, worldNormal);
     fragNormal = (nLenSq > 1e-8) ? (worldNormal * inversesqrt(nLenSq)) : vec3(0.0, 1.0, 0.0);
 
-    // Tính toán sẵn toàn bộ tọa độ lấy mẫu tại đỉnh (chỉ chạy vài lần cho cả mặt đất)
+    // Tính toán sẵn toàn bộ tọa độ lấy mẫu tại đỉnh
     vec2 worldXZ = vertexTexCoord;
     vec2 invTile = 1.0 / max(vec2(u_baseTileSize, u_detailTileSize), vec2(0.0001));
 
-    v_tileUVs.xy  = worldXZ * invTile.x;          // baseUV
-    v_tileUVs.zw  = worldXZ * invTile.y;          // detailUV
-    v_noiseUVs.xy = worldXZ * u_maskNoiseScale;   // maskNoiseUV
-    v_noiseUVs.zw = worldXZ * u_colorVarScale;    // colorVarUV
+    v_tileUVs  = worldXZ.xyxy * vec4(invTile.x, invTile.x, invTile.y, invTile.y);
+    v_noiseUVs = worldXZ.xyxy * vec4(u_maskNoiseScale, u_maskNoiseScale, u_colorVarScale, u_colorVarScale);
 
-    gl_Position = mvp * vec4(vertexPosition, 1.0);
+    gl_Position = mvp * worldPos4;
 }

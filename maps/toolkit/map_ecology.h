@@ -7,15 +7,18 @@
 #define MAP_ECOLOGY_MAX_PATHS 16
 /* RGBA: coverage, growth, moisture, habitat. Distance RG/BA: signed
  * road/shore meters, encoded as high byte plus fractional low byte. */
-typedef struct MapEcology {
+typedef struct MapEcology
+{
     Texture2D habitatTexture, distanceTexture;
     Vector4 rect;
     bool ready;
 } MapEcology;
-typedef struct {
+typedef struct
+{
     float coverage, growth, moisture, habitat, roadDistance, shoreDistance;
 } MapEcologySample;
-typedef struct {
+typedef struct
+{
     Vector4 rect, lake;
     const Vector4 *paths;
     int pathCount;

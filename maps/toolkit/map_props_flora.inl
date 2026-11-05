@@ -110,8 +110,8 @@ void MapFlora_GenerateFlowerPlacements(
         MapFlora_GetClusterEpicentersNorm(c, epicenters);
 
         float flowAngle = 0.785f + 0.30f * sinf(cl->center.x * 0.12f + (float)c);
-        float cosFlow = cosf(flowAngle);
-        float sinFlow = sinf(flowAngle);
+        float sinFlow, cosFlow;
+        Nature_FastSinCos(flowAngle, &sinFlow, &cosFlow);
 
         for (int i = 0; i < count; i++)
         {
@@ -132,11 +132,14 @@ void MapFlora_GenerateFlowerPlacements(
                 float uRand = Nature_Random01(&rng);
                 float rVal = uRand * sqrtf(uRand);
                 radialNorm = rVal;
+                float sinA, cosA;
+                Nature_FastSinCos(angle, &sinA, &cosA);
+
                 if (isColony && attempt < 16)
                 {
                     int tryColony = (colony + (attempt >> 2)) % 3;
-                    float along = cosf(angle) * rVal * 0.38f;
-                    float across = sinf(angle) * rVal * 0.20f;
+                    float along = cosA * rVal * 0.38f;
+                    float across = sinA * rVal * 0.20f;
                     float dxNorm = epicenters[tryColony].x + (cosFlow * along - sinFlow * across);
                     float dzNorm = epicenters[tryColony].y + (sinFlow * along + cosFlow * across);
                     x = cl->center.x + dxNorm * rx;
@@ -145,15 +148,14 @@ void MapFlora_GenerateFlowerPlacements(
                 else
                 {
                     float fallbackScale = (attempt < 24) ? (0.20f + 0.45f * rVal) : (0.05f + 0.18f * rVal);
-                    x = cl->center.x + cosf(angle) * rx * fallbackScale;
-                    z = cl->center.z + sinf(angle) * rz * fallbackScale;
+                    x = cl->center.x + cosA * rx * fallbackScale;
+                    z = cl->center.z + sinA * rz * fallbackScale;
                 }
 
                 if (isExcluded && isExcluded(x, z, ctx))
                     continue;
 
                 foundValid = true;
-                // Kiểm tra nhanh theo từng trục trước khi tính bình phương khoảng cách
                 bool tooClose = false;
                 int searchStart = (placementCursor - clusterStartIndex > 512)
                                       ? (placementCursor - 512)
@@ -179,8 +181,10 @@ void MapFlora_GenerateFlowerPlacements(
             {
                 float a = Nature_Random01(&rng) * (2.0f * PI);
                 float r = Nature_Random01(&rng) * 1.2f;
-                x = cl->center.x + cosf(a) * r;
-                z = cl->center.z + sinf(a) * r;
+                float sinA, cosA;
+                Nature_FastSinCos(a, &sinA, &cosA);
+                x = cl->center.x + cosA * r;
+                z = cl->center.z + sinA * r;
             }
 
             float gy = sampleHeight ? sampleHeight(x, z, ctx) : 0.0f;
@@ -198,7 +202,7 @@ void MapFlora_GenerateFlowerPlacements(
             }
             else
             {
-                variant = cl->species[(int)(Nature_Random01(&rng) * 4.0f) % 4];
+                variant = cl->species[(int)(Nature_Random01(&rng) * 4.0f) & 3];
             }
             if (speciesOverride >= 0)
                 variant = speciesOverride & 7;
@@ -227,8 +231,7 @@ float MapFlora_EvaluateFlowerUnderstorey(
         return 1.0f;
 
     MapFlora_EnsureEpicenterCache();
-    // [TỐI ƯU TOÁN HỌC]: Chỉ tìm minEpiDistSq nhỏ nhất trên tất cả các cụm hoa bằng phép nhân cộng,
-    // sau đó chỉ gọi đúng 1 lệnh sqrtf() duy nhất ở cuối hàm!
+    // Epicenters have max radial reach 0.44 and max influence radius 0.45 -> tight norm bound is 0.89
     float globalMinEpiDistSq = 0.45f * 0.45f;
     bool hitAny = false;
 
@@ -237,16 +240,16 @@ float MapFlora_EvaluateFlowerUnderstorey(
         const MapFloraFlowerCluster *cl = &clusters[c];
         float rx = (cl->radius.x > 0.1f) ? cl->radius.x : 10.0f;
         float rawDx = x - cl->center.x;
-        if (rawDx > rx * 1.2f || rawDx < -rx * 1.2f)
+        if (rawDx > rx * 0.90f || rawDx < -rx * 0.90f)
             continue;
         float rz = (cl->radius.y > 0.1f) ? cl->radius.y : rx;
         float rawDz = z - cl->center.z;
-        if (rawDz > rz * 1.2f || rawDz < -rz * 1.2f)
+        if (rawDz > rz * 0.90f || rawDz < -rz * 0.90f)
             continue;
 
-        float dx = rawDx * (1.0f / rx);
-        float dz = rawDz * (1.0f / rz);
-        if (dx * dx + dz * dz > 1.44f)
+        float dx = rawDx / rx;
+        float dz = rawDz / rz;
+        if (dx * dx + dz * dz > 0.81f)
             continue;
 
         Vector2 epicenters[3];
@@ -282,7 +285,7 @@ float MapFlora_EvaluateFlowerSuppression(
         return 1.0f;
 
     MapFlora_EnsureEpicenterCache();
-    // [TỐI ƯU TOÁN HỌC]: Chỉ gọi đúng 1 lệnh sqrtf() ở cuối hàm khi điểm xét thực sự nằm trong vùng nén cỏ
+    // Epicenters have max radial reach 0.44 and suppression radius 0.38 -> tight norm bound is 0.82
     float globalMinEpiDistSq = 0.38f * 0.38f;
     bool hitAny = false;
 
@@ -291,16 +294,16 @@ float MapFlora_EvaluateFlowerSuppression(
         const MapFloraFlowerCluster *cl = &clusters[c];
         float rx = (cl->radius.x > 0.1f) ? cl->radius.x : 10.0f;
         float rawDx = x - cl->center.x;
-        if (rawDx > rx * 1.2f || rawDx < -rx * 1.2f)
+        if (rawDx > rx * 0.84f || rawDx < -rx * 0.84f)
             continue;
         float rz = (cl->radius.y > 0.1f) ? cl->radius.y : rx;
         float rawDz = z - cl->center.z;
-        if (rawDz > rz * 1.2f || rawDz < -rz * 1.2f)
+        if (rawDz > rz * 0.84f || rawDz < -rz * 0.84f)
             continue;
 
-        float dx = rawDx * (1.0f / rx);
-        float dz = rawDz * (1.0f / rz);
-        if (dx * dx + dz * dz > 1.44f)
+        float dx = rawDx / rx;
+        float dz = rawDz / rz;
+        if (dx * dx + dz * dz > 0.70f)
             continue;
 
         Vector2 epicenters[3];
@@ -409,8 +412,7 @@ int MapFlora_GenerateMeadowPlacements(
         float macroSwirl = sinf(cx * 0.026f + cz * 0.018f) * 32.0f + cosf(cz * 0.038f - cx * 0.022f) * 20.0f;
         float flowAngle = -16.0f + macroSwirl + wave1 * 22.0f + eddy * 14.0f + patchAngleOffset;
 
-        float hash = sinf((float)(i * 47) + cx * 12.9898f + cz * 78.233f) * 43758.5453f;
-        hash -= floorf(hash);
+        float hash = Nature_Hash01((unsigned int)i * 747796405u ^ (unsigned int)(cellX * 19349663) ^ (unsigned int)(cellZ * 83492791));
         clump->rotationDeg = flowAngle + (hash - 0.5f) * 36.0f;
 
         float localHeight = clump->height;
@@ -437,7 +439,7 @@ int MapFlora_GenerateMeadowPlacements(
         float tierFactor = 0.5f + 0.5f * macroTierWave;
         float tieredBase = 0.30f + 0.28f * (tierFactor * tierFactor * (3.0f - 2.0f * tierFactor));
         float highTypePatch = (patchHash2 > 0.58f) ? (0.12f * clumpCore) : (-0.05f * clumpCore);
-        float heightNorm = (localHeight - 0.34f) / 0.20f;
+        float heightNorm = (localHeight - 0.34f) * 5.0f;
         clump->height = (tieredBase + heightNorm * 0.14f + highTypePatch) * (0.88f + 0.20f * growth);
         clump->height *= 0.84f + 0.16f * coverage;
 
@@ -449,7 +451,7 @@ int MapFlora_GenerateMeadowPlacements(
         }
 
         clump->radius = 0.26f + biome * 0.08f;
-        clump->radius *= 0.94f + 0.16f * (localRadius - 0.24f) / 0.08f;
+        clump->radius *= 0.94f + 0.16f * (localRadius - 0.24f) * 12.5f;
 
         if (config.edgeTaperFn)
         {
@@ -563,7 +565,9 @@ int MapFlora_GeneratePampasPlacements(
     unsigned char maxRockG = config.maxRockSplatGreen > 0 ? config.maxRockSplatGreen : 190;
     float driftThreshold = config.driftThreshold > 0.0f ? config.driftThreshold : 0.30f;
     float minRad = config.minRadius > 0.0f ? config.minRadius : 0.30f;
-    float maxRad = config.maxRadius > 0.0f ? config.minRadius : 0.40f;
+    float maxRad = config.maxRadius > 0.0f ? config.maxRadius : 0.40f;
+    if (maxRad < minRad)
+        maxRad = minRad;
     float baseH = config.baseHeight > 0.0f ? config.baseHeight : 0.48f;
 
     float effSpanX = spanX * 0.86f;
@@ -722,33 +726,35 @@ MapFloraSystem MapProp_CreateFloraSystem(
     // 4. Clustered Wildflower Fields: 100% Procedural 3D Petals
     if (flowerPlacements && clusters && clusterCount > 0)
     {
-        flora.flowerFields = (MapFlowerField *)RL_MALLOC(clusterCount * sizeof(MapFlowerField));
-        flora.flowerClusterCount = clusterCount;
-
-        int placementOffset = 0;
-        for (int i = 0; i < clusterCount; i++)
+        flora.flowerFields = (MapFlowerField *)RL_MALLOC((size_t)clusterCount * sizeof(MapFlowerField));
+        if (flora.flowerFields)
         {
-            const MapFloraFlowerCluster *cl = &clusters[i];
-            int count = cl->flowerCount;
-            if (count <= 0)
+            flora.flowerClusterCount = clusterCount;
+            int placementOffset = 0;
+            for (int i = 0; i < clusterCount; i++)
             {
-                flora.flowerFields[i] = (MapFlowerField){0};
-                continue;
+                const MapFloraFlowerCluster *cl = &clusters[i];
+                int count = cl->flowerCount;
+                if (count <= 0)
+                {
+                    flora.flowerFields[i] = (MapFlowerField){0};
+                    continue;
+                }
+
+                Color stemColor = (Color){68, 98, 44, 255};
+                Color centerColor = (cl->discalCenterColor.a > 0) ? cl->discalCenterColor
+                                                                  : (Color){248, 196, 38, 255};
+
+                flora.flowerFields[i] = MapProp_CreateFlowerField(
+                    &flowerPlacements[placementOffset], count,
+                    stemColor, centerColor,
+                    NULL, 0.0f, 1, 1);
+
+                // High-fidelity LOD: near 3D petals to 20m, far drift to 44m, shadow casters to 14m
+                MapProp_SetFlowerFieldLod(&flora.flowerFields[i], 20.0f, 14.0f);
+                MapProp_SetFlowerFieldDrawDistance(&flora.flowerFields[i], 44.0f);
+                placementOffset += count;
             }
-
-            Color stemColor = (Color){68, 98, 44, 255};
-            Color centerColor = (cl->discalCenterColor.a > 0) ? cl->discalCenterColor
-                                                              : (Color){248, 196, 38, 255};
-
-            flora.flowerFields[i] = MapProp_CreateFlowerField(
-                &flowerPlacements[placementOffset], count,
-                stemColor, centerColor,
-                NULL, 0.0f, 1, 1);
-
-            // High-fidelity LOD: near 3D petals to 20m, far drift to 44m, shadow casters to 14m
-            MapProp_SetFlowerFieldLod(&flora.flowerFields[i], 20.0f, 14.0f);
-            MapProp_SetFlowerFieldDrawDistance(&flora.flowerFields[i], 44.0f);
-            placementOffset += count;
         }
     }
 
@@ -762,6 +768,8 @@ void MapProp_UpdateFloraSystem(MapFloraSystem *flora, Vector3 cameraTarget, floa
     if (!flora || !flora->ready)
         return;
     flora->time += dt;
+    if (flora->time >= 62831.853f)
+        flora->time -= 62831.853f;
 
     if (flora->valleyGrassCount > 0 && flora->valleyMeadow.parametric)
     {
@@ -837,8 +845,6 @@ void MapProp_DrawFloraShadowCasters(MapFloraSystem *flora)
                                             flora->windDirection, 0.052f);
         }
     }
-    // [TỐI ƯU SHADOW BATCHING]: Gọi trực tiếp MapProp_DrawFlowerFieldShadowCasterBatch
-    // để gom toàn bộ các cụm hoa vào 1 lần bind shader duy nhất thay vì bật/tắt shader mỗi cụm!
     if (Nature_ShadowCasterTypeEnabled(true) && flora->flowerFields && flora->flowerClusterCount > 0)
     {
         MapProp_DrawFlowerFieldShadowCasterBatch(
@@ -852,15 +858,15 @@ void MapProp_UnloadFloraSystem(MapFloraSystem *flora)
     if (!flora || !flora->ready)
         return;
 
-    for (int i = 0; i < flora->flowerClusterCount; i++)
-    {
-        if (flora->flowerFields[i].ready)
-        {
-            MapProp_UnloadFlowerField(&flora->flowerFields[i]);
-        }
-    }
     if (flora->flowerFields)
     {
+        for (int i = 0; i < flora->flowerClusterCount; i++)
+        {
+            if (flora->flowerFields[i].ready)
+            {
+                MapProp_UnloadFlowerField(&flora->flowerFields[i]);
+            }
+        }
         RL_FREE(flora->flowerFields);
         flora->flowerFields = NULL;
     }

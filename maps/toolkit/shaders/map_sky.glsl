@@ -10,7 +10,6 @@ vec3 MapSkyRadiance(vec3 ray, vec3 sun, vec3 ambient, vec3 haze, vec3 direct)
     vec3 horizonColor = haze * 0.78 + direct * 0.045;
 
     // Morning dawn warmth along the horizon facing the sun
-    // [BUG FIX]: Bảo vệ sunHorizLenSq > 1e-6 để tránh lỗi normalize(vec2(0.0)) -> NaN khi mặt trời ở đỉnh đầu (zenith)
     float horizLenSq = dot(ray.xz, ray.xz);
     float sunHorizLenSq = dot(sun.xz, sun.xz);
     if (horizLenSq > 1e-6 && sunHorizLenSq > 1e-6) {
@@ -30,43 +29,43 @@ vec3 MapSkyRadiance(vec3 ray, vec3 sun, vec3 ambient, vec3 haze, vec3 direct)
     // Night Celestial Features: Stars, Moon & Aurora Borealis (Cực quang)
     vec3 nightAdditions = vec3(0.0);
     if (night > 0.001 && ray.y > 0.02) {
-        // 1. Procedural Twinkling Star Field
-        float starGrid = 160.0;
-        vec3 starP = ray * starGrid;
-        vec3 starId = floor(starP);
-        vec3 starFd = fract(starP) - 0.5;
-        float starHash = fract(sin(dot(starId, vec3(12.9898, 78.233, 45.164))) * 43758.5453);
-        if (starHash > 0.982 && ray.y > 0.06) {
-            float starDistSq = dot(starFd, starFd);
-            if (starDistSq < 0.04) {
-                float starDist = sqrt(starDistSq);
-                // [SPIR-V FIX]: Sửa smoothstep(0.20, 0.0, x) (undefined behavior khi edge0 > edge1)
-                // thành 1.0 - smoothstep(0.0, 0.20, x)
-                float starBrightness = (1.0 - smoothstep(0.0, 0.20, starDist)) * ((starHash - 0.982) * 55.555556);
-                vec3 starTint = mix(vec3(0.85, 0.92, 1.0), vec3(1.0, 0.88, 0.72), fract(starHash * 17.3));
-                nightAdditions += starTint * starBrightness * 1.8;
+        // 1. Procedural Twinkling Star Field (sin-less ALU hash, evaluated only above horizon haze)
+        if (ray.y > 0.06) {
+            vec3 starP = ray * 160.0;
+            vec3 starId = floor(starP);
+            vec3 h3 = fract(starId * vec3(0.1031, 0.1030, 0.0973));
+            h3 += dot(h3, h3.yxz + 33.33);
+            float starHash = fract((h3.x + h3.y) * h3.z);
+            if (starHash > 0.982) {
+                vec3 starFd = starP - starId - 0.5;
+                float starDistSq = dot(starFd, starFd);
+                if (starDistSq < 0.04) {
+                    float starDist = starDistSq * inversesqrt(max(starDistSq, 1e-8));
+                    float starBrightness = (1.0 - smoothstep(0.0, 0.20, starDist)) * ((starHash - 0.982) * 55.555556);
+                    vec3 starTint = mix(vec3(0.85, 0.92, 1.0), vec3(1.0, 0.88, 0.72), fract(starHash * 17.3));
+                    nightAdditions += starTint * (starBrightness * 1.8);
+                }
             }
         }
 
         // 2. Moon & Lunar Halo (positioned opposite the sun vector)
         vec3 moonRaw = vec3(-sun.x, max(-sun.y, 0.35), -sun.z);
-        vec3 moonDir = moonRaw * inversesqrt(max(dot(moonRaw, moonRaw), 1e-8));
-        float moonCos = clamp(dot(ray, moonDir), 0.0, 1.0);
-        if (moonCos > 0.85) {
-            float m2 = moonCos * moonCos;
-            float m4 = m2 * m2;
-            float m16 = m4 * m4;
-            float m64 = m16 * m16;
-            
-            // Silver lunar halo / corona
-            vec3 moonHalo = vec3(0.42, 0.55, 0.85) * (m16 * 0.08 + m64 * 0.25);
-            // Sharp lunar disc
-            float moonDisc = smoothstep(0.9991, 0.9995, moonCos);
-            nightAdditions += vec3(0.92, 0.96, 1.0) * (moonDisc * 3.2) + moonHalo;
+        float rawMoonDot = dot(ray, moonRaw);
+        if (rawMoonDot > 0.0) {
+            float moonCos = rawMoonDot * inversesqrt(max(dot(moonRaw, moonRaw), 1e-8));
+            if (moonCos > 0.85) {
+                float m2 = moonCos * moonCos;
+                float m4 = m2 * m2;
+                float m16 = m4 * m4;
+                float m64 = m16 * m16;
+
+                vec3 moonHalo = vec3(0.42, 0.55, 0.85) * (m16 * 0.08 + m64 * 0.25);
+                float moonDisc = smoothstep(0.9991, 0.9995, moonCos);
+                nightAdditions += vec3(0.92, 0.96, 1.0) * (moonDisc * 3.2) + moonHalo;
+            }
         }
 
         // 3. Aurora Borealis (Cực quang: undulating emerald and violet curtains)
-        // [SPIR-V FIX]: Sửa smoothstep(0.85, 0.20, ray.y) (undefined behavior khi edge0 > edge1)
         float auroraMask = smoothstep(0.08, 0.40, ray.y) * (1.0 - smoothstep(0.20, 0.85, ray.y));
         if (auroraMask > 0.0) {
             float invRayY = 1.0 / max(ray.y, 0.08);
@@ -75,32 +74,30 @@ vec3 MapSkyRadiance(vec3 ray, vec3 sun, vec3 ambient, vec3 haze, vec3 direct)
             float curtainA = sin(aX * 3.8 + aZ * 1.8);
             float curtainB = cos(aX * 7.5 - aZ * 3.2);
             float auroraWave = smoothstep(0.25, 0.88, abs(curtainA + curtainB * 0.5) * 0.65);
-            
+
             vec3 auroraGreen  = vec3(0.12, 0.88, 0.48);
             vec3 auroraViolet = vec3(0.62, 0.22, 0.85);
             vec3 auroraTint = mix(auroraGreen, auroraViolet, smoothstep(0.18, 0.55, ray.y));
-            nightAdditions += auroraTint * auroraWave * auroraMask * 0.48;
+            nightAdditions += auroraTint * (auroraWave * auroraMask * 0.48);
         }
     }
 
-    // Day Sun & Solar Corona
+    // Day Sun & Solar Corona (skip anti-solar hemisphere where dot(ray, sun) <= 0)
     vec3 sunRadiance = vec3(0.0);
     if (daylight > 0.0001) {
-        float cosine = clamp(dot(ray, sun), 0.0, 1.0);
-        float c2  = cosine * cosine;
-        float c4  = c2 * c2;
-        float c8  = c4 * c4;
-        float c16 = c8 * c8;
+        float cosine = dot(ray, sun);
+        if (cosine > 0.0) {
+            cosine = min(cosine, 1.0);
+            float c2  = cosine * cosine;
+            float c4  = c2 * c2;
+            float c8  = c4 * c4;
+            float c16 = c8 * c8;
 
-        // [VULKAN / SPIR-V FIX]: Thay fwidth(cosine) nằm trong nhánh không đồng nhất (if cosine > 0.9995
-        // và sau lệnh discard của cloud_sea.fs) bằng biên độ chuyển mượt giải tích ổn định, loại bỏ hoàn toàn
-        // nguy cơ lỗi đạo hàm NaN / đốm sáng viền mặt trời trên Vulkan.
-        float disc = smoothstep(0.999983, 0.999995, cosine);
-
-        float horizonGlow = (1.0 - zenithFactor) * c4 * 0.04;
-        sunRadiance = direct * (horizonGlow + c16 * 0.16 + disc * 4.0);
+            float disc = smoothstep(0.999983, 0.999995, cosine);
+            float horizonGlow = (1.0 - zenithFactor) * c4 * 0.04;
+            sunRadiance = direct * (horizonGlow + c16 * 0.16 + disc * 4.0);
+        }
     }
 
-    vec3 sky = mix(nightSky + nightAdditions, daySky + sunRadiance, daylight);
-    return sky;
+    return mix(nightSky + nightAdditions, daySky + sunRadiance, daylight);
 }

@@ -105,11 +105,11 @@ float MapShadowFilteredVisibilityTier(highp sampler2D mapTexture, vec2 uv,
                                       float radiusScale, float thinFeatureBoost,
                                       float quality)
 {
-    if (quality < 0.5)
-        return MapShadowCompareBilinear(mapTexture, uv, compareDepth, texelSize);
-
     float resolution = 1.0 / max(texelSize, 0.0000001);
     vec2 centerPos = uv * resolution - 0.5;
+
+    if (quality < 0.5)
+        return MapShadowCompareBilinearTexel(mapTexture, centerPos, compareDepth, texelSize);
 
     if (quality < 1.5) {
 #if MAP_SHADOW_USE_GATHER
@@ -131,10 +131,6 @@ float MapShadowFilteredVisibilityTier(highp sampler2D mapTexture, vec2 uv,
     float diagonal = radiusScale * 0.707;   // diagonal tap offset, in texels
 
 #if MAP_SHADOW_USE_GATHER
-    // HIGH with textureGather:
-    // Stage 1: Fetch center 2x2 neighborhood + 2 opposing rotated diagonal gathers first (3 gathers).
-    // Check unweighted 4-texel sum (cSum) rather than bilinear 'center' so sub-texel fraction=0/1
-    // never triggers a false early-out when 1 of the 4 center texels disagrees!
     vec2 base = floor(centerPos);
     vec2 fraction = centerPos - base;
     vec4 sc = step(vec4(compareDepth), textureGather(mapTexture, (base + 1.0) * texelSize));
@@ -144,7 +140,6 @@ float MapShadowFilteredVisibilityTier(highp sampler2D mapTexture, vec2 uv,
     if (cSum >= 3.999 && thinFeatureBoost <= 0.01)
         return 1.0;
 
-    // Subtle rotated disk offsets (26.5 deg golden-ratio tilt) break up blocky axis-aligned staircase edges
     vec2 offA = vec2(diagonal * 0.894, diagonal * 0.447) * texelSize;
     vec2 offB = vec2(-diagonal * 0.447, diagonal * 0.894) * texelSize;
 
@@ -162,12 +157,9 @@ float MapShadowFilteredVisibilityTier(highp sampler2D mapTexture, vec2 uv,
     float center = mix(mix(sc.w, sc.z, fraction.x),
                        mix(sc.x, sc.y, fraction.x), fraction.y);
 
-    // Stage 2: Penumbra boundary or thin-feature candidate — fetch remaining 2 orthogonal gathers
     float downRight = MapShadowGatherBox4(mapTexture, uv + offB, compareDepth);
     float upLeft    = MapShadowGatherBox4(mapTexture, uv - offB, compareDepth);
 #else
-    // HIGH without textureGather (e.g. Desktop GLSL 330):
-    // 2-Stage 5-Tap Cross Early-Out + 4-Corner C1 Quadratic B-Spline Penumbra Refine
     vec2 nearest = floor(centerPos + 0.5);
     vec2 d = centerPos - nearest; // fractional offset in [-0.5, 0.5)
     vec2 uvCenter = (nearest + 0.5) * texelSize;
@@ -184,13 +176,11 @@ float MapShadowFilteredVisibilityTier(highp sampler2D mapTexture, vec2 uv,
     if (crossSum >= 4.999)
         return 1.0;
 
-    // Penumbra edge pixel: fetch the 4 diagonal corners to complete the exact 3x3 resolve
     float s00 = MapShadowCompare(mapTexture, uvCenter + vec2(-texelSize, -texelSize), compareDepth);
     float s20 = MapShadowCompare(mapTexture, uvCenter + vec2( texelSize, -texelSize), compareDepth);
     float s02 = MapShadowCompare(mapTexture, uvCenter + vec2(-texelSize,  texelSize), compareDepth);
     float s22 = MapShadowCompare(mapTexture, uvCenter + vec2( texelSize,  texelSize), compareDepth);
 
-    // C1-continuous Quadratic B-Spline weights (eliminates C0 derivative seams at d = 0)
     vec2 t = d + 0.5;
     vec2 omt = 1.0 - t;
     vec2 w0 = 0.5 * omt * omt;
@@ -244,7 +234,6 @@ float MapShadowCoverageFade(vec2 uv)
 float MapShadowContrast(float visibility)
 {
     visibility = clamp(visibility, 0.0, 1.0);
-    // Natural penumbra rolloff: preserves delicate mid-tone shadow softness while grounding core umbra
     float sCurve = visibility * visibility * (3.0 - 2.0 * visibility);
     return mix(visibility, sCurve, 0.18);
 }
@@ -252,10 +241,10 @@ float MapShadowContrast(float visibility)
 float MapDynamicShadowVisibilityCovLS(vec4 lightSpace, float slope, out float coverage)
 {
     coverage = 0.0;
-    if (u_shadowEnabled < 0.5)
+    if (u_shadowEnabled < 0.5 || lightSpace.w <= 0.0001)
         return 1.0;
 
-    vec3 projected = lightSpace.xyz * (0.5 / max(lightSpace.w, 0.00001)) + 0.5;
+    vec3 projected = lightSpace.xyz * (0.5 / lightSpace.w) + 0.5;
     if (projected.z <= 0.0 || projected.z >= 1.0 ||
         projected.x <= 0.0 || projected.x >= 1.0 ||
         projected.y <= 0.0 || projected.y >= 1.0)
@@ -286,9 +275,9 @@ float MapDynamicShadowVisibility(vec3 worldPos, float slope)
 
 float MapStaticShadowVisibilityLS(vec4 lightSpace, float slope)
 {
-    if (u_staticShadowEnabled < 0.5)
+    if (u_staticShadowEnabled < 0.5 || lightSpace.w <= 0.0001)
         return 1.0;
-    vec3 projected = lightSpace.xyz * (0.5 / max(lightSpace.w, 0.00001)) + 0.5;
+    vec3 projected = lightSpace.xyz * (0.5 / lightSpace.w) + 0.5;
     if (projected.z <= 0.0 || projected.z >= 1.0 ||
         projected.x <= 0.0 || projected.x >= 1.0 ||
         projected.y <= 0.0 || projected.y >= 1.0)

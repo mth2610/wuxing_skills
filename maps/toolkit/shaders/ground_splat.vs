@@ -5,7 +5,6 @@
 in vec3 vertexPosition;
 in vec2 vertexTexCoord;
 in vec3 vertexNormal;
-in vec4 vertexColor;
 
 uniform mat4 mvp;
 uniform mat4 matModel;
@@ -14,7 +13,6 @@ uniform mat4 u_lightVP;
 uniform mat4 u_staticLightVP;
 
 out vec2 fragTexCoord;
-out vec4 fragColor;
 out vec3 fragPosition;
 out vec3 fragNormal;
 out vec3 fragWorldPos;
@@ -25,26 +23,28 @@ out vec2 v_macroPatchAndField;
 void main()
 {
     fragTexCoord = vertexTexCoord;
-    fragColor    = vertexColor;
 
     vec3 localPos = vertexPosition;
     vec3 wp = localPos + u_groundOffset;
 
     // Evaluate physical seismic wave deformation at this world position
-    vec2 seismicSlope;
+    vec2 seismicSlope = vec2(0.0);
     float seismicDY = EvaluateSeismicDisplacement(wp.xz, seismicSlope);
-    localPos.y += seismicDY;
-    wp.y += seismicDY;
+    bool hasSeismic = (abs(seismicDY) > 1e-5 || dot(seismicSlope, seismicSlope) > 1e-8);
+    if (hasSeismic) {
+        localPos.y += seismicDY;
+        wp.y += seismicDY;
+    }
 
     vec4 worldVertex = vec4(localPos, 1.0);
     vec4 shaderPos = matModel * worldVertex;
     fragPosition = shaderPos.xyz;
 
-    // Chuẩn hóa pháp tuyến an toàn theo ma trận model và làm nghiêng theo độ dốc sóng địa chấn
+    // Chuẩn hóa pháp tuyến an toàn theo ma trận model và chỉ nghiêng khi sóng địa chấn kích hoạt
     vec3 worldNormal = mat3(matModel) * vertexNormal;
     float nLenSq = dot(worldNormal, worldNormal);
     vec3 baseN = (nLenSq > 1e-8) ? (worldNormal * inversesqrt(nLenSq)) : vec3(0.0, 1.0, 0.0);
-    fragNormal = PerturbNormalWithSeismicWave(baseN, seismicSlope);
+    fragNormal = hasSeismic ? PerturbNormalWithSeismicWave(baseN, seismicSlope) : baseN;
 
     fragWorldPos = wp;
     v_lightSpace = u_lightVP * shaderPos;
@@ -57,5 +57,5 @@ void main()
     float field = 0.50 + 0.32 * macroA + 0.18 * macroB;
     v_macroPatchAndField = vec2(patch, field);
 
-    gl_Position  = mvp * worldVertex;
+    gl_Position = mvp * worldVertex;
 }
