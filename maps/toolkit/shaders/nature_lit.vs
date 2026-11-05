@@ -39,6 +39,7 @@ void main()
     mat3 worldLinear = mat3(u_worldFromShaderSpace) * mat3(matModel);
     vec3 shaderPosition = vec3(matModel * vec4(local, 1.0));
     vec3 world = vec3(u_worldFromShaderSpace * vec4(shaderPosition, 1.0));
+    vec2 rootWorldXZ = world.xz;
 
     float h = vertexTexCoord.y;
     vec3 bentNormal = vertexNormal;
@@ -105,12 +106,14 @@ void main()
         windSheen = clamp(dispLen / maxAllowedBend, 0.0, 1.0) * archSheenMask;
     }
 
-    // Physical seismic ground wave displacement: lift entire blade and tilt normal with ground heave
-    vec2 seismicSlope;
+    // Physical seismic ground wave displacement: only perturb normal when wave is active
+    vec2 seismicSlope = vec2(0.0);
     float seismicDY = EvaluateSeismicDisplacement(world.xz, seismicSlope);
-    local.y += seismicDY;
-    world.y += seismicDY;
-    bentNormal = PerturbNormalWithSeismicWave(bentNormal, seismicSlope);
+    if (abs(seismicDY) > 1e-5 || dot(seismicSlope, seismicSlope) > 1e-8) {
+        local.y += seismicDY;
+        world.y += seismicDY;
+        bentNormal = PerturbNormalWithSeismicWave(bentNormal, seismicSlope);
+    }
 
     fragPosition = world;
     vec3 worldN = worldLinear * bentNormal;
@@ -118,8 +121,18 @@ void main()
     fragColor = vec4(vertexColor.rgb, windSheen);
     fragHeight = h;
     fragTexCoord = vertexTexCoord2;
-    v_lightSpace = u_lightVP * vec4(world, 1.0);
-    v_staticLightSpace = u_staticLightVP * vec4(world, 1.0);
-    v_macroPatch = sin(world.x * 0.12 + world.z * 0.08) * 0.55 + cos(world.x * -0.07 + world.z * 0.16) * 0.45;
+
+    vec3 toCam = world - u_viewPos;
+    if (dot(toCam, toCam) <= 36.5 * 36.5) {
+        vec4 world4 = vec4(world, 1.0);
+        v_lightSpace = u_lightVP * world4;
+        v_staticLightSpace = u_staticLightVP * world4;
+    } else {
+        v_lightSpace = vec4(0.0, 0.0, 0.0, -1.0);
+        v_staticLightSpace = vec4(0.0, 0.0, 0.0, -1.0);
+    }
+
+    v_macroPatch = sin(rootWorldXZ.x * 0.12 + rootWorldXZ.y * 0.08) * 0.55 +
+                   cos(rootWorldXZ.x * -0.07 + rootWorldXZ.y * 0.16) * 0.45;
     gl_Position = mvp * vec4(local, 1.0);
 }

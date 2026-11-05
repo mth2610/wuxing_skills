@@ -4,7 +4,8 @@ static Mesh Ground_CreateIndexedHeightfield(Image image, Vector3 size, bool pack
 {
     Mesh mesh = {0};
     if (!image.data || image.width < 2 || image.height < 2 ||
-        (size_t)image.width * (size_t)image.height > 65535u) return mesh;
+        (size_t)image.width * (size_t)image.height > 65535u)
+        return mesh;
     int w = image.width, h = image.height;
     mesh.vertexCount = w * h;
     mesh.triangleCount = (w - 1) * (h - 1) * 2;
@@ -13,67 +14,99 @@ static Mesh Ground_CreateIndexedHeightfield(Image image, Vector3 size, bool pack
     mesh.texcoords = MemAlloc((unsigned int)mesh.vertexCount * 2u * sizeof(float));
     mesh.indices = MemAlloc((unsigned int)mesh.triangleCount * 3u * sizeof(unsigned short));
     Color *pixels = LoadImageColors(image);
-    if (!mesh.vertices || !mesh.normals || !mesh.texcoords || !mesh.indices || !pixels) {
-        MemFree(mesh.vertices); MemFree(mesh.normals); MemFree(mesh.texcoords); MemFree(mesh.indices);
-        if (pixels) UnloadImageColors(pixels);
+    if (!mesh.vertices || !mesh.normals || !mesh.texcoords || !mesh.indices || !pixels)
+    {
+        MemFree(mesh.vertices);
+        MemFree(mesh.normals);
+        MemFree(mesh.texcoords);
+        MemFree(mesh.indices);
+        if (pixels)
+            UnloadImageColors(pixels);
         return (Mesh){0};
     }
     memset(mesh.normals, 0, (size_t)mesh.vertexCount * 3u * sizeof(float));
-    for (int z = 0; z < h; z++) for (int x = 0; x < w; x++) {
-        int i = z * w + x;
-        float u = (float)x / (float)(w - 1), v = (float)z / (float)(h - 1);
-        mesh.vertices[i * 3] = u * size.x;
-        mesh.vertices[i * 3 + 1] = (packed16 ? (float)(pixels[i].r * 256 + pixels[i].g) / 65535.0f
-            : (float)(pixels[i].r + pixels[i].g + pixels[i].b) / 765.0f) * size.y;
-        mesh.vertices[i * 3 + 2] = v * size.z;
-        mesh.texcoords[i * 2] = u; mesh.texcoords[i * 2 + 1] = v;
-    }
+    for (int z = 0; z < h; z++)
+        for (int x = 0; x < w; x++)
+        {
+            int i = z * w + x;
+            float u = (float)x / (float)(w - 1), v = (float)z / (float)(h - 1);
+            mesh.vertices[i * 3] = u * size.x;
+            mesh.vertices[i * 3 + 1] = (packed16 ? (float)(pixels[i].r * 256 + pixels[i].g) / 65535.0f
+                                                 : (float)(pixels[i].r + pixels[i].g + pixels[i].b) / 765.0f) *
+                                       size.y;
+            mesh.vertices[i * 3 + 2] = v * size.z;
+            mesh.texcoords[i * 2] = u;
+            mesh.texcoords[i * 2 + 1] = v;
+        }
     UnloadImageColors(pixels);
     int index = 0;
-    for (int z = 0; z < h - 1; z++) for (int x = 0; x < w - 1; x++) {
-        int a = z * w + x, b = a + w, c = a + 1, d = b + 1;
-        float ya = mesh.vertices[a * 3 + 1];
-        float yb = mesh.vertices[b * 3 + 1];
-        float yc = mesh.vertices[c * 3 + 1];
-        float yd = mesh.vertices[d * 3 + 1];
-        if (size.y >= 15.0f && ya <= 0.75f && yb <= 0.75f && yc <= 0.75f && yd <= 0.75f)
-            continue;
-        float diffAD = fabsf(ya - yd);
-        float diffBC = fabsf(yb - yc);
-        int ids[6];
-        if (diffAD < diffBC) {
-            ids[0] = a; ids[1] = b; ids[2] = d;
-            ids[3] = a; ids[4] = d; ids[5] = c;
-        } else {
-            ids[0] = a; ids[1] = b; ids[2] = c;
-            ids[3] = c; ids[4] = b; ids[5] = d;
+    for (int z = 0; z < h - 1; z++)
+        for (int x = 0; x < w - 1; x++)
+        {
+            int a = z * w + x, b = a + w, c = a + 1, d = b + 1;
+            float ya = mesh.vertices[a * 3 + 1];
+            float yb = mesh.vertices[b * 3 + 1];
+            float yc = mesh.vertices[c * 3 + 1];
+            float yd = mesh.vertices[d * 3 + 1];
+            if (size.y >= 15.0f && ya <= 0.75f && yb <= 0.75f && yc <= 0.75f && yd <= 0.75f)
+                continue;
+            float diffAD = fabsf(ya - yd);
+            float diffBC = fabsf(yb - yc);
+            int ids[6];
+            if (diffAD < diffBC)
+            {
+                ids[0] = a;
+                ids[1] = b;
+                ids[2] = d;
+                ids[3] = a;
+                ids[4] = d;
+                ids[5] = c;
+            }
+            else
+            {
+                ids[0] = a;
+                ids[1] = b;
+                ids[2] = c;
+                ids[3] = c;
+                ids[4] = b;
+                ids[5] = d;
+            }
+            for (int k = 0; k < 6; k++)
+                mesh.indices[index++] = (unsigned short)ids[k];
         }
-        for (int k = 0; k < 6; k++) mesh.indices[index++] = (unsigned short)ids[k];
-    }
     mesh.triangleCount = index / 3;
-    for (int t = 0; t < mesh.triangleCount; t++) {
+    for (int t = 0; t < mesh.triangleCount; t++)
+    {
         unsigned short *ids = &mesh.indices[t * 3];
-        Vector3 a = {mesh.vertices[ids[0]*3], mesh.vertices[ids[0]*3+1], mesh.vertices[ids[0]*3+2]};
-        Vector3 b = {mesh.vertices[ids[1]*3], mesh.vertices[ids[1]*3+1], mesh.vertices[ids[1]*3+2]};
-        Vector3 c = {mesh.vertices[ids[2]*3], mesh.vertices[ids[2]*3+1], mesh.vertices[ids[2]*3+2]};
-        Vector3 n = Vector3CrossProduct(Vector3Subtract(b,a), Vector3Subtract(c,a));
-        for (int k = 0; k < 3; k++) {
-            mesh.normals[ids[k]*3] += n.x;
-            mesh.normals[ids[k]*3+1] += n.y;
-            mesh.normals[ids[k]*3+2] += n.z;
+        Vector3 a = {mesh.vertices[ids[0] * 3], mesh.vertices[ids[0] * 3 + 1], mesh.vertices[ids[0] * 3 + 2]};
+        Vector3 b = {mesh.vertices[ids[1] * 3], mesh.vertices[ids[1] * 3 + 1], mesh.vertices[ids[1] * 3 + 2]};
+        Vector3 c = {mesh.vertices[ids[2] * 3], mesh.vertices[ids[2] * 3 + 1], mesh.vertices[ids[2] * 3 + 2]};
+        Vector3 n = Vector3CrossProduct(Vector3Subtract(b, a), Vector3Subtract(c, a));
+        for (int k = 0; k < 3; k++)
+        {
+            mesh.normals[ids[k] * 3] += n.x;
+            mesh.normals[ids[k] * 3 + 1] += n.y;
+            mesh.normals[ids[k] * 3 + 2] += n.z;
         }
     }
-    for (int i = 0; i < mesh.vertexCount; i++) {
-        Vector3 n = Vector3Normalize((Vector3){mesh.normals[i*3],mesh.normals[i*3+1],mesh.normals[i*3+2]});
-        mesh.normals[i*3]=n.x; mesh.normals[i*3+1]=n.y; mesh.normals[i*3+2]=n.z;
+    for (int i = 0; i < mesh.vertexCount; i++)
+    {
+        Vector3 n = Vector3Normalize((Vector3){mesh.normals[i * 3], mesh.normals[i * 3 + 1], mesh.normals[i * 3 + 2]});
+        mesh.normals[i * 3] = n.x;
+        mesh.normals[i * 3 + 1] = n.y;
+        mesh.normals[i * 3 + 2] = n.z;
     }
     float *smoothNormals = MemAlloc((unsigned int)mesh.vertexCount * 3u * sizeof(float));
-    if (smoothNormals) {
-        for (int pass = 0; pass < 2; pass++) {
-            for (int z = 0; z < h; z++) {
+    if (smoothNormals)
+    {
+        for (int pass = 0; pass < 2; pass++)
+        {
+            for (int z = 0; z < h; z++)
+            {
                 int z0 = (z > 0) ? z - 1 : z;
                 int z1 = (z < h - 1) ? z + 1 : z;
-                for (int x = 0; x < w; x++) {
+                for (int x = 0; x < w; x++)
+                {
                     int x0 = (x > 0) ? x - 1 : x;
                     int x1 = (x < w - 1) ? x + 1 : x;
                     int c = z * w + x;
@@ -84,10 +117,10 @@ static Mesh Ground_CreateIndexedHeightfield(Image image, Vector3 size, bool pack
                     };
                     const int neighbors[8] = {
                         z * w + x0, z * w + x1, z0 * w + x, z1 * w + x,
-                        z0 * w + x0, z0 * w + x1, z1 * w + x0, z1 * w + x1
-                    };
+                        z0 * w + x0, z0 * w + x1, z1 * w + x0, z1 * w + x1};
                     const float weights[8] = {2.0f, 2.0f, 2.0f, 2.0f, 1.0f, 1.0f, 1.0f, 1.0f};
-                    for (int k = 0; k < 8; k++) {
+                    for (int k = 0; k < 8; k++)
+                    {
                         int nb = neighbors[k];
                         float wk = weights[k];
                         acc.x += mesh.normals[nb * 3 + 0] * wk;
@@ -104,24 +137,34 @@ static Mesh Ground_CreateIndexedHeightfield(Image image, Vector3 size, bool pack
         }
         MemFree(smoothNormals);
     }
-    if (!indexed) {
+    if (!indexed)
+    {
         Mesh expanded = {0};
         expanded.vertexCount = mesh.triangleCount * 3;
         expanded.triangleCount = mesh.triangleCount;
         expanded.vertices = MemAlloc((unsigned int)expanded.vertexCount * 3u * sizeof(float));
         expanded.normals = MemAlloc((unsigned int)expanded.vertexCount * 3u * sizeof(float));
         expanded.texcoords = MemAlloc((unsigned int)expanded.vertexCount * 2u * sizeof(float));
-        if (expanded.vertices && expanded.normals && expanded.texcoords) {
-            for (int i = 0; i < expanded.vertexCount; i++) {
+        if (expanded.vertices && expanded.normals && expanded.texcoords)
+        {
+            for (int i = 0; i < expanded.vertexCount; i++)
+            {
                 int j = mesh.indices[i];
-                memcpy(&expanded.vertices[i*3], &mesh.vertices[j*3], 3u*sizeof(float));
-                memcpy(&expanded.normals[i*3], &mesh.normals[j*3], 3u*sizeof(float));
-                memcpy(&expanded.texcoords[i*2], &mesh.texcoords[j*2], 2u*sizeof(float));
+                memcpy(&expanded.vertices[i * 3], &mesh.vertices[j * 3], 3u * sizeof(float));
+                memcpy(&expanded.normals[i * 3], &mesh.normals[j * 3], 3u * sizeof(float));
+                memcpy(&expanded.texcoords[i * 2], &mesh.texcoords[j * 2], 2u * sizeof(float));
             }
-            MemFree(mesh.vertices); MemFree(mesh.normals); MemFree(mesh.texcoords); MemFree(mesh.indices);
+            MemFree(mesh.vertices);
+            MemFree(mesh.normals);
+            MemFree(mesh.texcoords);
+            MemFree(mesh.indices);
             mesh = expanded;
-        } else {
-            MemFree(expanded.vertices); MemFree(expanded.normals); MemFree(expanded.texcoords);
+        }
+        else
+        {
+            MemFree(expanded.vertices);
+            MemFree(expanded.normals);
+            MemFree(expanded.texcoords);
         }
     }
     UploadMesh(&mesh, false);

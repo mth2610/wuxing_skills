@@ -34,6 +34,14 @@ out float v_macroPatch;
 void main()
 {
     if (!NatureTuftUsesCurrentLod()) {
+        fragPosition = vec3(0.0);
+        fragNormal = vec3(0.0, 1.0, 0.0);
+        fragColor = vec4(0.0);
+        fragHeight = 0.0;
+        fragTexCoord = vec2(0.0);
+        v_lightSpace = vec4(0.0, 0.0, 0.0, -1.0);
+        v_staticLightSpace = vec4(0.0, 0.0, 0.0, -1.0);
+        v_macroPatch = 0.0;
         gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
         return;
     }
@@ -45,10 +53,20 @@ void main()
 
     // Early clip if perimeter fade collapsed the blade completely
     if (bladeColor.a <= 0.0) {
+        fragPosition = vec3(0.0);
+        fragNormal = vec3(0.0, 1.0, 0.0);
+        fragColor = vec4(0.0);
+        fragHeight = 0.0;
+        fragTexCoord = vec2(0.0);
+        v_lightSpace = vec4(0.0, 0.0, 0.0, -1.0);
+        v_staticLightSpace = vec4(0.0, 0.0, 0.0, -1.0);
+        v_macroPatch = 0.0;
         gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
         return;
     }
 
+    vec3 rootLocal = s_cachedClumpTexel.xyz;
+    vec3 rootWorld = rootLocal + u_worldOffset;
     vec3 local = bladePosition;
     vec3 world = local + u_worldOffset;
     float h = bladeWindUV.y;
@@ -57,8 +75,6 @@ void main()
 
     // Skip all wind & state deformation evaluations for stationary root vertices (h == 0)
     if (h > 0.0001) {
-        vec3 rootLocal = s_cachedClumpTexel.xyz;
-        vec3 rootWorld = rootLocal + u_worldOffset;
         vec3 spineCenter = local - s_cachedSide * (s_cachedHalfWidth * vertexPosition.x);
 
         float windCompliance = 1.0;
@@ -133,12 +149,14 @@ void main()
         windSheen = clamp(dispLen / maxAllowedBend, 0.0, 1.0) * archSheenMask;
     }
 
-    // Physical seismic ground wave displacement: lift entire blade and tilt normal with ground heave
-    vec2 seismicSlope;
+    // Physical seismic ground wave displacement: only perturb normal when wave is active
+    vec2 seismicSlope = vec2(0.0);
     float seismicDY = EvaluateSeismicDisplacement(world.xz, seismicSlope);
-    local.y += seismicDY;
-    world.y += seismicDY;
-    bentNormal = PerturbNormalWithSeismicWave(bentNormal, seismicSlope);
+    if (abs(seismicDY) > 1e-5 || dot(seismicSlope, seismicSlope) > 1e-8) {
+        local.y += seismicDY;
+        world.y += seismicDY;
+        bentNormal = PerturbNormalWithSeismicWave(bentNormal, seismicSlope);
+    }
 
     fragPosition = world;
     fragNormal = bentNormal * inversesqrt(max(dot(bentNormal, bentNormal), 1e-8));
@@ -146,16 +164,19 @@ void main()
     fragHeight = h;
     fragTexCoord = bladeSurfaceUV;
 
-    // [TỐI ƯU ALU]: Chỉ nhân 2 ma trận bóng đổ 4x4 khi bụi cỏ nằm trong bán kính nhận bóng (<= 28.5m)
-    if (s_cachedDistToCam <= 28.5) {
+    // [TỐI ƯU ALU & SỬA LỖI RANH GIỚI BÓNG]: Đồng bộ cự ly tính ma trận bóng (36.5m) vượt qua
+    // ngưỡng tắt hoàn toàn shadowFade (36.0m) trong nature_surface.glsl, gán w = -1.0 khi ngoài vùng.
+    if (s_cachedDistToCam <= 36.5) {
         vec4 world4 = vec4(world, 1.0);
         v_lightSpace = u_lightVP * world4;
         v_staticLightSpace = u_staticLightVP * world4;
     } else {
-        v_lightSpace = vec4(0.0);
-        v_staticLightSpace = vec4(0.0);
+        v_lightSpace = vec4(0.0, 0.0, 0.0, -1.0);
+        v_staticLightSpace = vec4(0.0, 0.0, 0.0, -1.0);
     }
 
-    v_macroPatch = sin(world.x * 0.12 + world.z * 0.08) * 0.55 + cos(world.x * -0.07 + world.z * 0.16) * 0.45;
+    // Neo màu mảng cỏ (macroPatch) theo gốc cây (rootWorld) để màu không bị trôi khi ngọn cỏ nghiêng theo gió
+    v_macroPatch = sin(rootWorld.x * 0.12 + rootWorld.z * 0.08) * 0.55 +
+                   cos(rootWorld.x * -0.07 + rootWorld.z * 0.16) * 0.45;
     gl_Position = mvp * vec4(local, 1.0);
 }

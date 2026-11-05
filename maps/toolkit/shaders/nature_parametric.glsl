@@ -124,13 +124,17 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     vec4 p1 = texelFetch(u_bladeParameters, ivec2(baseCoord.x + 1, baseCoord.y), 0);
     vec4 p2 = texelFetch(u_bladeParameters, ivec2(baseCoord.x + 2, baseCoord.y), 0);
     vec4 p3 = texelFetch(u_bladeParameters, ivec2(baseCoord.x + 3, baseCoord.y), 0);
+
+#ifdef NATURE_BLADE_POSITION_ONLY
+    // Trong lượt đổ bóng (Shadow Pass), không cần đọc texel thứ 5 (clump) trừ khi tangent suy biến thẳng đứng
+    s_cachedClumpTexel = vec4(p0.xyz, 0.0);
+    s_hasCachedClumpTexel = true;
+#else
     vec4 clump = (s_hasCachedClumpTexel && localBlade == 0)
         ? s_cachedClumpTexel
         : texelFetch(u_bladeParameters, ivec2(baseCoord.x + 4, baseCoord.y), 0);
     s_cachedClumpTexel = vec4(p0.xyz, clump.w);
     s_hasCachedClumpTexel = true;
-
-#ifndef NATURE_BLADE_POSITION_ONLY
     vec3 rootColor = texelFetch(u_bladeParameters, ivec2(baseCoord.x + 5, baseCoord.y), 0).rgb;
     vec3 tipColor  = texelFetch(u_bladeParameters, ivec2(baseCoord.x + 6, baseCoord.y), 0).rgb;
 #endif
@@ -158,7 +162,12 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     if (sideLenSq > 1e-6) {
         side *= inversesqrt(sideLenSq);
     } else {
-        side = vec3(-sin(clump.w), 0.0, cos(clump.w));
+#ifdef NATURE_BLADE_POSITION_ONLY
+        float leanAngle = texelFetch(u_bladeParameters, ivec2(baseCoord.x + 4, baseCoord.y), 0).w;
+#else
+        float leanAngle = clump.w;
+#endif
+        side = vec3(-sin(leanAngle), 0.0, cos(leanAngle));
     }
 
 #ifdef NATURE_VISIBLE_TUFT_LOD
@@ -181,8 +190,8 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
         viewSide3D *= inversesqrt(vsLenSq);
         if (dot(side, viewSide3D) < 0.0) viewSide3D = -viewSide3D;
         if (u_geometryLod < 2) {
-            vec3 natCross = cross(side, tangent);
-            vec3 naturalNormal = natCross * inversesqrt(max(dot(natCross, natCross), 1e-8));
+            // Vì side và tangent đều là vector đơn vị trực giao, cross(side, tangent) đã có độ dài = 1.0
+            vec3 naturalNormal = cross(side, tangent);
             vec3 viewDir = toCamVec * invDistToCam;
             float edgeOn = 1.0 - abs(dot(naturalNormal, viewDir));
             float viewAssist = mix(0.36, 0.50, clamp(distToCam * 0.04, 0.0, 1.0));
@@ -197,8 +206,9 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     }
 #endif
 
-    vec3 rawGeomN = cross(side, tangent);
-    vec3 geometricNormal = rawGeomN * inversesqrt(max(dot(rawGeomN, rawGeomN), 1e-8));
+    // Vì cả side và viewSide3D đều vuông góc với tangent nên tổ hợp chuẩn hóa của chúng
+    // vẫn vuông góc tuyệt đối với tangent -> cross(side, tangent) là vector đơn vị!
+    vec3 geometricNormal = cross(side, tangent);
     if (geometricNormal.y < 0.0) geometricNormal = -geometricNormal;
     if (geometricNormal.y < 0.25) {
         geometricNormal.y = 0.25;
@@ -256,8 +266,8 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
         float upBlend = mix(0.42, 0.54, t);
         vec3 rawTarget = mix(sphereDirection, vec3(0.0, 1.0, 0.0), upBlend);
         vec3 target = rawTarget * inversesqrt(max(dot(rawTarget, rawTarget), 1e-8));
-        vec3 rawMeshN = geometricNormal + side * (sideSign * (0.34 * (1.0 - 0.35 * t)));
-        vec3 meshNormal = rawMeshN * inversesqrt(max(dot(rawMeshN, rawMeshN), 1e-8));
+        float edgeTilt = sideSign * (0.34 * (1.0 - 0.35 * t));
+        vec3 meshNormal = (geometricNormal + side * edgeTilt) * inversesqrt(1.0 + edgeTilt * edgeTilt);
         vec3 rawFinalN = mix(meshNormal, target, mix(0.44, 0.54, t));
         normal = rawFinalN * inversesqrt(max(dot(rawFinalN, rawFinalN), 1e-8));
     } else {

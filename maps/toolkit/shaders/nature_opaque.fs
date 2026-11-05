@@ -30,7 +30,8 @@ void main()
         : vec3(-fragNormal.x, max(abs(fragNormal.y), 0.30), -fragNormal.z);
     vec3 baseNormal = rawN * inversesqrt(max(dot(rawN, rawN), 1e-8));
 
-    vec3 albedo = fragColor.rgb * colDiffuse.rgb;
+    float tipSoft = clamp(u_grassTipSoftening, 0.0, 1.0) * smoothstep(0.68, 1.0, fragHeight);
+    vec3 albedo = fragColor.rgb * colDiffuse.rgb * (1.0 + tipSoft * 0.03);
 
     vec3 lit = GrassShade(albedo, fragPosition, baseNormal, fragHeight,
                           uNorm, v_lightSpace, v_staticLightSpace, v_macroPatch);

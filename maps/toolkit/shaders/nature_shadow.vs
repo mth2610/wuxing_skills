@@ -49,11 +49,17 @@ void main()
         }
 
         float rawBendSq = dot(windBend, windBend);
-        if (rawBendSq > maxAllowedBend * maxAllowedBend) {
-            windBend *= maxAllowedBend * inversesqrt(rawBendSq);
+        float rawBendLen = (rawBendSq > 1e-10) ? (rawBendSq * inversesqrt(rawBendSq)) : 0.0;
+        if (rawBendLen > maxAllowedBend) {
+            windBend *= maxAllowedBend / rawBendLen;
+            rawBendLen = maxAllowedBend;
         }
 
+        float dispLen = rawBendLen * rootMask;
+        float dispSq = dispLen * dispLen;
+        float effHeight = max(abs(local.y), 0.15);
         local.xz += windBend * rootMask;
+        local.y  -= dispSq / (effHeight * 3.6 + dispSq * (0.28 / effHeight));
     }
 
     fragTexCoord = vertexTexCoord2;

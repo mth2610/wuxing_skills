@@ -81,7 +81,6 @@ static const float kNatureWindSampleHeight = 0.25f;
 static Texture2D s_natureInteractionTexture = {0};
 static Color s_natureInteractionPixels[NATURE_INTERACTION_PIXEL_COUNT];
 static Color s_natureInteractionScratch[NATURE_INTERACTION_PIXEL_COUNT];
-static Color s_natureInteractionUploaded[NATURE_INTERACTION_PIXEL_COUNT];
 static bool s_natureInteractionUploadValid = false;
 static bool s_natureInteractionDirty = false;
 static bool s_natureInteractionScrolled = false;
@@ -433,8 +432,8 @@ static Vector2 Nature_DecodeMacroAtCell(int x, int z, float fraction)
         z = NATURE_MACRO_RESOLUTION - 1;
     Color pixel = s_natureMacroPixels[z * NATURE_MACRO_RESOLUTION + x];
     return (Vector2){
-        (((float)pixel.r + ((float)pixel.b - pixel.r) * fraction) / 255.0f * 2.0f - 1.0f) * s_natureMacroScale,
-        (((float)pixel.g + ((float)pixel.a - pixel.g) * fraction) / 255.0f * 2.0f - 1.0f) * s_natureMacroScale,
+        (((float)pixel.r + ((float)pixel.b - pixel.r) * fraction) * (2.0f / 255.0f) - 1.0f) * s_natureMacroScale,
+        (((float)pixel.g + ((float)pixel.a - pixel.g) * fraction) * (2.0f / 255.0f) - 1.0f) * s_natureMacroScale,
     };
 }
 
@@ -487,9 +486,10 @@ static void Nature_UpdateMacroCache(float time)
         return;
     }
     const float cellSize = kNatureMacroWorldSize / NATURE_MACRO_RESOLUTION;
+    const float invCellSize = (float)NATURE_MACRO_RESOLUTION / kNatureMacroWorldSize;
     Vector4 region = {
-        roundf(camera.target.x / cellSize) * cellSize,
-        roundf(camera.target.z / cellSize) * cellSize,
+        roundf(camera.target.x * invCellSize) * cellSize,
+        roundf(camera.target.z * invCellSize) * cellSize,
         kNatureMacroWorldSize,
         camera.target.y,
     };
@@ -648,7 +648,7 @@ static inline Color Nature_EncodeInteractionPixel(Vector2 bend)
     return (Color){
         (unsigned char)((directionX * 0.5f + 0.5f) * 255.0f),
         (unsigned char)((directionZ * 0.5f + 0.5f) * 255.0f),
-        (unsigned char)(magnitude / kNatureInteractionMaxBend * 255.0f),
+        (unsigned char)(magnitude * (255.0f / kNatureInteractionMaxBend)),
         255,
     };
 }
@@ -702,9 +702,9 @@ static void Nature_InitInteraction(void)
 
 static void Nature_ScrollAndDecayInteraction(Vector2 newCenter, float dt)
 {
-    const float cellSize = kNatureInteractionWorldSize / NATURE_INTERACTION_RESOLUTION;
-    int shiftX = (int)roundf((newCenter.x - s_natureInteractionCenter.x) / cellSize);
-    int shiftY = (int)roundf((newCenter.y - s_natureInteractionCenter.y) / cellSize);
+    const float invCellSize = (float)NATURE_INTERACTION_RESOLUTION / kNatureInteractionWorldSize;
+    int shiftX = (int)roundf((newCenter.x - s_natureInteractionCenter.x) * invCellSize);
+    int shiftY = (int)roundf((newCenter.y - s_natureInteractionCenter.y) * invCellSize);
     float decay = (dt > 0.0f) ? expf(-dt * 2.15f) : 1.0f;
     Color empty = Nature_EmptyInteractionPixel();
 
@@ -758,14 +758,18 @@ static void Nature_ScrollAndDecayInteraction(Vector2 newCenter, float dt)
         return;
     }
 
-    // Nếu dịch chuyển quá toàn bộ lưới 64x64 thì reset nhanh
+    // Nếu dịch chuyển quá toàn bộ lưới 64x64 thì reset nhanh, chỉ đánh dấu dirty khi thực sự có dữ liệu cũ
     if (abs(shiftX) >= NATURE_INTERACTION_RESOLUTION || abs(shiftY) >= NATURE_INTERACTION_RESOLUTION)
     {
+        bool hadActiveState = s_natureInteractionHasData || s_natureForceAwake;
         for (int i = 0; i < NATURE_INTERACTION_PIXEL_COUNT; i++)
         {
-            s_natureInteractionPixels[i] = empty;
-            s_natureForceBend[i] = (Vector2){0};
-            s_natureForceVelocity[i] = (Vector2){0};
+            if (hadActiveState)
+            {
+                s_natureInteractionPixels[i] = empty;
+                s_natureForceBend[i] = (Vector2){0};
+                s_natureForceVelocity[i] = (Vector2){0};
+            }
             s_natureCellGroundY[i] = NATURE_GROUND_Y_INVALID;
         }
         s_natureActiveMinX = NATURE_INTERACTION_RESOLUTION;
@@ -773,8 +777,12 @@ static void Nature_ScrollAndDecayInteraction(Vector2 newCenter, float dt)
         s_natureActiveMinY = NATURE_INTERACTION_RESOLUTION;
         s_natureActiveMaxY = -1;
         s_natureInteractionHasData = false;
-        s_natureInteractionScrolled = true;
-        s_natureInteractionDirty = true;
+        s_natureForceAwake = false;
+        if (hadActiveState)
+        {
+            s_natureInteractionScrolled = true;
+            s_natureInteractionDirty = true;
+        }
         s_natureInteractionCenter = newCenter;
         return;
     }
@@ -876,9 +884,10 @@ void MapProp_BeginNatureInteraction(Vector3 focus, float dt)
     if (!s_natureInteractionReady)
         return;
     const float cellSize = kNatureInteractionWorldSize / NATURE_INTERACTION_RESOLUTION;
+    const float invCellSize = (float)NATURE_INTERACTION_RESOLUTION / kNatureInteractionWorldSize;
     Vector2 snappedCenter = {
-        roundf(focus.x / cellSize) * cellSize,
-        roundf(focus.z / cellSize) * cellSize,
+        roundf(focus.x * invCellSize) * cellSize,
+        roundf(focus.z * invCellSize) * cellSize,
     };
     s_natureRequestedFocusCenter = snappedCenter;
     Nature_ScrollAndDecayInteraction(snappedCenter, dt);
@@ -914,11 +923,15 @@ void MapProp_AddNatureInteractor(Vector3 position, float radius, float strength)
         return;
     s_natureInteractorAddedThisFrame = true;
     const float cellSize = kNatureInteractionWorldSize / NATURE_INTERACTION_RESOLUTION;
+    const float invCellSize = (float)NATURE_INTERACTION_RESOLUTION / kNatureInteractionWorldSize;
     const float halfSize = kNatureInteractionWorldSize * 0.5f;
-    int minX = (int)floorf((position.x - radius - (s_natureInteractionCenter.x - halfSize)) / cellSize);
-    int maxX = (int)ceilf((position.x + radius - (s_natureInteractionCenter.x - halfSize)) / cellSize);
-    int minY = (int)floorf((position.z - radius - (s_natureInteractionCenter.y - halfSize)) / cellSize);
-    int maxY = (int)ceilf((position.z + radius - (s_natureInteractionCenter.y - halfSize)) / cellSize);
+    const float originX = s_natureInteractionCenter.x - halfSize;
+    const float originZ = s_natureInteractionCenter.y - halfSize;
+
+    int minX = (int)floorf((position.x - radius - originX) * invCellSize);
+    int maxX = (int)ceilf((position.x + radius - originX) * invCellSize);
+    int minY = (int)floorf((position.z - radius - originZ) * invCellSize);
+    int maxY = (int)ceilf((position.z + radius - originZ) * invCellSize);
     if (minX < 0)
         minX = 0;
     if (minY < 0)
@@ -932,11 +945,11 @@ void MapProp_AddNatureInteractor(Vector3 position, float radius, float strength)
 
     float radiusSq = radius * radius;
     float invRadius = 1.0f / radius;
-    float strengthNorm = fminf(strength / kNatureInteractionMaxBend, 1.0f);
+    float strengthNorm = fminf(strength * (1.0f / kNatureInteractionMaxBend), 1.0f);
 
     for (int y = minY; y <= maxY; y++)
     {
-        float worldZ = s_natureInteractionCenter.y - halfSize + (y + 0.5f) * cellSize;
+        float worldZ = originZ + ((float)y + 0.5f) * cellSize;
         float dz = worldZ - position.z;
         float dzSq = dz * dz;
         if (dzSq >= radiusSq)
@@ -944,7 +957,7 @@ void MapProp_AddNatureInteractor(Vector3 position, float radius, float strength)
         int row = y * NATURE_INTERACTION_RESOLUTION;
         for (int x = minX; x <= maxX; x++)
         {
-            float worldX = s_natureInteractionCenter.x - halfSize + (x + 0.5f) * cellSize;
+            float worldX = originX + ((float)x + 0.5f) * cellSize;
             float dx = worldX - position.x;
             float distSq = dx * dx + dzSq;
             if (distSq >= radiusSq)
@@ -1021,10 +1034,11 @@ static int Nature_UpdateDominantWindImpact(const VorticleData *vorticles,
         strongestFocus != directImpact)
     {
         const float cellSize = kNatureInteractionWorldSize / NATURE_INTERACTION_RESOLUTION;
+        const float invCellSize = (float)NATURE_INTERACTION_RESOLUTION / kNatureInteractionWorldSize;
         const VorticleData *focus = &vorticles[strongestFocus];
         Vector2 windCenter = {
-            roundf(focus->position.x / cellSize) * cellSize,
-            roundf(focus->position.z / cellSize) * cellSize,
+            roundf(focus->position.x * invCellSize) * cellSize,
+            roundf(focus->position.z * invCellSize) * cellSize,
         };
         Nature_ScrollAndDecayInteraction(windCenter, 0.0f);
     }
@@ -1095,17 +1109,18 @@ static int Nature_UpdateDominantWindImpact(const VorticleData *vorticles,
 static void Nature_AdvanceAnchoredCell(Vector2 *bend, Vector2 *velocity,
                                        Vector3 forceNewtons, float dt)
 {
-    const float massKg = kNatureCanopyMassKg;
+    const float invMass = 1.0f / kNatureCanopyMassKg;
     const float stiffnessNPerM = 0.30f;
-    const float dampingRatio = 0.30f;
-    const float damping = 2.0f * dampingRatio * sqrtf(stiffnessNPerM * massKg);
+    // 2.0f * 0.30f * sqrtf(0.30f * 0.003f) = 0.60f * 0.03f = 0.018f exact
+    const float dampingOverMass = 0.018f * invMass;
     float step = fminf(fmaxf(dt, 0.0f), 1.0f / 120.0f);
-    float implicitDrag = 1.0f + damping * step / massKg;
+    float invImplicitDrag = 1.0f / (1.0f + dampingOverMass * step);
+    float accelScale = step * invMass;
 
     float bx = bend->x;
     float by = bend->y;
-    float vx = (velocity->x + (forceNewtons.x - stiffnessNPerM * bx) * step / massKg) / implicitDrag;
-    float vy = (velocity->y + (forceNewtons.z - stiffnessNPerM * by) * step / massKg) / implicitDrag;
+    float vx = (velocity->x + (forceNewtons.x - stiffnessNPerM * bx) * accelScale) * invImplicitDrag;
+    float vy = (velocity->y + (forceNewtons.z - stiffnessNPerM * by) * accelScale) * invImplicitDrag;
     bx += vx * step;
     by += vy * step;
 
@@ -1141,11 +1156,11 @@ static Vector3 Nature_AnchoredAirForce(Vector3 velocity, Vector3 airflow, float 
     float speed = sqrtf(relative.x * relative.x + relative.y * relative.y + relative.z * relative.z);
     const float airDensityKgM3 = 1.225f, dragCoefficient = 1.2f;
     const float projectedAreaM2 = kNatureWindSampleHeight * 0.012f;
-    float drag = 0.5f * airDensityKgM3 * dragCoefficient * projectedAreaM2;
+    const float drag = 0.5f * airDensityKgM3 * dragCoefficient * projectedAreaM2;
     float forceScale = drag * speed;
     if (dt > 0.0f)
     {
-        float speedScale = 2.0f / (1.0f + sqrtf(1.0f + 4.0f * drag * speed * dt / kNatureCanopyMassKg));
+        float speedScale = 2.0f / (1.0f + sqrtf(1.0f + 4.0f * drag * speed * dt * (1.0f / kNatureCanopyMassKg)));
         forceScale = kNatureCanopyMassKg * (1.0f - speedScale) / dt;
     }
     return (Vector3){relative.x * forceScale, relative.y * forceScale,
@@ -1161,7 +1176,11 @@ static void Nature_AddAnchoredMotion(void)
     if (!fieldsActive && !s_natureForceAwake)
         return;
     const float cellSize = kNatureInteractionWorldSize / NATURE_INTERACTION_RESOLUTION;
+    const float invCellSize = (float)NATURE_INTERACTION_RESOLUTION / kNatureInteractionWorldSize;
     const float halfSize = kNatureInteractionWorldSize * 0.5f;
+    const float originX = s_natureInteractionCenter.x - halfSize;
+    const float originZ = s_natureInteractionCenter.y - halfSize;
+
     bool awake = false;
     float maxBend = 0.0f;
     int queryCells = 0;
@@ -1180,10 +1199,10 @@ static void Nature_AddAnchoredMotion(void)
         float fMaxX = maximum.x + kNatureInteractionMaxBend;
         float fMinZ = minimum.z - kNatureInteractionMaxBend;
         float fMaxZ = maximum.z + kNatureInteractionMaxBend;
-        gridMinX = (int)floorf((fMinX - (s_natureInteractionCenter.x - halfSize)) / cellSize);
-        gridMaxX = (int)ceilf((fMaxX - (s_natureInteractionCenter.x - halfSize)) / cellSize);
-        gridMinY = (int)floorf((fMinZ - (s_natureInteractionCenter.y - halfSize)) / cellSize);
-        gridMaxY = (int)ceilf((fMaxZ - (s_natureInteractionCenter.y - halfSize)) / cellSize);
+        gridMinX = (int)floorf((fMinX - originX) * invCellSize);
+        gridMaxX = (int)ceilf((fMaxX - originX) * invCellSize);
+        gridMinY = (int)floorf((fMinZ - originZ) * invCellSize);
+        gridMaxY = (int)ceilf((fMaxZ - originZ) * invCellSize);
         if (gridMinX < 0)
             gridMinX = 0;
         if (gridMinY < 0)
@@ -1213,14 +1232,14 @@ static void Nature_AddAnchoredMotion(void)
         float fMaxX = maximum.x + kNatureInteractionMaxBend;
         float fMinZ = minimum.z - kNatureInteractionMaxBend;
         float fMaxZ = maximum.z + kNatureInteractionMaxBend;
-        int fGridMinX = (int)floorf((fMinX - (s_natureInteractionCenter.x - halfSize)) / cellSize);
-        int fGridMaxX = (int)ceilf((fMaxX - (s_natureInteractionCenter.x - halfSize)) / cellSize);
-        int fGridMinY = (int)floorf((fMinZ - (s_natureInteractionCenter.y - halfSize)) / cellSize);
-        int fGridMaxY = (int)ceilf((fMaxZ - (s_natureInteractionCenter.y - halfSize)) / cellSize);
-        gridMinX = (int)fminf((float)fGridMinX, (float)s_natureAwakeMinX);
-        gridMaxX = (int)fmaxf((float)fGridMaxX, (float)s_natureAwakeMaxX);
-        gridMinY = (int)fminf((float)fGridMinY, (float)s_natureAwakeMinY);
-        gridMaxY = (int)fmaxf((float)fGridMaxY, (float)s_natureAwakeMaxY);
+        int fGridMinX = (int)floorf((fMinX - originX) * invCellSize);
+        int fGridMaxX = (int)ceilf((fMaxX - originX) * invCellSize);
+        int fGridMinY = (int)floorf((fMinZ - originZ) * invCellSize);
+        int fGridMaxY = (int)ceilf((fMaxZ - originZ) * invCellSize);
+        gridMinX = (fGridMinX < s_natureAwakeMinX) ? fGridMinX : s_natureAwakeMinX;
+        gridMaxX = (fGridMaxX > s_natureAwakeMaxX) ? fGridMaxX : s_natureAwakeMaxX;
+        gridMinY = (fGridMinY < s_natureAwakeMinY) ? fGridMinY : s_natureAwakeMinY;
+        gridMaxY = (fGridMaxY > s_natureAwakeMaxY) ? fGridMaxY : s_natureAwakeMaxY;
         if (gridMinX < 0)
             gridMinX = 0;
         if (gridMinY < 0)
@@ -1236,17 +1255,33 @@ static void Nature_AddAnchoredMotion(void)
     int nextAwakeMinX = NATURE_INTERACTION_RESOLUTION - 1, nextAwakeMaxX = 0;
     int nextAwakeMinY = NATURE_INTERACTION_RESOLUTION - 1, nextAwakeMaxY = 0;
 
+    const BodyPhysicalProperties kBody = {
+        .massKg = kNatureCanopyMassKg,
+        .projectedAreaM2 = kNatureWindSampleHeight * 0.012f,
+        .dragCoefficient = 1.2f,
+    };
+    const MediumProperties kMedium = {
+        .densityKgM3 = 1.225f,
+        .gravityMps2 = {0.0f, -9.81f, 0.0f},
+    };
+    const ReceiverConstraints kConstraints = {
+        .mode = RECEIVER_ROOTED,
+        .permittedAxes = {1.0f, 0.0f, 1.0f},
+    };
+
     for (int y = gridMinY; y <= gridMaxY; y++)
     {
+        float rootZ = originZ + ((float)y + 0.5f) * cellSize;
+        int rowOffset = y * NATURE_INTERACTION_RESOLUTION;
         for (int x = gridMinX; x <= gridMaxX; x++)
         {
-            int index = y * NATURE_INTERACTION_RESOLUTION + x;
+            int index = rowOffset + x;
             Vector2 *bend = &s_natureForceBend[index];
             Vector2 *velocity = &s_natureForceVelocity[index];
             Vector3 root = {
-                s_natureInteractionCenter.x - halfSize + (x + 0.5f) * cellSize,
+                originX + ((float)x + 0.5f) * cellSize,
                 0.0f,
-                s_natureInteractionCenter.y - halfSize + (y + 0.5f) * cellSize,
+                rootZ,
             };
             bool inBounds = fieldsActive && root.x >= minimum.x - kNatureInteractionMaxBend &&
                             root.x <= maximum.x + kNatureInteractionMaxBend &&
@@ -1268,24 +1303,16 @@ static void Nature_AddAnchoredMotion(void)
             for (int substep = 0; substep < steps; substep++)
             {
                 FieldSample sample = {0};
+                Vector3 tipVelocity = {velocity->x, 0.0f, velocity->y};
                 if (inBounds)
                 {
                     Vector3 position = {root.x + bend->x, root.y, root.z + bend->y};
-                    Vector3 tipVelocity = {velocity->x, 0.0f, velocity->y};
-                    BodyPhysicalProperties body = {
-                        .massKg = kNatureCanopyMassKg,
-                        .projectedAreaM2 = kNatureWindSampleHeight * 0.012f,
-                        .dragCoefficient = 1.2f,
-                    };
-                    MediumProperties medium = {.densityKgM3 = 1.225f,
-                                               .gravityMps2 = {0, -9.81f, 0}};
-                    ReceiverConstraints constraints = {.mode = RECEIVER_ROOTED,
-                                                       .permittedAxes = {1, 0, 1}};
-                    MotionFields_SampleBody(position, tipVelocity, &body, &medium,
-                                            &constraints, step, MOTION_RECEIVER_FOLIAGE, NULL, &sample);
+                    MotionFields_SampleBody(position, tipVelocity, &kBody, &kMedium,
+                                            &kConstraints, step, MOTION_RECEIVER_FOLIAGE, NULL, &sample);
                 }
-                Vector3 tipVelocity = {velocity->x, 0.0f, velocity->y};
-                Vector3 airForce = sample.hasDragForce ? (Vector3){0} : Nature_AnchoredAirForce(tipVelocity, sample.mediumVelocityMps, step);
+                Vector3 airForce = sample.hasDragForce
+                                       ? (Vector3){0}
+                                       : Nature_AnchoredAirForce(tipVelocity, sample.mediumVelocityMps, step);
                 sample.forceNewtons.x += airForce.x + sample.accelerationMps2.x * kNatureCanopyMassKg;
                 sample.forceNewtons.z += airForce.z + sample.accelerationMps2.z * kNatureCanopyMassKg;
                 Nature_AdvanceAnchoredCell(bend, velocity, sample.forceNewtons, step);
@@ -1379,6 +1406,7 @@ void MapProp_AddNatureWindVorticles(float time)
     int directImpact = Nature_UpdateDominantWindImpact(vorticles,
                                                        vorticleCount, time);
     const float cellSize = kNatureInteractionWorldSize / NATURE_INTERACTION_RESOLUTION;
+    const float invCellSize = (float)NATURE_INTERACTION_RESOLUTION / kNatureInteractionWorldSize;
     const float halfSize = kNatureInteractionWorldSize * 0.5f;
     float fieldMinX = s_natureInteractionCenter.x - halfSize;
     float fieldMinZ = s_natureInteractionCenter.y - halfSize;
@@ -1388,14 +1416,10 @@ void MapProp_AddNatureWindVorticles(float time)
         const VorticleData *vorticle = &vorticles[i];
         if (i == directImpact || !vorticle->active || vorticle->radius <= 0.0f)
             continue;
-        int minX = (int)floorf((vorticle->position.x - vorticle->radius - fieldMinX) /
-                               cellSize);
-        int maxX = (int)ceilf((vorticle->position.x + vorticle->radius - fieldMinX) /
-                              cellSize);
-        int minY = (int)floorf((vorticle->position.z - vorticle->radius - fieldMinZ) /
-                               cellSize);
-        int maxY = (int)ceilf((vorticle->position.z + vorticle->radius - fieldMinZ) /
-                              cellSize);
+        int minX = (int)floorf((vorticle->position.x - vorticle->radius - fieldMinX) * invCellSize);
+        int maxX = (int)ceilf((vorticle->position.x + vorticle->radius - fieldMinX) * invCellSize);
+        int minY = (int)floorf((vorticle->position.z - vorticle->radius - fieldMinZ) * invCellSize);
+        int maxY = (int)ceilf((vorticle->position.z + vorticle->radius - fieldMinZ) * invCellSize);
         if (minX < 0)
             minX = 0;
         if (minY < 0)
@@ -1710,11 +1734,17 @@ static inline Color Nature_ScaleColor(Color color, float scale)
     int r = (int)(color.r * scale);
     int g = (int)(color.g * scale);
     int b = (int)(color.b * scale);
-    if (r > 255)
+    if (r < 0)
+        r = 0;
+    else if (r > 255)
         r = 255;
-    if (g > 255)
+    if (g < 0)
+        g = 0;
+    else if (g > 255)
         g = 255;
-    if (b > 255)
+    if (b < 0)
+        b = 0;
+    else if (b > 255)
         b = 255;
     return (Color){(unsigned char)r, (unsigned char)g, (unsigned char)b, 255};
 }
@@ -1723,12 +1753,14 @@ static Shader Nature_GetShader(bool cutout)
 {
     Shader *shader = cutout ? &s_natureCutoutShader : &s_natureOpaqueShader;
     bool *ready = cutout ? &s_natureCutoutShaderReady : &s_natureOpaqueShaderReady;
-    if (!*ready)
+    if (!*ready || shader->id == 0)
     {
         *shader = ResourceManager_LoadShader(
             "maps/toolkit/shaders/nature_lit.vs",
             cutout ? "maps/toolkit/shaders/nature_lit.fs"
                    : "maps/toolkit/shaders/nature_opaque.fs");
+        if (shader->id == 0)
+            return *shader;
         shader->locs[SHADER_LOC_VERTEX_POSITION] = GetShaderLocationAttrib(*shader, "vertexPosition");
         shader->locs[SHADER_LOC_VERTEX_TEXCOORD01] = GetShaderLocationAttrib(*shader, "vertexTexCoord");
         shader->locs[SHADER_LOC_VERTEX_TEXCOORD02] = GetShaderLocationAttrib(*shader, "vertexTexCoord2");
@@ -1748,11 +1780,13 @@ static Shader Nature_GetShader(bool cutout)
 
 static Shader NatureShadow_GetShader(void)
 {
-    if (!s_natureShadowShaderReady)
+    if (!s_natureShadowShaderReady || s_natureShadowShader.id == 0)
     {
         s_natureShadowShader = ResourceManager_LoadShader(
             "maps/toolkit/shaders/nature_shadow.vs",
             "maps/toolkit/shaders/nature_shadow.fs");
+        if (s_natureShadowShader.id == 0)
+            return s_natureShadowShader;
         s_natureShadowShader.locs[SHADER_LOC_VERTEX_POSITION] =
             GetShaderLocationAttrib(s_natureShadowShader, "vertexPosition");
         s_natureShadowShader.locs[SHADER_LOC_VERTEX_TEXCOORD01] =
@@ -1773,10 +1807,12 @@ static Shader NatureShadow_GetShader(void)
 
 static Shader Water_GetShader(void)
 {
-    if (!s_waterShaderReady)
+    if (!s_waterShaderReady || s_waterShader.id == 0)
     {
         s_waterShader = ResourceManager_LoadShader("maps/toolkit/shaders/water_surface.vs",
                                                    "maps/toolkit/shaders/water_surface.fs");
+        if (s_waterShader.id == 0)
+            return s_waterShader;
         s_waterShader.locs[SHADER_LOC_VERTEX_POSITION] = GetShaderLocationAttrib(s_waterShader, "vertexPosition");
         s_waterShader.locs[SHADER_LOC_VERTEX_TEXCOORD01] = GetShaderLocationAttrib(s_waterShader, "vertexTexCoord");
         s_waterShader.locs[SHADER_LOC_MATRIX_MVP] = GetShaderLocation(s_waterShader, "mvp");
@@ -1860,10 +1896,12 @@ static Shader Water_GetShader(void)
 
 static Shader Water_GetBedShader(void)
 {
-    if (!s_waterBedShaderReady)
+    if (!s_waterBedShaderReady || s_waterBedShader.id == 0)
     {
         s_waterBedShader = ResourceManager_LoadShader("maps/toolkit/shaders/water_bed.vs",
                                                       "maps/toolkit/shaders/water_bed.fs");
+        if (s_waterBedShader.id == 0)
+            return s_waterBedShader;
         s_waterBedShader.locs[SHADER_LOC_VERTEX_POSITION] = GetShaderLocationAttrib(s_waterBedShader, "vertexPosition");
         s_waterBedShader.locs[SHADER_LOC_VERTEX_TEXCOORD01] = GetShaderLocationAttrib(s_waterBedShader, "vertexTexCoord");
         s_waterBedShader.locs[SHADER_LOC_VERTEX_NORMAL] = GetShaderLocationAttrib(s_waterBedShader, "vertexNormal");
@@ -1901,11 +1939,13 @@ static Shader Water_GetBedShader(void)
 
 static Shader FlowerShadow_GetShader(void)
 {
-    if (!s_flowerShadowShaderReady)
+    if (!s_flowerShadowShaderReady || s_flowerShadowShader.id == 0)
     {
         s_flowerShadowShader = ResourceManager_LoadShader(
             "maps/toolkit/shaders/flower_shadow.vs",
             "maps/toolkit/shaders/flower_shadow.fs");
+        if (s_flowerShadowShader.id == 0)
+            return s_flowerShadowShader;
         s_flowerShadowShader.locs[SHADER_LOC_VERTEX_POSITION] =
             GetShaderLocationAttrib(s_flowerShadowShader, "vertexPosition");
         s_flowerShadowShader.locs[SHADER_LOC_VERTEX_TEXCOORD01] =
@@ -1960,26 +2000,30 @@ static void Nature_UpdateProjectedShadowShader(Shader shader, bool realShadowAct
 static inline void Nature_SetVertex(Mesh *mesh, int index, Vector3 p, Vector3 n,
                                     float phase, float heightMask, Color color)
 {
-    mesh->vertices[index * 3 + 0] = p.x;
-    mesh->vertices[index * 3 + 1] = p.y;
-    mesh->vertices[index * 3 + 2] = p.z;
-    mesh->normals[index * 3 + 0] = n.x;
-    mesh->normals[index * 3 + 1] = n.y;
-    mesh->normals[index * 3 + 2] = n.z;
-    mesh->texcoords[index * 2 + 0] = phase;
-    mesh->texcoords[index * 2 + 1] = heightMask;
-    mesh->texcoords2[index * 2 + 0] = -1.0f;
-    mesh->texcoords2[index * 2 + 1] = heightMask;
-    mesh->colors[index * 4 + 0] = color.r;
-    mesh->colors[index * 4 + 1] = color.g;
-    mesh->colors[index * 4 + 2] = color.b;
-    mesh->colors[index * 4 + 3] = 255;
+    int v3 = index * 3;
+    int v2 = index * 2;
+    int v4 = index * 4;
+    mesh->vertices[v3 + 0] = p.x;
+    mesh->vertices[v3 + 1] = p.y;
+    mesh->vertices[v3 + 2] = p.z;
+    mesh->normals[v3 + 0] = n.x;
+    mesh->normals[v3 + 1] = n.y;
+    mesh->normals[v3 + 2] = n.z;
+    mesh->texcoords[v2 + 0] = phase;
+    mesh->texcoords[v2 + 1] = heightMask;
+    mesh->texcoords2[v2 + 0] = -1.0f;
+    mesh->texcoords2[v2 + 1] = heightMask;
+    mesh->colors[v4 + 0] = color.r;
+    mesh->colors[v4 + 1] = color.g;
+    mesh->colors[v4 + 2] = color.b;
+    mesh->colors[v4 + 3] = 255;
 }
 
 static inline void Nature_SetUv2(Mesh *mesh, int index, float u, float v)
 {
-    mesh->texcoords2[index * 2 + 0] = u;
-    mesh->texcoords2[index * 2 + 1] = v;
+    int v2 = index * 2;
+    mesh->texcoords2[v2 + 0] = u;
+    mesh->texcoords2[v2 + 1] = v;
 }
 
 // Tam giác đơn 3D (Dùng cho ngọn lá cỏ nhọn hoặc cánh hoa LOD1/LOD2 không cần discard)
@@ -2072,6 +2116,8 @@ static void Nature_AddQuad4(Mesh *mesh, int *cursor, Vector3 p0, Vector3 p1,
 static Mesh Nature_AllocMesh(int vertexCount)
 {
     Mesh mesh = {0};
+    if (vertexCount <= 0)
+        return mesh;
     mesh.vertexCount = vertexCount;
     mesh.triangleCount = vertexCount / 3;
     mesh.vertices = MemAlloc((unsigned int)vertexCount * 3u * sizeof(float));
@@ -2312,14 +2358,13 @@ static void Nature_UpdateShader(Shader shader, float time, Vector2 windDirection
             }
         }
 
+        // Nature shaders reconstruct world-space fragPosition via u_worldFromShaderSpace,
+        // so both dynamic and static light matrices must be in world space independently.
         MapShadow_UpdateShader(shader);
-        if (EnvShadow_IsEnabled())
-        {
-            if (locs->lightVP >= 0)
-                SetShaderValueMatrix(shader, locs->lightVP, EnvShadow_GetLightVP());
-            if (EnvShadow_HasStaticCache() && locs->staticLightVP >= 0)
-                SetShaderValueMatrix(shader, locs->staticLightVP, EnvShadow_GetStaticLightVP());
-        }
+        if (EnvShadow_IsEnabled() && locs->lightVP >= 0)
+            SetShaderValueMatrix(shader, locs->lightVP, EnvShadow_GetLightVP());
+        if (EnvShadow_HasStaticCache() && locs->staticLightVP >= 0)
+            SetShaderValueMatrix(shader, locs->staticLightVP, EnvShadow_GetStaticLightVP());
     }
 
     // 3. Các Uniform thay đổi theo từng nhóm thực thể (Cỏ vs Hoa vs Tĩnh)

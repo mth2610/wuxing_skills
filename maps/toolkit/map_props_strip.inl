@@ -3,7 +3,7 @@
 // not a standalone translation unit.
 
 static Shader pathShader = {0};
-static bool pathShaderLoaded = false;
+static unsigned int s_pathShaderId = 0;
 static int locPathLightDir = -1, locPathLightCol = -1, locPathAmbCol = -1;
 static int locPathViewPos = -1, locPathTiling = -1, locPathSurfaceMaps = -1;
 
@@ -11,49 +11,46 @@ MapStripSurface MapProp_CreateStrip(float length, float width, float tileSize,
                                     const char *diffusePath, const char *normalPath, const char *roughnessPath)
 {
     MapStripSurface strip = {0};
+    if (length <= 0.0f || width <= 0.0f)
+        return strip;
+
     // 1. Tạo Mesh (KHÔNG GỌI TilePlaneUVs để giữ hệ trục tọa độ viền)
-    Mesh mesh = GenMeshPlane(length, width, 16, 4); // Tăng chia lưới để bóp méo viền đẹp hơn
+    Mesh mesh = GenMeshPlane(length, width, 16, 4);
     strip.model = LoadModelFromMesh(mesh);
 
-    // 2. Load Shader Con đường
-    if (!pathShaderLoaded)
+    // 2. Load Shader Con đường (hỗ trợ tự động re-bind nếu shader được nạp lại)
+    pathShader = ResourceManager_LoadShader("maps/toolkit/shaders/path_blend.vs",
+                                            "maps/toolkit/shaders/path_blend.fs");
+    if (pathShader.id != 0 && s_pathShaderId != pathShader.id)
     {
-        // ResourceManager_LoadShader — only it runs the preprocessor that resolves
-        // the #include this shader now carries (core/docs/LANDMINES.md).
-        pathShader = ResourceManager_LoadShader("maps/toolkit/shaders/path_blend.vs",
-                                                "maps/toolkit/shaders/path_blend.fs");
-        // Required for path_blend.vs's world-space fragPosition — see the long
-        // note in map_props_ground.inl. Without it the strip thinks it is at
-        // the origin and receives no point light.
         pathShader.locs[SHADER_LOC_VERTEX_POSITION] = GetShaderLocationAttrib(pathShader, "vertexPosition");
         pathShader.locs[SHADER_LOC_VERTEX_TEXCOORD01] = GetShaderLocationAttrib(pathShader, "vertexTexCoord");
+        pathShader.locs[SHADER_LOC_VERTEX_NORMAL] = GetShaderLocationAttrib(pathShader, "vertexNormal");
         pathShader.locs[SHADER_LOC_MATRIX_MVP] = GetShaderLocation(pathShader, "mvp");
-        pathShader.locs[SHADER_LOC_MATRIX_MODEL] =
-            GetShaderLocation(pathShader, "matModel");
+        pathShader.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocation(pathShader, "matModel");
         pathShader.locs[SHADER_LOC_COLOR_DIFFUSE] = GetShaderLocation(pathShader, "colDiffuse");
         pathShader.locs[SHADER_LOC_MAP_DIFFUSE] = GetShaderLocation(pathShader, "texture0");
         pathShader.locs[SHADER_LOC_MAP_NORMAL] = GetShaderLocation(pathShader, "texture2");
         pathShader.locs[SHADER_LOC_MAP_ROUGHNESS] = GetShaderLocation(pathShader, "texture3");
         MapShadow_ConfigureShader(pathShader);
 
-        VFXLight_RegisterShader(pathShader);   // main.c binds it each frame
+        VFXLight_RegisterShader(pathShader);
         locPathLightDir = GetShaderLocation(pathShader, "lightDir");
         locPathLightCol = GetShaderLocation(pathShader, "lightColor");
         locPathAmbCol = GetShaderLocation(pathShader, "ambientColor");
         locPathViewPos = GetShaderLocation(pathShader, "viewPos");
         locPathTiling = GetShaderLocation(pathShader, "tiling");
         locPathSurfaceMaps = GetShaderLocation(pathShader, "u_hasSurfaceMaps");
-        pathShaderLoaded = true;
+        s_pathShaderId = pathShader.id;
     }
 
     // 3. Load Texture
     Texture2D diffuse = MapLoadMippedTexture(diffusePath, TEXTURE_WRAP_REPEAT);
 
-    // Tạm thời bỏ qua normal/roughness đối với đường mờ lề để tối ưu hiệu năng
     strip.model.materials[0].shader = pathShader;
     strip.model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = diffuse;
 
-    strip.useSurfaceMaps = normalPath && roughnessPath;
+    strip.useSurfaceMaps = (normalPath != NULL && roughnessPath != NULL);
     if (strip.useSurfaceMaps)
     {
         Texture2D normal = MapLoadMippedTexture(normalPath, TEXTURE_WRAP_REPEAT);
@@ -64,8 +61,9 @@ MapStripSurface MapProp_CreateStrip(float length, float width, float tileSize,
     }
     MapShadow_AttachMaterial(&strip.model.materials[0]);
 
-    // 4. Truyền Tiling xuống shader để lặp texture
-    strip.tiling = (Vector2){length / tileSize, width / tileSize};
+    // 4. Truyền Tiling xuống shader để lặp texture (chống chia cho 0)
+    float invTile = (tileSize > 1e-6f) ? (1.0f / tileSize) : 1.0f;
+    strip.tiling = (Vector2){length * invTile, width * invTile};
 
     strip.ready = true;
     return strip;
@@ -73,27 +71,51 @@ MapStripSurface MapProp_CreateStrip(float length, float width, float tileSize,
 
 static void MapProp_UpdateStripLighting(const MapStripSurface *strip)
 {
+    Shader shader = strip->model.materials[0].shader;
+    if (shader.id == 0)
+        return;
+
+    MapShadow_AttachMaterial(&strip->model.materials[0]);
+
     Vector3 lightDir = Environment_GetSunDirection();
     Color sunCol = Environment_GetSunColor();
     Color ambCol = Environment_GetAmbientColor();
 
+    const float inv255 = 1.0f / 255.0f;
+    const float sunScale = Environment_GetSunIntensity() * inv255;
     float lightDirArr[3] = {lightDir.x, lightDir.y, lightDir.z};
-    float sunColArr[4] = {sunCol.r / 255.0f, sunCol.g / 255.0f, sunCol.b / 255.0f, sunCol.a / 255.0f};
-    float ambColArr[4] = {ambCol.r / 255.0f, ambCol.g / 255.0f, ambCol.b / 255.0f, ambCol.a / 255.0f};
+    float sunColArr[4] = {
+        (float)sunCol.r * sunScale,
+        (float)sunCol.g * sunScale,
+        (float)sunCol.b * sunScale,
+        (float)sunCol.a * inv255};
+    float ambColArr[4] = {
+        (float)ambCol.r * inv255,
+        (float)ambCol.g * inv255,
+        (float)ambCol.b * inv255,
+        (float)ambCol.a * inv255};
     int hasSurfaceMaps = strip->useSurfaceMaps ? 1 : 0;
 
-    SetShaderValue(strip->model.materials[0].shader, locPathLightDir, lightDirArr, SHADER_UNIFORM_VEC3);
-    SetShaderValue(strip->model.materials[0].shader, locPathLightCol, sunColArr, SHADER_UNIFORM_VEC4);
-    SetShaderValue(strip->model.materials[0].shader, locPathAmbCol, ambColArr, SHADER_UNIFORM_VEC4);
-    SetShaderValue(strip->model.materials[0].shader, locPathViewPos, &camera.position, SHADER_UNIFORM_VEC3);
-    SetShaderValue(strip->model.materials[0].shader, locPathTiling, &strip->tiling, SHADER_UNIFORM_VEC2);
-    SetShaderValue(strip->model.materials[0].shader, locPathSurfaceMaps, &hasSurfaceMaps, SHADER_UNIFORM_INT);
-    MapShadow_UpdateShader(strip->model.materials[0].shader);
+    BeginShaderMode(shader);
+    if (locPathLightDir >= 0)
+        SetShaderValue(shader, locPathLightDir, lightDirArr, SHADER_UNIFORM_VEC3);
+    if (locPathLightCol >= 0)
+        SetShaderValue(shader, locPathLightCol, sunColArr, SHADER_UNIFORM_VEC4);
+    if (locPathAmbCol >= 0)
+        SetShaderValue(shader, locPathAmbCol, ambColArr, SHADER_UNIFORM_VEC4);
+    if (locPathViewPos >= 0)
+        SetShaderValue(shader, locPathViewPos, &camera.position, SHADER_UNIFORM_VEC3);
+    if (locPathTiling >= 0)
+        SetShaderValue(shader, locPathTiling, &strip->tiling, SHADER_UNIFORM_VEC2);
+    if (locPathSurfaceMaps >= 0)
+        SetShaderValue(shader, locPathSurfaceMaps, &hasSurfaceMaps, SHADER_UNIFORM_INT);
+    MapShadow_UpdateShader(shader);
+    EndShaderMode();
 }
 
 void MapProp_DrawStrip(const MapStripSurface *strip, Vector3 worldCenter, float yOffset)
 {
-    if (!strip->ready)
+    if (!strip || !strip->ready)
         return;
 
     MapProp_UpdateStripLighting(strip);
@@ -104,7 +126,7 @@ void MapProp_DrawStrip(const MapStripSurface *strip, Vector3 worldCenter, float 
 void MapProp_DrawStripEx(const MapStripSurface *strip, Vector3 worldCenter, float yOffset,
                          float rotationDeg, Vector3 scale)
 {
-    if (!strip->ready)
+    if (!strip || !strip->ready)
         return;
 
     MapProp_UpdateStripLighting(strip);
@@ -114,8 +136,13 @@ void MapProp_DrawStripEx(const MapStripSurface *strip, Vector3 worldCenter, floa
 
 void MapProp_UnloadStrip(MapStripSurface *strip)
 {
-    if (!strip->ready)
+    if (!strip || !strip->ready)
         return;
+    for (int i = 0; i < strip->model.materialCount; i++)
+    {
+        strip->model.materials[i].maps[MATERIAL_MAP_OCCLUSION].texture = (Texture2D){0};
+        strip->model.materials[i].maps[MATERIAL_MAP_HEIGHT].texture = (Texture2D){0};
+    }
     UnloadModel(strip->model);
     strip->ready = false;
 }
