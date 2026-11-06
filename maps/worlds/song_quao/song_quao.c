@@ -106,8 +106,8 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
         return 0.0f;
 
     Color splat = MapDem_SampleSplat(&s_dem, x, z);
-    // Keep river sand beaches, alluvial gravel beds & rocky cliff rims clean of grass
-    if (splat.a > 76 || splat.g > 175)
+    // Keep submerged river channels & rocky cliff rims clean of grass
+    if (splat.a > 115 || splat.g > 175)
         return 0.0f;
 
     float geomSlope = 1.0f - normal.y;
@@ -121,17 +121,17 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
     if (surfaceY > -CLIFF_DEPTH + 0.5f)
     {
         float waterClearance = pos.y - surfaceY;
-        if (waterClearance < 0.075f)
+        if (waterClearance < 0.035f)
             return 0.0f;
 
-        if (waterClearance < 0.24f)
+        if (waterClearance < 0.22f)
         {
             float coveNoise = sinf(x * 0.16f + z * 0.12f) * 0.55f +
                               cosf(z * 0.25f - x * 0.18f + 0.8f) * 0.45f;
-            float minClearance = (coveNoise > 0.15f) ? 0.075f : (0.115f - coveNoise * 0.030f);
+            float minClearance = (coveNoise > 0.10f) ? 0.038f : (0.075f - coveNoise * 0.025f);
             if (waterClearance < minClearance)
                 return 0.0f;
-            shoreFade = MapMath_SmoothStep01(minClearance, minClearance + 0.08f, waterClearance);
+            shoreFade = MapMath_SmoothStep01(minClearance, minClearance + 0.06f, waterClearance);
         }
     }
 
@@ -147,7 +147,8 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
 
     float heightFade = MapMath_SmoothStep01(GRASS_CLIFF_MIN_Y, GRASS_CLIFF_FADE_Y, pos.y);
     float slopeFade = MapMath_SmoothStep01(GRASS_MIN_NORMAL_Y, GRASS_FULL_NORMAL_Y, normal.y);
-    float sandFade = 1.0f - MapMath_SmoothStep01(42.0f, 76.0f, (float)splat.a);
+    // Sparse beach fescue & riverbank tufts feather naturally across the sandbars
+    float sandFade = 1.0f - MapMath_SmoothStep01(45.0f, 95.0f, (float)splat.a) * 0.76f;
     float rockFade = 1.0f - MapMath_SmoothStep01(0.35f, 0.65f, rockScree);
 
     // Coherent macro meadow swells with organic openings and glades
@@ -224,7 +225,7 @@ static void BuildFloraPlacements(void)
         (MapFloraMeadowConfig){
             .minBounds = {10.0f, 8.0f},
             .maxBounds = {MAP_WIDTH - 10.0f, MAP_DEPTH - 8.0f},
-            .spacing = 0.38f,
+            .spacing = 0.34f,
             .seed = 0x51a7c3u,
             .densityFn = SongQuaoGrassDensity,
             .ecology = &s_habitat,
@@ -537,14 +538,14 @@ void InitSongQuaoMap(void)
                                              .detailScale = 0.35f,
                                              .detailStrength = 0.32f,
                                              .maxDepth = 1.45f,
-                                             .absorption = {0.45f, 0.12f, 0.04f},
-                                             .scatterColor = {0.18f, 0.65f, 0.62f},
-                                             .scatterCoeff = 0.32f,
-                                             .causticsStrength = 0.55f,
+                                             .absorption = {0.42f, 0.10f, 0.035f},
+                                             .scatterColor = {0.16f, 0.72f, 0.66f},
+                                             .scatterCoeff = 0.35f,
+                                             .causticsStrength = 0.65f,
                                              .causticsScale = 3.80f,
-                                             .foamThreshold = 0.095f,
-                                             .deepColor = {14, 58, 72, 235},
-                                             .shallowColor = {74, 172, 164, 160},
+                                             .foamThreshold = 0.085f,
+                                             .deepColor = {12, 60, 78, 220},
+                                             .shallowColor = {68, 184, 172, 140},
                                              .foamColor = {248, 252, 255, 235},
                                          });
 
@@ -559,30 +560,30 @@ void InitSongQuaoMap(void)
     BuildFloraPlacements();
 
     // [VISUAL AAA & 60+ FPS FLORA]:
-    // - Bản lá rộng 0.135f với màu gốc rêu trầm và ngọn vàng nắng ngọc bích hài hòa
+    // - Bản lá thanh mảnh tự nhiên (bladeWidthScale = 0.065f ~ 2.1cm) đan kết rosettes mềm mại
     s_flora = MapProp_CreateFloraSystem(
         s_grassPlacements, s_grassCount,
         s_reedPlacements, s_reedCount,
         s_flowerPlacements, SONG_QUAO_FLOWER_CLUSTERS, SONG_QUAO_FLOWER_CLUSTER_COUNT,
         (MapFloraStyle){
-            .grassRootColor = {26, 44, 18, 255},  // Sắc rêu trầm ấm ăn khớp nền đất
-            .grassTipColor = {148, 174, 76, 255}, // Sắc vàng nắng ban mai ngọc bích
-            .bladesPerClump = 5,
+            .grassRootColor = {22, 34, 16, 255},  // Sắc rêu trầm ấm ăn khớp nền đất mùn
+            .grassTipColor = {122, 152, 56, 255}, // Sắc vàng nắng ngọc bích ấm áp
+            .bladesPerClump = 6,
             .bladeSegments = 3,
-            .bladeWidthScale = 0.135f,
+            .bladeWidthScale = 0.065f,
             .lodDistance = 22.0f,
             .midLodDistance = 11.0f,
             .drawDistance = 42.0f,
             .shadowDistance = 7.5f,
             .grassState = MAP_GRASS_STATE_LUSH,
-            .reedRootColor = {28, 44, 20, 255},
-            .reedTipColor = {122, 168, 68, 255},
+            .reedRootColor = {20, 32, 16, 255},
+            .reedTipColor = {108, 142, 60, 255},
             .hasReedPlumes = false,
             .botanicalVariation = 1.0f,
             .pampasPlacements = s_pampasPlacements,
             .pampasCount = s_pampasCount,
-            .pampasRootColor = {34, 48, 22, 255},
-            .pampasTipColor = {164, 184, 102, 255},
+            .pampasRootColor = {26, 36, 18, 255},
+            .pampasTipColor = {148, 162, 92, 255},
         });
 
     EnvShadow_SetMapCasterCallback(DrawSongQuaoShadowCasters, NULL);

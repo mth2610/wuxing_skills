@@ -289,9 +289,10 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     vec3 n = rawCanopyN * inversesqrt(max(dot(rawCanopyN, rawCanopyN), 1e-8));
 
     float warmShift = clamp(macroPatch * 0.5 + 0.5, 0.0, 1.0);
-    float tipHeightMask = FastRamp(0.32, 0.92, h);
-    vec3 coolEmeraldTip = vec3(0.88, 1.02, 0.82);
-    vec3 warmGoldenTip  = vec3(1.16, 1.05, 0.65);
+    float tipHeightMask = FastRamp(0.35, 0.92, h);
+    // Harmonious organic tones: forest moss & warm golden hay, avoiding neon lime
+    vec3 coolEmeraldTip = vec3(0.92, 0.98, 0.86);
+    vec3 warmGoldenTip  = vec3(1.06, 1.00, 0.72);
     vec3 tipTone = mix(vec3(1.0), mix(coolEmeraldTip, warmGoldenTip, warmShift), tipHeightMask);
     baseColor *= tipTone;
 
@@ -369,7 +370,8 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     vec3 ambientGround = mix(groundBounce, greenBounce, 0.48);
     vec3 ambient = mix(ambientGround, skyAmbient, n.y * 0.5 + 0.5);
 
-    float rootAO = mix(mix(0.74, 0.90, distRootLift), 1.0, smoothstep(0.0, 0.38, h));
+    // Botanical root self-shadowing anchors individual grass tufts into the dark loam
+    float rootAO = mix(mix(0.38, 0.72, distRootLift), 1.0, smoothstep(0.0, 0.42, h));
     vec3 lit = baseColor * ambient * rootAO;
 
     float nv = max(dot(faceNormal, viewDir), 0.0);
@@ -385,7 +387,7 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
             float cloudDistFade = FastRamp(576.0, 900.0, distSq);
             cloudVis = mix(Environment_CloudVisibility(u_cloudNoise, worldPosition), 0.92, cloudDistFade);
         }
-        float sunVis = mix(0.40, 1.0, shadow) * cloudVis;
+        float sunVis = shadow * cloudVis;
         if (sunVis > 0.001) {
             float lightSunY = max(lightDir.y, 0.0);
             float horizonEnv = smoothstep(0.02, 0.38, lightSunY) * 0.66 + 0.34;
@@ -441,11 +443,11 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
             float edgeThinness = 0.64 + 0.36 * absU;
             float sssWindow = FastRamp(0.16, 0.54, h) * (1.0 - FastRamp(0.88, 1.0, h) * 0.20);
             float transmission = (backLobe * 0.48 + forwardLobe * 0.72 * (0.28 + 0.72 * h)) * sssWindow * edgeThinness * sssScale;
-            vec3 goldenJadeSSS = baseColor * vec3(1.18, 1.08, 0.48) + vec3(0.024, 0.028, 0.008) * sssScale;
+            vec3 goldenJadeSSS = baseColor * vec3(1.08, 0.96, 0.44) + vec3(0.016, 0.018, 0.006) * sssScale;
 
-            float diffuseLobe = wrapped * (0.48 + 0.52 * wrapped);
-            vec3 directDiffuse = baseColor * (diffuseLobe * 0.74);
-            vec3 jadeTrans = goldenJadeSSS * (transmission * 0.94);
+            float diffuseLobe = wrapped * (0.42 + 0.48 * wrapped);
+            vec3 directDiffuse = baseColor * (diffuseLobe * 0.65);
+            vec3 jadeTrans = goldenJadeSSS * (transmission * 0.80);
             vec3 specHighlight = anisoSpec + vec3(waxySpec * 0.34) * baseColor;
 
             vec3 directSun = ((directDiffuse + jadeTrans) * canopy + specHighlight) * sunVis;

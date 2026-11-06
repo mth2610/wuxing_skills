@@ -460,9 +460,9 @@ void main()
     // ── 8. CRYSTAL CLEAR SEE-THROUGH WATER TRANSPARENCY ──────────────────────
     // Balanced stylized-realism transparency: visible sky reflection and jade body,
     // while remaining crystal clear to see riverbed sand and rocks underneath.
-    float depthOpacity = 1.0 - exp(-2.2 * waterDepth);
+    float depthOpacity = 1.0 - exp(-1.8 * waterDepth);
     float waterColumnAlpha = (u_waterShape == 3)
-        ? clamp(0.22 + 0.58 * depthOpacity, 0.0, 0.85)
+        ? clamp(0.18 + 0.54 * depthOpacity, 0.0, 0.80)
         : (0.18 + 0.52 * depthOpacity);
     float glintAlphaBoost = clamp(glintSharp * 0.45, 0.0, 0.30);
     float surfaceAlpha = (fresnel * 0.72) + waterColumnAlpha + glintAlphaBoost;
@@ -479,17 +479,17 @@ void main()
     if (alpha < 0.002) discard;
 
     // ── 9. ENERGY-CONSERVING COMPOSITION ─────────────────────────────────────
-    vec3 shallowTint = mix(u_shallowColor, vec3(0.22, 0.62, 0.58), 0.48);
-    vec3 deepTint    = mix(u_deepColor,    vec3(0.06, 0.28, 0.36), 0.50);
+    vec3 shallowTint = mix(u_shallowColor, vec3(0.18, 0.72, 0.65), 0.52);
+    vec3 deepTint    = mix(u_deepColor,    vec3(0.05, 0.30, 0.38), 0.50);
 
     vec3 depthBlend = clamp(mix(vec3(1.0 - smoothstep(0.04, 0.85, waterDepth)), transmittance, 0.65), 0.0, 1.0);
     vec3 waterVolumeColor = mix(deepTint, shallowTint, depthBlend);
-    waterVolumeColor *= (0.78 + u_ambientColor * 0.32 + effectiveLight * 0.22);
+    waterVolumeColor *= (0.82 + u_ambientColor * 0.35 + effectiveLight * 0.25);
 
-    float shoreFadeOptical = (u_waterShape == 3) ? smoothstep(0.004, 0.085, waterDepth) : 1.0;
+    float shoreFadeOptical = (u_waterShape == 3) ? smoothstep(0.003, 0.075, waterDepth) : 1.0;
 
     float reflectWeight = (u_waterShape == 3)
-        ? clamp((fresnel * 0.70 + 0.16) * shoreFadeOptical, 0.0, 0.85)
+        ? clamp((fresnel * 0.75 + 0.18) * shoreFadeOptical, 0.0, 0.86)
         : clamp(fresnel * 0.75 + 0.12, 0.0, 0.88);
     vec3 underwaterTerms = waterVolumeColor + causticLight + sssLight + waveLighting;
     vec3 color = mix(underwaterTerms, reflectedSky, reflectWeight);

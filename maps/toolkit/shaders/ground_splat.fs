@@ -222,18 +222,18 @@ void main()
         float rockCliff = smoothstep(0.32, 0.72, rockScree) * smoothstep(0.12, 0.30, slope);
         wCliff = clamp(max(wSlope, max(rockCliff, outerAbyssMask)), 0.0, 1.0);
 
-        // Thu gọn dải cát chuyển tiếp ven bờ (0.02m -> 0.95m) để thảm cỏ có thể lan sát mép nước tự nhiên
+        // Thu gọn dải cát chuyển tiếp ven bờ (0.02m -> 0.45m) để thảm cỏ có thể lan sát mép nước tự nhiên
         if (u_ecologyEnabled != 0 && smoothSignedShore >= -0.10) {
-            riparianSandMargin = (1.0 - smoothstep(0.02, 0.95, smoothSignedShore)) * 0.42;
+            riparianSandMargin = (1.0 - smoothstep(0.02, 0.45, smoothSignedShore)) * 0.35;
         }
 
         wDrySoil = clamp(max(max(wPathMargin * 0.78, wCliff), riparianSandMargin), 0.0, 1.0)
                        * (1.0 - wWetSoil * 0.75) * (1.0 - wPath * 0.85);
         wGrass = clamp(1.0 - wPath - wWetSoil - wDrySoil, 0.0, 1.0);
 
-        if (u_ecologyEnabled != 0 && smoothSignedShore >= -0.25 && smoothSignedShore < 1.35) {
-            float grassGrain = (dirtDetail.r - 0.5) * 0.24;
-            float grassTaper = smoothstep(0.08, 0.95, smoothSignedShore + grassGrain);
+        if (u_ecologyEnabled != 0 && smoothSignedShore >= -0.15 && smoothSignedShore < 0.65) {
+            float grassGrain = (dirtDetail.r - 0.5) * 0.16;
+            float grassTaper = smoothstep(0.02, 0.48, smoothSignedShore + grassGrain);
             wGrass *= grassTaper;
             wDrySoil = clamp(1.0 - wPath - wWetSoil - wGrass, 0.0, 1.0);
         }
@@ -517,8 +517,8 @@ void main()
             float sandRipple = (sinP1 * 0.60 + sinP2 * 0.40) * 0.5 + 0.5;
 
             vec3 drySand = mix(vec3(0.55, 0.49, 0.39), vec3(0.59, 0.53, 0.43), sandRipple * 0.12);
-            vec3 wetSand = mix(vec3(0.45, 0.40, 0.32), vec3(0.49, 0.44, 0.35), sandRipple * 0.12);
-            vec3 submergedSand = mix(vec3(0.41, 0.37, 0.30), vec3(0.45, 0.40, 0.33), sandRipple * 0.12);
+            vec3 wetSand = mix(vec3(0.44, 0.39, 0.30), vec3(0.50, 0.45, 0.34), sandRipple * 0.12);
+            vec3 submergedSand = mix(vec3(0.48, 0.44, 0.33), vec3(0.56, 0.51, 0.38), sandRipple * 0.15);
 
             float wetLevel = clamp(shoreFactor * 0.85 + streamWet * 0.50, 0.0, 1.0);
             vec3 sandBase = mix(drySand, wetSand, wetLevel);
@@ -559,8 +559,8 @@ void main()
             }
 
             float sandDominance = clamp(shoreFactor * 1.25 + streamWet * 1.35 + lakeDepthFactor * 2.0, 0.0, 1.0);
-            vec3 bankFringeHumus = mix(vec3(0.32, 0.28, 0.22), vec3(0.42, 0.36, 0.28), dirtDetail.g) * (0.88 + 0.28 * colorDirt.rgb);
-            wetSoilColor = mix(bankFringeHumus, riverbedBed, smoothstep(0.08, 0.45, sandDominance));
+            vec3 bankFringeHumus = mix(vec3(0.36, 0.32, 0.25), vec3(0.46, 0.40, 0.32), dirtDetail.g) * (0.88 + 0.28 * colorDirt.rgb);
+            wetSoilColor = mix(bankFringeHumus, riverbedBed, smoothstep(0.04, 0.35, sandDominance));
         } else {
             vec3 mossyBank = vec3(0.28, 0.26, 0.20) * (0.85 + 0.35 * dirtDetail.g);
             wetSoilColor = mossyBank;
@@ -574,14 +574,17 @@ void main()
                        + pathMarginColor * wPath;
     }
 
-    float riparianSaturation = clamp(shoreFactor * 0.85 + lakeDepthFactor * 1.0, 0.0, 1.0);
-    float wetCapillaryDarken = riparianSaturation * 0.05;
-    blendedAlbedo *= (1.0 - clamp(wetCapillaryDarken, 0.0, 0.08));
+    float riparianSaturation = clamp(shoreFactor * 0.90 + streamWet * 0.60 + lakeDepthFactor * 1.2, 0.0, 1.0);
+    // Physically based capillary darkening: porous wet sand and bank mud darken naturally
+    float wetCapillaryDarken = smoothstep(0.12, 0.82, riparianSaturation) * 0.30;
+    blendedAlbedo *= (1.0 - wetCapillaryDarken);
 
-    // Subtle submerged bed depth tint (warm attenuation only in deep water)
+    // Subtle submerged bed depth tint: clean turquoise mountain water tint with golden riverbed sand
     if (lakeDepthFactor > 0.0) {
         float subDepth = clamp(lakeDepthFactor * 0.40, 0.0, 0.50);
         blendedAlbedo *= exp(-vec3(0.35, 0.12, 0.04) * subDepth);
+        vec3 bedWaterTint = mix(vec3(0.18, 0.56, 0.50), vec3(0.08, 0.32, 0.36), smoothstep(0.12, 1.10, lakeDepthFactor));
+        blendedAlbedo = mix(blendedAlbedo, bedWaterTint * 0.70, smoothstep(0.10, 0.85, lakeDepthFactor) * 0.38);
     }
 
     float rockContactAO = 1.0;
@@ -663,8 +666,8 @@ void main()
     float roughness = mix(grassMaterial.a, soilMaterial.a, soilWeight);
     roughness = mix(roughness, 0.78, (wDrySoil + wPath) * 0.80);
     roughness = mix(roughness, clamp(0.72 + cliffRoughnessMod, 0.45, 0.92), wCliff * 0.85);
-    float riparianRoughness = mix(0.78, 0.24, smoothstep(0.12, 0.92, shoreFactor));
-    roughness = mix(roughness, riparianRoughness, isRiparian * 0.85);
+    float riparianRoughness = mix(0.78, 0.24, smoothstep(0.10, 0.85, max(shoreFactor, wWetSoil)));
+    roughness = mix(roughness, riparianRoughness, max(isRiparian, wWetSoil) * 0.85);
     roughness = clamp(roughness, 0.22, 0.98);
 
     float nearCanopyMask = 1.0 - smoothstep(324.0, 1800.0, camDistSqXZ);

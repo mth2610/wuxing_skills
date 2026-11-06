@@ -443,24 +443,27 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
         float lengthScale, widthScaleVal, leanFactor, droopFactor;
         if (bladeId < 2)
         {
-            lengthScale = 1.12f + 0.16f * bHash2;
-            widthScaleVal = 0.90f + 0.10f * bHash3;
-            leanFactor = 0.36f + 0.10f * bHash;
+            // Inner erect stalks: slender, upright with delicate arch
+            lengthScale = 1.10f + 0.15f * bHash2;
+            widthScaleVal = 0.88f + 0.10f * bHash3;
+            leanFactor = 0.22f + 0.08f * bHash;
             droopFactor = 0.06f + 0.04f * bHash3;
         }
         else if (bladeId < 4)
         {
-            lengthScale = 0.98f + 0.16f * bHash2;
-            widthScaleVal = 0.98f + 0.12f * bHash3;
-            leanFactor = 0.52f + 0.12f * bHash;
-            droopFactor = 0.11f + 0.05f * bHash3;
+            // Mid arching blades: graceful outward curving arc
+            lengthScale = 0.95f + 0.14f * bHash2;
+            widthScaleVal = 0.96f + 0.10f * bHash3;
+            leanFactor = 0.45f + 0.12f * bHash;
+            droopFactor = 0.15f + 0.06f * bHash3;
         }
         else
         {
-            lengthScale = 0.82f + 0.14f * bHash2;
-            widthScaleVal = 1.06f + 0.12f * bHash3;
-            leanFactor = 0.66f + 0.14f * bHash;
-            droopFactor = 0.16f + 0.06f * bHash3;
+            // Outer nodding blades: gentle splay, delicate and slender
+            lengthScale = 0.82f + 0.12f * bHash2;
+            widthScaleVal = 1.05f + 0.12f * bHash3;
+            leanFactor = 0.58f + 0.14f * bHash;
+            droopFactor = 0.24f + 0.08f * bHash3;
         }
 
         height = clump->height * lengthScale;
@@ -481,27 +484,27 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
             height *= stretch;
             width /= sqrtf(stretch);
             lean *= stretch * (1.0f + botanical * (0.06f + 0.10f * habit));
-            droopY = height * (droopFactor + botanical * 0.04f * habit);
+            droopY = height * (droopFactor + botanical * 0.08f * habit);
         }
 
         float curlSign = ((bladeId & 1) == 0) ? 1.0f : -1.0f;
-        float curlAmt = (bHash - 0.5f) * 0.12f + curlSign * 0.05f;
+        float curlAmt = (bHash - 0.5f) * 0.14f + curlSign * 0.06f;
         float latX = -dirZ;
         float latZ = dirX;
 
         pBase = (Vector3){bx, clump->position.y - 0.014f, bz};
         pP1 = (Vector3){
-            bx + dirX * (lean * 0.18f),
-            pBase.y + height * 0.36f,
-            bz + dirZ * (lean * 0.18f)};
+            bx + dirX * (lean * 0.20f),
+            pBase.y + height * 0.38f,
+            bz + dirZ * (lean * 0.20f)};
         pP2 = (Vector3){
-            bx + dirX * (lean * 0.48f) + latX * (lean * 0.04f * curlAmt),
-            pBase.y + height * 0.71f,
-            bz + dirZ * (lean * 0.48f) + latZ * (lean * 0.04f * curlAmt)};
+            bx + dirX * (lean * 0.52f) + latX * (lean * 0.04f * curlAmt),
+            pBase.y + height * 0.76f,
+            bz + dirZ * (lean * 0.52f) + latZ * (lean * 0.04f * curlAmt)};
         pP3 = (Vector3){
-            bx + dirX * (lean * 0.92f) + latX * (lean * 0.08f * curlAmt),
-            pBase.y + height * (0.96f - 0.04f * droopFactor),
-            bz + dirZ * (lean * 0.92f) + latZ * (lean * 0.08f * curlAmt)};
+            bx + dirX * (lean * 0.88f) + latX * (lean * 0.08f * curlAmt),
+            pBase.y + fmaxf(height * 0.30f, height * 0.94f - droopY),
+            bz + dirZ * (lean * 0.88f) + latZ * (lean * 0.08f * curlAmt)};
 
         isSeedhead = false;
         float colorField = sinf(clump->position.x * 0.12f + clump->position.z * 0.08f) * 0.55f +
@@ -615,7 +618,8 @@ static Model Nature_BuildMeadowChunkFromIndices(const MapMeadowPlacement *placem
         float groundAnchor = fmaxf(0.0f, 1.0f - tk * 2.5f);
 
         knotTable[k].tk = tk;
-        knotTable[k].occ = (tk < 0.25f) ? (0.90f + 0.40f * tk) : 1.0f;
+        // Botanical root ambient occlusion: anchors clump rosettes gently to dark forest loam
+        knotTable[k].occ = 0.58f + 0.42f * (tk * tk * (3.0f - 2.0f * tk));
         knotTable[k].sCurve = tk2 * (3.0f - 2.0f * tk);
         knotTable[k].reedProfile = 0.5f * (0.78f + 0.36f * sinf(PI * tk)) * (1.0f - fastPow18);
         knotTable[k].grassProfile = 0.5f * sheath * body * taper;
