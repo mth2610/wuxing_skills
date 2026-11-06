@@ -438,10 +438,10 @@ int MapFlora_GenerateMeadowPlacements(
                               cosf(cz * 0.060f - cx * 0.035f + 1.2f) * 0.30f +
                               sinf(cx * 0.11f + cz * 0.08f) * 0.15f;
         float tierFactor = 0.5f + 0.5f * macroTierWave;
-        float tieredBase = 0.32f + 0.28f * (tierFactor * tierFactor * (3.0f - 2.0f * tierFactor));
-        float highTypePatch = (patchHash2 > 0.58f) ? (0.12f * clumpCore) : (-0.05f * clumpCore);
+        float tieredBase = 0.22f + 0.12f * (tierFactor * tierFactor * (3.0f - 2.0f * tierFactor));
+        float highTypePatch = (patchHash2 > 0.58f) ? (0.06f * clumpCore) : (-0.03f * clumpCore);
         float heightNorm = (localHeight - 0.35f) * (1.0f / 0.21f);
-        clump->height = (tieredBase + heightNorm * 0.14f + highTypePatch) * (0.88f + 0.20f * growth);
+        clump->height = (tieredBase + heightNorm * 0.08f + highTypePatch) * (0.88f + 0.20f * growth);
         clump->height *= 0.85f + 0.15f * coverage;
 
         if (config.flowerClusters && config.flowerClusterCount > 0)

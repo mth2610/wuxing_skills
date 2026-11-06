@@ -443,27 +443,27 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
         float lengthScale, widthScaleVal, leanFactor, droopFactor;
         if (bladeId < 2)
         {
-            // Inner erect stalks: slender, upright with delicate arch
-            lengthScale = 1.10f + 0.15f * bHash2;
-            widthScaleVal = 0.88f + 0.10f * bHash3;
-            leanFactor = 0.22f + 0.08f * bHash;
-            droopFactor = 0.06f + 0.04f * bHash3;
+            // Inner arching stalks: graceful outward reach with soft nodding crest
+            lengthScale = 1.05f + 0.12f * bHash2;
+            widthScaleVal = 0.92f + 0.10f * bHash3;
+            leanFactor = 0.38f + 0.10f * bHash;
+            droopFactor = 0.18f + 0.06f * bHash3;
         }
         else if (bladeId < 4)
         {
-            // Mid arching blades: graceful outward curving arc
-            lengthScale = 0.95f + 0.14f * bHash2;
-            widthScaleVal = 0.96f + 0.10f * bHash3;
-            leanFactor = 0.45f + 0.12f * bHash;
-            droopFactor = 0.15f + 0.06f * bHash3;
+            // Mid arching blades: lush fountain arc splaying outward
+            lengthScale = 0.95f + 0.12f * bHash2;
+            widthScaleVal = 1.00f + 0.10f * bHash3;
+            leanFactor = 0.62f + 0.14f * bHash;
+            droopFactor = 0.34f + 0.08f * bHash3;
         }
         else
         {
-            // Outer nodding blades: gentle splay, delicate and slender
-            lengthScale = 0.82f + 0.12f * bHash2;
-            widthScaleVal = 1.05f + 0.12f * bHash3;
-            leanFactor = 0.58f + 0.14f * bHash;
-            droopFactor = 0.24f + 0.08f * bHash3;
+            // Outer nodding blades: flowing perimeter fronds bowing toward earth
+            lengthScale = 0.85f + 0.10f * bHash2;
+            widthScaleVal = 1.08f + 0.12f * bHash3;
+            leanFactor = 0.85f + 0.16f * bHash;
+            droopFactor = 0.48f + 0.10f * bHash3;
         }
 
         height = clump->height * lengthScale;
@@ -494,17 +494,17 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
 
         pBase = (Vector3){bx, clump->position.y - 0.014f, bz};
         pP1 = (Vector3){
-            bx + dirX * (lean * 0.20f),
-            pBase.y + height * 0.38f,
-            bz + dirZ * (lean * 0.20f)};
+            bx + dirX * (lean * 0.30f),
+            pBase.y + height * 0.34f,
+            bz + dirZ * (lean * 0.30f)};
         pP2 = (Vector3){
-            bx + dirX * (lean * 0.52f) + latX * (lean * 0.04f * curlAmt),
-            pBase.y + height * 0.76f,
-            bz + dirZ * (lean * 0.52f) + latZ * (lean * 0.04f * curlAmt)};
+            bx + dirX * (lean * 0.72f) + latX * (lean * 0.08f * curlAmt),
+            pBase.y + height * 0.68f,
+            bz + dirZ * (lean * 0.72f) + latZ * (lean * 0.08f * curlAmt)};
         pP3 = (Vector3){
-            bx + dirX * (lean * 0.88f) + latX * (lean * 0.08f * curlAmt),
-            pBase.y + fmaxf(height * 0.30f, height * 0.94f - droopY),
-            bz + dirZ * (lean * 0.88f) + latZ * (lean * 0.08f * curlAmt)};
+            bx + dirX * (lean * 1.12f) + latX * (lean * 0.14f * curlAmt),
+            pBase.y + fmaxf(height * 0.14f, height * 0.86f - droopY),
+            bz + dirZ * (lean * 1.12f) + latZ * (lean * 0.14f * curlAmt)};
 
         isSeedhead = false;
         float colorField = sinf(clump->position.x * 0.12f + clump->position.z * 0.08f) * 0.55f +
@@ -547,8 +547,8 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
                             (unsigned char)(canopy.y * 0.32f * 255.0f),
                             (unsigned char)(canopy.z * 0.18f * 255.0f), 255};
         float botVar = fminf(style.botanicalVariation, 1.0f);
-        bladeRoot = Nature_LerpColor(bladeRoot, canopyRoot, botVar * 0.75f);
-        bladeTip = Nature_LerpColor(bladeTip, canopyTip, botVar * 0.88f);
+        bladeRoot = Nature_LerpColor(bladeRoot, canopyRoot, botVar * 0.65f);
+        bladeTip = Nature_LerpColor(bladeTip, canopyTip, botVar * 0.52f);
     }
     return (NatureBladeDescriptor){pBase, pP1, pP2, pP3, clump->position,
                                    bladeRoot, bladeTip, width, clump->phase, bladeLeanAngle, isReed, isSeedhead};

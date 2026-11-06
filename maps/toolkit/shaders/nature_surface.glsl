@@ -290,9 +290,9 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
 
     float warmShift = clamp(macroPatch * 0.5 + 0.5, 0.0, 1.0);
     float tipHeightMask = FastRamp(0.35, 0.92, h);
-    // Harmonious organic tones: forest moss & warm golden hay, avoiding neon lime
-    vec3 coolEmeraldTip = vec3(0.92, 0.98, 0.86);
-    vec3 warmGoldenTip  = vec3(1.06, 1.00, 0.72);
+    // Organic foliage tones: rich emerald clover & sun-kissed olive tips, never fluorescent
+    vec3 coolEmeraldTip = vec3(0.88, 1.02, 0.82);
+    vec3 warmGoldenTip  = vec3(1.02, 0.98, 0.70);
     vec3 tipTone = mix(vec3(1.0), mix(coolEmeraldTip, warmGoldenTip, warmShift), tipHeightMask);
     baseColor *= tipTone;
 
@@ -371,7 +371,7 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     vec3 ambient = mix(ambientGround, skyAmbient, n.y * 0.5 + 0.5);
 
     // Botanical root self-shadowing anchors individual grass tufts into the dark loam
-    float rootAO = mix(mix(0.38, 0.72, distRootLift), 1.0, smoothstep(0.0, 0.42, h));
+    float rootAO = mix(mix(0.24, 0.65, distRootLift), 1.0, smoothstep(0.0, 0.45, h));
     vec3 lit = baseColor * ambient * rootAO;
 
     float nv = max(dot(faceNormal, viewDir), 0.0);
@@ -443,11 +443,11 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
             float edgeThinness = 0.64 + 0.36 * absU;
             float sssWindow = FastRamp(0.16, 0.54, h) * (1.0 - FastRamp(0.88, 1.0, h) * 0.20);
             float transmission = (backLobe * 0.48 + forwardLobe * 0.72 * (0.28 + 0.72 * h)) * sssWindow * edgeThinness * sssScale;
-            vec3 goldenJadeSSS = baseColor * vec3(1.08, 0.96, 0.44) + vec3(0.016, 0.018, 0.006) * sssScale;
+            vec3 emeraldJadeSSS = baseColor * vec3(0.72, 1.15, 0.42) + vec3(0.010, 0.018, 0.006) * sssScale;
 
             float diffuseLobe = wrapped * (0.42 + 0.48 * wrapped);
             vec3 directDiffuse = baseColor * (diffuseLobe * 0.65);
-            vec3 jadeTrans = goldenJadeSSS * (transmission * 0.80);
+            vec3 jadeTrans = emeraldJadeSSS * (transmission * 0.80);
             vec3 specHighlight = anisoSpec + vec3(waxySpec * 0.34) * baseColor;
 
             vec3 directSun = ((directDiffuse + jadeTrans) * canopy + specHighlight) * sunVis;

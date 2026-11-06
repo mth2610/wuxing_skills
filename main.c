@@ -2016,11 +2016,14 @@ int main(int argc, char **argv) {
     PostFXConfig scenePostFX = postFXConfig;
     const char *activeMapName = MapManager_GetName(MapManager_GetActiveIndex());
     if (activeMapName && strcmp(activeMapName, "SONG_QUAO") == 0) {
-        scenePostFX.saturation = 1.15f;
-        scenePostFX.contrast = 1.08f;
+        scenePostFX.saturation = 1.12f;
+        scenePostFX.contrast = 1.04f;
+        scenePostFX.bloomThreshold = 1.15f;
+        scenePostFX.bloomIntensity = 0.16f;
+        scenePostFX.vignetteRadius = 1.12f;
+        scenePostFX.vignetteSoftness = 0.42f;
+        scenePostFX.exposure = 1.02f;
         scenePostFX.lutEnabled = true;
-        scenePostFX.vignetteRadius = 1.08f;
-        scenePostFX.vignetteSoftness = 0.35f;
     }
     PostFX_Draw(&scenePostFX);
     if (benchmarkVisible) profileTime[9] = GetTime();

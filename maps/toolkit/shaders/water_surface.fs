@@ -389,14 +389,14 @@ void main()
 
     vec3 reflectDir = reflect(-viewDir, normal);
     float skyAngle = clamp(reflectDir.y * 0.85 + 0.15, 0.0, 1.0);
-    vec3 skyZenith  = vec3(0.18, 0.44, 0.74) * (0.85 + u_ambientColor.b * 0.35);
-    vec3 skyHorizon = vec3(0.42, 0.62, 0.76) * (0.80 + u_ambientColor.g * 0.25);
+    vec3 skyZenith  = vec3(0.16, 0.48, 0.82) * (0.85 + u_ambientColor.b * 0.35);
+    vec3 skyHorizon = vec3(0.38, 0.68, 0.84) * (0.80 + u_ambientColor.g * 0.25);
     vec3 reflectedSky = mix(skyHorizon, skyZenith, skyAngle);
 
-    // Subtle green-emerald riverbank canopy reflection near shallow edges on all water types
-    vec3 bankCanopyReflect = vec3(0.15, 0.28, 0.12) * (0.75 + u_ambientColor.g * 0.45);
-    float bankReflectMask = (1.0 - smoothstep(0.02, 0.48, waterDepth)) * (1.0 - skyAngle * 0.55);
-    reflectedSky = mix(reflectedSky, bankCanopyReflect, bankReflectMask * 0.58);
+    // Luminous emerald waterline contact reflection only at immediate bank shoreline
+    vec3 bankCanopyReflect = vec3(0.14, 0.38, 0.22) * (0.85 + u_ambientColor.g * 0.35);
+    float bankReflectMask = (1.0 - smoothstep(0.005, 0.065, waterDepth)) * (1.0 - skyAngle * 0.65);
+    reflectedSky = mix(reflectedSky, bankCanopyReflect, bankReflectMask * 0.35);
 
     float sunReflect = max(0.0, dot(reflectDir, L));
     float sr2 = sunReflect * sunReflect;
@@ -458,11 +458,13 @@ void main()
     }
 
     // ── 8. CRYSTAL CLEAR SEE-THROUGH WATER TRANSPARENCY ──────────────────────
-    // Balanced stylized-realism transparency: visible sky reflection and jade body,
+    // Balanced stylized-realism transparency: luminous turquoise body and crisp sky reflection,
     // while remaining crystal clear to see riverbed sand and rocks underneath.
-    float depthOpacity = 1.0 - exp(-1.8 * waterDepth);
+    float depthOpacity = (u_waterShape == 3)
+        ? (1.0 - exp(-5.2 * waterDepth))
+        : (1.0 - exp(-2.2 * waterDepth));
     float waterColumnAlpha = (u_waterShape == 3)
-        ? clamp(0.18 + 0.54 * depthOpacity, 0.0, 0.80)
+        ? clamp(0.38 + 0.48 * depthOpacity, 0.0, 0.88)
         : (0.18 + 0.52 * depthOpacity);
     float glintAlphaBoost = clamp(glintSharp * 0.45, 0.0, 0.30);
     float surfaceAlpha = (fresnel * 0.72) + waterColumnAlpha + glintAlphaBoost;
@@ -479,8 +481,8 @@ void main()
     if (alpha < 0.002) discard;
 
     // ── 9. ENERGY-CONSERVING COMPOSITION ─────────────────────────────────────
-    vec3 shallowTint = mix(u_shallowColor, vec3(0.18, 0.72, 0.65), 0.52);
-    vec3 deepTint    = mix(u_deepColor,    vec3(0.05, 0.30, 0.38), 0.50);
+    vec3 shallowTint = mix(u_shallowColor, vec3(0.14, 0.78, 0.72), 0.58);
+    vec3 deepTint    = mix(u_deepColor,    vec3(0.04, 0.34, 0.44), 0.55);
 
     vec3 depthBlend = clamp(mix(vec3(1.0 - smoothstep(0.04, 0.85, waterDepth)), transmittance, 0.65), 0.0, 1.0);
     vec3 waterVolumeColor = mix(deepTint, shallowTint, depthBlend);

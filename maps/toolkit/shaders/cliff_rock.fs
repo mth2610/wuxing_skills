@@ -50,9 +50,7 @@ void main() {
     vec3 viewDir = toCam * invCamDist;
 
     vec4 albedo = textureGrad(texture0, fragTexCoord, uvDx, uvDy);
-    // Soften extreme biotite mica pits for authentic weathered granite bedrock
-    albedo.rgb = mix(albedo.rgb, vec3(dot(albedo.rgb, vec3(0.3333333))), 0.18);
-    albedo.rgb = max(albedo.rgb, vec3(0.26, 0.25, 0.24));
+    // Authentic granite bedrock: rich mineral facets with deep fracture crevices
     albedo.rgb *= colDiffuse.rgb;
     vec3 normalSample = textureGrad(texture2, fragTexCoord, uvDx, uvDy).rgb * 2.0 - 1.0;
 
@@ -115,12 +113,12 @@ void main() {
 
     // 1b. Sub-Soil Regolith Band (warm earthy loam transition below the turf lip)
     float soilBand = smoothstep(-3.8, -1.4, fragLocalY) * (1.0 - smoothstep(-1.5, -1.3, fragLocalY));
-    vec3 subSoilLoam = mix(vec3(0.32, 0.24, 0.16), vec3(0.44, 0.32, 0.20), strataBand);
-    rockBase = mix(rockBase, subSoilLoam, soilBand * 0.65);
+    vec3 subSoilLoam = mix(vec3(0.22, 0.17, 0.11), vec3(0.32, 0.24, 0.15), strataBand);
+    rockBase = mix(rockBase, subSoilLoam, soilBand * 0.40);
 
     // Turf overhang fringe right at the top rim (-1.8 to -1.35)
     float turfLip = smoothstep(-1.8, -1.35, fragLocalY);
-    vec3 turfColor = mix(vec3(0.22, 0.38, 0.12), vec3(0.32, 0.46, 0.16), drainStreak);
+    vec3 turfColor = mix(vec3(0.16, 0.30, 0.10), vec3(0.24, 0.38, 0.12), drainStreak);
     rockBase = mix(rockBase, turfColor, turfLip * 0.70 * clamp(worldNormal.y * 1.6 + 0.4, 0.0, 1.0));
 
     // 2. Ledge Moss & Lichen Colonization (enhanced near upper rim via fragLocalY)

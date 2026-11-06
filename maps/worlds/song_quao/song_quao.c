@@ -563,13 +563,13 @@ void InitSongQuaoMap(void)
                                              .detailStrength = 0.32f,
                                              .maxDepth = 1.45f,
                                              .absorption = {0.42f, 0.10f, 0.035f},
-                                             .scatterColor = {0.16f, 0.72f, 0.66f},
+                                             .scatterColor = {0.14f, 0.74f, 0.68f},
                                              .scatterCoeff = 0.35f,
                                              .causticsStrength = 0.65f,
                                              .causticsScale = 3.80f,
                                              .foamThreshold = 0.085f,
-                                             .deepColor = {12, 60, 78, 220},
-                                             .shallowColor = {68, 184, 172, 140},
+                                             .deepColor = {10, 68, 88, 225},
+                                             .shallowColor = {38, 182, 172, 150},
                                              .foamColor = {248, 252, 255, 235},
                                          });
 
@@ -590,24 +590,24 @@ void InitSongQuaoMap(void)
         s_reedPlacements, s_reedCount,
         s_flowerPlacements, SONG_QUAO_FLOWER_CLUSTERS, SONG_QUAO_FLOWER_CLUSTER_COUNT,
         (MapFloraStyle){
-            .grassRootColor = {22, 34, 16, 255},  // Sắc rêu trầm ấm ăn khớp nền đất mùn
-            .grassTipColor = {122, 152, 56, 255}, // Sắc vàng nắng ngọc bích ấm áp
+            .grassRootColor = {18, 28, 14, 255},  // Sắc rêu mùn trầm ấm ăn khớp nền đất
+            .grassTipColor = {82, 128, 46, 255},  // Sắc ngọc bích cỏ ba lá tự nhiên
             .bladesPerClump = 6,
             .bladeSegments = 3,
-            .bladeWidthScale = 0.065f,
+            .bladeWidthScale = 0.078f,
             .lodDistance = 22.0f,
             .midLodDistance = 11.0f,
             .drawDistance = 42.0f,
             .shadowDistance = 22.0f,
             .grassState = MAP_GRASS_STATE_LUSH,
-            .reedRootColor = {20, 32, 16, 255},
-            .reedTipColor = {108, 142, 60, 255},
+            .reedRootColor = {16, 26, 12, 255},
+            .reedTipColor = {88, 124, 48, 255},
             .hasReedPlumes = false,
             .botanicalVariation = 1.0f,
             .pampasPlacements = s_pampasPlacements,
             .pampasCount = s_pampasCount,
-            .pampasRootColor = {26, 36, 18, 255},
-            .pampasTipColor = {148, 162, 92, 255},
+            .pampasRootColor = {24, 32, 16, 255},
+            .pampasTipColor = {142, 154, 88, 255},
         });
 
     EnvShadow_SetMapCasterCallback(DrawSongQuaoShadowCasters, NULL);

@@ -72,22 +72,28 @@ def grade_pixel(r01, g01, b01):
     # 1. Subtle S-Curve Contrast in linear space
     luma_curved = luma * luma * (3.0 - 2.0 * luma)
     contrast_factor = luma_curved / max(1e-5, luma)
-    r_lin = clamp01(r_lin * (0.25 + 0.75 * contrast_factor))
-    g_lin = clamp01(g_lin * (0.25 + 0.75 * contrast_factor))
-    b_lin = clamp01(b_lin * (0.25 + 0.75 * contrast_factor))
+    r_lin = clamp01(r_lin * (0.35 + 0.65 * contrast_factor))
+    g_lin = clamp01(g_lin * (0.35 + 0.65 * contrast_factor))
+    b_lin = clamp01(b_lin * (0.35 + 0.65 * contrast_factor))
+
+    # Lift deep blacks by +0.018 to preserve open shadow details (avoiding black crush)
+    black_lift = 0.018 * math.pow(clamp01(1.0 - luma * 2.5), 2.0)
+    r_lin += black_lift * 0.95
+    g_lin += black_lift * 1.05
+    b_lin += black_lift * 1.15
 
     # 2. Split Toning:
-    # Shadow bias: cool teal / navy (r -0.012, g +0.004, b +0.022 in shadows)
-    shadow_weight = math.pow(clamp01(1.0 - luma * 2.0), 1.6)
-    r_lin += shadow_weight * -0.012
-    g_lin += shadow_weight * 0.004
-    b_lin += shadow_weight * 0.022
+    # Shadow bias: cool teal / navy (preserve open shadows without clipping R)
+    shadow_weight = math.pow(clamp01(1.0 - luma * 1.8), 1.5)
+    r_lin += shadow_weight * -0.006
+    g_lin += shadow_weight * 0.005
+    b_lin += shadow_weight * 0.018
 
     # Highlight bias: gentle natural sun warmth without yellow-tinting grass foliage
-    highlight_weight = math.pow(clamp01((luma - 0.40) / 0.60), 1.6)
-    r_lin += highlight_weight * 0.012
-    g_lin += highlight_weight * 0.008
-    b_lin += highlight_weight * -0.004
+    highlight_weight = math.pow(clamp01((luma - 0.38) / 0.62), 1.5)
+    r_lin += highlight_weight * 0.010
+    g_lin += highlight_weight * 0.007
+    b_lin += highlight_weight * -0.003
 
     r_srgb = clamp01(linear_to_srgb(clamp01(r_lin)))
     g_srgb = clamp01(linear_to_srgb(clamp01(g_lin)))
