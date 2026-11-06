@@ -6,7 +6,7 @@ in vec2 v_texCoord;
 out vec4 finalColor;
 
 #define MAX_BLOBS 64
-#define MAX_ACTIVE 32
+#define MAX_ACTIVE 64
 
 uniform vec4 u_blobs[MAX_BLOBS]; // xyz: world center, w: radius in meters
 uniform int u_blobCount;
@@ -175,7 +175,7 @@ void main() {
         if (!hit) discard;
     } else {
         // Fast 1D Polynomial Marching over only the active intersecting blobs
-        int numSteps = clamp(u_stepCount, 10, 36);
+        int numSteps = clamp(u_stepCount, 10, 56);
         float stepSize = (tEnd - tStart) / float(numSteps);
         float t = tStart;
         float tPrev = t;
@@ -193,7 +193,7 @@ void main() {
             hit = true;
             tHit = tStart;
         } else {
-            for (int s = 0; s < 36; s++) {
+            for (int s = 0; s < 56; s++) {
                 if (s >= numSteps) break;
                 t += stepSize;
                 if (t > tEnd) t = tEnd;

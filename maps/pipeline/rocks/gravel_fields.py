@@ -10,6 +10,8 @@ Generates:
 import os
 import sys
 import json
+import zlib
+import struct
 import numpy as np
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -18,6 +20,67 @@ if PIPELINE_DIR not in sys.path:
     sys.path.insert(0, PIPELINE_DIR)
 
 from dem_pipeline import write_png, gaussian_filter_2d
+
+
+def read_png(filename):
+    """Reads uncompressed/zlib 8-bit PNG into uint8 NumPy array."""
+    with open(filename, "rb") as f:
+        data = f.read()
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        raise ValueError("Not a PNG file")
+    offset = 8
+    idat_chunks = []
+    w, h, bit_depth, color_type = 0, 0, 0, 0
+    while offset < len(data):
+        length, chunk_type = struct.unpack(">I4s", data[offset:offset+8])
+        chunk_data = data[offset+8:offset+8+length]
+        offset += 12 + length
+        if chunk_type == b"IHDR":
+            w, h, bit_depth, color_type = struct.unpack(">IIBB", chunk_data[:10])
+        elif chunk_type == b"IDAT":
+            idat_chunks.append(chunk_data)
+        elif chunk_type == b"IEND":
+            break
+    decompressed = zlib.decompress(b"".join(idat_chunks))
+    channels = 4 if color_type == 6 else (3 if color_type == 2 else 1)
+    bytes_per_pixel = channels * (bit_depth // 8)
+    stride = w * bytes_per_pixel
+    img = np.zeros((h, w, channels), dtype=np.uint8)
+    src_offset = 0
+    prev_row = np.zeros(stride, dtype=np.uint8)
+    for row in range(h):
+        filter_type = decompressed[src_offset]
+        src_offset += 1
+        raw_row = np.frombuffer(decompressed, dtype=np.uint8, count=stride, offset=src_offset)
+        src_offset += stride
+        if filter_type == 0:
+            cur_row = raw_row.copy()
+        elif filter_type == 1:
+            cur_row = np.zeros(stride, dtype=np.uint8)
+            for i in range(stride):
+                left = cur_row[i - bytes_per_pixel] if i >= bytes_per_pixel else 0
+                cur_row[i] = (int(raw_row[i]) + int(left)) & 0xff
+        elif filter_type == 2:
+            cur_row = (raw_row.astype(np.uint16) + prev_row.astype(np.uint16)).astype(np.uint8)
+        elif filter_type == 3:
+            cur_row = np.zeros(stride, dtype=np.uint8)
+            for i in range(stride):
+                left = cur_row[i - bytes_per_pixel] if i >= bytes_per_pixel else 0
+                up = prev_row[i]
+                cur_row[i] = (int(raw_row[i]) + (int(left) + int(up)) // 2) & 0xff
+        elif filter_type == 4:
+            cur_row = np.zeros(stride, dtype=np.uint8)
+            for i in range(stride):
+                a = cur_row[i - bytes_per_pixel] if i >= bytes_per_pixel else 0
+                b = prev_row[i]
+                c = prev_row[i - bytes_per_pixel] if i >= bytes_per_pixel else 0
+                p = int(a) + int(b) - int(c)
+                pa, pb, pc = abs(p - int(a)), abs(p - int(b)), abs(p - int(c))
+                pr = a if (pa <= pb and pa <= pc) else (b if pb <= pc else c)
+                cur_row[i] = (int(raw_row[i]) + int(pr)) & 0xff
+        prev_row = cur_row
+        img[row] = cur_row.reshape((w, channels))
+    return img
 
 
 def generate_gravel_and_grounding(terrain_npz_path, placements_json_path, theme_path, out_dir, c_header_path):
@@ -122,6 +185,71 @@ def generate_gravel_and_grounding(terrain_npz_path, placements_json_path, theme_
     mask_out_path = os.path.join(out_dir, "song_quao_rock_mask.png")
     write_png(mask_out_path, rock_mask_u8, color_type=6) # RGBA
     print(f"[Stage 6] Baked rock grounding mask to: {mask_out_path}")
+
+    # -------------------------------------------------------------
+    # 1b. Bake Rock Footprint Contact AO & Talus into song_quao_debris_map.png
+    # -------------------------------------------------------------
+    debris_map_path = os.path.join(os.path.dirname(c_header_path), "song_quao_debris_map.png")
+    if os.path.exists(debris_map_path):
+        debris_img = read_png(debris_map_path)
+        dh, dw = debris_img.shape[:2]
+        dsx = map_w / (dw - 1)
+        dsz = map_d / (dh - 1)
+        dyy, dxx = np.indices((dh, dw))
+        dworld_x = dxx * dsx
+        dworld_z = dyy * dsz
+
+        contact_ao = np.zeros((dh, dw), dtype=np.float32)
+        talus_gravel = np.zeros((dh, dw), dtype=np.float32)
+
+        for p in placements:
+            px, pz = p["x"], p["z"]
+            r = p["rScale"]
+            arch = p.get("archetype", 0)
+
+            # Skip river stones in water (moving water prevents talus accumulation & caustics fill AO)
+            if arch == 2:
+                continue
+            # Small scree pebbles don't cast large macro contact AO
+            if r < 0.65:
+                continue
+
+            pad_m = r * 1.35
+            min_c = max(0, int((px - pad_m) / dsx))
+            max_c = min(dw - 1, int((px + pad_m) / dsx))
+            min_r = max(0, int((pz - pad_m) / dsz))
+            max_r = min(dh - 1, int((pz + pad_m) / dsz))
+
+            sub_x = dworld_x[min_r:max_r+1, min_c:max_c+1]
+            sub_z = dworld_z[min_r:max_r+1, min_c:max_c+1]
+            dist = np.hypot(sub_x - px, sub_z - pz)
+
+            # Tight contact AO directly underneath rock perimeter (r * 1.08)
+            ao_val = np.clip((r * 1.08 - dist) / max(0.18, r * 0.28), 0.0, 1.0)
+            ao_val = ao_val * ao_val * 0.72
+            contact_ao[min_r:max_r+1, min_c:max_c+1] = np.maximum(
+                contact_ao[min_r:max_r+1, min_c:max_c+1], ao_val
+            )
+
+            # Talus gravel collar: chips around boulder foot
+            gravel_val = np.clip(1.0 - np.abs(dist - (r * 1.05)) / max(0.22, r * 0.35), 0.0, 1.0)
+            talus_gravel[min_r:max_r+1, min_c:max_c+1] = np.maximum(
+                talus_gravel[min_r:max_r+1, min_c:max_c+1], gravel_val * 0.75
+            )
+
+        contact_ao = gaussian_filter_2d(contact_ao, 0.85)
+        talus_gravel = gaussian_filter_2d(talus_gravel, 0.75)
+
+        # Update channels:
+        # R (0): leaf litter (keep)
+        # G (1): scree / gravel -> combine with rock talus gravel
+        debris_img[..., 1] = np.clip(np.maximum(debris_img[..., 1].astype(np.float32) / 255.0, talus_gravel) * 255.0, 0, 255).astype(np.uint8)
+        # B (2): contact AO (0..255)
+        debris_img[..., 2] = (np.clip(contact_ao, 0.0, 1.0) * 255.0).astype(np.uint8)
+        # A (3): moss (keep)
+
+        write_png(debris_map_path, debris_img, color_type=6)
+        print(f"[Stage 6] Baked rock contact AO & gravel into: {debris_map_path}")
 
     # -------------------------------------------------------------
     # 2. Export Production C Header

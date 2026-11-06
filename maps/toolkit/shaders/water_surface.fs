@@ -382,19 +382,19 @@ void main()
     vec3 sssLight = effectiveLight * u_scatterColor * (sssFactor * (1.0 - exp(-2.0 * waterDepth)) * crestThickness * 0.75);
 
     // ── 6. HYBRID FRESNEL & ENVIRONMENT REFLECTION (Energy-Conserving) ───────
-    const float F0 = 0.02;
+    const float F0 = 0.04;
     float omv = 1.0 - NdotV;
     float omv2 = omv * omv;
     float fresnel = F0 + (1.0 - F0) * (omv2 * omv2 * omv);
 
     vec3 reflectDir = reflect(-viewDir, normal);
     float skyAngle = clamp(reflectDir.y * 0.85 + 0.15, 0.0, 1.0);
-    vec3 skyZenith  = vec3(0.16, 0.38, 0.64) * (0.80 + u_ambientColor.b * 0.30);
-    vec3 skyHorizon = vec3(0.36, 0.54, 0.66) * (0.75 + u_ambientColor.g * 0.22);
+    vec3 skyZenith  = vec3(0.18, 0.44, 0.74) * (0.85 + u_ambientColor.b * 0.35);
+    vec3 skyHorizon = vec3(0.42, 0.62, 0.76) * (0.80 + u_ambientColor.g * 0.25);
     vec3 reflectedSky = mix(skyHorizon, skyZenith, skyAngle);
 
     // Subtle green-emerald riverbank canopy reflection near shallow edges on all water types
-    vec3 bankCanopyReflect = vec3(0.13, 0.23, 0.10) * (0.68 + u_ambientColor.g * 0.42);
+    vec3 bankCanopyReflect = vec3(0.15, 0.28, 0.12) * (0.75 + u_ambientColor.g * 0.45);
     float bankReflectMask = (1.0 - smoothstep(0.02, 0.48, waterDepth)) * (1.0 - skyAngle * 0.55);
     reflectedSky = mix(reflectedSky, bankCanopyReflect, bankReflectMask * 0.58);
 
@@ -402,7 +402,7 @@ void main()
     float sr2 = sunReflect * sunReflect;
     float sr4 = sr2 * sr2;
     float sr8 = sr4 * sr4;
-    reflectedSky += effectiveLight * (sr8 * sr8 * 0.10);
+    reflectedSky += effectiveLight * (sr8 * sr8 * 0.18);
 
     float crest = smoothstep(0.48, 0.92, waveFacet) * 0.045;
     vec3 waveHighlight = reflectedSky * (max(waveFacet, 0.0) * 0.038 + crest + wakeCrestHighlight * 0.42);
@@ -458,39 +458,39 @@ void main()
     }
 
     // ── 8. CRYSTAL CLEAR SEE-THROUGH WATER TRANSPARENCY ──────────────────────
-    // Shallow water is crystal-clear (alpha ~0.05..0.22) so the sandy bed & stepping stone bases show through;
-    // deeper channel transitions smoothly into rich jade-teal depth.
-    float depthOpacity = 1.0 - exp(-1.85 * waterDepth);
+    // Balanced stylized-realism transparency: visible sky reflection and jade body,
+    // while remaining crystal clear to see riverbed sand and rocks underneath.
+    float depthOpacity = 1.0 - exp(-2.2 * waterDepth);
     float waterColumnAlpha = (u_waterShape == 3)
-        ? clamp(0.05 + 0.62 * depthOpacity * depthOpacity, 0.0, 0.74)
-        : (0.10 + 0.42 * depthOpacity);
-    float glintAlphaBoost = clamp(glintSharp * 0.35, 0.0, 0.22);
-    float surfaceAlpha = (fresnel * 0.54) + waterColumnAlpha + glintAlphaBoost;
+        ? clamp(0.22 + 0.58 * depthOpacity, 0.0, 0.85)
+        : (0.18 + 0.52 * depthOpacity);
+    float glintAlphaBoost = clamp(glintSharp * 0.45, 0.0, 0.30);
+    float surfaceAlpha = (fresnel * 0.72) + waterColumnAlpha + glintAlphaBoost;
 
     float shoreEdgeFade = radialEdgeFade;
     if (u_waterShape == 3) {
-        shoreEdgeFade = smoothstep(0.001, 0.042, waterDepth);
+        shoreEdgeFade = smoothstep(0.001, 0.038, waterDepth);
     } else if (u_waterShape != 0) {
         shoreEdgeFade = smoothstep(0.002, 0.038, waterDepth);
     }
     surfaceAlpha *= shoreEdgeFade;
 
-    float alpha = clamp(surfaceAlpha + brokenFoam * 0.32 * shoreEdgeFade, 0.0, 0.88);
+    float alpha = clamp(surfaceAlpha + brokenFoam * 0.40 * shoreEdgeFade, 0.0, 0.92);
     if (alpha < 0.002) discard;
 
     // ── 9. ENERGY-CONSERVING COMPOSITION ─────────────────────────────────────
-    vec3 shallowTint = mix(u_shallowColor, vec3(0.16, 0.48, 0.44), 0.52);
-    vec3 deepTint    = mix(u_deepColor,    vec3(0.04, 0.22, 0.28), 0.55);
+    vec3 shallowTint = mix(u_shallowColor, vec3(0.22, 0.62, 0.58), 0.48);
+    vec3 deepTint    = mix(u_deepColor,    vec3(0.06, 0.28, 0.36), 0.50);
 
-    vec3 depthBlend = clamp(mix(vec3(1.0 - smoothstep(0.06, 0.95, waterDepth)), transmittance, 0.65), 0.0, 1.0);
+    vec3 depthBlend = clamp(mix(vec3(1.0 - smoothstep(0.04, 0.85, waterDepth)), transmittance, 0.65), 0.0, 1.0);
     vec3 waterVolumeColor = mix(deepTint, shallowTint, depthBlend);
-    waterVolumeColor *= (0.72 + u_ambientColor * 0.28 + effectiveLight * 0.18);
+    waterVolumeColor *= (0.78 + u_ambientColor * 0.32 + effectiveLight * 0.22);
 
     float shoreFadeOptical = (u_waterShape == 3) ? smoothstep(0.004, 0.085, waterDepth) : 1.0;
 
     float reflectWeight = (u_waterShape == 3)
-        ? clamp((fresnel * 0.58 + 0.08) * shoreFadeOptical, 0.0, 0.78)
-        : clamp(fresnel * 0.68 + 0.06, 0.0, 0.82);
+        ? clamp((fresnel * 0.70 + 0.16) * shoreFadeOptical, 0.0, 0.85)
+        : clamp(fresnel * 0.75 + 0.12, 0.0, 0.88);
     vec3 underwaterTerms = waterVolumeColor + causticLight + sssLight + waveLighting;
     vec3 color = mix(underwaterTerms, reflectedSky, reflectWeight);
 

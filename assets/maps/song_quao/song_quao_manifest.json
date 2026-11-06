@@ -74,7 +74,7 @@
     "stream_ratio": 0.01
   },
   "metrics": {
-    "bake_seconds": 8.758703846997378,
+    "bake_seconds": 30.62195688400243,
     "wet_nodes": 2249,
     "lake_nodes": 107
   }

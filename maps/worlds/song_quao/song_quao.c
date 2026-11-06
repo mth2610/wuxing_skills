@@ -150,13 +150,21 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
     float sandFade = 1.0f - MapMath_SmoothStep01(42.0f, 76.0f, (float)splat.a);
     float rockFade = 1.0f - MapMath_SmoothStep01(0.35f, 0.65f, rockScree);
 
-    // Coherent macro meadow swells
-    float warpedX = x + sinf(z * 0.12f) * 2.6f;
-    float macroField = sinf(warpedX * 0.075f + z * 0.048f) * 0.55f +
-                       sinf(z * 0.11f - x * 0.042f + 1.2f) * 0.30f +
-                       sinf(x * 0.19f + z * 0.15f) * 0.15f;
-    float patch = MapMath_SmoothStep01(-0.35f, 0.35f, macroField);
-    float macro = 0.74f + 0.26f * patch;
+    // Coherent macro meadow swells with organic openings and glades
+    float warpedX = x + sinf(z * 0.12f) * 2.8f;
+    float warpedZ = z + cosf(x * 0.11f) * 2.4f;
+    float macroField = sinf(warpedX * 0.072f + warpedZ * 0.046f) * 0.55f +
+                       sinf(warpedZ * 0.105f - warpedX * 0.038f + 1.2f) * 0.30f +
+                       sinf(warpedX * 0.18f + warpedZ * 0.14f) * 0.15f;
+    
+    // Natural clearings / soil glades where grass recedes into low moss & open earth
+    float gladeNoise = sinf(x * 0.038f + z * 0.032f) * 0.60f + cosf(z * 0.045f - x * 0.035f + 0.7f) * 0.40f;
+    float gladeClearing = MapMath_SmoothStep01(0.42f, 0.72f, gladeNoise);
+
+    // Patch density: from dense 0.95 in meadow cores down to 0.18 in glades
+    float patch = MapMath_SmoothStep01(-0.28f, 0.38f, macroField);
+    float macro = (0.42f + 0.55f * patch) * (1.0f - gladeClearing * 0.75f);
+    macro = fmaxf(0.14f, macro);
 
     float density = macro * heightFade * slopeFade * shoreFade * sandFade *
                     rockFade * flowerSuppression * rockSuppression;
@@ -216,7 +224,7 @@ static void BuildFloraPlacements(void)
         (MapFloraMeadowConfig){
             .minBounds = {10.0f, 8.0f},
             .maxBounds = {MAP_WIDTH - 10.0f, MAP_DEPTH - 8.0f},
-            .spacing = 0.33f,
+            .spacing = 0.38f,
             .seed = 0x51a7c3u,
             .densityFn = SongQuaoGrassDensity,
             .ecology = &s_habitat,
@@ -369,9 +377,9 @@ static void CaptureSongQuaoStaticShadows(void)
 
 void InitSongQuaoMap(void)
 {
-    // Skip disjointed s_cliff skirt: s_ground's unified triplanar granite terrain
-    // renders the seamless floating island directly into the cloud sea.
-    s_skipMask = MapProp_GetSkipMask() | MAP_SKIP_CLIFF;
+    // Enable s_cliff skirt: sculpted 17-row 3D geological cliff mesh with
+    // overhanging turf lip, eroded sub-soil band, and inward floating keel.
+    s_skipMask = MapProp_GetSkipMask();
     if (s_skipMask & MAP_SKIP_GRADE)
         ColorGradeLut_UseNeutral();
     else
@@ -515,7 +523,33 @@ void InitSongQuaoMap(void)
     if (!(s_skipMask & MAP_SKIP_CLIFF))
         s_cliff = MapProp_CreateCliffSkirt(&s_ground, kMapCenter, -1.35f, -26.0f);
 
+    // [VISUAL AAA WATER]: Nước trong ngọc bích, phản chiếu vòm trời và đáy cát ven bờ
+    s_river = MapProp_CreateTerrainWater("assets/maps/song_quao/song_quao_water.obj",
+                                         (MapWaterConfig){
+                                             .ecosystem = WATER_ECO_CUSTOM,
+                                             .center = {kMapCenter.x, 0.0f, kMapCenter.z},
+                                             .radiusX = MAP_WIDTH * 0.5f,
+                                             .radiusZ = MAP_DEPTH * 0.5f,
+                                             .waveHeight = 0.016f,
+                                             .waveScale = 2.2f,
+                                             .waveSpeed = 0.68f,
+                                             .flowVelocity = {0.24f, 0.36f},
+                                             .detailScale = 0.35f,
+                                             .detailStrength = 0.32f,
+                                             .maxDepth = 1.45f,
+                                             .absorption = {0.45f, 0.12f, 0.04f},
+                                             .scatterColor = {0.18f, 0.65f, 0.62f},
+                                             .scatterCoeff = 0.32f,
+                                             .causticsStrength = 0.55f,
+                                             .causticsScale = 3.80f,
+                                             .foamThreshold = 0.095f,
+                                             .deepColor = {14, 58, 72, 235},
+                                             .shallowColor = {74, 172, 164, 160},
+                                             .foamColor = {248, 252, 255, 235},
+                                         });
+
     BuildRocks();
+    RegisterSongQuaoWaterObstacles();
 
     // Cull small 3D pebbles/twigs at 14m
     s_debris = MapProp_CreateDebrisSystem(
@@ -525,59 +559,31 @@ void InitSongQuaoMap(void)
     BuildFloraPlacements();
 
     // [VISUAL AAA & 60+ FPS FLORA]:
-    // - Bản lá rộng 0.138f với thân lá đầy đặn giúp thảm cỏ đan kín mượt mà như nhung,
-    //   xóa hoàn toàn cảm giác "gai nhọn" và hòa nhập liền mạch với nền địa hình ở cự ly 40m.
+    // - Bản lá rộng 0.135f với màu gốc rêu trầm và ngọn vàng nắng ngọc bích hài hòa
     s_flora = MapProp_CreateFloraSystem(
         s_grassPlacements, s_grassCount,
         s_reedPlacements, s_reedCount,
         s_flowerPlacements, SONG_QUAO_FLOWER_CLUSTERS, SONG_QUAO_FLOWER_CLUSTER_COUNT,
         (MapFloraStyle){
-            .grassRootColor = {32, 52, 22, 255},  // Sắc xanh rêu rừng sâu ăn khớp nền đất
-            .grassTipColor = {124, 178, 66, 255}, // Sắc xanh ngọc bích bắt nắng ngược sáng
+            .grassRootColor = {26, 44, 18, 255},  // Sắc rêu trầm ấm ăn khớp nền đất
+            .grassTipColor = {148, 174, 76, 255}, // Sắc vàng nắng ban mai ngọc bích
             .bladesPerClump = 5,
             .bladeSegments = 3,
-            .bladeWidthScale = 0.138f,
-            .lodDistance = 21.0f,
+            .bladeWidthScale = 0.135f,
+            .lodDistance = 22.0f,
             .midLodDistance = 11.0f,
-            .drawDistance = 40.0f,
+            .drawDistance = 42.0f,
             .shadowDistance = 7.5f,
             .grassState = MAP_GRASS_STATE_LUSH,
-            .reedRootColor = {30, 48, 22, 255},
-            .reedTipColor = {112, 162, 64, 255},
+            .reedRootColor = {28, 44, 20, 255},
+            .reedTipColor = {122, 168, 68, 255},
             .hasReedPlumes = false,
             .botanicalVariation = 1.0f,
             .pampasPlacements = s_pampasPlacements,
             .pampasCount = s_pampasCount,
-            .pampasRootColor = {38, 54, 26, 255},
-            .pampasTipColor = {152, 180, 94, 255},
+            .pampasRootColor = {34, 48, 22, 255},
+            .pampasTipColor = {164, 184, 102, 255},
         });
-
-    // [VISUAL AAA WATER]: Nước nông ven bờ trong vắt (alpha 72) nhìn xuyên thấu đáy cát vàng,
-    // chuyển dần theo định luật Beer-Lambert sang sắc xanh ngọc lục bảo sâu thẳm ở lòng sông.
-    s_river = MapProp_CreateTerrainWater("assets/maps/song_quao/song_quao_water.obj",
-                                         (MapWaterConfig){
-                                             .ecosystem = WATER_ECO_CUSTOM,
-                                             .center = {kMapCenter.x, 0.0f, kMapCenter.z},
-                                             .radiusX = MAP_WIDTH * 0.5f,
-                                             .radiusZ = MAP_DEPTH * 0.5f,
-                                             .waveHeight = 0.011f,
-                                             .waveScale = 1.55f,
-                                             .waveSpeed = 0.62f,
-                                             .flowVelocity = {0.22f, 0.34f},
-                                             .detailScale = 0.32f,
-                                             .detailStrength = 0.26f,
-                                             .maxDepth = 1.45f,
-                                             .absorption = {0.48f, 0.14f, 0.05f},
-                                             .scatterColor = {0.14f, 0.58f, 0.56f},
-                                             .scatterCoeff = 0.26f,
-                                             .causticsStrength = 0.52f,
-                                             .causticsScale = 3.60f,
-                                             .foamThreshold = 0.085f,
-                                             .deepColor = {16, 62, 78, 215},
-                                             .shallowColor = {64, 148, 138, 72},
-                                             .foamColor = {244, 248, 250, 215},
-                                         });
-    RegisterSongQuaoWaterObstacles();
 
     EnvShadow_SetMapCasterCallback(DrawSongQuaoShadowCasters, NULL);
     CaptureSongQuaoStaticShadows();

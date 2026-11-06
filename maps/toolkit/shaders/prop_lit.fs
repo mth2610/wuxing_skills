@@ -50,9 +50,8 @@ void main() {
     vec3 viewDir = toCam * invCamDist;
 
     vec4 albedo = textureGrad(texture0, fragTexCoord, uvDx, uvDy);
-    // Nâng sàn sáng khoáng vật đá granite để tảng đá không bị sậm đen như than dưới nắng chiều
-    albedo.rgb = mix(albedo.rgb, vec3(dot(albedo.rgb, vec3(0.3333333))), 0.14);
-    albedo.rgb = max(albedo.rgb, vec3(0.24, 0.23, 0.22)) * 1.22;
+    // Natural mineral lithology calibration: preserve genuine granite, river stone & scree tones
+    albedo.rgb = mix(albedo.rgb, vec3(dot(albedo.rgb, vec3(0.3333333))), 0.08) * 0.92;
     albedo.rgb *= colDiffuse.rgb;
     vec3 normalSample = textureGrad(texture2, fragTexCoord, uvDx, uvDy).rgb * 2.0 - 1.0;
 
@@ -144,11 +143,7 @@ void main() {
     float diff = calcDiffuse(normal, modelLightDir, 0.15);
 
     float shadow = MapShadowVisibility(fragPosition, normal, lightDir);
-    if (isRiverStone > 0.5) {
-        shadow = max(shadow, 0.76);
-    } else {
-        shadow = mix(0.38, 1.0, shadow);
-    }
+    shadow = mix(0.42, 1.0, shadow);
     if (shadow > 0.001) {
         shadow *= Environment_CloudVisibility(u_cloudNoise, worldPosition);
     }

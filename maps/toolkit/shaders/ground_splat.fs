@@ -578,11 +578,22 @@ void main()
     float wetCapillaryDarken = riparianSaturation * 0.05;
     blendedAlbedo *= (1.0 - clamp(wetCapillaryDarken, 0.0, 0.08));
 
+    // Subtle submerged bed depth tint (warm attenuation only in deep water)
+    if (lakeDepthFactor > 0.0) {
+        float subDepth = clamp(lakeDepthFactor * 0.40, 0.0, 0.50);
+        blendedAlbedo *= exp(-vec3(0.35, 0.12, 0.04) * subDepth);
+    }
+
+    float rockContactAO = 1.0;
     if (u_groundDebrisEnabled != 0 && camDistSqXZ < 1024.0) {
         float debrisDistFade = 1.0 - smoothstep(576.0, 1024.0, camDistSqXZ);
         vec4 debris = textureLod(u_groundDebris, fragTexCoord, 0.0);
         float fineGrain = (soilPossible) ? dirtDetail.r : fineGrassLuma;
         float grassDebrisAtten = 1.0 - wGrass * 0.72;
+
+        if (debris.b > 0.02) {
+            rockContactAO = 1.0 - smoothstep(0.04, 0.85, debris.b) * 0.68 * debrisDistFade;
+        }
 
         float dryWoodlandMask = (1.0 - clamp(shoreFactor + streamWet, 0.0, 1.0)) * debrisDistFade * grassDebrisAtten;
         if (debris.r > 0.04 && dryWoodlandMask > 0.05) {
@@ -661,7 +672,8 @@ void main()
     float cliffCreviceAO = mix(1.0, cliffOcclusion, smoothstep(0.04, 0.35, wCliff));
     float cavityAO = mix(0.86 + 0.14 * fineGrassLuma + distantTuftRelief * 0.35,
                          0.74 + 0.26 * pebbleRelief, soilWeight) * reliefShadow * cliffCreviceAO * canopyContactAO;
-    cavityAO = clamp(cavityAO, 0.65, 1.08);
+    cavityAO *= rockContactAO;
+    cavityAO = clamp(cavityAO, 0.45, 1.08);
 
     // ---- 11. Physically Based Lighting & Soft Grass/Soil Shadows ----
     float rawNdotL = dot(normal, light);
@@ -682,7 +694,7 @@ void main()
     float resolvedShadow = mix(rawShadow, softShadowVis, max(wGrass, isRiparian * 0.85));
     float shadowFloor = mix(0.56, 0.65, max(wGrass, isRiparian * 0.65));
     float shadow = mix(shadowFloor, 1.0, resolvedShadow);
-    float sunVisibility = (shadow > 0.001) ? shadow * Environment_CloudVisibility(u_cloudNoise, fragWorldPos) : 0.0;
+    float sunVisibility = (shadow > 0.001) ? shadow * Environment_CloudVisibility(u_cloudNoise, fragWorldPos) * rockContactAO : 0.0;
 
     float ambientShadowMod = mix(mix(0.90, 0.95, wGrass), 1.0, resolvedShadow);
     vec3 ambient = Environment_HemisphereIrradiance(normal, actualAmbient) * (cavityAO * ambientShadowMod);
@@ -701,13 +713,24 @@ void main()
         groundLit += grassAlbedo * actualLight * vec3(0.94, 1.32, 0.62) * sssFactor;
     }
 
-    float h2 = NdotH * NdotH;
-    float h4 = h2 * h2;
-    float h8 = h4 * h4;
-    float h24 = h8 * h8 * h8;
-    float smoothness = 1.0 - roughness;
-    float drySpec = mix(h8, h24, smoothness) * smoothness * 0.022;
-    groundLit += actualLight * drySpec * sunVisibility;
+    // Cook-Torrance GGX Microfacet Specular for soil, sand, and bedrock
+    float alpha = roughness * roughness;
+    float alpha2 = max(alpha * alpha, 0.0004);
+    float denomD = NdotH * NdotH * (alpha2 - 1.0) + 1.0;
+    float D_GGX = alpha2 / (3.14159265 * denomD * denomD);
+    float NdotV = max(dot(normal, viewDir), 0.001);
+    float NdotL_clamped = max(dot(normal, light), 0.001);
+    float k_direct = (roughness + 1.0);
+    k_direct = (k_direct * k_direct) * 0.125;
+    float G_Smith = (NdotV / (NdotV * (1.0 - k_direct) + k_direct)) *
+                    (NdotL_clamped / (NdotL_clamped * (1.0 - k_direct) + k_direct));
+    float VdotH = clamp(dot(viewDir, halfDir), 0.0, 1.0);
+    float omvh = 1.0 - VdotH;
+    float omvh2 = omvh * omvh;
+    float F_Schlick = 0.04 + 0.96 * (omvh2 * omvh2 * omvh);
+    float specGGX = (D_GGX * G_Smith * F_Schlick) / (4.0 * NdotV * NdotL_clamped + 0.001);
+    vec3 drySpec = actualLight * specGGX * (NdotL_clamped * sunVisibility);
+    groundLit += drySpec * (0.85 - wGrass * 0.65);
 
     // ---- 12. Capillary Wetness Mechanics (Tight meniscus waterline contact sheen) ----
     if ((wWetSoil > 0.05 || isRiparian > 0.05) && lakeDepthFactor < 0.40) {
@@ -717,10 +740,13 @@ void main()
         float om2 = oneMinusNdotV * oneMinusNdotV;
         float fresnelWet = 0.04 + 0.96 * (om2 * om2 * oneMinusNdotV);
 
+        float h2 = NdotH * NdotH;
+        float h4 = h2 * h2;
+        float h8 = h4 * h4;
         float h16 = h8 * h8;
         float h32 = h16 * h16;
         float wetSpecSharp = (h32 * h32) * 0.75;
-        float wetSpecBroad = h24 * 0.35;
+        float wetSpecBroad = (h8 * h4) * 0.35;
         vec3 wetSheen = actualLight * (wetSpecSharp + wetSpecBroad * detailResolve) * (0.35 + fresnelWet * 0.65);
         vec3 skySheen = actualAmbient * (fresnelWet * 0.38) * cavityAO;
         groundLit += (wetSheen * sunVisibility + skySheen) * waterlineBand;

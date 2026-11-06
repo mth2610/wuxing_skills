@@ -273,12 +273,17 @@ static void LiquidMetaball3D_BodyBounds(const LiquidMetaball3DBody *body,
     float diagonal = sqrtf(boxSize.x * boxSize.x + boxSize.y * boxSize.y +
                            boxSize.z * boxSize.z);
     float distToCam = Vector3Distance(cameraPos, boxCenter);
-    /* Scale step size gently with camera distance so distant bodies don't burn 32 steps */
-    float distFactor = fminf(fmaxf(distToCam / 8.0f, 1.0f), 2.4f);
-    float step = fmaxf(effectiveRadius * 0.80f * distFactor, 0.028f);
+    /* Scale step size gently with camera distance so distant bodies don't burn
+     * the whole step budget. The distance factor used to reach 2.4x, which is
+     * enough to step straight over a thin body: a guided jet is a ~0.15 m rope
+     * in a 5 m box, so a 0.29 m step sampled it at a handful of points and the
+     * continuous stream rendered as a row of beads. Thin geometry needs the step
+     * tied to its own radius, not to the box. */
+    float distFactor = fminf(fmaxf(distToCam / 8.0f, 1.0f), 1.6f);
+    float step = fmaxf(effectiveRadius * 0.50f * distFactor, 0.022f);
     int steps = (int)ceilf(diagonal / step);
     if (steps < 10) steps = 10;
-    if (steps > 32) steps = 32;
+    if (steps > 48) steps = 48;
 
     *outMin = boxMin;
     *outMax = boxMax;

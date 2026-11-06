@@ -601,10 +601,16 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
     depositional2 = np.clip(-tpi2 / 25.0, 0.0, 1.0) * moisture2
     growth2 = np.clip(0.45 + 0.55 * moisture2, 0.0, 1.0) * (1.0 - rock2)
     valley_boost2 = np.clip((18.0 - slope2) / 18.0, 0.0, 1.0) * np.clip((12.0 - ground2) / 12.0, 0.0, 1.0)
-    coverage2 = np.clip((1.0 - rock2 * 0.85) * (1.0 - wet_smooth2) * (0.76 + 0.24 * growth2 + 0.22 * valley_boost2), 0.0, 1.0)
+    ridge_exposure2 = np.clip((tpi2 - 4.5) / 8.0, 0.0, 1.0) * np.clip((slope2 - 8.0) / 12.0, 0.0, 1.0)
+    coverage2 = np.clip((1.0 - rock2 * 0.85) * (1.0 - wet_smooth2) * (0.76 + 0.24 * growth2 + 0.22 * valley_boost2) * (1.0 - ridge_exposure2 * 0.35), 0.0, 1.0)
     coverage2[~valid2] = 0.0
     soil2 = np.clip((1.0 - coverage2) * (1.0 - rock2) * (1.0 - wet_smooth2) * 1.15, 0.0, 1.0)
     wet_mud2 = np.clip(np.maximum(shore2 * 0.78, wet_smooth2), 0.0, 1.0)
+
+    # 4-stop macro ecological canopy stratification (valley moss -> clover -> sunlit gold -> dry crest)
+    tpi_factor2 = np.clip((tpi2 + 4.0) / 12.0, 0.0, 1.0)
+    elevation_factor2 = np.clip((ground2 - 1.5) / 10.5, 0.0, 1.0)
+    habitat_val2 = np.clip(0.42 + 0.35 * tpi_factor2 + 0.18 * elevation_factor2 - 0.45 * moisture2, 0.0, 1.0)
 
     leaf_litter2 = np.clip(growth2 * 0.65 + depositional2 * 0.50, 0.0, 1.0) * np.clip((16.0 - slope2) / 16.0, 0.0, 1.0) * np.clip(1.0 - shore2 * 1.8, 0.0, 1.0) * (1.0 - wet_smooth2) * (1.0 - rock2 * 0.8)
     scree_gravel2 = np.clip((slope2 - 10.0) / 12.0, 0.0, 1.0) * np.clip((28.0 - slope2) / 12.0, 0.0, 1.0) * (0.35 + 0.65 * rock2)
@@ -616,7 +622,7 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
 
     splat2 = np.stack((coverage2, rock2, flowers2, shore2), axis=-1)
     splat2[~valid2] = (0, 1, 0, 0)
-    habitat2 = np.stack((coverage2, growth2, moisture2, 1.0 - moisture2), axis=-1)
+    habitat2 = np.stack((coverage2, growth2, moisture2, habitat_val2), axis=-1)
     habitat2[~valid2] = 0.0
     debris_map2 = np.stack((leaf_litter2, scree_gravel2, twigs2, moss2), axis=-1)
     debris_map2[~valid2] = 0

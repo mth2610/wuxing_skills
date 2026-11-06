@@ -536,12 +536,16 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
     if (!isReed && !isPampas && style.botanicalVariation > 0.0f)
     {
         Vector3 canopy = MeadowCanopyColor(MeadowHabitat(clump->position.x, clump->position.z));
-        float variation = 0.96f + 0.08f * bHash2;
-        Color canopyTip = {(unsigned char)(canopy.x * variation * 255.0f),
-                           (unsigned char)(canopy.y * variation * 255.0f),
-                           (unsigned char)(canopy.z * variation * 255.0f), 255};
-        bladeTip = Nature_LerpColor(bladeTip, canopyTip,
-                                    fminf(style.botanicalVariation, 1.0f) * 0.42f);
+        float variation = 0.94f + 0.12f * bHash2;
+        Color canopyTip = {(unsigned char)(fminf(canopy.x * variation * 255.0f, 255.0f)),
+                           (unsigned char)(fminf(canopy.y * variation * 255.0f, 255.0f)),
+                           (unsigned char)(fminf(canopy.z * variation * 255.0f, 255.0f)), 255};
+        Color canopyRoot = {(unsigned char)(canopy.x * 0.22f * 255.0f),
+                            (unsigned char)(canopy.y * 0.32f * 255.0f),
+                            (unsigned char)(canopy.z * 0.18f * 255.0f), 255};
+        float botVar = fminf(style.botanicalVariation, 1.0f);
+        bladeRoot = Nature_LerpColor(bladeRoot, canopyRoot, botVar * 0.75f);
+        bladeTip = Nature_LerpColor(bladeTip, canopyTip, botVar * 0.88f);
     }
     return (NatureBladeDescriptor){pBase, pP1, pP2, pP3, clump->position,
                                    bladeRoot, bladeTip, width, clump->phase, bladeLeanAngle, isReed, isSeedhead};

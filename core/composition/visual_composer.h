@@ -692,6 +692,9 @@ typedef enum {
     VFX_LIQUID_PRESET_SURGING_TIDE,   // Low conformal water surge rushing across terrain and spreading an expansive puddle
     VFX_LIQUID_PRESET_MOLTEN_GEYSER,  // Lava: slow Bingham gush, short splash, thick crusted puddle
     VFX_LIQUID_PRESET_MERCURIAL_ORB,  // Liquid metal: dense, high surface tension, tight cohesion, beads on impact
+    VFX_LIQUID_PRESET_WHIP_LASH,      // Serpentine water lash: thin, fast, high swirl, ribbon wake
+    VFX_LIQUID_PRESET_RAIN_LANCE,     // Piercing rain lance: tight cone, flat fast arc, needle impact
+    VFX_LIQUID_PRESET_TIDAL_CRESCENT, // Crescent wave blade: wide ring emission, low surge, expansive puddle
     VFX_LIQUID_PRESET_COUNT
 } VFX_GuidedLiquidPreset;
 
@@ -817,6 +820,16 @@ void                    VFX_GuidedLiquid_ApplyPreset(VFX_GuidedLiquidConfig *cfg
 int                     VFX_GuidedLiquid_GetParams(VFX_GuidedLiquidConfig *cfg, VFX_ParamDef *outParams, int maxParams);
 int                     VFX_ComposeGuidedLiquid(const VFX_GuidedLiquidConfig *cfg);
 int                     VFX_ComposeGuidedLiquidEx(Vector3 source, Vector3 target, const VFX_GuidedLiquidConfig *cfg);
+/* One-call skill integration: apply a named preset, then fire it between two
+ * world points. `scale` multiplies every spatial dimension (emission radius,
+ * guide radius, droplet size, arc, puddle, mist, wind) and takes the square
+ * root of travel speed, so a 2x skill reads as the same motion, larger and
+ * slower, instead of a different effect. scale <= 0 means 1.0. */
+int                     VFX_ComposeGuidedLiquidPreset(Vector3 source, Vector3 target,
+                                                      VFX_GuidedLiquidPreset preset);
+int                     VFX_ComposeGuidedLiquidScaled(Vector3 source, Vector3 target,
+                                                      VFX_GuidedLiquidPreset preset, float scale);
+VFX_GuidedLiquidConfig  VFX_GuidedLiquid_PresetConfig(VFX_GuidedLiquidPreset preset);
 void                    VFX_KillGuidedLiquid(int handle);
 const char             *VFX_GuidedLiquidPreset_Name(VFX_GuidedLiquidPreset preset);
 const char             *VFX_LiquidSpawnMode_Name(VFX_LiquidSpawnMode mode);

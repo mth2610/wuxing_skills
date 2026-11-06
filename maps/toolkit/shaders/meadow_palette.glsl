@@ -6,25 +6,31 @@
 // maps/tests/test_meadow_palette_sync.py parses the MEADOW_PALETTE_* block below and the
 // matching block in meadow_palette.h, and fails on any mismatch. Edit both in one change.
 //
-// Three bands are blended by two overlapping smoothsteps over habitat:
-//   deep moss    -> lush clover : habitat 0.18 .. 0.54
-//   lush clover  -> sunlit gold : habitat 0.48 .. 0.82
-// (the second blend starts before the first ends, so 0.48 .. 0.54 mixes all three.)
+// Four bands are blended by overlapping smoothsteps over habitat:
+//   deep moss    -> lush clover : habitat 0.15 .. 0.42
+//   lush clover  -> sunlit gold : habitat 0.38 .. 0.72
+//   sunlit gold  -> dry crest   : habitat 0.68 .. 0.92
 //
 // Colour-space note: values are returned unchanged. Whether the caller treats them as linear
 // or display-referred is decided by the consuming shader, not here.
-const vec3  MEADOW_PALETTE_DEEP_MOSS    = vec3(0.17, 0.34, 0.14);
-const vec3  MEADOW_PALETTE_LUSH_CLOVER  = vec3(0.30, 0.47, 0.15);
-const vec3  MEADOW_PALETTE_SUNLIT_GOLD  = vec3(0.54, 0.56, 0.20);
-const float MEADOW_PALETTE_CLOVER_EDGE0 = 0.18;
-const float MEADOW_PALETTE_CLOVER_EDGE1 = 0.54;
-const float MEADOW_PALETTE_GOLD_EDGE0   = 0.48;
-const float MEADOW_PALETTE_GOLD_EDGE1   = 0.82;
+const vec3  MEADOW_PALETTE_DEEP_MOSS    = vec3(0.14, 0.28, 0.11);
+const vec3  MEADOW_PALETTE_LUSH_CLOVER  = vec3(0.26, 0.44, 0.14);
+const vec3  MEADOW_PALETTE_SUNLIT_GOLD  = vec3(0.48, 0.54, 0.18);
+const vec3  MEADOW_PALETTE_DRY_CREST    = vec3(0.62, 0.58, 0.24);
+
+const float MEADOW_PALETTE_CLOVER_EDGE0 = 0.15;
+const float MEADOW_PALETTE_CLOVER_EDGE1 = 0.42;
+const float MEADOW_PALETTE_GOLD_EDGE0   = 0.38;
+const float MEADOW_PALETTE_GOLD_EDGE1   = 0.72;
+const float MEADOW_PALETTE_CREST_EDGE0  = 0.68;
+const float MEADOW_PALETTE_CREST_EDGE1  = 0.92;
 
 vec3 MeadowCanopyColor(float habitat)
 {
-    vec3 color = mix(MEADOW_PALETTE_DEEP_MOSS, MEADOW_PALETTE_LUSH_CLOVER,
-                     smoothstep(MEADOW_PALETTE_CLOVER_EDGE0, MEADOW_PALETTE_CLOVER_EDGE1, habitat));
-    return mix(color, MEADOW_PALETTE_SUNLIT_GOLD,
-               smoothstep(MEADOW_PALETTE_GOLD_EDGE0, MEADOW_PALETTE_GOLD_EDGE1, habitat));
+    vec3 c0 = mix(MEADOW_PALETTE_DEEP_MOSS, MEADOW_PALETTE_LUSH_CLOVER,
+                  smoothstep(MEADOW_PALETTE_CLOVER_EDGE0, MEADOW_PALETTE_CLOVER_EDGE1, habitat));
+    vec3 c1 = mix(c0, MEADOW_PALETTE_SUNLIT_GOLD,
+                  smoothstep(MEADOW_PALETTE_GOLD_EDGE0, MEADOW_PALETTE_GOLD_EDGE1, habitat));
+    return mix(c1, MEADOW_PALETTE_DRY_CREST,
+               smoothstep(MEADOW_PALETTE_CREST_EDGE0, MEADOW_PALETTE_CREST_EDGE1, habitat));
 }

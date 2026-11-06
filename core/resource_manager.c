@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define MAX_CACHED_TEXTURES 32
+#define MAX_CACHED_TEXTURES 64
 /* Raised from 32 when the output permutation landed (M1/M3, 20/08/2026): a
  * permutation turns one .vs/.fs pair into several cache entries by design, so
  * the old ceiling was one that a few more variants would quietly cross. Going

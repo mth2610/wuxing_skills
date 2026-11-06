@@ -113,6 +113,16 @@ void main() {
     rockBase *= mix(vec3(0.88, 0.90, 0.94), vec3(1.06, 1.03, 0.98), fragColor.a);
     rockBase *= mix(vec3(0.94, 0.94, 0.92), vec3(1.04, 1.02, 0.98), strataBand * 0.20);
 
+    // 1b. Sub-Soil Regolith Band (warm earthy loam transition below the turf lip)
+    float soilBand = smoothstep(-3.8, -1.4, fragLocalY) * (1.0 - smoothstep(-1.5, -1.3, fragLocalY));
+    vec3 subSoilLoam = mix(vec3(0.32, 0.24, 0.16), vec3(0.44, 0.32, 0.20), strataBand);
+    rockBase = mix(rockBase, subSoilLoam, soilBand * 0.65);
+
+    // Turf overhang fringe right at the top rim (-1.8 to -1.35)
+    float turfLip = smoothstep(-1.8, -1.35, fragLocalY);
+    vec3 turfColor = mix(vec3(0.22, 0.38, 0.12), vec3(0.32, 0.46, 0.16), drainStreak);
+    rockBase = mix(rockBase, turfColor, turfLip * 0.70 * clamp(worldNormal.y * 1.6 + 0.4, 0.0, 1.0));
+
     // 2. Ledge Moss & Lichen Colonization (enhanced near upper rim via fragLocalY)
     float upperRimBoost = smoothstep(-6.0, -0.5, fragLocalY) * 0.15 + 0.85;
     float ledgeFacing = clamp(worldNormal.y * 1.35 - 0.15, 0.0, 1.0);
