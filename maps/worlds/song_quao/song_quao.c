@@ -306,45 +306,61 @@ static void SpawnSongQuaoMistVolumes(void)
 {
     FogVolume_ClearAll();
 
+    // 1. Upper mountain river cascade mist (hovering along the rocky torrent)
+    LocalFogVolume upperGorgeMist = {
+        .shape = FOG_SHAPE_CYLINDER,
+        .position = {104.0f, 6.35f, 75.0f},
+        .extents = {14.0f, 0.65f, 22.0f},
+        .color = {230, 244, 252, 255},
+        .density = 0.050f,
+        .edgeSoftness = 0.92f,
+        .driftVelocity = {0.015f, 0.0f, 0.02f},
+        .active = true};
+    FogVolume_Create(&upperGorgeMist);
+
+    // 2. Lower river bend valley mist
     LocalFogVolume riverValleyMist = {
         .shape = FOG_SHAPE_CYLINDER,
-        .position = {115.0f, 0.38f, 130.0f},
-        .extents = {18.0f, 0.48f, 14.0f},
+        .position = {114.0f, 0.45f, 135.0f},
+        .extents = {22.0f, 0.55f, 18.0f},
         .color = {232, 244, 252, 255},
-        .density = 0.065f,
-        .edgeSoftness = 0.90f,
+        .density = 0.055f,
+        .edgeSoftness = 0.92f,
         .driftVelocity = {0.02f, 0.0f, 0.01f},
         .active = true};
     FogVolume_Create(&riverValleyMist);
 
+    // 3. Poetic celestial lake basin mist
     LocalFogVolume lakeBasinMist = {
         .shape = FOG_SHAPE_CYLINDER,
-        .position = {SONG_QUAO_LAKE_CENTER_X, 0.30f, SONG_QUAO_LAKE_CENTER_Z},
-        .extents = {SONG_QUAO_LAKE_RADIUS_X * 1.35f, 0.44f, SONG_QUAO_LAKE_RADIUS_Z * 1.35f},
+        .position = {SONG_QUAO_LAKE_CENTER_X, 0.28f, SONG_QUAO_LAKE_CENTER_Z},
+        .extents = {SONG_QUAO_LAKE_RADIUS_X * 1.45f, 0.48f, SONG_QUAO_LAKE_RADIUS_Z * 1.45f},
         .color = {228, 242, 252, 255},
-        .density = 0.075f,
-        .edgeSoftness = 0.90f,
-        .driftVelocity = {0.025f, 0.0f, 0.015f},
+        .density = 0.060f,
+        .edgeSoftness = 0.92f,
+        .driftVelocity = {0.02f, 0.0f, 0.015f},
         .active = true};
     FogVolume_Create(&lakeBasinMist);
 
+    // 4. Central plateau glade mist
     LocalFogVolume centralMeadowMist = {
         .shape = FOG_SHAPE_CYLINDER,
         .position = {94.0f, 0.42f, 150.0f},
-        .extents = {15.0f, 0.45f, 11.5f},
+        .extents = {16.0f, 0.45f, 12.0f},
         .color = {236, 246, 252, 255},
-        .density = 0.060f,
-        .edgeSoftness = 0.90f,
-        .driftVelocity = {0.02f, 0.0f, 0.01f},
+        .density = 0.045f,
+        .edgeSoftness = 0.92f,
+        .driftVelocity = {0.015f, 0.0f, 0.01f},
         .active = true};
     FogVolume_Create(&centralMeadowMist);
 
+    // 5. Cloud waterfall abyss outlet plume
     LocalFogVolume outletWaterfallMist = {
         .shape = FOG_SHAPE_CYLINDER,
-        .position = {SONG_QUAO_OUTLET_X, -0.35f, SONG_QUAO_OUTLET_Z - 1.5f},
-        .extents = {14.5f, 1.45f, 12.0f},
+        .position = {SONG_QUAO_OUTLET_X, -0.40f, SONG_QUAO_OUTLET_Z - 1.5f},
+        .extents = {16.0f, 1.65f, 14.0f},
         .color = {234, 244, 252, 255},
-        .density = 0.16f,
+        .density = 0.14f,
         .edgeSoftness = 0.92f,
         .driftVelocity = {0.0f, -0.02f, 0.04f},
         .active = true};
@@ -552,10 +568,10 @@ void InitSongQuaoMap(void)
     BuildRocks();
     RegisterSongQuaoWaterObstacles();
 
-    // Cull small 3D pebbles/twigs at 14m
+    // Draw small 3D pebbles/twigs around camera focus (< 28m)
     s_debris = MapProp_CreateDebrisSystem(
         SONG_QUAO_DEBRIS_ITEMS, SONG_QUAO_DEBRIS_ITEM_COUNT,
-        &s_ground, kMapCenter, 14.0f);
+        &s_ground, kMapCenter, 28.0f);
 
     BuildFloraPlacements();
 

@@ -1167,17 +1167,17 @@ void MapProp_PopulateRockItems(MapRockSystem *sys, const MapGroundSurface *groun
             sinkOffset = item->heightScale * 0.15f;
             break;
         case MAP_ROCK_SANDSTONE:
-            sinkOffset = item->heightScale * 0.18f;
+            sinkOffset = item->heightScale * 0.20f;
             break;
         case MAP_ROCK_GRANITE:
         case MAP_ROCK_BOULDER:
-            sinkOffset = item->heightScale * 0.22f;
+            sinkOffset = item->heightScale * 0.25f;
             break;
         case MAP_ROCK_RIVER_STONE:
-            sinkOffset = item->heightScale * 0.14f;
+            sinkOffset = item->heightScale * 0.26f;
             break;
         case MAP_ROCK_SCREE:
-            sinkOffset = item->heightScale * 0.06f;
+            sinkOffset = item->heightScale * 0.16f;
             break;
         default:
             sinkOffset = item->heightScale * 0.20f;

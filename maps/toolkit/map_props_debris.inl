@@ -240,9 +240,24 @@ MapDebrisSystem MapProp_CreateDebrisSystem(
             }
             case MAP_DEBRIS_PEBBLE:
             {
-                float shade = (float)((i * 29) % 10) * 0.1f;
-                unsigned char val = (unsigned char)(140.0f + 25.0f * shade);
-                p.color = (Color){val, val, (unsigned char)(val - 4), 255};
+                int variant = (i * 29) % 3;
+                float shade = (float)((i * 31) % 10) * 0.1f;
+                unsigned char val = (unsigned char)(135.0f + 25.0f * shade);
+                if (variant == 0)
+                {
+                    // Warm river silt & sandstone pebble
+                    p.color = (Color){(unsigned char)(val + 14), (unsigned char)(val + 8), (unsigned char)(val - 6), 255};
+                }
+                else if (variant == 1)
+                {
+                    // Dark basalt / shale river chip
+                    p.color = (Color){(unsigned char)(val - 22), (unsigned char)(val - 20), (unsigned char)(val - 18), 255};
+                }
+                else
+                {
+                    // Quartzite & granite river pebble
+                    p.color = (Color){val, val, (unsigned char)(val - 4), 255};
+                }
                 break;
             }
             case MAP_DEBRIS_TWIG:

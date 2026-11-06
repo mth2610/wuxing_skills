@@ -11,7 +11,7 @@
 #include "maps/toolkit/shaders/meadow_palette.glsl"
 
 // ---- Look knobs ( tinh chỉnh hài hòa màu cỏ & nền đất cho song_quao ) ----
-#define GS_DISTANT_CANOPY_GAIN 0.72
+#define GS_DISTANT_CANOPY_GAIN 0.78
 #define GS_CREST_COOL vec3(0.92, 0.99, 0.94)
 #define GS_CREST_WARM vec3(1.04, 1.03, 0.95)
 #define GS_GRASS_CHROMA 0.96
@@ -361,17 +361,25 @@ void main()
                 vec2 wp = fragWorldPos.xz;
                 float tuftWaveA = sin(wp.x * 2.4 + sin(wp.y * 1.7) * 0.8);
                 float tuftWaveB = cos(wp.y * 2.8 - sin(wp.x * 1.9) * 0.8);
-                float fauxTuft = (tuftWaveA * 0.55 + tuftWaveB * 0.45) * 0.5 + 0.5;
+                float tuftWaveC = sin(wp.x * 5.2 - wp.y * 4.6);
+                float fauxTuft = ((tuftWaveA * 0.55 + tuftWaveB * 0.45) * 0.70 + tuftWaveC * 0.30) * 0.5 + 0.5;
                 float tuftGrain = clamp(mix(fauxTuft, 0.5 + (turfDetail - 0.22) * 0.85, 0.55), 0.0, 1.0);
 
-                distantTuftRelief = (tuftGrain - 0.48) * distantCanopyBlend * 0.34;
-                distantTuftNormal = vec2(cos(wp.x * 2.4) * 0.22, -sin(wp.y * 2.8) * 0.22) * distantCanopyBlend;
+                distantTuftRelief = (tuftGrain - 0.48) * distantCanopyBlend * 0.38;
+                distantTuftNormal = vec2(cos(wp.x * 2.4) * 0.32 + cos(wp.x * 5.2) * 0.14,
+                                         -sin(wp.y * 2.8) * 0.32 - sin(wp.y * 4.6) * 0.14) * distantCanopyBlend;
 
                 canopyColor *= mix(0.84, 1.14, tuftGrain);
 
+                // Multi-scale landscape macro-variation for midground/distant hills (Ghost of Tsushima style)
+                float hillRidgeNoise = sin(fragWorldPos.x * 0.085 + fragWorldPos.z * 0.062) * 0.55
+                                     + cos(fragWorldPos.z * 0.092 - fragWorldPos.x * 0.048) * 0.45;
+                float hillCrestMask = smoothstep(-0.18, 0.48, hillRidgeNoise);
+                canopyColor = mix(canopyColor * vec3(0.92, 1.01, 0.94), canopyColor * vec3(1.08, 1.05, 0.86), hillCrestMask * 0.38);
+
                 float macroPatch = v_macroPatchAndField.x;
                 float warmShift = clamp(macroPatch * 0.5 + 0.5, 0.0, 1.0);
-                canopyColor *= mix(vec3(0.95, 1.03, 0.92), vec3(1.06, 1.04, 0.88), warmShift * 0.65);
+                canopyColor *= mix(vec3(0.95, 1.03, 0.92), vec3(1.06, 1.04, 0.88), warmShift * 0.50);
 
                 float windPhase = fract(u_time * 0.31830988) * 6.2831853;
                 float windWave = sin(dot(fragWorldPos.xz, vec2(0.26, 0.18)) - windPhase) * 0.5 + 0.5;
@@ -713,7 +721,7 @@ void main()
     if (wGrass > 0.05 && sunVisibility > 0.01) {
         float backScatter = max(dot(viewDir, -light), 0.0);
         float sssFactor = (backScatter * backScatter * backScatter) * wGrass * sunVisibility * horizonEnvelope * 0.16;
-        groundLit += grassAlbedo * actualLight * vec3(0.94, 1.32, 0.62) * sssFactor;
+        groundLit += grassAlbedo * actualLight * vec3(1.16, 1.06, 0.52) * sssFactor;
     }
 
     // Cook-Torrance GGX Microfacet Specular for soil, sand, and bedrock
