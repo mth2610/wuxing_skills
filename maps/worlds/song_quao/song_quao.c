@@ -383,7 +383,7 @@ static void CaptureSongQuaoStaticShadows(void)
         return;
     if ((s_skipMask & MAP_SKIP_SHADOWCASTERS) || (s_skipMask & MAP_SKIP_ROCKS))
         return;
-    float staticRadius = fmaxf(MAP_WIDTH, MAP_DEPTH) * 0.52f;
+    float staticRadius = 96.0f;
     EnvShadow_BeginStaticCapture(kMapCenter, staticRadius);
     if (!EnvShadow_IsCapturing())
         return;
@@ -404,34 +404,42 @@ void InitSongQuaoMap(void)
 
     Environment_SetTimeOfDaySpeed(0.0f);
     // Ghost of Tsushima / Where Winds Meet cinematic golden-hour lighting:
-    Environment_SetAmbientColor((Color){76, 104, 138, 255});
-    Environment_SetSunColor((Color){255, 218, 162, 255});
-    Environment_SetSunIntensity(1.85f);
-    Environment_SetSunDirection(Vector3Normalize((Vector3){0.46f, -0.38f, -0.80f}));
-    Environment_SetShadowColor((Color){32, 46, 64, 98});
+    // Sun elevation ~33 deg shortens foliage shadow fans while preserving warm modeling.
+    Environment_SetAmbientColor((Color){96, 122, 146, 255});
+    Environment_SetSunColor((Color){255, 222, 172, 255});
+    Environment_SetSunIntensity(1.65f);
+    Environment_SetSunDirection(Vector3Normalize((Vector3){0.44f, -0.52f, -0.73f}));
+    Environment_SetShadowColor((Color){46, 62, 78, 140});
 
     AtmosphereProfile atmos = {
-        .color = {226, 236, 246, 255},
-        .start = 30.0f,
-        .end = 220.0f,
+        .color = {222, 232, 244, 255},
+        .start = 25.0f,
+        .end = 200.0f,
         .enabled = true,
         .optics = {
             .rayleighLMS = {0.0082f, 0.0142f, 0.0275f},
-            .mieScattering = 0.0032f,
-            .mieAnisotropy = 0.80f,
-            .multipleScatteringAmp = 2.25f},
-        .density = {.baseDensity = 0.0072f, .heightFalloff = 0.36f, .baseAltitude = -1.5f, .enableSigmoidLayer = false}};
+            .mieScattering = 0.0030f,
+            .mieAnisotropy = 0.78f,
+            .multipleScatteringAmp = 2.10f},
+        .density = {
+            .baseDensity = 0.0092f,
+            .heightFalloff = 0.28f,
+            .baseAltitude = -1.5f,
+            .enableSigmoidLayer = true,
+            .layerAltitude = 2.4f,
+            .layerThickness = 3.2f,
+            .layerDensity = 0.0045f}};
     Environment_SetAtmosphereProfile(&atmos);
-    VolumetricFog_SetGodRayIntensity((s_skipMask & MAP_SKIP_GODRAYS) ? 0.0f : 1.35f);
+    VolumetricFog_SetGodRayIntensity((s_skipMask & MAP_SKIP_GODRAYS) ? 0.0f : 0.75f);
     VolumetricFog_SetDistantCoverage(2.0f / 3.0f);
 
     EnvCloudShadowConfig cloudConfig = {
         .enabled = true,
-        .strength = 0.16f,
-        .worldSize = 105.0f,
+        .strength = 0.12f,
+        .worldSize = 115.0f,
         .planeHeight = 80.0f,
-        .coverage = 0.46f,
-        .softness = 0.24f,
+        .coverage = 0.36f,
+        .softness = 0.32f,
         .windSpeedScale = 0.45f,
     };
     Environment_SetCloudShadowConfig((s_skipMask & MAP_SKIP_CLOUDSHADOW) ? NULL : &cloudConfig);
@@ -590,7 +598,7 @@ void InitSongQuaoMap(void)
             .lodDistance = 22.0f,
             .midLodDistance = 11.0f,
             .drawDistance = 42.0f,
-            .shadowDistance = 7.5f,
+            .shadowDistance = 22.0f,
             .grassState = MAP_GRASS_STATE_LUSH,
             .reedRootColor = {20, 32, 16, 255},
             .reedTipColor = {108, 142, 60, 255},

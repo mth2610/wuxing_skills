@@ -18,7 +18,7 @@ vec3 MapSkyRadiance(vec3 ray, vec3 sun, vec3 ambient, vec3 haze, vec3 direct)
         horizonColor = mix(horizonColor, dawnColor, smoothstep(-0.2, 0.85, sunAzimuth) * (1.0 - zenithFactor) * 0.45);
     }
 
-    vec3 zenithColor  = ambient * vec3(0.30, 0.50, 0.90) + vec3(0.035, 0.060, 0.10);
+    vec3 zenithColor  = ambient * vec3(0.35, 0.52, 0.82) + vec3(0.036, 0.048, 0.065);
     vec3 daySky = mix(horizonColor, zenithColor, zenithFactor);
 
     // Deep ethereal night sky (midnight navy at horizon, deep cosmos at zenith)
@@ -95,7 +95,9 @@ vec3 MapSkyRadiance(vec3 ray, vec3 sun, vec3 ambient, vec3 haze, vec3 direct)
 
             float disc = smoothstep(0.999983, 0.999995, cosine);
             float horizonGlow = (1.0 - zenithFactor) * c4 * 0.04;
-            sunRadiance = direct * (horizonGlow + c16 * 0.16 + disc * 4.0);
+            float warmHalo = c4 * 0.08 * (1.0 - zenithFactor * 0.5);
+            vec3 haloTint = vec3(1.15, 0.95, 0.72);
+            sunRadiance = direct * (horizonGlow + c16 * 0.18 + disc * 4.0) + direct * haloTint * warmHalo;
         }
     }
 
