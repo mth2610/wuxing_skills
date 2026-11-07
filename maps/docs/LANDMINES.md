@@ -340,3 +340,22 @@
   1. `MapEcology_Sample` in `maps/toolkit/map_ecology.c` checks `m != s_owner` (only populated by `MapEcology_Bake`), returning `{0}` (`distToWater = 0.0f`) when `MapEcology` textures were loaded directly from baked PNGs (`song_quao_habitat_distance.png`).
   2. Interior river terrace scarps on a ~1m DEM grid have triangle normals `normal.y = 0.55 .. 0.72` (`slope = 0.28 .. 0.45`). Setting `GRASS_MIN_NORMAL_Y = 0.73f` and `wSlope = smoothstep(0.28, 0.48, slope)` treated gentle interior meadow embankments the same as outer island cliff walls, deleting tufts and painting cliff/scree soil.
 - **Rule:** For PNG-loaded `MapEcology`, cache the decoded `encShore` byte array in CPU RAM (`s_shoreField`) during image upload so CPU placement sampling matches `ground_splat.fs` (`encShore * 5.5f - 3.1f`) identically. Separate outer cliff rim slopes (`y < 0.15m`) from interior plateau embankments (`y >= 0.15m`): allow grass tufts down to `GRASS_MIN_NORMAL_Y = 0.50f` and gate `wSlope` / `rockCliff` at `slope >= 0.44 .. 0.64` on interior terrain.
+
+### Submerged river stones display milky polygonal saucers and riverbed turns into green grass
+
+- **Symptom:** In streams, submerged stones appear surrounded by a flat milky turquoise polygonal apron/saucer, and the riverbed beneath shallow water renders as green grass meadow.
+- **Cause:** Three separate issues:
+  1. `Nature_BuildProceduralRockMesh` clamped `vy < -0.10f` with a 0.55 factor while leaving horizontal radius unscaled, compressing the stone's bottom into a flat wide saucer flange that poked out at the waterline. When adjusting emergence height, `radiusScale` was additionally inflated by 1.5x.
+  2. `ground_splat.fs` only adjusted riparian weights inside `if (smoothSignedShore >= -0.45)`. For the submerged riverbed (`smoothSignedShore < -0.45`), `wGrass` was never zeroed, leaving the riverbed shaded as 100% green grass meadow.
+  3. `water_surface.fs` lacked physical volumetric in-scattering attenuation in shallow water; `waterVolumeColor` was added at full intensity into `underwaterTerms`, and `brokenFoam` contact masks blanketed entire submerged stones with white froth.
+- **Rule:** Author river stones with rounded water-tumbled bottom profiles without flat planar flanges. Zero `wGrass = 0.0` and set `wWetSoil = 1.0` unconditionally whenever `smoothSignedShore < 0.0` so the riverbed displays alluvial sand and pebbles. Scale `waterVolumeColor` by `(1.0 - exp(-3.8 * waterDepth))` so water under 15 cm deep is crystal-clear rather than opaque milky turquoise.
+
+### Riverbank displays sharp parallel brown ribbon boundary between grass and water
+
+- **Symptom:** A distinct, continuous brown band with a sharp parallel contour line borders the riverbank, abruptly cutting off grass into a painted-like stripe.
+- **Cause:** Three compounding flaws:
+  1. `ground_splat.fs` gated soil evaluation with `soilPossible`, which checked `shoreFactor > 0.015`. Because `shoreFactor` dropped to zero at `smoothSignedShore >= 0.26m`, `soilPossible` shut off abruptly, causing `wGrass` to jump from ~0.05 to 1.0 in a single pixel.
+  2. Transition noise used only low-frequency sinusoids (wavelengths ~22m), while `bankDist` for bank sand/loam colors was sampled using un-warped `smoothSignedShore`, creating a smooth, straight parallel contour line of color that mismatched grass weights.
+  3. `bankFringeHumus` on the exposed bank was shaded as a uniform dark brown mud without alluvial gravel or moss, while `SongQuaoGrassDensity` in `song_quao.c` banished 3D grass tufts beyond 0.25m–0.70m from the water, exposing a wide bare dirt trench.
+- **Rule:** Ensure `soilPossible` covers the full riparian zone (`smoothSignedShore < 1.45`). Drive both layer weights and exposed bank color zonation from the same multi-octave domain-warped `variableShore` (macro meanders + medium scallops + micro-grain). Extend riverbed gravel, quartz sand bars, and velvet moss smoothly onto the exposed bank rather than using flat dark mud. Allow water-edge grass and reeds to reach the water margin (`bankThreshold = 0.05m - 0.08m * rosetteJut`) with organic cluster promontories.
+

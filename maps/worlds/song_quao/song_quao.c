@@ -152,12 +152,24 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
     if (rockScree > 0.72f)
         return 0.0f;
 
-    // Exact metric signed shoreline distance matching ground_splat.fs (decodedDist.g * 5.5 - 3.1):
-    // lush meadow grows across the entire peninsula and riverbanks right down to the waterline edge.
+    // Exact metric signed shoreline distance matching ground_splat.fs:
+    // Multi-octave organic bank setback (macro meanders + medium scallops + micro promontories)
+    // so grass clusters into natural rosettes instead of an artificial parallel wall.
     float signedShore = SongQuaoSampleSignedShore(x, z);
-    if (signedShore < -0.02f)
+    float bankNoiseMacro = sinf(x * 0.28f + z * 0.22f) * 0.28f + cosf(z * 0.48f - x * 0.36f) * 0.18f;
+    float bankNoiseMed   = sinf(x * 1.15f - z * 0.88f) * 0.12f + cosf(z * 1.55f + x * 1.25f) * 0.08f;
+    float bankNoiseMicro = sinf(x * 3.40f + z * 2.80f) * 0.05f + cosf(z * 4.60f - x * 3.80f) * 0.03f;
+    float rosetteGrain   = sinf(x * 9.2f + z * 6.8f) * cosf(z * 8.4f - x * 10.1f);
+    float rosetteJut     = sinf(x * 1.85f + 1.2f) * cosf(z * 1.75f - 0.8f);
+
+    // Dynamic bank setback:
+    // Reeds & riverbank sedges grow right to the water's edge (-0.02m .. 0.05m);
+    // Gravel bars & pebble beaches recess naturally to 0.12m .. 0.20m
+    float bankThreshold = 0.05f - rosetteJut * 0.07f + rosetteGrain * 0.03f;
+    float varShore = signedShore + bankNoiseMacro + bankNoiseMed + bankNoiseMicro;
+    if (varShore < bankThreshold)
         return 0.0f;
-    float shoreFade = MapMath_SmoothStep01(-0.02f, 0.05f, signedShore);
+    float shoreFade = MapMath_SmoothStep01(bankThreshold, bankThreshold + 0.28f, varShore);
 
     float rockSuppression = MapProp_EvaluateRockSuppression(
         x, z, SONG_QUAO_ROCK_ITEMS, SONG_QUAO_ROCK_ITEM_COUNT);
@@ -210,9 +222,9 @@ static float SongQuaoEdgeTaper(float cx, float cz, void *userData)
         return 0.5f;
 
     float signedShore = SongQuaoSampleSignedShore(cx, cz);
-    float shoreTaper = (signedShore >= 0.10f)
+    float shoreTaper = (signedShore >= 0.75f)
                            ? 1.0f
-                           : (0.76f + 0.24f * MapMath_SmoothStep01(-0.02f, 0.10f, signedShore));
+                           : (0.35f + 0.65f * MapMath_SmoothStep01(0.06f, 0.75f, signedShore));
     float cliffTaper = (pos.y >= -0.20f)
                            ? 1.0f
                            : (0.35f + 0.65f * MapMath_SmoothStep01(GRASS_CLIFF_MIN_Y, -0.20f, pos.y));

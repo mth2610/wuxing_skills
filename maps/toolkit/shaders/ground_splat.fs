@@ -117,6 +117,7 @@ void main()
     float shoreFactor = 0.0;
     float lakeDepthFactor = 0.0;
     float smoothSignedShore = 1000.0;
+    float variableShore = 1000.0;
     float riparianSandMargin = 0.0;
     if (u_ecologyEnabled != 0) {
         vec2 ecoUV = clamp((fragWorldPos.xz - u_ecologyRect.xy) / max(u_ecologyRect.zw, vec2(0.0001)), vec2(0.0), vec2(1.0));
@@ -135,9 +136,10 @@ void main()
             lakeDepthFactor = clamp(-smoothSignedShore * (1.0 / 2.6), 0.0, 1.0);
             shoreFactor = 1.0;
         } else {
-            float wetCore = 1.0 - smoothstep(0.0, 0.14, smoothSignedShore);
-            float dampFringe = 1.0 - smoothstep(0.02, 0.26, smoothSignedShore);
-            shoreFactor = max(wetCore, dampFringe * 0.28);
+            float wetCore = 1.0 - smoothstep(0.0, 0.20, smoothSignedShore);
+            float dampFringe = 1.0 - smoothstep(0.05, 0.85, smoothSignedShore);
+            float riparianInfluence = 1.0 - smoothstep(0.10, 1.45, smoothSignedShore);
+            shoreFactor = max(wetCore, max(dampFringe * 0.50, riparianInfluence * 0.20));
         }
     } else if (u_pathSegCount > 0) {
         float minDistSq = 1000000.0;
@@ -174,6 +176,7 @@ void main()
     // ---- 6. Soil Detail ----
     bool soilPossible = distToPath < PATH_INFLUENCE
                      || shoreFactor > 0.015
+                     || smoothSignedShore < 1.45
                      || streamWet > 0.80
                      || slope > 0.42
                      || (fragWorldPos.y < 0.15 && slope > 0.20)
@@ -227,18 +230,34 @@ void main()
                         * max(smoothstep(0.48, 0.65, slope), rimMask * smoothstep(0.22, 0.38, slope));
         wCliff = clamp(max(wSlope, max(rockCliff, outerAbyssMask)), 0.0, 1.0) * (1.0 - shoreFactor * 0.99);
 
-        // Organic riparian margin modulated by multi-octave shoreline meanders
-        if (u_ecologyEnabled != 0 && smoothSignedShore >= -0.45) {
-            float bankNoise = sin(fragWorldPos.x * 0.18 + fragWorldPos.z * 0.14) * 0.35
-                            + cos(fragWorldPos.z * 0.32 - fragWorldPos.x * 0.22) * 0.22;
-            float variableShore = smoothSignedShore + bankNoise;
-            // Smoothly feather riparian margin over 0.5m so gravel bars and grassy banks intertwine naturally
-            float riparianFringe = (1.0 - smoothstep(-0.15, 0.35, variableShore));
-            wWetSoil = max(wWetSoil, riparianFringe * 0.70);
-            float grassTaper = smoothstep(-0.08, 0.32, variableShore);
-            // Retain verdant moss substrate right down to the waterline so ground never flashes bare sand
-            float mossSubstrate = smoothstep(-0.04, 0.15, variableShore) * 0.45;
-            wGrass = max(wGrass * grassTaper, mossSubstrate);
+        // Organic 3-Zone Riparian & Riverbed System:
+        // Zone 1 (Riverbed, smoothSignedShore < 0): 0% grass, 100% wet alluvial sand & gravel
+        // Zone 2 (Bank Transition, 0 <= varShore <= 0.75): wet mud, sand bar, exposed bank
+        // Zone 3 (Riparian Meadow, varShore > 0.75): lush meadow turf
+        if (u_ecologyEnabled != 0) {
+            float bankNoiseMacro = sin(fragWorldPos.x * 0.28 + fragWorldPos.z * 0.22) * 0.28
+                                 + cos(fragWorldPos.z * 0.48 - fragWorldPos.x * 0.36) * 0.18;
+            float bankNoiseMed   = sin(fragWorldPos.x * 1.15 - fragWorldPos.z * 0.88) * 0.12
+                                 + cos(fragWorldPos.z * 1.55 + fragWorldPos.x * 1.25) * 0.08;
+            float bankNoiseMicro = sin(fragWorldPos.x * 3.40 + fragWorldPos.z * 2.80) * 0.05
+                                 + cos(fragWorldPos.z * 4.60 - fragWorldPos.x * 3.80) * 0.03;
+            float bankGrain      = sin(fragWorldPos.x * 9.2 + fragWorldPos.z * 6.8)
+                                 * cos(fragWorldPos.z * 8.4 - fragWorldPos.x * 10.1);
+            variableShore = smoothSignedShore + bankNoiseMacro + bankNoiseMed + bankNoiseMicro + bankGrain * 0.05;
+
+            if (smoothSignedShore < 0.0) {
+                // Zone 1: Submerged riverbed
+                wGrass = 0.0;
+                wWetSoil = 1.0;
+            } else {
+                // Zone 2 & 3: Bank Transition to Riparian Grassland with organic rosette fingers
+                float grassTaper = smoothstep(0.02, 0.42, variableShore);
+                float rosetteFringe = smoothstep(0.08, 0.35, grassTaper + bankGrain * 0.14);
+                wGrass = wGrass * mix(grassTaper, rosetteFringe, 0.50);
+
+                float riparianFringe = 1.0 - smoothstep(0.00, 0.45, variableShore);
+                wWetSoil = max(wWetSoil, riparianFringe * 0.90);
+            }
         }
 
         wDrySoil = clamp(max(wPathMargin * 0.78, wCliff), 0.0, 1.0)
@@ -525,9 +544,10 @@ void main()
             float sinP2 = sin(sandPhase2);
             float sandRipple = (sinP1 * 0.60 + sinP2 * 0.40) * 0.5 + 0.5;
 
-            vec3 drySand = mix(vec3(0.12, 0.11, 0.09), vec3(0.16, 0.15, 0.12), sandRipple * 0.12);
-            vec3 wetSand = mix(vec3(0.09, 0.09, 0.07), vec3(0.13, 0.12, 0.10), sandRipple * 0.12);
-            vec3 submergedSand = mix(vec3(0.12, 0.15, 0.13), vec3(0.16, 0.19, 0.15), sandRipple * 0.15);
+            // Rich mountain stream alluvial riverbed sand & gravel (Ghost of Tsushima / Where Winds Meet riverbed palette)
+            vec3 drySand = mix(vec3(0.32, 0.30, 0.25), vec3(0.38, 0.36, 0.30), sandRipple * 0.18);
+            vec3 wetSand = mix(vec3(0.22, 0.20, 0.16), vec3(0.28, 0.26, 0.21), sandRipple * 0.18);
+            vec3 submergedSand = mix(vec3(0.24, 0.29, 0.25), vec3(0.32, 0.38, 0.33), sandRipple * 0.20);
 
             float wetLevel = clamp(shoreFactor * 0.85 + streamWet * 0.50, 0.0, 1.0);
             vec3 sandBase = mix(drySand, wetSand, wetLevel);
@@ -551,8 +571,8 @@ void main()
             float gravelHighlight = smoothstep(0.38, 0.70, pebbleLuma);
             float pebbleCrevice = 1.0 - smoothstep(0.24, 0.48, pebbleLuma);
 
-            vec3 pebbleMineral = mix(vec3(0.18, 0.17, 0.15), vec3(0.32, 0.30, 0.26), gravelHighlight);
-            pebbleMineral = mix(pebbleMineral, vec3(0.22, 0.24, 0.20), fineGravelTex.g);
+            vec3 pebbleMineral = mix(vec3(0.35, 0.33, 0.28), vec3(0.56, 0.52, 0.44), gravelHighlight);
+            pebbleMineral = mix(pebbleMineral, vec3(0.32, 0.36, 0.28), fineGravelTex.g);
 
             float gravelAO = 1.0 - pebbleCrevice * 0.28 * shingleBar;
             vec3 riverbedBed = mix(sandBase, pebbleMineral, gravelHighlight * 0.74 * shingleBar) * gravelAO;
@@ -567,9 +587,28 @@ void main()
                 proceduralPebbleNormal = (gNorm * (0.44 * shingleBar + 0.20) + rippleNorm * (1.0 - shingleBar * 0.45)) * detailResolve;
             }
 
+            // Exposed Riverbank Zonation (Zone 2):
+            // 1. Waterline Shingle & Wet Alluvial Bar (smoothSignedShore < 0.25m):
+            //    Exposed river gravel, wet sand ripples, and rounded pebbles continuous with riverbed
+            // 2. Mid-Bank Sand & Pebble Terrace (0.20m .. 0.55m):
+            //    Golden-sand matrix with embedded quartzite pebbles
+            vec3 exposedSandBar = mix(sandBase, pebbleMineral, gravelHighlight * 0.65 * shingleBar) * gravelAO;
+
+            // 3. Upper-Bank Moss & Loam Fringe (0.45m .. 0.90m):
+            //    Moist humus with velvet bryophyte moss interweaving with grass roots
+            vec3 bankMossTone = mix(vec3(0.14, 0.22, 0.08), vec3(0.22, 0.32, 0.11), dirtDetail.r);
+            vec3 bankLoamTone = mix(vec3(0.18, 0.15, 0.11), vec3(0.28, 0.23, 0.16), dirtDetail.g);
+            vec3 upperBankFringe = mix(bankLoamTone, bankMossTone, 0.45 + 0.35 * microSediment.g) * (0.88 + 0.30 * colorDirt.rgb);
+
+            float bankDist = max(variableShore, 0.0);
+            float bankZoneMid = smoothstep(0.02, 0.22, bankDist);
+            float bankZoneUpper = smoothstep(0.12, 0.45, bankDist);
+
+            vec3 exposedBankSoil = mix(riverbedBed, exposedSandBar, bankZoneMid);
+            exposedBankSoil = mix(exposedBankSoil, upperBankFringe, bankZoneUpper);
+
             float submergedBed = clamp(lakeDepthFactor * 2.5, 0.0, 1.0);
-            vec3 bankFringeHumus = mix(vec3(0.12, 0.13, 0.09), vec3(0.16, 0.16, 0.12), dirtDetail.g) * (0.88 + 0.30 * colorDirt.rgb);
-            wetSoilColor = mix(bankFringeHumus, riverbedBed, submergedBed);
+            wetSoilColor = mix(exposedBankSoil, riverbedBed, submergedBed);
         } else {
             vec3 mossyBank = vec3(0.28, 0.26, 0.20) * (0.85 + 0.35 * dirtDetail.g);
             wetSoilColor = mossyBank;

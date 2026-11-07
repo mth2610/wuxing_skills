@@ -296,22 +296,24 @@ static Mesh Nature_BuildProceduralRockMesh(int rockType)
             float strataTerrace = sinf(rawY * 14.0f + vx * 2.2f) * 0.024f;
             vy = rawY + strataTerrace;
 
-            // Bevelled fracture planes give river boulders authentic chiseled character
+            // Gentle hydro-smoothed bedding facets (water-tumbled rounded boulder character)
             for (int p = 0; p < 5; p++)
             {
-                float dist = vx * kBoulderPlanes[p][0] + vy * kBoulderPlanes[p][1] + vz * kBoulderPlanes[p][2] - kBoulderPlanes[p][3] * 0.82f;
+                float dist = vx * kBoulderPlanes[p][0] + vy * kBoulderPlanes[p][1] + vz * kBoulderPlanes[p][2] - kBoulderPlanes[p][3] * 0.95f;
                 if (dist > 0.0f)
                 {
-                    float bevel = Rock_Smoothstep(0.0f, 0.24f, dist) * dist * 0.56f;
+                    float bevel = Rock_Smoothstep(0.0f, 0.18f, dist) * dist * 0.28f;
                     vx -= kBoulderPlanes[p][0] * bevel;
                     vy -= kBoulderPlanes[p][1] * bevel;
                     vz -= kBoulderPlanes[p][2] * bevel;
                 }
             }
 
-            if (vy < -0.10f)
+            // Natural water-worn rounded bottom so submerged stones have authentic contour without a flat saucer flange
+            if (y < -0.82f)
             {
-                vy = -0.10f + (vy + 0.10f) * 0.55f;
+                float baseFlatten = (-0.82f - y) * (1.0f / 0.18f);
+                vy += baseFlatten * 0.05f;
             }
         }
         else if (rockType == MAP_ROCK_SCREE)
@@ -1080,7 +1082,7 @@ void MapProp_DrawRockSystem(const MapRockSystem *sys, bool drawShadows)
         }
         else if (p->archetype == MAP_ROCK_RIVER_STONE)
         {
-            rockTint = (Color){192, 185, 175, 250};
+            rockTint = (Color){192, 185, 175, 255};
         }
         else if (p->archetype == MAP_ROCK_SCREE)
         {
@@ -1220,7 +1222,8 @@ void MapProp_PopulateRockItems(MapRockSystem *sys, const MapGroundSurface *groun
             }
             if (heightScale > item->heightScale * 1.15f)
             {
-                radiusScale = fmaxf(radiusScale, heightScale * 0.95f);
+                // Preserve natural rock aspect ratio without blowing up horizontal radius
+                radiusScale = item->radiusScale * (1.0f + (heightScale / item->heightScale - 1.0f) * 0.25f);
             }
             pos.y = targetTopY - heightScale * 0.62f;
         }

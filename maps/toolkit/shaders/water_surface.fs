@@ -482,7 +482,7 @@ void main()
 
     // ── 7. SHORELINE & SUBMERGED CONTACT WATERLINE MENISCUS ──────────────────
     float foamDist = clamp(u_foamThreshold, 0.06, 0.13);
-    float contactMask = clamp(1.0 - waterDepth / foamDist, 0.0, 1.0);
+    float contactMask = clamp(1.0 - waterDepth / foamDist, 0.0, 1.0) * smoothstep(0.002, 0.035, waterDepth);
     float brokenFoam = 0.0;
 
     if (contactMask > 0.001 || dynamicWakeFoam > 0.001) {
@@ -509,8 +509,9 @@ void main()
     }
 
     // ── 8. CRYSTAL CLEAR SEE-THROUGH WATER TRANSPARENCY ──────────────────────
-    // Shallow water (0..30cm) stays crystal-clear so riverbed pebbles, sand ripples & caustics
-    // read clearly through the water column, while deeper pools transition to rich emerald-jade.
+    // Physical volumetric in-scattering: thin water layer (0..15cm) has negligible scattering
+    // so submerged sand, river pebbles & rocks remain 100% visible and un-clouded.
+    float volumeInScatter = 1.0 - exp(-3.8 * waterDepth);
     float depthOpacity = (u_waterShape == 3)
         ? (1.0 - exp(-2.05 * waterDepth))
         : (1.0 - exp(-2.20 * waterDepth));
@@ -518,26 +519,27 @@ void main()
         ? clamp(depthOpacity * 0.72, 0.0, 0.82)
         : clamp(depthOpacity * 0.75, 0.0, 0.85);
     float glintAlphaBoost = clamp(glintSharp * 0.38, 0.0, 0.26);
-    float surfaceAlpha = (fresnel * 0.66) + waterColumnAlpha + glintAlphaBoost;
+    float opticalWaterAlpha = (fresnel * 0.55) + waterColumnAlpha + glintAlphaBoost;
 
     float shoreEdgeFade = radialEdgeFade;
     if (u_waterShape == 3) {
-        shoreEdgeFade = smoothstep(0.002, 0.125, fragWaterDepth);
+        shoreEdgeFade = smoothstep(0.001, 0.08, fragWaterDepth);
     } else if (u_waterShape != 0) {
-        shoreEdgeFade = smoothstep(0.002, 0.055, waterDepth);
+        shoreEdgeFade = smoothstep(0.001, 0.045, waterDepth);
     }
-    surfaceAlpha *= shoreEdgeFade;
+    float surfaceAlpha = opticalWaterAlpha * shoreEdgeFade;
 
-    float alpha = clamp(surfaceAlpha + brokenFoam * 0.58 * smoothstep(0.001, 0.035, waterDepth), 0.0, 0.92);
+    float alpha = clamp(surfaceAlpha + brokenFoam * 0.45 * smoothstep(0.002, 0.045, waterDepth), 0.0, 0.92);
     if (alpha < 0.002) discard;
 
     // ── 9. ENERGY-CONSERVING COMPOSITION ─────────────────────────────────────
-    vec3 shallowTint = mix(u_shallowColor, vec3(0.24, 0.64, 0.58), 0.35);
+    vec3 shallowTint = mix(u_shallowColor, vec3(0.26, 0.70, 0.64), 0.45);
     vec3 deepTint    = mix(u_deepColor,    vec3(0.06, 0.32, 0.40), 0.50);
 
     vec3 depthBlend = clamp(mix(vec3(1.0 - smoothstep(0.06, 0.95, waterDepth)), transmittance, 0.68), 0.0, 1.0);
     vec3 waterVolumeColor = mix(deepTint, shallowTint, depthBlend);
-    waterVolumeColor *= (0.80 + u_ambientColor * 0.35 + effectiveLight * 0.24);
+    float scatterDensity = 0.40 + 0.60 * volumeInScatter;
+    waterVolumeColor *= (0.85 + u_ambientColor * 0.35 + effectiveLight * 0.26) * scatterDensity;
 
     float shoreFadeOptical = (u_waterShape == 3) ? smoothstep(0.005, 0.18, fragWaterDepth) : 1.0;
 
