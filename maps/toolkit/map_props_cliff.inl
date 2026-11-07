@@ -730,9 +730,9 @@ MapCliffSkirt MapProp_CreateCliffSkirt(const MapGroundSurface *ground, Vector3 m
             lip.z + inward.y * 0.22f};
         Vector3 gp, gn;
         if (MapProp_SampleGroundSurface(ground, mapCenter, rimPos[i].x, rimPos[i].z, &gp, &gn))
-            rimY[i] = fminf(gp.y, sliceHeight + 1.45f);
+            rimY[i] = fminf(gp.y, sliceHeight + 6.80f);
         else
-            rimY[i] = fminf(lip.y, sliceHeight + 1.45f);
+            rimY[i] = fminf(lip.y, sliceHeight + 6.80f);
     }
 
     // Light smoothing keeps the rim line organic but kills stair steps.

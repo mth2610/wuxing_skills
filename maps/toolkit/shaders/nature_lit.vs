@@ -132,7 +132,10 @@ void main()
         v_staticLightSpace = vec4(0.0, 0.0, 0.0, -1.0);
     }
 
-    v_macroPatch = sin(rootWorldXZ.x * 0.12 + rootWorldXZ.y * 0.08) * 0.55 +
-                   cos(rootWorldXZ.x * -0.07 + rootWorldXZ.y * 0.16) * 0.45;
+    float warpX = rootWorldXZ.x + sin(rootWorldXZ.y * 0.08) * 3.5;
+    float warpZ = rootWorldXZ.y + cos(rootWorldXZ.x * 0.07) * 3.2;
+    v_macroPatch = sin(warpX * 0.055 + warpZ * 0.038) * 0.55 +
+                   sin(warpZ * 0.11 - warpX * 0.045 + 1.2) * 0.30 +
+                   sin(warpX * 0.19 + warpZ * 0.15) * 0.15;
     gl_Position = mvp * vec4(local, 1.0);
 }

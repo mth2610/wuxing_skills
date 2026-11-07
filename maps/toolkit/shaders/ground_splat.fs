@@ -408,9 +408,9 @@ void main()
         float porousDarkening = smoothstep(0.0, 0.45, wWetSoil) * (1.0 - wWetSoil * 0.35);
         float soilLuma = dot(dirtDetail, vec3(0.299, 0.587, 0.114));
         pebbleRelief = smoothstep(0.26, 0.72, soilLuma);
-        vec3 loamDark  = vec3(0.19, 0.148, 0.095);
-        vec3 loamLight = vec3(0.38, 0.298, 0.200);
-        vec3 warmLoamColor = mix(loamDark, loamLight, pebbleRelief) * (0.86 + 0.28 * dirtDetail) * (1.0 - porousDarkening * 0.18);
+        vec3 loamDark  = vec3(0.10, 0.08, 0.05);
+        vec3 loamLight = vec3(0.18, 0.14, 0.09);
+        vec3 warmLoamColor = mix(loamDark, loamLight, pebbleRelief) * (0.86 + 0.28 * dirtDetail) * (1.0 - porousDarkening * 0.32);
 
         vec3 cliffAlbedo = warmLoamColor;
         if (wCliff > 0.01) {
@@ -527,9 +527,9 @@ void main()
             float sinP2 = sin(sandPhase2);
             float sandRipple = (sinP1 * 0.60 + sinP2 * 0.40) * 0.5 + 0.5;
 
-            vec3 drySand = mix(vec3(0.18, 0.16, 0.12), vec3(0.24, 0.21, 0.16), sandRipple * 0.12);
-            vec3 wetSand = mix(vec3(0.14, 0.12, 0.09), vec3(0.19, 0.16, 0.12), sandRipple * 0.12);
-            vec3 submergedSand = mix(vec3(0.18, 0.22, 0.18), vec3(0.25, 0.29, 0.23), sandRipple * 0.15);
+            vec3 drySand = mix(vec3(0.13, 0.11, 0.08), vec3(0.17, 0.14, 0.10), sandRipple * 0.12);
+            vec3 wetSand = mix(vec3(0.09, 0.08, 0.06), vec3(0.12, 0.10, 0.07), sandRipple * 0.12);
+            vec3 submergedSand = mix(vec3(0.12, 0.15, 0.13), vec3(0.17, 0.20, 0.17), sandRipple * 0.15);
 
             float wetLevel = clamp(shoreFactor * 0.85 + streamWet * 0.50, 0.0, 1.0);
             vec3 sandBase = mix(drySand, wetSand, wetLevel);
@@ -538,7 +538,7 @@ void main()
             vec3 microSediment = textureGrad(texPath, fragWorldPos.xz * 1.85, wpDx * 1.85, wpDy * 1.85).rgb;
             sandBase *= (0.80 + 0.40 * microSediment.r) * (0.84 + 0.32 * colorDirt.rgb);
 
-            float beachDryMix = clamp(shoreFactor * 0.45 + riparianSandMargin * 0.85, 0.0, 1.0);
+            float beachDryMix = clamp(shoreFactor * 0.35 + riparianSandMargin * 0.70, 0.0, 1.0);
             drySoilColor = mix(drySoilColor, drySand * (0.84 + 0.32 * colorDirt.rgb), beachDryMix);
 
             vec2 gravelUV = tiledUV * 3.4;
@@ -587,7 +587,7 @@ void main()
 
     float riparianSaturation = clamp(shoreFactor * 0.95 + streamWet * 0.70 + lakeDepthFactor * 1.2, 0.0, 1.0);
     // Physically based capillary darkening: porous wet sand and bank mud darken naturally
-    float wetCapillaryDarken = smoothstep(0.08, 0.78, riparianSaturation) * 0.34;
+    float wetCapillaryDarken = smoothstep(0.08, 0.78, riparianSaturation) * 0.45;
     blendedAlbedo *= (1.0 - wetCapillaryDarken);
 
     // Subtle submerged bed depth tint: crystal-clear turquoise mountain water revealing golden riverbed pebbles

@@ -291,12 +291,14 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     vec3 n = rawCanopyN * inversesqrt(max(dot(rawCanopyN, rawCanopyN), 1e-8));
 
     float warmShift = clamp(macroPatch * 0.5 + 0.5, 0.0, 1.0);
-    float tipHeightMask = FastRamp(0.32, 0.90, h);
+    float tipHeightMask = FastRamp(0.24, 0.88, h);
     // Rich macro botanical contrast: cool emerald hollows vs warm sun-kissed golden-olive crests
-    vec3 coolEmeraldTip = vec3(0.84, 1.04, 0.80);
-    vec3 warmGoldenTip  = vec3(1.12, 1.02, 0.66);
-    vec3 tipTone = mix(vec3(1.0), mix(coolEmeraldTip, warmGoldenTip, warmShift), tipHeightMask);
-    baseColor *= tipTone;
+    vec3 coolEmeraldTip = vec3(0.78, 1.06, 0.75);
+    vec3 warmGoldenTip  = vec3(1.18, 1.05, 0.58);
+    vec3 midOliveTone   = vec3(0.92, 0.98, 0.78);
+    vec3 macroTone = mix(coolEmeraldTip, warmGoldenTip, warmShift);
+    macroTone = mix(midOliveTone, macroTone, tipHeightMask);
+    baseColor *= mix(vec3(1.0), macroTone, FastRamp(0.12, 0.85, h));
 
     vec2 grassState = ((u_grassStateParams.x + u_grassStateParams.y) > 0.0001 || u_grassBurnZoneCount > 0)
         ? GrassEvaluateLocalState(worldPosition)
@@ -374,8 +376,8 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     vec3 ambientGround = mix(groundBounce, greenBounce, 0.48);
     vec3 ambient = mix(ambientGround, skyAmbient, n.y * 0.5 + 0.5);
 
-    // Botanical root self-shadowing anchors close grass tufts without darkening mid-distance meadow
-    float rootAO = mix(mix(0.32, 0.82, distRootLift), 1.0, smoothstep(0.0, 0.46, h));
+    // Botanical root self-shadowing anchors close grass tufts with volumetric depth
+    float rootAO = mix(mix(0.18, 0.78, distRootLift), 1.0, smoothstep(0.0, 0.48, h));
     vec3 lit = baseColor * ambient * rootAO;
 
     float nv = max(dot(faceNormal, viewDir), 0.0);
@@ -431,8 +433,8 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
                 float sinTH16 = sinTH8 * sinTH8;
                 float sinTHBroad = mix(sinTH16, sinTH4, distRoughness);
 
-                vec3 primarySheen   = mix(baseColor, vec3(0.96, 0.98, 0.86), 0.46) * (sinTH8 * 0.044);
-                vec3 secondaryGlint = mix(baseColor, vec3(0.96, 0.98, 0.88), 0.38) * (sinTHBroad * 0.028 * (1.0 - distRoughness * 0.75));
+                vec3 primarySheen   = mix(baseColor, vec3(0.98, 0.96, 0.82), 0.55) * (sinTH8 * 0.068);
+                vec3 secondaryGlint = mix(baseColor, vec3(0.98, 0.96, 0.88), 0.42) * (sinTHBroad * 0.038 * (1.0 - distRoughness * 0.75));
                 anisoSpec = (primarySheen + secondaryGlint) * (specAA * max(NdotH + 0.20, 0.0));
                 waxySpec = FastPow32(NdotH) * (0.032 * h) * specAA * (1.0 - distRoughness);
             }
@@ -445,8 +447,8 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
             float backLobe = FastPow2(backLight) * (0.42 + 0.65 * forwardScatter);
             float edgeThinness = 0.64 + 0.36 * absU;
             float sssWindow = FastRamp(0.14, 0.52, h) * (1.0 - FastRamp(0.88, 1.0, h) * 0.20);
-            float transmission = (backLobe * 0.56 + forwardLobe * 0.84 * (0.30 + 0.70 * h)) * sssWindow * edgeThinness * sssScale;
-            vec3 emeraldJadeSSS = baseColor * vec3(0.84, 1.22, 0.44) + vec3(0.014, 0.022, 0.006) * sssScale;
+            float transmission = (backLobe * 0.65 + forwardLobe * 0.95 * (0.30 + 0.70 * h)) * sssWindow * edgeThinness * sssScale;
+            vec3 emeraldJadeSSS = baseColor * vec3(0.95, 1.28, 0.46) + vec3(0.022, 0.032, 0.008) * sssScale;
 
             float diffuseLobe = wrapped * (0.42 + 0.48 * wrapped);
             vec3 directDiffuse = baseColor * (diffuseLobe * 0.66);

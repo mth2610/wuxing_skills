@@ -219,8 +219,9 @@ static float SongQuaoEdgeTaper(float cx, float cz, void *userData)
     float slopeTaper = (normal.y >= 0.72f)
                            ? 1.0f
                            : (0.68f + 0.32f * MapMath_SmoothStep01(GRASS_MIN_NORMAL_Y, 0.72f, normal.y));
-    float rockTaper = 0.68f + 0.32f * MapProp_EvaluateRockSuppression(
-                                          cx, cz, SONG_QUAO_ROCK_ITEMS, SONG_QUAO_ROCK_ITEM_COUNT);
+    float rockSupp = MapProp_EvaluateRockSuppression(
+        cx, cz, SONG_QUAO_ROCK_ITEMS, SONG_QUAO_ROCK_ITEM_COUNT);
+    float rockTaper = 0.20f + 0.80f * rockSupp;
     return shoreTaper * cliffTaper * slopeTaper * rockTaper;
 }
 
@@ -354,7 +355,7 @@ static void RegisterSongQuaoWaterObstacles(void)
             if (GetWaterInfoSongQuaoMap(rock->position.x, rock->position.z, &surfaceY, &waterDepth) &&
                 waterDepth > 0.02f)
             {
-                MapProp_AddWaterObstacle(&s_river, rock->position, rock->radiusScale * 1.38f, 1.0f);
+                MapProp_AddWaterObstacle(&s_river, rock->position, rock->radiusScale * 0.95f, 0.85f);
                 registered[regCount++] = (Vector2){rock->position.x, rock->position.z};
             }
         }
@@ -520,21 +521,21 @@ void InitSongQuaoMap(void)
     Environment_SetTimeOfDayPresets(kSongQuaoToD, kSongQuaoTimes, 4);
     Environment_SetTimeOfDay(0.6875f); // 16:30 default
     Environment_SetTimeOfDaySpeed(0.0f);
-    Environment_SetAmbientColor((Color){86, 112, 145, 255});
-    Environment_SetSunColor((Color){255, 202, 138, 255});
-    Environment_SetSunIntensity(1.85f);
+    Environment_SetAmbientColor((Color){74, 98, 134, 255});
+    Environment_SetSunColor((Color){255, 204, 142, 255});
+    Environment_SetSunIntensity(2.10f);
     Environment_SetSunDirection(Vector3Normalize((Vector3){0.58f, -0.285f, -0.76f}));
-    Environment_SetShadowColor((Color){40, 58, 78, 140});
+    Environment_SetShadowColor((Color){36, 52, 72, 145});
 
     PostFXMapProfile postProfile = {
         .enabled = true,
-        .exposure = 0.98f,
-        .contrast = 1.05f,
-        .saturation = 0.98f,
-        .bloomIntensity = 0.16f,
-        .shadowTint = {0.92f, 0.96f, 1.05f},    // Cool jade-slate shadows
-        .highlightTint = {1.05f, 1.01f, 0.93f}, // Warm golden amber sun highlights
-        .bloomThreshold = 1.15f,                // Catches water glints, cloud crests & grass SSS
+        .exposure = 1.02f,
+        .contrast = 1.12f,
+        .saturation = 1.02f,
+        .bloomIntensity = 0.20f,
+        .shadowTint = {0.90f, 0.94f, 1.04f},    // Cool jade-slate shadows
+        .highlightTint = {1.06f, 1.02f, 0.92f}, // Warm golden amber sun highlights
+        .bloomThreshold = 1.08f,                // Catches water glints, cloud crests & grass SSS
         .bloomKnee = 0.42f,
         .hueRestore = 0.65f,                    // Filmic hue restore: prevents neon lime skew under ACES
     };

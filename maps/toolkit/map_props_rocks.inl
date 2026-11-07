@@ -1266,19 +1266,19 @@ float MapProp_EvaluateRockSuppression(float x, float z, const MapRockItem *items
             continue;
         float dx = x - items[i].position.x;
         float dz = z - items[i].position.z;
-        // [VISUAL FIX]: Thu hẹp bán kính cắt cỏ về 0.58 * r (lõi 0.42 * r) để cỏ mọc ôm sát vào
-        // gầm đá tảng, xóa bỏ hoàn toàn "vòng tròn hói cỏ" quanh chân đá!
-        float maxR = r * 0.58f;
+        // Suppress grass fully inside rock mesh footprint (coreR = 0.85 * r)
+        // and taper smoothly outside (maxR = 1.25 * r) so blades don't stab through rock faces.
+        float maxR = r * 1.25f;
         if (fabsf(dx) > maxR || fabsf(dz) > maxR)
             continue;
         float distSq = dx * dx + dz * dz;
         if (distSq > maxR * maxR)
             continue;
-        float coreR = r * 0.42f;
+        float coreR = r * 0.85f;
         if (distSq <= coreR * coreR)
             return 0.0f;
         float dist = sqrtf(distSq);
-        float t = (dist - coreR) / (r * 0.16f);
+        float t = (dist - coreR) / (r * 0.40f);
         float fade = t * t * (3.0f - 2.0f * t);
         if (fade < suppression)
             suppression = fade;

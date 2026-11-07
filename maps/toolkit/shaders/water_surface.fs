@@ -100,11 +100,11 @@ void EvaluateObstacleWake(vec4 obs, vec2 worldXZ, vec2 flowDir, float time,
     float vWave = cos(downReach * 8.0 - time * 4.8) * 0.5 + 0.5;
     float kelvinWake = exp(-wakeDist * 4.2) * (1.0 - smoothstep(0.5, 3.2, downReach)) * vWave;
 
-    float strength = clamp(obs.w, 0.2, 1.5);
-    ioSlope += (dir * 0.10 + flowDir * 0.16) * (kelvinWake + bowCushion) * strength;
-    float foam = (bowCushion * 0.28 + kelvinWake * 0.38 * smoothstep(0.0, 1.2, downReach)) * strength;
+    float strength = clamp(obs.w, 0.15, 0.90);
+    ioSlope += (dir * 0.06 + flowDir * 0.10) * (kelvinWake + bowCushion) * strength;
+    float foam = (bowCushion * 0.22 + kelvinWake * 0.32 * smoothstep(0.0, 1.2, downReach)) * strength;
     // Delicate meniscus contact foam ring hugging stone waterline
-    float contactFoam = smoothstep(0.40, 0.48, normR) * (1.0 - smoothstep(0.48, 0.64, normR)) * 0.42;
+    float contactFoam = smoothstep(0.42, 0.50, normR) * (1.0 - smoothstep(0.50, 0.68, normR)) * 0.36;
     ioFoam = max(ioFoam, max(foam, contactFoam * strength));
 }
 
@@ -114,11 +114,11 @@ float EvaluateObstacleWaterDepth(vec4 obs, vec2 worldXZ, float inDepth)
     vec2 toFrag = worldXZ - obs.xy;
     float d2 = dot(toFrag, toFrag);
     float r = obs.z;
-    if (d2 >= r * r * 1.56) return inDepth;
+    if (d2 >= r * r * 1.44) return inDepth;
     float normR = sqrt(d2) / r;
-    // Approximating dome/boulder bathymetry:
-    // Apex emerges above waterline (normR < 0.40), submerged flank slopes down to riverbed (normR ~ 1.05)
-    float domeDepth = inDepth * smoothstep(0.36, 1.08, normR);
+    // Approximating dome/boulder bathymetry without cutting a hole in the water plane:
+    // Submerged flank slopes down smoothly (normR: 0.35 -> 1.05)
+    float domeDepth = mix(inDepth * 0.35, inDepth, smoothstep(0.35, 1.05, normR));
     return min(inDepth, domeDepth);
 }
 
@@ -542,7 +542,7 @@ void main()
 
     float shoreEdgeFade = radialEdgeFade;
     if (u_waterShape == 3) {
-        shoreEdgeFade = smoothstep(0.002, 0.125, waterDepth);
+        shoreEdgeFade = smoothstep(0.002, 0.125, fragWaterDepth);
     } else if (u_waterShape != 0) {
         shoreEdgeFade = smoothstep(0.002, 0.055, waterDepth);
     }
@@ -559,7 +559,7 @@ void main()
     vec3 waterVolumeColor = mix(deepTint, shallowTint, depthBlend);
     waterVolumeColor *= (0.80 + u_ambientColor * 0.35 + effectiveLight * 0.24);
 
-    float shoreFadeOptical = (u_waterShape == 3) ? smoothstep(0.005, 0.18, waterDepth) : 1.0;
+    float shoreFadeOptical = (u_waterShape == 3) ? smoothstep(0.005, 0.18, fragWaterDepth) : 1.0;
 
     float reflectWeight = (u_waterShape == 3)
         ? clamp((fresnel * 0.68 + 0.10) * shoreFadeOptical, 0.0, 0.78)
