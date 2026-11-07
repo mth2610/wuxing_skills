@@ -162,14 +162,14 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
     float rosetteGrain   = sinf(x * 9.2f + z * 6.8f) * cosf(z * 8.4f - x * 10.1f);
     float rosetteJut     = sinf(x * 1.85f + 1.2f) * cosf(z * 1.75f - 0.8f);
 
-    // Dynamic bank setback:
-    // Reeds & riverbank sedges grow right to the water's edge (-0.02m .. 0.05m);
-    // Gravel bars & pebble beaches recess naturally to 0.12m .. 0.20m
-    float bankThreshold = 0.05f - rosetteJut * 0.07f + rosetteGrain * 0.03f;
+    // Dynamic bank setback (GPU Gems 3 Continuous Riverbank Ecology):
+    // Reeds & riverbank sedges grow right down into the waterline (-0.04m .. 0.02m);
+    // Gravel bars & pebble beaches transition smoothly without harsh empty trenches
+    float bankThreshold = -0.04f - rosetteJut * 0.05f + rosetteGrain * 0.02f;
     float varShore = signedShore + bankNoiseMacro + bankNoiseMed + bankNoiseMicro;
     if (varShore < bankThreshold)
         return 0.0f;
-    float shoreFade = MapMath_SmoothStep01(bankThreshold, bankThreshold + 0.28f, varShore);
+    float shoreFade = MapMath_SmoothStep01(bankThreshold, bankThreshold + 0.22f, varShore);
 
     float rockSuppression = MapProp_EvaluateRockSuppression(
         x, z, SONG_QUAO_ROCK_ITEMS, SONG_QUAO_ROCK_ITEM_COUNT);
@@ -365,9 +365,9 @@ static void RegisterSongQuaoWaterObstacles(void)
 
             float surfaceY = 0.0f, waterDepth = 0.0f;
             if (GetWaterInfoSongQuaoMap(rock->position.x, rock->position.z, &surfaceY, &waterDepth) &&
-                waterDepth > 0.02f)
+                waterDepth > 0.12f)
             {
-                MapProp_AddWaterObstacle(&s_river, rock->position, rock->radiusScale * 0.95f, 0.85f);
+                MapProp_AddWaterObstacle(&s_river, rock->position, rock->radiusScale * 0.90f, 0.35f);
                 registered[regCount++] = (Vector2){rock->position.x, rock->position.z};
             }
         }
@@ -730,9 +730,54 @@ void InitSongQuaoMap(void)
     RegisterSongQuaoWaterObstacles();
 
     // Draw small 3D pebbles/twigs around camera focus (< 28m)
-    s_debris = MapProp_CreateDebrisSystem(
-        SONG_QUAO_DEBRIS_ITEMS, SONG_QUAO_DEBRIS_ITEM_COUNT,
-        &s_ground, kMapCenter, 28.0f);
+    // Supplement static debris with dynamic riverbank pebbles and river chips along the stream banks
+    int totalDebrisCapacity = SONG_QUAO_DEBRIS_ITEM_COUNT + 1600;
+    MapDebrisPlacement *allDebris = (MapDebrisPlacement *)MemAlloc((size_t)totalDebrisCapacity * sizeof(MapDebrisPlacement));
+    if (allDebris)
+    {
+        memcpy(allDebris, SONG_QUAO_DEBRIS_ITEMS, SONG_QUAO_DEBRIS_ITEM_COUNT * sizeof(MapDebrisPlacement));
+        int debrisCount = SONG_QUAO_DEBRIS_ITEM_COUNT;
+
+        for (float rz = 24.0f; rz < 268.0f; rz += 1.85f)
+        {
+            for (float rx = 34.0f; rx < 162.0f; rx += 1.85f)
+            {
+                if (debrisCount >= totalDebrisCapacity)
+                    break;
+                float jx = rx + sinf(rz * 3.7f + rx * 1.9f) * 0.65f;
+                float jz = rz + cosf(rx * 2.3f - rz * 2.1f) * 0.65f;
+                float signedShore = SongQuaoSampleSignedShore(jx, jz);
+                if (signedShore >= -0.06f && signedShore <= 0.40f)
+                {
+                    Vector3 gPos, gNorm;
+                    if (MapProp_SampleGroundSurface(&s_ground, kMapCenter, jx, jz, &gPos, &gNorm))
+                    {
+                        if (gNorm.y >= 0.68f && gPos.y >= -0.65f)
+                        {
+                            float pScale = 0.85f + 0.65f * (0.5f + 0.5f * sinf(jx * 7.1f + jz * 5.3f));
+                            float pRot = (float)fmodf((jx * 137.0f + jz * 83.0f), 360.0f);
+                            allDebris[debrisCount++] = (MapDebrisPlacement){
+                                .position = gPos,
+                                .rotationDeg = pRot,
+                                .scale = pScale,
+                                .color = (Color){255, 255, 255, 255},
+                                .type = MAP_DEBRIS_PEBBLE};
+                        }
+                    }
+                }
+            }
+        }
+        TraceLog(LOG_INFO, "SONG_QUAO_RIVER_PEBBLES: added=%d total=%d capacity=%d",
+                 debrisCount - SONG_QUAO_DEBRIS_ITEM_COUNT, debrisCount, totalDebrisCapacity);
+        s_debris = MapProp_CreateDebrisSystem(allDebris, debrisCount, &s_ground, kMapCenter, 28.0f);
+        MemFree(allDebris);
+    }
+    else
+    {
+        s_debris = MapProp_CreateDebrisSystem(
+            SONG_QUAO_DEBRIS_ITEMS, SONG_QUAO_DEBRIS_ITEM_COUNT,
+            &s_ground, kMapCenter, 28.0f);
+    }
 
     BuildFloraPlacements();
 

@@ -359,3 +359,13 @@
   3. `bankFringeHumus` on the exposed bank was shaded as a uniform dark brown mud without alluvial gravel or moss, while `SongQuaoGrassDensity` in `song_quao.c` banished 3D grass tufts beyond 0.25m–0.70m from the water, exposing a wide bare dirt trench.
 - **Rule:** Ensure `soilPossible` covers the full riparian zone (`smoothSignedShore < 1.45`). Drive both layer weights and exposed bank color zonation from the same multi-octave domain-warped `variableShore` (macro meanders + medium scallops + micro-grain). Extend riverbed gravel, quartz sand bars, and velvet moss smoothly onto the exposed bank rather than using flat dark mud. Allow water-edge grass and reeds to reach the water margin (`bankThreshold = 0.05m - 0.08m * rosetteJut`) with organic cluster promontories.
 
+### Shoreline displays sharp discontinuous contour jump, dark mud ribbon, and rocks in water display circular white wake halos
+
+- **Symptom:** The river boundary exhibits a razor-sharp contour line where grass meets soil, a dark murky ribbon along the water contact, and submerged boulders exhibit a stark circular milk-white froth disk.
+- **Cause:** Three separate bugs:
+  1. `ground_splat.fs` branched on `if (smoothSignedShore < 0.0)` to force `wGrass = 0.0`, while the `else` branch used domain-warped `variableShore`. When `smoothSignedShore` crossed 0.0, `wGrass` leaped discontinuously from 0.0 to $> 0.50$, creating a razor-sharp line.
+  2. Riverbank sand/soil albedo was multiplied down by `(1.0 - wetCapillaryDarken)` across a wide swath, while `water_surface.fs` blended 42% dark greenish-black `bankCanopyReflect = vec3(0.16, 0.34, 0.18)` into water reflections across a 22 cm band, painting a dark ribbon sandwiched between grass and water.
+  3. `EvaluateObstacleWake` in `water_surface.fs` exited with `if (d2 >= maxReach * maxReach) return;` without a radial fade, while `RegisterSongQuaoWaterObstacles` assigned deep-water strength (0.85) to shallow/bank boulders, flooding a 4-meter circle with opaque froth.
+- **Rule:** GPU Gems 3 §1.2–§1.5: Never use discrete `if (distance < 0)` branching to switch material weights; transition $C^1$-continuously over domain-warped `variableShore` (`smoothstep(-0.04, 0.32, variableShore)`). Use high-albedo golden alluvial sand and triplanar slope compensation on bank cuts instead of dark loam. Envelope obstacle wakes with smooth continuous cubic falloffs (`reachFade * innerFade`) and only register submerged boulders (`waterDepth > 0.12m`) with modest strength ($\le 0.35$).
+
+
