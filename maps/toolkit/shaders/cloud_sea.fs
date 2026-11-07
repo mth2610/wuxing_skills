@@ -17,8 +17,8 @@ uniform vec4 ambientColor;
 
 out vec4 finalColor;
 
-const vec3 CLOUD_DARK  = vec3(0.46, 0.54, 0.68); // Deep twilight-slate shadow in cloud valleys
-const vec3 CLOUD_LIGHT = vec3(1.02, 0.94, 0.84); // Warm golden-hour sunlight crest
+const vec3 CLOUD_DARK  = vec3(0.56, 0.62, 0.72); // Soft twilight-slate shadow in cloud valleys
+const vec3 CLOUD_LIGHT = vec3(0.96, 0.96, 0.98); // Natural white-cream droplet scattering crest
 
 void main()
 {
@@ -64,16 +64,14 @@ void main()
 
         float density = mix(n1, n1 * 0.62 + n2 * 0.38, octaveWeight);
 
+        // Soft volumetric billow normal derived from multi-layer flow coordinates (zero extra texture taps)
         vec3 baseN = v_normal * inversesqrt(max(dot(v_normal, v_normal), 1e-8));
         vec3 N;
         if (octaveWeight > 0.001) {
-            vec2 stepUV = max(flowFootprint * 1.5, vec2(0.012));
-            float nR = textureGrad(texture0, warpedFlow1 + vec2(stepUV.x, 0.0), uvDx1, uvDy1).r;
-            float nU = textureGrad(texture0, warpedFlow1 + vec2(0.0, stepUV.y), uvDx1, uvDy1).r;
-            float slopeScale = 2.65 * octaveWeight;
-            vec3 billowNormal = vec3(-(nR - n1) * slopeScale, 1.0, -(nU - n1) * slopeScale);
+            vec2 billowWarp = sin(warpedFlow1 * 6.2831853) * 0.32;
+            vec3 billowNormal = vec3(-billowWarp.x, 1.0, -billowWarp.y);
             billowNormal *= inversesqrt(dot(billowNormal, billowNormal));
-            vec3 mixedN = mix(baseN, billowNormal, 0.68 * octaveWeight);
+            vec3 mixedN = mix(baseN, billowNormal, 0.42 * octaveWeight);
             N = mixedN * inversesqrt(max(dot(mixedN, mixedN), 1e-8));
         } else {
             N = baseN;

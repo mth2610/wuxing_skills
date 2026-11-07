@@ -215,16 +215,16 @@ void MapFlora_GenerateFlowerPlacements(
 
             bool tallAccent = (variant == 2 || variant == 4 || variant == 6);
             float coreLift = isColony ? (1.0f - 0.14f * radialNorm) : 0.86f;
-            // Wider botanical height & bloom scale variation (0.82x..1.26x) for organic wildflower drifts
-            float driftHeightBase = tallAccent ? 0.56f : 0.48f;
-            outPlacements[outIdx].height = (driftHeightBase + (Nature_Random01(&rng) * 0.14f - 0.06f)) * coreLift;
+            // Wildflower stalks emerge proudly above the waving meadow blades (0.62m..1.05m)
+            float driftHeightBase = tallAccent ? 0.76f : 0.64f;
+            outPlacements[outIdx].height = (driftHeightBase + (Nature_Random01(&rng) * 0.18f - 0.06f)) * coreLift;
 
-            float baseBloomRadius = tallAccent ? 0.122f : 0.108f;
-            outPlacements[outIdx].bloomRadius = baseBloomRadius * (0.82f + Nature_Random01(&rng) * 0.42f) * (0.90f + 0.12f * coreLift);
+            float baseBloomRadius = tallAccent ? 0.155f : 0.138f;
+            outPlacements[outIdx].bloomRadius = baseBloomRadius * (0.88f + Nature_Random01(&rng) * 0.44f) * (0.92f + 0.14f * coreLift);
             outPlacements[outIdx].petalColor = MapProp_GetFlowerSpeciesColor(variant, Nature_Random01(&rng) > 0.74f);
             outPlacements[outIdx].petalCount = (unsigned char)(5 + (variant % 3));
             outPlacements[outIdx].bloomVariant = (unsigned char)variant;
-            outPlacements[outIdx].petalLengthScale = 1.04f + Nature_Random01(&rng) * 0.24f;
+            outPlacements[outIdx].petalLengthScale = 1.08f + Nature_Random01(&rng) * 0.28f;
         }
     }
 }
@@ -444,16 +444,16 @@ int MapFlora_GenerateMeadowPlacements(
                               cosf(cz * 0.060f - cx * 0.035f + 1.2f) * 0.30f +
                               sinf(cx * 0.11f + cz * 0.08f) * 0.15f;
         float tierFactor = 0.5f + 0.5f * macroTierWave;
-        float tieredBase = 0.22f + 0.14f * (tierFactor * tierFactor * (3.0f - 2.0f * tierFactor));
-        float highTypePatch = (patchHash2 > 0.58f) ? (0.08f * clumpCore) : (-0.04f * clumpCore);
+        float tieredBase = 0.46f + 0.28f * (tierFactor * tierFactor * (3.0f - 2.0f * tierFactor));
+        float highTypePatch = (patchHash2 > 0.58f) ? (0.12f * clumpCore) : (-0.05f * clumpCore);
         float heightNorm = (localHeight - 0.35f) * (1.0f / 0.21f);
 
-        // 3-stratum height hierarchy (0.14m lawn/grazing turf -> 0.45m mid meadow -> 0.85m tall plumes)
-        float effGrowth = fmaxf(growth, 0.22f);
-        float effCoverage = fmaxf(coverage, 0.25f);
+        // 3-stratum height hierarchy (0.42m mid turf -> 0.72m lush meadow -> 1.25m tall plumes)
+        float effGrowth = fmaxf(growth, 0.28f);
+        float effCoverage = fmaxf(coverage, 0.32f);
         float stratum = 0.50f * effGrowth + 0.50f * effCoverage;
-        clump->height = (tieredBase * 0.82f + heightNorm * 0.12f + highTypePatch) * (0.55f + 0.95f * stratum);
-        clump->height = fmaxf(0.14f, fminf(clump->height, 0.95f));
+        clump->height = (tieredBase + heightNorm * 0.18f + highTypePatch) * (0.85f + 0.45f * stratum);
+        clump->height = fmaxf(0.38f, fminf(clump->height, 1.28f));
 
         if (config.flowerClusters && config.flowerClusterCount > 0)
         {
@@ -463,7 +463,7 @@ int MapFlora_GenerateMeadowPlacements(
         }
 
         // Mở rộng bán kính xòe của từng bụi cỏ để các tán lá đan lồng vào nhau không lộ khe đất
-        clump->radius = 0.29f + biome * 0.09f;
+        clump->radius = 0.39f + biome * 0.14f;
         clump->radius *= 0.94f + 0.16f * (localRadius - 0.27f) * (1.0f / 0.09f);
 
         if (config.edgeTaperFn)

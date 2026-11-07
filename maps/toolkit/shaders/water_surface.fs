@@ -81,9 +81,9 @@ void EvaluateObstacleWake(vec4 obs, vec2 worldXZ, vec2 flowDir, float time,
     float d = d2 * invD;
     vec2 dir = toFrag * invD;
 
-    // Band around stone perimeter (d ~ 0.45 * r .. 2.65 * r)
+    // Band around stone perimeter (d ~ 0.40 * r .. 2.65 * r)
     float normR = d / obs.z;
-    if (normR < 0.42) return;
+    if (normR < 0.38) return;
 
     // Asymmetric downstream hydraulic wake: bow cushion upstream + Kelvin V-chevron downstream
     float alongFlow = dot(toFrag, flowDir) / obs.z;
@@ -103,7 +103,23 @@ void EvaluateObstacleWake(vec4 obs, vec2 worldXZ, vec2 flowDir, float time,
     float strength = clamp(obs.w, 0.2, 1.5);
     ioSlope += (dir * 0.10 + flowDir * 0.16) * (kelvinWake + bowCushion) * strength;
     float foam = (bowCushion * 0.28 + kelvinWake * 0.38 * smoothstep(0.0, 1.2, downReach)) * strength;
-    ioFoam = max(ioFoam, foam);
+    // Delicate meniscus contact foam ring hugging stone waterline
+    float contactFoam = smoothstep(0.40, 0.48, normR) * (1.0 - smoothstep(0.48, 0.64, normR)) * 0.42;
+    ioFoam = max(ioFoam, max(foam, contactFoam * strength));
+}
+
+float EvaluateObstacleWaterDepth(vec4 obs, vec2 worldXZ, float inDepth)
+{
+    if (obs.z <= 0.01) return inDepth;
+    vec2 toFrag = worldXZ - obs.xy;
+    float d2 = dot(toFrag, toFrag);
+    float r = obs.z;
+    if (d2 >= r * r * 1.56) return inDepth;
+    float normR = sqrt(d2) / r;
+    // Approximating dome/boulder bathymetry:
+    // Apex emerges above waterline (normR < 0.40), submerged flank slopes down to riverbed (normR ~ 1.05)
+    float domeDepth = inDepth * smoothstep(0.36, 1.08, normR);
+    return min(inDepth, domeDepth);
 }
 
 void main()
@@ -333,6 +349,24 @@ void main()
         hasValidDepth = true;
     }
 
+    // Submerged rock bathymetry relief: smoothly shallow the water over river boulders
+    if (distSq < 1600.0 && u_obstacle0.z > 0.01) {
+        waterDepth = EvaluateObstacleWaterDepth(u_obstacle0, fragWorldXZ, waterDepth);
+        waterDepth = EvaluateObstacleWaterDepth(u_obstacle1, fragWorldXZ, waterDepth);
+        waterDepth = EvaluateObstacleWaterDepth(u_obstacle2, fragWorldXZ, waterDepth);
+        waterDepth = EvaluateObstacleWaterDepth(u_obstacle3, fragWorldXZ, waterDepth);
+        waterDepth = EvaluateObstacleWaterDepth(u_obstacle4, fragWorldXZ, waterDepth);
+        waterDepth = EvaluateObstacleWaterDepth(u_obstacle5, fragWorldXZ, waterDepth);
+        if (u_obstacle6.z > 0.01) {
+            waterDepth = EvaluateObstacleWaterDepth(u_obstacle6, fragWorldXZ, waterDepth);
+            waterDepth = EvaluateObstacleWaterDepth(u_obstacle7, fragWorldXZ, waterDepth);
+            waterDepth = EvaluateObstacleWaterDepth(u_obstacle8, fragWorldXZ, waterDepth);
+            waterDepth = EvaluateObstacleWaterDepth(u_obstacle9, fragWorldXZ, waterDepth);
+            waterDepth = EvaluateObstacleWaterDepth(u_obstacle10, fragWorldXZ, waterDepth);
+            waterDepth = EvaluateObstacleWaterDepth(u_obstacle11, fragWorldXZ, waterDepth);
+        }
+    }
+
     // Hardware scene depth buffer refinement (detects submerged stepping stones & exact bank contact)
     if (u_hasDepthTex > 0 && u_resolution.x > 1.0 && u_resolution.y > 1.0) {
         vec2 screenUV = gl_FragCoord.xy / u_resolution;
@@ -483,9 +517,9 @@ void main()
         float wakeFoamTex = dynamicWakeFoam * smoothstep(0.24, 0.70, foamWeb + dynamicWakeFoam * 0.45);
         if (u_waterShape == 3) {
             // Delicate shoreline meniscus foam, lapping bank ripples, and crisp stone wake lacing
-            float shoreLace = meniscusLip * 0.58 * smoothstep(0.36, 0.68, foamWeb)
-                            + max(contactRipple, 0.0) * 0.24 * contactMask * smoothstep(0.38, 0.70, foamWeb);
-            brokenFoam = clamp(max(shoreLace, wakeFoamTex), 0.0, 0.88);
+            float shoreLace = meniscusLip * 0.38 * smoothstep(0.44, 0.74, foamWeb)
+                            + max(contactRipple, 0.0) * 0.16 * contactMask * smoothstep(0.48, 0.78, foamWeb);
+            brokenFoam = clamp(max(shoreLace, wakeFoamTex), 0.0, 0.70);
         } else {
             brokenFoam = smoothstep(0.46, 0.78, contactMask * 0.60 + (foamWeb - 0.5) * 0.72);
             brokenFoam = max(brokenFoam, meniscusLip * 0.38 * smoothstep(0.36, 0.68, foamWeb));
@@ -501,8 +535,8 @@ void main()
         ? (1.0 - exp(-2.05 * waterDepth))
         : (1.0 - exp(-2.20 * waterDepth));
     float waterColumnAlpha = (u_waterShape == 3)
-        ? clamp(0.12 + 0.58 * depthOpacity, 0.0, 0.82)
-        : (0.18 + 0.52 * depthOpacity);
+        ? clamp(depthOpacity * 0.72, 0.0, 0.82)
+        : clamp(depthOpacity * 0.75, 0.0, 0.85);
     float glintAlphaBoost = clamp(glintSharp * 0.38, 0.0, 0.26);
     float surfaceAlpha = (fresnel * 0.66) + waterColumnAlpha + glintAlphaBoost;
 
@@ -518,8 +552,8 @@ void main()
     if (alpha < 0.002) discard;
 
     // ── 9. ENERGY-CONSERVING COMPOSITION ─────────────────────────────────────
-    vec3 shallowTint = mix(u_shallowColor, vec3(0.16, 0.74, 0.68), 0.52);
-    vec3 deepTint    = mix(u_deepColor,    vec3(0.04, 0.32, 0.42), 0.55);
+    vec3 shallowTint = mix(u_shallowColor, vec3(0.24, 0.64, 0.58), 0.35);
+    vec3 deepTint    = mix(u_deepColor,    vec3(0.06, 0.32, 0.40), 0.50);
 
     vec3 depthBlend = clamp(mix(vec3(1.0 - smoothstep(0.06, 0.95, waterDepth)), transmittance, 0.68), 0.0, 1.0);
     vec3 waterVolumeColor = mix(deepTint, shallowTint, depthBlend);

@@ -143,7 +143,10 @@ void main() {
     float miePhase = HenyeyGreenstein(cosTheta, clamp(u_mieAnisotropy, 0.4, 0.85));
     vec3 directSun = u_sunColor * (miePhase * u_godRayIntensity * 1.6);
 
-    vec3 baseColor = u_fogColor;
+    // Directional aerial perspective: cool slate-blue Rayleigh backscatter vs warm apricot solar forward scatter
+    vec3 antiSunColor = mix(u_fogColor, vec3(0.68, 0.78, 0.90) * dot(u_fogColor, vec3(0.33333)), 0.42);
+    vec3 directionalBase = mix(antiSunColor, u_fogColor, smoothstep(-0.55, 0.35, cosTheta));
+    vec3 baseColor = directionalBase;
     if (localDensitySum > 0.001) {
         baseColor = mix(baseColor, localFogAccum / localDensitySum, clamp(localDensitySum / (opticalDepth + 0.001), 0.0, 1.0));
     }

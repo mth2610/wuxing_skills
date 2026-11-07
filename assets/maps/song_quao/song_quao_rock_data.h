@@ -132,6 +132,14 @@ static const MapRockItem SONG_QUAO_ROCK_ITEMS[] = {
     {{50.92f, 5.06f, 259.26f}, 1.36f, 1.02f, 19.3f, MAP_ROCK_GRANITE},
     {{45.37f, 4.74f, 260.81f}, 0.50f, 0.26f, 37.3f, MAP_ROCK_SCREE},
     {{50.56f, 5.33f, 261.42f}, 0.62f, 0.32f, 77.3f, MAP_ROCK_SCREE},
+    // Tributary Mountain Springhead Cluster (Ishigumi source formation capping the riverhead at z=124)
+    {{100.50f, 4.65f, 123.60f}, 2.60f, 1.95f, 42.0f, MAP_ROCK_GRANITE},
+    {{97.60f, 4.60f, 124.10f}, 2.10f, 1.55f, 78.0f, MAP_ROCK_GRANITE},
+    {{103.40f, 4.58f, 123.90f}, 2.25f, 1.65f, 128.0f, MAP_ROCK_GRANITE},
+    {{99.10f, 4.52f, 124.70f}, 1.10f, 0.78f, 52.0f, MAP_ROCK_RIVER_STONE},
+    {{101.90f, 4.50f, 124.60f}, 0.98f, 0.72f, 215.0f, MAP_ROCK_RIVER_STONE},
+    {{96.40f, 4.55f, 124.80f}, 0.75f, 0.48f, 110.0f, MAP_ROCK_RIVER_STONE},
+    {{104.60f, 4.55f, 124.50f}, 0.82f, 0.52f, 305.0f, MAP_ROCK_RIVER_STONE},
 };
 #define SONG_QUAO_ROCK_ITEM_COUNT (int)(sizeof(SONG_QUAO_ROCK_ITEMS) / sizeof(SONG_QUAO_ROCK_ITEMS[0]))
 

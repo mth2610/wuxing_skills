@@ -83,6 +83,10 @@ static Vector3 s_lastShadowFocus = {-9999.0f, 0.0f, -9999.0f};
 static bool s_shadowWasEnabled = false;
 static bool s_ready = false;
 static unsigned int s_skipMask = 0;
+static Vector3 s_playerPos = {0};
+static Vector3 s_playerVel = {0};
+static float s_playerRadius = 0.0f;
+static bool s_hasPlayerInteractor = false;
 
 #define SHORE_FIELD_MAX_PIXELS (512 * 768)
 static unsigned char s_shoreField[SHORE_FIELD_MAX_PIXELS];
@@ -149,11 +153,11 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
         return 0.0f;
 
     // Exact metric signed shoreline distance matching ground_splat.fs (decodedDist.g * 5.5 - 3.1):
-    // lush meadow grows across the entire peninsula and riverbanks right down to 15cm from the water.
+    // lush meadow grows across the entire peninsula and riverbanks right down to the waterline edge.
     float signedShore = SongQuaoSampleSignedShore(x, z);
-    if (signedShore < 0.03f)
+    if (signedShore < -0.02f)
         return 0.0f;
-    float shoreFade = MapMath_SmoothStep01(0.03f, 0.15f, signedShore);
+    float shoreFade = MapMath_SmoothStep01(-0.02f, 0.05f, signedShore);
 
     float rockSuppression = MapProp_EvaluateRockSuppression(
         x, z, SONG_QUAO_ROCK_ITEMS, SONG_QUAO_ROCK_ITEM_COUNT);
@@ -189,7 +193,7 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
 
     // Colony drift wave: 0.90..1.0 in dense tussock colonies, 0.35..0.65 in fringe
     float patch = MapMath_SmoothStep01(-0.25f, 0.40f, macroField);
-    float colonyDensity = (0.35f + 0.65f * patch) * (1.0f - clearing * 0.92f);
+    float colonyDensity = (0.35f + 0.65f * patch) * (1.0f - clearing * 0.35f);
     float outerHillFactor = 1.0f - outerHillBlend * 0.28f;
     float macro = colonyDensity * outerHillFactor;
 
@@ -206,9 +210,9 @@ static float SongQuaoEdgeTaper(float cx, float cz, void *userData)
         return 0.5f;
 
     float signedShore = SongQuaoSampleSignedShore(cx, cz);
-    float shoreTaper = (signedShore >= 0.20f)
+    float shoreTaper = (signedShore >= 0.10f)
                            ? 1.0f
-                           : (0.64f + 0.36f * MapMath_SmoothStep01(0.03f, 0.20f, signedShore));
+                           : (0.76f + 0.24f * MapMath_SmoothStep01(-0.02f, 0.10f, signedShore));
     float cliffTaper = (pos.y >= -0.20f)
                            ? 1.0f
                            : (0.35f + 0.65f * MapMath_SmoothStep01(GRASS_CLIFF_MIN_Y, -0.20f, pos.y));
@@ -254,7 +258,7 @@ static void BuildFloraPlacements(void)
         (MapFloraMeadowConfig){
             .minBounds = {10.0f, 8.0f},
             .maxBounds = {MAP_WIDTH - 10.0f, MAP_DEPTH - 8.0f},
-            .spacing = 0.408f,
+            .spacing = 0.302f,
             .seed = 0x51a7c3u,
             .densityFn = SongQuaoGrassDensity,
             .ecology = &s_habitat,
@@ -485,12 +489,12 @@ void InitSongQuaoMap(void)
                 .density = {.baseDensity = 0.009f, .heightFalloff = 0.24f, .baseAltitude = -1.5f, .enableSigmoidLayer = true, .layerAltitude = 2.4f, .layerThickness = 3.4f, .layerDensity = 0.004f}
             }
         },
-        // 16:30 Golden Hour (Primary Artistic Target)
+        // 16:30 Golden Hour (Primary Artistic Target - Raking Warm Sun & Jade Shadows)
         {
-            .ambientColor = {90, 118, 148, 255},
-            .sunColor = {255, 206, 146, 255},
-            .sunDirection = {0.46f, -0.47f, -0.75f},
-            .shadowColor = {44, 62, 82, 140},
+            .ambientColor = {86, 112, 145, 255},
+            .sunColor = {255, 202, 138, 255},
+            .sunDirection = {0.58f, -0.285f, -0.76f},
+            .shadowColor = {40, 58, 78, 140},
             .fog = {.enabled = true, .color = {236, 228, 218, 255}, .start = 18.0f, .end = 165.0f, .density = 0.0112f},
             .atmosphere = {
                 .color = {236, 228, 218, 255}, .start = 18.0f, .end = 165.0f, .enabled = true,
@@ -516,22 +520,22 @@ void InitSongQuaoMap(void)
     Environment_SetTimeOfDayPresets(kSongQuaoToD, kSongQuaoTimes, 4);
     Environment_SetTimeOfDay(0.6875f); // 16:30 default
     Environment_SetTimeOfDaySpeed(0.0f);
-    Environment_SetAmbientColor((Color){90, 118, 148, 255});
-    Environment_SetSunColor((Color){255, 206, 146, 255});
-    Environment_SetSunIntensity(1.72f);
-    Environment_SetSunDirection(Vector3Normalize((Vector3){0.46f, -0.47f, -0.75f}));
-    Environment_SetShadowColor((Color){44, 62, 82, 140});
+    Environment_SetAmbientColor((Color){86, 112, 145, 255});
+    Environment_SetSunColor((Color){255, 202, 138, 255});
+    Environment_SetSunIntensity(1.85f);
+    Environment_SetSunDirection(Vector3Normalize((Vector3){0.58f, -0.285f, -0.76f}));
+    Environment_SetShadowColor((Color){40, 58, 78, 140});
 
     PostFXMapProfile postProfile = {
         .enabled = true,
         .exposure = 0.98f,
-        .contrast = 1.06f,
-        .saturation = 1.02f,
-        .bloomIntensity = 0.22f,
+        .contrast = 1.05f,
+        .saturation = 0.98f,
+        .bloomIntensity = 0.16f,
         .shadowTint = {0.92f, 0.96f, 1.05f},    // Cool jade-slate shadows
         .highlightTint = {1.05f, 1.01f, 0.93f}, // Warm golden amber sun highlights
-        .bloomThreshold = 1.68f,                // Day map gate: prevents white flowers & water foam blowout
-        .bloomKnee = 0.35f,
+        .bloomThreshold = 1.15f,                // Catches water glints, cloud crests & grass SSS
+        .bloomKnee = 0.42f,
         .hueRestore = 0.65f,                    // Filmic hue restore: prevents neon lime skew under ACES
     };
     if (s_skipMask & MAP_SKIP_GRADE)
@@ -705,7 +709,7 @@ void InitSongQuaoMap(void)
                                              .causticsScale = 3.80f,
                                              .foamThreshold = 0.095f,
                                              .deepColor = {10, 68, 88, 225},
-                                             .shallowColor = {38, 182, 172, 150},
+                                             .shallowColor = {72, 168, 156, 110},
                                              .foamColor = {248, 252, 255, 240},
                                          });
 
@@ -728,13 +732,13 @@ void InitSongQuaoMap(void)
         (MapFloraStyle){
             .grassRootColor = {20, 28, 14, 255},  // Sắc rêu mùn trầm ấm ăn khớp nền đất
             .grassTipColor = {106, 138, 48, 255}, // Sắc olive-viridian tự nhiên
-            .bladesPerClump = 5,
+            .bladesPerClump = 6,
             .bladeSegments = 4,
-            .bladeWidthScale = 0.062f,
-            .lodDistance = 22.0f,
-            .midLodDistance = 11.0f,
-            .drawDistance = 42.0f,
-            .shadowDistance = 17.5f,
+            .bladeWidthScale = 0.096f,
+            .lodDistance = 28.0f,
+            .midLodDistance = 16.0f,
+            .drawDistance = 52.0f,
+            .shadowDistance = 22.5f,
             .grassState = MAP_GRASS_STATE_LUSH,
             .reedRootColor = {16, 26, 12, 255},
             .reedTipColor = {88, 124, 48, 255},
@@ -758,6 +762,16 @@ void UpdateSongQuaoMap(float dt)
 {
     if (!s_ready)
         return;
+
+    // Direct player grass parting: forward player position into the 64x64 nature interaction field
+    MapProp_BeginNatureInteraction(camera.target, dt);
+    MapProp_AddNatureWindVorticles(s_flora.time);
+    if (s_hasPlayerInteractor && s_playerRadius > 0.01f)
+    {
+        MapProp_AddNatureInteractor(s_playerPos, 0.85f, 1.0f);
+    }
+    MapProp_EndNatureInteraction();
+
     MapProp_UpdateFloraSystem(&s_flora, camera.target, dt);
     MapProp_UpdateWaterSurface(&s_river, dt);
     if (!(s_skipMask & MAP_SKIP_FLUFF))
@@ -882,6 +896,10 @@ void UnloadSongQuaoMap(void)
     EnvShadow_SetEnabled(s_shadowWasEnabled);
 #endif
     s_lastShadowFocus = (Vector3){-9999.0f, 0.0f, -9999.0f};
+    s_playerPos = (Vector3){0};
+    s_playerVel = (Vector3){0};
+    s_playerRadius = 0.0f;
+    s_hasPlayerInteractor = false;
     s_ready = false;
 }
 
@@ -902,6 +920,10 @@ bool GetWaterInfoSongQuaoMap(float x, float z, float *outSurfaceY, float *outWat
 
 void SetWaterInteractorSongQuaoMap(Vector3 position, Vector3 velocity, float radius)
 {
+    s_playerPos = position;
+    s_playerVel = velocity;
+    s_playerRadius = radius;
+    s_hasPlayerInteractor = (radius > 0.05f);
     MapDem_SetWaterInteractor(&s_dem, &s_ground, &s_river, position, velocity, radius);
 }
 

@@ -218,32 +218,34 @@ void main()
             wWetSoil = mix(wWetSoil, 1.0, clamp(lakeDepthFactor * 2.0, 0.0, 1.0));
         }
 
-        // Separate interior grassy terrace embankments from the outer island cliff rim (LANDMINES.md §135)
-        float rimMask = 1.0 - smoothstep(-1.10, 0.15, fragWorldPos.y);
-        float wSlope = max(smoothstep(0.46, 0.64, slope), rimMask * smoothstep(0.22, 0.40, slope));
-        float outerAbyssMask = (1.0 - smoothstep(-2.20, -0.45, fragWorldPos.y)) * smoothstep(0.08, 0.26, slope);
+        // Separate interior grassy terrace embankments and riverbeds from the outer island cliff rim (LANDMINES.md §135)
+        float outerCliffElev = 1.0 - smoothstep(-2.20, -0.65, fragWorldPos.y);
+        float rimMask = outerCliffElev * (1.0 - smoothstep(0.0, 0.45, shoreFactor));
+        float wSlope = max(smoothstep(0.52, 0.72, slope), rimMask * smoothstep(0.22, 0.40, slope));
+        float outerAbyssMask = (1.0 - smoothstep(-2.20, -0.65, fragWorldPos.y)) * smoothstep(0.08, 0.26, slope);
         float rockCliff = smoothstep(0.55, 0.88, rockScree)
-                        * max(smoothstep(0.44, 0.60, slope), rimMask * smoothstep(0.22, 0.38, slope));
-        wCliff = clamp(max(wSlope, max(rockCliff, outerAbyssMask)), 0.0, 1.0);
+                        * max(smoothstep(0.48, 0.65, slope), rimMask * smoothstep(0.22, 0.38, slope));
+        wCliff = clamp(max(wSlope, max(rockCliff, outerAbyssMask)), 0.0, 1.0) * (1.0 - shoreFactor * 0.95);
 
         // Organic riparian margin modulated by shoreline grain
         if (u_ecologyEnabled != 0 && smoothSignedShore >= -0.15) {
-            float bankNoise = sin(fragWorldPos.x * 0.32 + fragWorldPos.z * 0.28) * 0.045
-                            + sin(fragWorldPos.z * 0.65 - fragWorldPos.x * 0.42) * 0.025;
+            float bankNoise = sin(fragWorldPos.x * 0.45 + fragWorldPos.z * 0.38) * 0.025
+                            + sin(fragWorldPos.z * 0.85 - fragWorldPos.x * 0.58) * 0.015;
             float variableShore = smoothSignedShore + bankNoise;
-            riparianSandMargin = (1.0 - smoothstep(-0.02, 0.16, variableShore)) * 0.18;
+            float riparianFringe = (1.0 - smoothstep(-0.04, 0.06, variableShore));
+            wWetSoil = max(wWetSoil, riparianFringe * 0.92);
         }
 
-        wDrySoil = clamp(max(max(wPathMargin * 0.78, wCliff), riparianSandMargin), 0.0, 1.0)
-                       * (1.0 - wWetSoil * 0.75) * (1.0 - wPath * 0.85);
+        wDrySoil = clamp(max(wPathMargin * 0.78, wCliff), 0.0, 1.0)
+                       * (1.0 - wWetSoil * 0.85) * (1.0 - wPath * 0.85);
         wGrass = clamp(1.0 - wPath - wWetSoil - wDrySoil, 0.0, 1.0);
 
-        if (u_ecologyEnabled != 0 && smoothSignedShore >= -0.15 && smoothSignedShore < 0.18) {
-            float bankNoise = sin(fragWorldPos.x * 0.32 + fragWorldPos.z * 0.28) * 0.045
-                            + sin(fragWorldPos.z * 0.65 - fragWorldPos.x * 0.42) * 0.025;
-            float grassTaper = smoothstep(-0.03, 0.15, smoothSignedShore + bankNoise);
+        if (u_ecologyEnabled != 0 && smoothSignedShore >= -0.10 && smoothSignedShore < 0.06) {
+            float bankNoise = sin(fragWorldPos.x * 0.45 + fragWorldPos.z * 0.38) * 0.025
+                            + sin(fragWorldPos.z * 0.85 - fragWorldPos.x * 0.58) * 0.015;
+            float grassTaper = smoothstep(-0.03, 0.04, smoothSignedShore + bankNoise);
             wGrass *= grassTaper;
-            wDrySoil = clamp(1.0 - wPath - wWetSoil - wGrass, 0.0, 1.0);
+            wWetSoil = clamp(1.0 - wPath - wDrySoil - wGrass, 0.0, 1.0);
         }
     }
 
@@ -362,35 +364,30 @@ void main()
             if (distantCanopyBlend > 0.002) {
                 vec3 canopyColor = targetCanopyColor * GS_DISTANT_CANOPY_GAIN;
 
-                // [VISUAL UPGRADE]: Giả lập cấu trúc khóm cỏ 3D (Faux-Tuft Canopy Relief) ở cự ly > 18m
-                // để mặt đất ngoài tầm vẽ cỏ 3D (38m) vẫn có độ xốp và gợn bóng như thảm cỏ thật!
-                vec2 wp = fragWorldPos.xz;
-                float tuftWaveA = sin(wp.x * 2.4 + sin(wp.y * 1.7) * 0.8);
-                float tuftWaveB = cos(wp.y * 2.8 - sin(wp.x * 1.9) * 0.8);
-                float tuftWaveC = sin(wp.x * 5.2 - wp.y * 4.6);
-                float fauxTuft = ((tuftWaveA * 0.55 + tuftWaveB * 0.45) * 0.70 + tuftWaveC * 0.30) * 0.5 + 0.5;
-                float tuftGrain = clamp(mix(fauxTuft, 0.5 + (turfDetail - 0.22) * 0.85, 0.55), 0.0, 1.0);
+                // [VISUAL UPGRADE]: Isotropic domain-warped landscape macro-variation (Ghost of Tsushima style)
+                // Replaces axis-aligned Cartesian trig waffle grid and planar diagonal sine waves.
+                vec2 pMacro = fragWorldPos.xz * 0.048;
+                vec2 pWarp = vec2(sin(pMacro.y * 1.6 + pMacro.x * 0.5), cos(pMacro.x * 1.4 - pMacro.y * 0.8)) * 0.42;
+                vec2 pRot = mat2(0.80, -0.60, 0.60, 0.80) * (pMacro + pWarp) * 1.65;
+                float macroA = sin((pMacro.x + pWarp.x) * 1.9 + (pMacro.y + pWarp.y) * 1.2) * 0.5 + 0.5;
+                float macroB = cos(pRot.x * 1.7 - pRot.y * 1.3) * 0.5 + 0.5;
+                float hillCrestNoise = macroA * 0.60 + macroB * 0.40;
 
-                distantTuftRelief = (tuftGrain - 0.48) * distantCanopyBlend * 0.38;
-                distantTuftNormal = vec2(cos(wp.x * 2.4) * 0.32 + cos(wp.x * 5.2) * 0.14,
-                                         -sin(wp.y * 2.8) * 0.32 - sin(wp.y * 4.6) * 0.14) * distantCanopyBlend;
+                // Subtle organic tuft grain for distant albedo texture without axis-aligned normal perturbation
+                float tuftGrain = clamp(mix(hillCrestNoise, 0.5 + (turfDetail - 0.22) * 0.65, 0.45), 0.0, 1.0);
+                distantTuftRelief = 0.0;
+                distantTuftNormal = vec2(0.0);
 
-                canopyColor *= mix(0.84, 1.14, tuftGrain);
+                canopyColor *= mix(0.92, 1.08, tuftGrain);
 
-                // Multi-scale landscape macro-variation for midground/distant hills (Ghost of Tsushima style)
-                float hillRidgeNoise = sin(fragWorldPos.x * 0.085 + fragWorldPos.z * 0.062) * 0.55
-                                     + cos(fragWorldPos.z * 0.092 - fragWorldPos.x * 0.048) * 0.45;
-                float hillCrestMask = smoothstep(-0.18, 0.48, hillRidgeNoise);
-                canopyColor = mix(canopyColor * vec3(0.92, 1.01, 0.94), canopyColor * vec3(1.08, 1.05, 0.86), hillCrestMask * 0.38);
+                float hillCrestMask = smoothstep(0.20, 0.72, hillCrestNoise);
+                canopyColor = mix(canopyColor * vec3(0.94, 1.01, 0.96), canopyColor * vec3(1.06, 1.03, 0.90), hillCrestMask * 0.35);
 
                 float macroPatch = v_macroPatchAndField.x;
                 float warmShift = clamp(macroPatch * 0.5 + 0.5, 0.0, 1.0);
-                canopyColor *= mix(vec3(0.95, 1.03, 0.92), vec3(1.06, 1.04, 0.88), warmShift * 0.50);
+                canopyColor *= mix(vec3(0.96, 1.02, 0.94), vec3(1.04, 1.03, 0.92), warmShift * 0.40);
 
-                float windPhase = fract(u_time * 0.31830988) * 6.2831853;
-                float windWave = sin(dot(fragWorldPos.xz, vec2(0.26, 0.18)) - windPhase) * 0.5 + 0.5;
-                canopyColor *= mix(vec3(0.96, 0.99, 0.94), vec3(1.06, 1.05, 0.95), windWave * distantCanopyBlend);
-                grassAlbedo = mix(grassAlbedo, canopyColor, distantCanopyBlend * 0.94);
+                grassAlbedo = mix(grassAlbedo, canopyColor, distantCanopyBlend * 0.92);
             }
         }
 
@@ -530,9 +527,9 @@ void main()
             float sinP2 = sin(sandPhase2);
             float sandRipple = (sinP1 * 0.60 + sinP2 * 0.40) * 0.5 + 0.5;
 
-            vec3 drySand = mix(vec3(0.35, 0.30, 0.22), vec3(0.40, 0.35, 0.26), sandRipple * 0.12);
-            vec3 wetSand = mix(vec3(0.26, 0.23, 0.17), vec3(0.32, 0.28, 0.21), sandRipple * 0.12);
-            vec3 submergedSand = mix(vec3(0.46, 0.42, 0.31), vec3(0.55, 0.50, 0.37), sandRipple * 0.15);
+            vec3 drySand = mix(vec3(0.18, 0.16, 0.12), vec3(0.24, 0.21, 0.16), sandRipple * 0.12);
+            vec3 wetSand = mix(vec3(0.14, 0.12, 0.09), vec3(0.19, 0.16, 0.12), sandRipple * 0.12);
+            vec3 submergedSand = mix(vec3(0.18, 0.22, 0.18), vec3(0.25, 0.29, 0.23), sandRipple * 0.15);
 
             float wetLevel = clamp(shoreFactor * 0.85 + streamWet * 0.50, 0.0, 1.0);
             vec3 sandBase = mix(drySand, wetSand, wetLevel);
@@ -541,7 +538,7 @@ void main()
             vec3 microSediment = textureGrad(texPath, fragWorldPos.xz * 1.85, wpDx * 1.85, wpDy * 1.85).rgb;
             sandBase *= (0.80 + 0.40 * microSediment.r) * (0.84 + 0.32 * colorDirt.rgb);
 
-            float beachDryMix = clamp(shoreFactor * 0.80 + riparianSandMargin * 1.35, 0.0, 1.0);
+            float beachDryMix = clamp(shoreFactor * 0.45 + riparianSandMargin * 0.85, 0.0, 1.0);
             drySoilColor = mix(drySoilColor, drySand * (0.84 + 0.32 * colorDirt.rgb), beachDryMix);
 
             vec2 gravelUV = tiledUV * 3.4;
@@ -556,8 +553,8 @@ void main()
             float gravelHighlight = smoothstep(0.38, 0.70, pebbleLuma);
             float pebbleCrevice = 1.0 - smoothstep(0.24, 0.48, pebbleLuma);
 
-            vec3 pebbleMineral = mix(vec3(0.38, 0.36, 0.34), vec3(0.66, 0.61, 0.52), gravelHighlight);
-            pebbleMineral = mix(pebbleMineral, vec3(0.52, 0.45, 0.36), fineGravelTex.g);
+            vec3 pebbleMineral = mix(vec3(0.18, 0.17, 0.15), vec3(0.32, 0.30, 0.26), gravelHighlight);
+            pebbleMineral = mix(pebbleMineral, vec3(0.22, 0.24, 0.20), fineGravelTex.g);
 
             float gravelAO = 1.0 - pebbleCrevice * 0.28 * shingleBar;
             vec3 riverbedBed = mix(sandBase, pebbleMineral, gravelHighlight * 0.74 * shingleBar) * gravelAO;
@@ -565,16 +562,16 @@ void main()
             if (camDistSqXZ < 900.0) {
                 float cosP1 = cos(sandPhase1);
                 float cosP2 = cos(sandPhase2);
-                vec2 rippleNorm = clamp(vec2(cosP1 + cosP2 * 0.6, cosP1 - cosP2 * 0.5) * 0.048, vec2(-0.22), vec2(0.22));
+                vec2 rippleNorm = clamp(vec2(cosP1 + cosP2 * 0.6, cosP1 - cosP2 * 0.5) * 0.048, vec2(-0.22), vec2(-0.22));
 
                 vec4 gravelMat = textureGrad(texSoilMaterial, gravelUV, grDx, grDy);
                 vec2 gNorm = (gravelMat.rg * 2.0 - 1.0);
                 proceduralPebbleNormal = (gNorm * (0.44 * shingleBar + 0.20) + rippleNorm * (1.0 - shingleBar * 0.45)) * detailResolve;
             }
 
-            float sandDominance = clamp(shoreFactor * 1.25 + streamWet * 1.35 + lakeDepthFactor * 2.0, 0.0, 1.0);
-            vec3 bankFringeHumus = mix(vec3(0.32, 0.29, 0.22), vec3(0.45, 0.40, 0.30), dirtDetail.g) * (0.86 + 0.30 * colorDirt.rgb);
-            wetSoilColor = mix(bankFringeHumus, riverbedBed, smoothstep(0.02, 0.28, sandDominance));
+            float submergedBed = clamp(lakeDepthFactor * 2.5, 0.0, 1.0);
+            vec3 bankFringeHumus = mix(vec3(0.14, 0.12, 0.08), vec3(0.20, 0.17, 0.12), dirtDetail.g) * (0.86 + 0.30 * colorDirt.rgb);
+            wetSoilColor = mix(bankFringeHumus, riverbedBed, submergedBed);
         } else {
             vec3 mossyBank = vec3(0.28, 0.26, 0.20) * (0.85 + 0.35 * dirtDetail.g);
             wetSoilColor = mossyBank;
@@ -712,7 +709,7 @@ void main()
     // [VISUAL FIX]: Làm mềm bóng đổ trên cả thảm cỏ lẫn bãi cát ven sông (xóa vệt bóng răng lược đen)
     float softShadowVis = rawShadow * mix(rawShadow, 1.0, 0.58);
     float resolvedShadow = mix(rawShadow, softShadowVis, max(wGrass, isRiparian * 0.85));
-    float shadowFloor = mix(0.60, 0.76, max(wGrass, isRiparian * 0.72));
+    float shadowFloor = mix(0.24, 0.32, max(wGrass, isRiparian * 0.72));
     float shadow = mix(shadowFloor, 1.0, resolvedShadow);
     float sunVisibility = (shadow > 0.001) ? shadow * Environment_CloudVisibility(u_cloudNoise, fragWorldPos) * rockContactAO : 0.0;
 

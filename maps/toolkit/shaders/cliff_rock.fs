@@ -129,8 +129,8 @@ void main() {
     vec3 mossColor = mix(vec3(0.14, 0.22, 0.09), vec3(0.24, 0.36, 0.14), albedo.g);
     vec3 rockAlbedo = mix(rockBase, mossColor, mossMask * 0.82);
 
-    // 3. Baked Cavity Ambient Occlusion
-    float cavityAO = clamp(fragColor.r, 0.22, 1.0);
+    // 3. Baked Cavity Ambient Occlusion (clamped to prevent crushing shaded facets to black)
+    float cavityAO = clamp(fragColor.r, 0.44, 1.0);
 
     // 4. Wrap diffuse lighting & shadow evaluation
     float NdotL = max((dot(normal, lightDir) + 0.25) * 0.80, 0.0);
@@ -156,12 +156,14 @@ void main() {
         spec = min(ggx * 0.18, 1.8) * (1.0 - roughness) * 0.28 * (1.0 - mossMask * 0.85);
     }
 
-    // 5. Cloud Up-Bounce (Warm luminous bounce light radiating from the cloud sea below)
+    // 5. Cloud Up-Bounce (Warm luminous bounce light radiating from the sunlit cloud sea below)
     float upwardCloudBounceFactor = max(-worldNormal.y * 0.65 + 0.20, 0.0);
-    vec3 cloudBounceLight = vec3(0.88, 0.86, 0.82) * actualAmbient * (upwardCloudBounceFactor * 1.65);
+    vec3 cloudLitColor = actualLight * vec3(0.50, 0.42, 0.34) + actualAmbient * vec3(0.85, 0.88, 0.92);
+    vec3 cloudBounceLight = cloudLitColor * (upwardCloudBounceFactor * 1.45);
 
-    // 6. Total Lighting Combination
-    vec3 diffuseLight = (actualAmbient + cloudBounceLight) * cavityAO + actualLight * (NdotL * directAtten);
+    // 6. Total Lighting Combination with Hemisphere Ambient
+    vec3 hemisphereAmbient = Environment_HemisphereIrradiance(normal, actualAmbient);
+    vec3 diffuseLight = (hemisphereAmbient + cloudBounceLight) * cavityAO + actualLight * (NdotL * directAtten);
     vec3 finalRgb = rockAlbedo * diffuseLight + actualLight * (spec * directAtten);
 
     // Add dynamic VFX point lights if active

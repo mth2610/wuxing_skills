@@ -103,9 +103,10 @@ def grade_pixel(r01, g01, b01):
     h, s, l = rgb_to_hsl(r_srgb, g_srgb, b_srgb)
 
     # Foliage green tuning (Tsushima lush emerald/jade clarity):
-    # Preserve pristine green hue (~0.28-0.31) without pushing towards yellow (0.22)
+    # Organic olive-sage tone: prevent neon oversaturation and enhance natural depth
     is_green = math.exp(-math.pow((h - 0.29) / 0.08, 2.0))
-    s = clamp01(s * (1.0 + 0.10 * is_green))
+    s = clamp01(s * (1.0 - 0.04 * is_green))
+    h = h + 0.008 * is_green
 
     # Red/Orange/Gold detection (centered around hue 0.05 = 18 deg)
     dist_red = min(abs(h - 0.05), abs(h - 1.05))

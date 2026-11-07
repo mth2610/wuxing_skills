@@ -153,7 +153,9 @@ static void Cliff_UpdateLighting(Shader shader, Camera3D cam)
 
     if (s_cliffLocHazeColor >= 0)
     {
-        Vector3 haze = (Vector3){0.86f, 0.88f, 0.92f};
+        EnvFogConfig fog = Environment_GetFogConfig();
+        Vector4 fogNorm = ColorNormalize(fog.color);
+        Vector3 haze = (Vector3){fogNorm.x, fogNorm.y, fogNorm.z};
         SetShaderValue(shader, s_cliffLocHazeColor, &haze, SHADER_UNIFORM_VEC3);
     }
 
@@ -515,11 +517,11 @@ static Vector3 Cliff_FindLip(const MapGroundSurface *ground, Vector3 mapCenter,
                              Vector3 contourPoint, Vector2 inward, float contourY)
 {
     const float step = 0.28f;
-    const int maxSteps = 12; // ~3.36m max inland collar
-    const float maxRimY = contourY + 1.45f;
-    Vector3 samples[16];
-    Vector3 normals[16];
-    bool valid[16];
+    const int maxSteps = 28; // ~7.84m max inland search to reach tall scarp plateaus
+    const float maxRimY = contourY + 6.8f; // allow finding the true plateau rim (up to +5.4m)
+    Vector3 samples[32];
+    Vector3 normals[32];
+    bool valid[32];
     int validCount = 0;
     float peakY = -1e9f;
     int peakIdx = 0;
@@ -573,8 +575,8 @@ static Vector3 Cliff_FindLip(const MapGroundSurface *ground, Vector3 mapCenter,
         int kAhead = (k + 2 < maxSteps && valid[k + 2]) ? k + 2 : k + 1;
         float forwardRise = samples[kAhead].y - y;
 
-        bool leveledOff = (forwardRise <= 0.22f && ny >= 0.80f);
-        bool nearPeak = (y >= peakY - 0.20f && forwardRise <= 0.16f);
+        bool leveledOff = (forwardRise <= 0.16f && ny >= 0.78f);
+        bool nearPeak = (y >= peakY - 0.20f && forwardRise <= 0.14f && ny >= 0.75f);
         bool crest = (valid[k + 1] && samples[k + 1].y < y - 0.03f && y >= -0.45f);
 
         if (leveledOff || nearPeak || crest)
