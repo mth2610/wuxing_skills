@@ -155,6 +155,9 @@ typedef struct {
   Vector3 highlightTint;
   float   bloomIntensity;
   float   exposure;
+  float   bloomThreshold; // Optional per-map override (>0.0 overrides config bloomThreshold)
+  float   bloomKnee;      // Optional per-map override (>0.0 overrides default knee)
+  float   hueRestore;     // Optional per-map override (0.0..1.0 filmic hue restore on ACES)
 } PostFXMapProfile;
 
 void PostFX_SetMapProfile(PostFXMapProfile profile);

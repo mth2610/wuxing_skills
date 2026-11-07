@@ -37,10 +37,10 @@
 #define PLAYABLE_BASIN_FADE_Y (-1.65f)
 
 // Plateau grass elevation & slope thresholds aligned with ground_splat.fs wCliff
-#define GRASS_CLIFF_MIN_Y (-0.95f)
-#define GRASS_CLIFF_FADE_Y (-0.35f)
-#define GRASS_MIN_NORMAL_Y 0.50f
-#define GRASS_FULL_NORMAL_Y 0.70f
+#define GRASS_CLIFF_MIN_Y (-0.22f)
+#define GRASS_CLIFF_FADE_Y (-0.05f)
+#define GRASS_MIN_NORMAL_Y 0.76f
+#define GRASS_FULL_NORMAL_Y 0.86f
 
 // Shadow focus quantization & hysteresis to prevent boundary flip-flop shimmering
 #define SHADOW_SNAP_STEP 1.0f
@@ -169,7 +169,7 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
     float slopeFade = MapMath_SmoothStep01(GRASS_MIN_NORMAL_Y, GRASS_FULL_NORMAL_Y, normal.y);
     float rockFade = 1.0f - MapMath_SmoothStep01(0.45f, 0.70f, rockScree);
 
-    // Coherent macro meadow swells: 100% lush inside central playable river-bend, natural glades on outer hills
+    // Coherent macro meadow swells: multi-scale colonies (45% lush core, 35% transition turf, 20% clearings)
     float warpedX = x + sinf(z * 0.12f) * 2.8f;
     float warpedZ = z + cosf(x * 0.11f) * 2.4f;
     float macroField = sinf(warpedX * 0.072f + warpedZ * 0.046f) * 0.55f +
@@ -181,13 +181,17 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
     float distBasin = sqrtf(dxBasin * dxBasin + dzBasin * dzBasin);
     float outerHillBlend = MapMath_SmoothStep01(34.0f, 58.0f, distBasin);
 
-    float gladeNoise = sinf(x * 0.038f + z * 0.032f) * 0.60f + cosf(z * 0.045f - x * 0.035f + 0.7f) * 0.40f;
-    float gladeClearing = MapMath_SmoothStep01(0.32f, 0.68f, gladeNoise) * outerHillBlend;
+    // Natural meadow clearings & foot-worn desire channels (~20% negative space exposing soil & pebbles)
+    float clearingNoise = sinf(x * 0.052f + z * 0.044f) * 0.55f +
+                          cosf(z * 0.068f - x * 0.038f + 0.9f) * 0.35f +
+                          sinf(x * 0.14f + z * 0.11f) * 0.10f;
+    float clearing = MapMath_SmoothStep01(0.24f, 0.60f, clearingNoise);
 
-    float patch = MapMath_SmoothStep01(-0.30f, 0.38f, macroField);
-    float innerMacro = 0.86f + 0.14f * patch;
-    float outerMacro = (0.44f + 0.50f * patch) * (1.0f - gladeClearing * 0.78f);
-    float macro = innerMacro + (outerMacro - innerMacro) * outerHillBlend;
+    // Colony drift wave: 0.90..1.0 in dense tussock colonies, 0.35..0.65 in fringe
+    float patch = MapMath_SmoothStep01(-0.25f, 0.40f, macroField);
+    float colonyDensity = (0.35f + 0.65f * patch) * (1.0f - clearing * 0.92f);
+    float outerHillFactor = 1.0f - outerHillBlend * 0.28f;
+    float macro = colonyDensity * outerHillFactor;
 
     float density = macro * heightFade * slopeFade * shoreFade *
                     rockFade * flowerSuppression * rockSuppression;
@@ -453,9 +457,65 @@ void InitSongQuaoMap(void)
     else
         ColorGradeLut_Load("assets/maps/song_quao/song_quao_grade.png");
 
+    // Ghost of Tsushima / Where Winds Meet dynamic celestial floating island ToD curve
+    static const EnvLightingPreset kSongQuaoToD[4] = {
+        // 06:00 Misty Dawn: soft rose-gold sun, cool azure-violet ambient
+        {
+            .ambientColor = {80, 95, 130, 255},
+            .sunColor = {255, 185, 140, 255},
+            .sunDirection = {0.85f, -0.22f, -0.46f},
+            .shadowColor = {40, 52, 75, 130},
+            .fog = {.enabled = true, .color = {230, 220, 215, 255}, .start = 15.0f, .end = 150.0f, .density = 0.012f},
+            .atmosphere = {
+                .color = {230, 220, 215, 255}, .start = 15.0f, .end = 150.0f, .enabled = true,
+                .optics = {.rayleighLMS = {0.0095f, 0.0165f, 0.0310f}, .mieScattering = 0.0055f, .mieAnisotropy = 0.82f, .multipleScatteringAmp = 2.4f},
+                .density = {.baseDensity = 0.012f, .heightFalloff = 0.28f, .baseAltitude = -1.5f, .enableSigmoidLayer = true, .layerAltitude = 2.4f, .layerThickness = 3.4f, .layerDensity = 0.006f}
+            }
+        },
+        // 12:00 High Celestial Noon: brilliant white-gold overhead sun, lush sky ambient
+        {
+            .ambientColor = {110, 130, 155, 255},
+            .sunColor = {255, 246, 220, 255},
+            .sunDirection = {0.20f, -0.95f, -0.22f},
+            .shadowColor = {48, 65, 88, 150},
+            .fog = {.enabled = true, .color = {225, 235, 245, 255}, .start = 22.0f, .end = 180.0f, .density = 0.008f},
+            .atmosphere = {
+                .color = {225, 235, 245, 255}, .start = 22.0f, .end = 180.0f, .enabled = true,
+                .optics = {.rayleighLMS = {0.0080f, 0.0140f, 0.0260f}, .mieScattering = 0.0035f, .mieAnisotropy = 0.78f, .multipleScatteringAmp = 2.0f},
+                .density = {.baseDensity = 0.009f, .heightFalloff = 0.24f, .baseAltitude = -1.5f, .enableSigmoidLayer = true, .layerAltitude = 2.4f, .layerThickness = 3.4f, .layerDensity = 0.004f}
+            }
+        },
+        // 16:30 Golden Hour (Primary Artistic Target)
+        {
+            .ambientColor = {90, 118, 148, 255},
+            .sunColor = {255, 206, 146, 255},
+            .sunDirection = {0.46f, -0.47f, -0.75f},
+            .shadowColor = {44, 62, 82, 140},
+            .fog = {.enabled = true, .color = {236, 228, 218, 255}, .start = 18.0f, .end = 165.0f, .density = 0.0112f},
+            .atmosphere = {
+                .color = {236, 228, 218, 255}, .start = 18.0f, .end = 165.0f, .enabled = true,
+                .optics = {.rayleighLMS = {0.0088f, 0.0152f, 0.0285f}, .mieScattering = 0.0042f, .mieAnisotropy = 0.80f, .multipleScatteringAmp = 2.25f},
+                .density = {.baseDensity = 0.0112f, .heightFalloff = 0.26f, .baseAltitude = -1.5f, .enableSigmoidLayer = true, .layerAltitude = 2.4f, .layerThickness = 3.4f, .layerDensity = 0.0052f}
+            }
+        },
+        // 18:30 Crimson Sunset: deep orange-red horizon sun, slate-blue shadows
+        {
+            .ambientColor = {65, 80, 115, 255},
+            .sunColor = {255, 145, 85, 255},
+            .sunDirection = {-0.88f, -0.18f, -0.44f},
+            .shadowColor = {35, 45, 68, 140},
+            .fog = {.enabled = true, .color = {245, 195, 165, 255}, .start = 14.0f, .end = 140.0f, .density = 0.014f},
+            .atmosphere = {
+                .color = {245, 195, 165, 255}, .start = 14.0f, .end = 140.0f, .enabled = true,
+                .optics = {.rayleighLMS = {0.0120f, 0.0185f, 0.0350f}, .mieScattering = 0.0068f, .mieAnisotropy = 0.85f, .multipleScatteringAmp = 2.6f},
+                .density = {.baseDensity = 0.014f, .heightFalloff = 0.30f, .baseAltitude = -1.5f, .enableSigmoidLayer = true, .layerAltitude = 2.4f, .layerThickness = 3.4f, .layerDensity = 0.007f}
+            }
+        }
+    };
+    static const float kSongQuaoTimes[4] = {0.25f, 0.50f, 0.6875f, 0.7708f};
+    Environment_SetTimeOfDayPresets(kSongQuaoToD, kSongQuaoTimes, 4);
+    Environment_SetTimeOfDay(0.6875f); // 16:30 default
     Environment_SetTimeOfDaySpeed(0.0f);
-    // Ghost of Tsushima / Where Winds Meet cinematic 16:30 golden-hour lighting:
-    // Warm amber sun + cool azure sky bounce + golden-pearl atmospheric aerial perspective.
     Environment_SetAmbientColor((Color){90, 118, 148, 255});
     Environment_SetSunColor((Color){255, 206, 146, 255});
     Environment_SetSunIntensity(1.72f);
@@ -464,12 +524,15 @@ void InitSongQuaoMap(void)
 
     PostFXMapProfile postProfile = {
         .enabled = true,
-        .exposure = 1.02f,
-        .contrast = 1.05f,
-        .saturation = 1.04f,
-        .bloomIntensity = 0.38f,
-        .shadowTint = {0.96f, 0.99f, 1.05f},
-        .highlightTint = {1.05f, 1.01f, 0.94f},
+        .exposure = 0.98f,
+        .contrast = 1.06f,
+        .saturation = 1.02f,
+        .bloomIntensity = 0.22f,
+        .shadowTint = {0.92f, 0.96f, 1.05f},    // Cool jade-slate shadows
+        .highlightTint = {1.05f, 1.01f, 0.93f}, // Warm golden amber sun highlights
+        .bloomThreshold = 1.68f,                // Day map gate: prevents white flowers & water foam blowout
+        .bloomKnee = 0.35f,
+        .hueRestore = 0.65f,                    // Filmic hue restore: prevents neon lime skew under ACES
     };
     if (s_skipMask & MAP_SKIP_GRADE)
         PostFX_ClearMapProfile();
@@ -500,12 +563,12 @@ void InitSongQuaoMap(void)
 
     EnvCloudShadowConfig cloudConfig = {
         .enabled = true,
-        .strength = 0.12f,
-        .worldSize = 115.0f,
+        .strength = 0.42f,
+        .worldSize = 135.0f,
         .planeHeight = 80.0f,
-        .coverage = 0.36f,
-        .softness = 0.32f,
-        .windSpeedScale = 0.45f,
+        .coverage = 0.42f,
+        .softness = 0.28f,
+        .windSpeedScale = 0.75f,
     };
     Environment_SetCloudShadowConfig((s_skipMask & MAP_SKIP_CLOUDSHADOW) ? NULL : &cloudConfig);
     if (s_skipMask & MAP_SKIP_FOGVOLUMES)
@@ -663,11 +726,11 @@ void InitSongQuaoMap(void)
         s_reedPlacements, s_reedCount,
         s_flowerPlacements, SONG_QUAO_FLOWER_CLUSTERS, SONG_QUAO_FLOWER_CLUSTER_COUNT,
         (MapFloraStyle){
-            .grassRootColor = {18, 28, 14, 255},  // Sắc rêu mùn trầm ấm ăn khớp nền đất
-            .grassTipColor = {82, 128, 46, 255},  // Sắc ngọc bích cỏ ba lá tự nhiên
+            .grassRootColor = {20, 28, 14, 255},  // Sắc rêu mùn trầm ấm ăn khớp nền đất
+            .grassTipColor = {106, 138, 48, 255}, // Sắc olive-viridian tự nhiên
             .bladesPerClump = 5,
-            .bladeSegments = 3,
-            .bladeWidthScale = 0.095f,
+            .bladeSegments = 4,
+            .bladeWidthScale = 0.062f,
             .lodDistance = 22.0f,
             .midLodDistance = 11.0f,
             .drawDistance = 42.0f,

@@ -85,19 +85,25 @@ void EvaluateObstacleWake(vec4 obs, vec2 worldXZ, vec2 flowDir, float time,
     float normR = d / obs.z;
     if (normR < 0.42) return;
 
-    float collar = (1.0 - smoothstep(0.85, 2.55, normR)) * smoothstep(0.42, 0.78, normR);
-    float downstream = dot(dir, flowDir);
-    float crossStream = abs(dir.x * flowDir.y - dir.y * flowDir.x);
-    float wakeV = sin((normR - 0.72) * 15.0 - time * 4.2 + abs(downstream) * 2.8);
-    float chevron = (downstream > -0.15)
-        ? exp(-abs(crossStream - (normR - 0.65) * 0.38) * 5.5) * (1.0 - smoothstep(0.65, 2.75, normR))
-        : 0.0;
-    float strength = clamp(obs.w, 0.2, 1.5);
+    // Asymmetric downstream hydraulic wake: bow cushion upstream + Kelvin V-chevron downstream
+    float alongFlow = dot(toFrag, flowDir) / obs.z;
+    float acrossFlow = abs(toFrag.x * flowDir.y - toFrag.y * flowDir.x) / obs.z;
 
-    ioSlope += dir * ((wakeV * collar * 0.28 + chevron * 0.22) * strength);
-    float bowBuild = 0.78 + 0.38 * max(-downstream, 0.0);
-    float stoneFoam = collar * (0.62 + 0.38 * max(wakeV, 0.0)) * bowBuild + chevron * 0.52;
-    ioFoam = max(ioFoam, stoneFoam * 0.92 * strength);
+    // 1. Upstream bow cushion (smooth compression mound, no concentric rings)
+    float bowZone = smoothstep(-1.4, -0.65, alongFlow) * (1.0 - smoothstep(-0.65, -0.35, alongFlow));
+    float bowCushion = bowZone * exp(-acrossFlow * acrossFlow * 2.5) * 0.20;
+
+    // 2. Downstream parabolic Kelvin wake
+    float downReach = max(alongFlow - 0.35, 0.0);
+    float vSpread = sqrt(downReach) * 0.62;
+    float wakeDist = abs(acrossFlow - vSpread);
+    float vWave = cos(downReach * 8.0 - time * 4.8) * 0.5 + 0.5;
+    float kelvinWake = exp(-wakeDist * 4.2) * (1.0 - smoothstep(0.5, 3.2, downReach)) * vWave;
+
+    float strength = clamp(obs.w, 0.2, 1.5);
+    ioSlope += (dir * 0.10 + flowDir * 0.16) * (kelvinWake + bowCushion) * strength;
+    float foam = (bowCushion * 0.28 + kelvinWake * 0.38 * smoothstep(0.0, 1.2, downReach)) * strength;
+    ioFoam = max(ioFoam, foam);
 }
 
 void main()

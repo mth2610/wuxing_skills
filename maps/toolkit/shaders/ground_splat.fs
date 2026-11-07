@@ -226,18 +226,22 @@ void main()
                         * max(smoothstep(0.44, 0.60, slope), rimMask * smoothstep(0.22, 0.38, slope));
         wCliff = clamp(max(wSlope, max(rockCliff, outerAbyssMask)), 0.0, 1.0);
 
-        // Tight riparian shingle margin (0.0m -> 0.12m) so lush meadow grass reaches right to the riverbank
-        if (u_ecologyEnabled != 0 && smoothSignedShore >= -0.10) {
-            riparianSandMargin = (1.0 - smoothstep(0.0, 0.12, smoothSignedShore)) * 0.18;
+        // Organic riparian margin modulated by shoreline grain
+        if (u_ecologyEnabled != 0 && smoothSignedShore >= -0.15) {
+            float bankNoise = sin(fragWorldPos.x * 0.32 + fragWorldPos.z * 0.28) * 0.045
+                            + sin(fragWorldPos.z * 0.65 - fragWorldPos.x * 0.42) * 0.025;
+            float variableShore = smoothSignedShore + bankNoise;
+            riparianSandMargin = (1.0 - smoothstep(-0.02, 0.16, variableShore)) * 0.18;
         }
 
         wDrySoil = clamp(max(max(wPathMargin * 0.78, wCliff), riparianSandMargin), 0.0, 1.0)
                        * (1.0 - wWetSoil * 0.75) * (1.0 - wPath * 0.85);
         wGrass = clamp(1.0 - wPath - wWetSoil - wDrySoil, 0.0, 1.0);
 
-        if (u_ecologyEnabled != 0 && smoothSignedShore >= -0.15 && smoothSignedShore < 0.14) {
-            float grassGrain = (dirtDetail.r - 0.5) * 0.05;
-            float grassTaper = smoothstep(-0.02, 0.10, smoothSignedShore + grassGrain);
+        if (u_ecologyEnabled != 0 && smoothSignedShore >= -0.15 && smoothSignedShore < 0.18) {
+            float bankNoise = sin(fragWorldPos.x * 0.32 + fragWorldPos.z * 0.28) * 0.045
+                            + sin(fragWorldPos.z * 0.65 - fragWorldPos.x * 0.42) * 0.025;
+            float grassTaper = smoothstep(-0.03, 0.15, smoothSignedShore + bankNoise);
             wGrass *= grassTaper;
             wDrySoil = clamp(1.0 - wPath - wWetSoil - wGrass, 0.0, 1.0);
         }

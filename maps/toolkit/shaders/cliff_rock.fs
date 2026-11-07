@@ -56,14 +56,14 @@ void main() {
 
     // Dual-scale mineral detail at close proximity (< 22m)
     if (camDistSq < 484.0) {
-        float detailWeight = (1.0 - camDistSq * (1.0 / 484.0)) * 0.38;
+        float detailWeight = (1.0 - camDistSq * (1.0 / 484.0)) * 0.35;
         vec2 detailUV = fragTexCoord * 3.4;
         vec2 detailDx = uvDx * 3.4;
         vec2 detailDy = uvDy * 3.4;
         vec3 detailNorm = textureGrad(texture2, detailUV, detailDx, detailDy).rgb * 2.0 - 1.0;
         normalSample = mix(normalSample, detailNorm, detailWeight);
         vec3 detailAlb = textureGrad(texture0, detailUV, detailDx, detailDy).rgb;
-        albedo.rgb *= mix(vec3(1.0), detailAlb * 1.25, detailWeight * 0.32);
+        albedo.rgb *= mix(vec3(1.0), clamp(detailAlb * 1.1 + 0.12, 0.50, 1.25), detailWeight * 0.22);
     }
 
     mat3 worldRot = mat3(u_cloudWorldFromShader);
@@ -111,15 +111,16 @@ void main() {
     rockBase *= mix(vec3(0.88, 0.90, 0.94), vec3(1.06, 1.03, 0.98), fragColor.a);
     rockBase *= mix(vec3(0.94, 0.94, 0.92), vec3(1.04, 1.02, 0.98), strataBand * 0.20);
 
-    // 1b. Sub-Soil Regolith Band (warm earthy loam transition below the turf lip)
-    float soilBand = smoothstep(-3.8, -1.4, fragLocalY) * (1.0 - smoothstep(-1.5, -1.3, fragLocalY));
-    vec3 subSoilLoam = mix(vec3(0.22, 0.17, 0.11), vec3(0.32, 0.24, 0.15), strataBand);
-    rockBase = mix(rockBase, subSoilLoam, soilBand * 0.40);
+    // 1b. Sub-Soil Regolith Band (warm earthy loam transition directly below the turf lip)
+    float cliffArcDepth = fragTexCoord.y * (1.0 / 0.38);
+    float soilBand = smoothstep(1.8, 0.3, cliffArcDepth) * (1.0 - smoothstep(0.4, 0.0, cliffArcDepth));
+    vec3 subSoilLoam = mix(vec3(0.24, 0.20, 0.15), vec3(0.32, 0.26, 0.19), strataBand);
+    rockBase = mix(rockBase, subSoilLoam, soilBand * 0.30);
 
-    // Turf overhang fringe right at the top rim (-1.8 to -1.35)
-    float turfLip = smoothstep(-1.8, -1.35, fragLocalY);
-    vec3 turfColor = mix(vec3(0.16, 0.30, 0.10), vec3(0.24, 0.38, 0.12), drainStreak);
-    rockBase = mix(rockBase, turfColor, turfLip * 0.70 * clamp(worldNormal.y * 1.6 + 0.4, 0.0, 1.0));
+    // Turf overhang fringe: only the topmost 25cm collar tucked under the plateau meadow
+    float turfLip = smoothstep(0.35, 0.05, cliffArcDepth);
+    vec3 turfColor = mix(vec3(0.14, 0.24, 0.09), vec3(0.22, 0.32, 0.11), drainStreak);
+    rockBase = mix(rockBase, turfColor, turfLip * 0.65 * clamp(worldNormal.y * 1.6 + 0.4, 0.0, 1.0));
 
     // 2. Ledge Moss & Lichen Colonization (enhanced near upper rim via fragLocalY)
     float upperRimBoost = smoothstep(-6.0, -0.5, fragLocalY) * 0.15 + 0.85;

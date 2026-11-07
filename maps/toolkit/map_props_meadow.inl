@@ -427,8 +427,8 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
         float bz = clump->position.z + radZ * collarRadius;
 
         float dirX = flowX, dirZ = flowZ;
-        float splayWeight = (bladeId < 2) ? (0.26f + 0.10f * bHash)
-                                          : (bladeId < 4 ? (0.46f + 0.12f * bHash) : (0.64f + 0.14f * bHash));
+        float splayWeight = (bladeId < 2) ? (0.72f + 0.12f * bHash)
+                                          : (bladeId < 4 ? (0.80f + 0.12f * bHash) : (0.88f + 0.10f * bHash));
         float splayX = radX * splayWeight + flowX * (1.0f - splayWeight);
         float splayZ = radZ * splayWeight + flowZ * (1.0f - splayWeight);
         float splayLenSq = splayX * splayX + splayZ * splayZ;
@@ -492,24 +492,26 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
         float latX = -dirZ;
         float latZ = dirX;
 
+        // Botanical cantilever cubic Bézier: steep upright basal sheath (P1),
+        // high convex arch knee (P2), and graceful gravity-nodding tip (P3)
         pBase = (Vector3){bx, clump->position.y - 0.014f, bz};
         pP1 = (Vector3){
-            bx + dirX * (lean * 0.30f),
-            pBase.y + height * 0.34f,
-            bz + dirZ * (lean * 0.30f)};
+            bx + dirX * (lean * 0.10f),
+            pBase.y + height * 0.42f,
+            bz + dirZ * (lean * 0.10f)};
         pP2 = (Vector3){
-            bx + dirX * (lean * 0.72f) + latX * (lean * 0.08f * curlAmt),
-            pBase.y + height * 0.68f,
-            bz + dirZ * (lean * 0.72f) + latZ * (lean * 0.08f * curlAmt)};
+            bx + dirX * (lean * 0.62f) + latX * (lean * 0.08f * curlAmt),
+            pBase.y + height * 0.86f,
+            bz + dirZ * (lean * 0.62f) + latZ * (lean * 0.08f * curlAmt)};
         pP3 = (Vector3){
-            bx + dirX * (lean * 1.12f) + latX * (lean * 0.14f * curlAmt),
-            pBase.y + fmaxf(height * 0.14f, height * 0.86f - droopY),
-            bz + dirZ * (lean * 1.12f) + latZ * (lean * 0.14f * curlAmt)};
+            bx + dirX * (lean * 1.08f) + latX * (lean * 0.14f * curlAmt),
+            pBase.y + fmaxf(height * 0.12f, height * 0.84f - droopY),
+            bz + dirZ * (lean * 1.08f) + latZ * (lean * 0.14f * curlAmt)};
 
         isSeedhead = false;
         float colorField = sinf(clump->position.x * 0.12f + clump->position.z * 0.08f) * 0.55f +
                            sinf(clump->position.z * 0.14f - clump->position.x * 0.06f + 1.2f) * 0.45f;
-        float tone = 1.0f + colorField * 0.05f + (bHash - 0.5f) * 0.06f;
+        float tone = 1.0f + colorField * 0.08f + (bHash - 0.5f) * 0.10f;
         int rR = (int)(style.rootColor.r * tone * 1.06f + 4.0f);
         int rG = (int)(style.rootColor.g * tone * 1.06f + 6.0f);
         int rB = (int)(style.rootColor.b * tone * 1.04f + 3.0f);
@@ -519,12 +521,22 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
 
         if (bHash2 < 0.12f && bladeId < 2)
         {
-            tR = (int)(tR * 1.04f);
-            tG = (int)(tG * 1.04f);
-            tB = (int)(tB * 0.96f);
+            tR = (int)(tR * 1.06f);
+            tG = (int)(tG * 1.05f);
+            tB = (int)(tB * 0.94f);
         }
 
-        if (bladeId >= 4)
+        // ~14% outer dry sheath / straw blades for natural Xianxia botanical realism
+        if (bHash2 < 0.14f && bladeId >= 3)
+        {
+            rR = (int)(rR * 1.35f + 16.0f);
+            rG = (int)(rG * 1.20f + 12.0f);
+            rB = (int)(rB * 0.85f);
+            tR = (int)(tR * 1.48f + 24.0f);
+            tG = (int)(tG * 1.28f + 18.0f);
+            tB = (int)(tB * 0.78f);
+        }
+        else if (bladeId >= 4)
         {
             rR = (int)(rR * 0.95f);
             rG = (int)(rG * 0.96f);

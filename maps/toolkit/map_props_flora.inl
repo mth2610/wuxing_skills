@@ -420,7 +420,7 @@ int MapFlora_GenerateMeadowPlacements(
         float flowAngle = -16.0f + macroSwirl + wave1 * 22.0f + eddy * 14.0f + patchAngleOffset;
 
         float hash = Nature_Hash01((unsigned int)i * 747796405u ^ (unsigned int)(cellX * 19349663) ^ (unsigned int)(cellZ * 83492791));
-        clump->rotationDeg = flowAngle + (hash - 0.5f) * 36.0f;
+        clump->rotationDeg = flowAngle + (hash - 0.5f) * 72.0f;
 
         float localHeight = clump->height;
         float localRadius = clump->radius;
@@ -444,13 +444,16 @@ int MapFlora_GenerateMeadowPlacements(
                               cosf(cz * 0.060f - cx * 0.035f + 1.2f) * 0.30f +
                               sinf(cx * 0.11f + cz * 0.08f) * 0.15f;
         float tierFactor = 0.5f + 0.5f * macroTierWave;
-        float tieredBase = 0.22f + 0.12f * (tierFactor * tierFactor * (3.0f - 2.0f * tierFactor));
-        float highTypePatch = (patchHash2 > 0.58f) ? (0.06f * clumpCore) : (-0.03f * clumpCore);
+        float tieredBase = 0.22f + 0.14f * (tierFactor * tierFactor * (3.0f - 2.0f * tierFactor));
+        float highTypePatch = (patchHash2 > 0.58f) ? (0.08f * clumpCore) : (-0.04f * clumpCore);
         float heightNorm = (localHeight - 0.35f) * (1.0f / 0.21f);
-        float effGrowth = fmaxf(growth, 0.76f);
-        float effCoverage = fmaxf(coverage, 0.84f);
-        clump->height = (tieredBase + heightNorm * 0.08f + highTypePatch) * (0.88f + 0.20f * effGrowth);
-        clump->height *= 0.85f + 0.15f * effCoverage;
+
+        // 3-stratum height hierarchy (0.14m lawn/grazing turf -> 0.45m mid meadow -> 0.85m tall plumes)
+        float effGrowth = fmaxf(growth, 0.22f);
+        float effCoverage = fmaxf(coverage, 0.25f);
+        float stratum = 0.50f * effGrowth + 0.50f * effCoverage;
+        clump->height = (tieredBase * 0.82f + heightNorm * 0.12f + highTypePatch) * (0.55f + 0.95f * stratum);
+        clump->height = fmaxf(0.14f, fminf(clump->height, 0.95f));
 
         if (config.flowerClusters && config.flowerClusterCount > 0)
         {

@@ -192,8 +192,9 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
             vec3 naturalNormal = cross(side, tangent);
             vec3 viewDir = toCamVec * invDistToCam;
             float edgeOn = 1.0 - abs(dot(naturalNormal, viewDir));
-            float viewAssist = mix(0.44, 0.58, clamp(distToCam * 0.04, 0.0, 1.0));
-            viewAssist = mix(viewAssist, 0.86, edgeOn * edgeOn);
+            float distScale = clamp((distToCam - 4.0) * 0.05, 0.0, 1.0);
+            float viewAssist = mix(0.12, 0.55, distScale);
+            viewAssist = mix(viewAssist, mix(0.32, 0.82, distScale), edgeOn * edgeOn);
             vec3 mixedSide = mix(side, viewSide3D, viewAssist);
             side = mixedSide * inversesqrt(max(dot(mixedSide, mixedSide), 1e-8));
         } else {

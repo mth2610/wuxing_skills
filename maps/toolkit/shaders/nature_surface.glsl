@@ -81,9 +81,8 @@ float FoliageShadowVisibility(vec4 lightSpace, vec4 staticLightSpace,
         }
     }
 
-    // Soft, luminous botanical shadow floor: in shadow, foliage maintains translucent emerald green (0.70)
-    // instead of harsh black dirt, eliminating self-shadow acne and dark boundaries on screen.
-    float translucentVis = mix(0.70, 1.0, rawCombined);
+    // Physical botanical shadow floor: direct sun cuts cleanly in shadow while ambient sky illuminates foliage
+    float translucentVis = mix(0.08, 1.0, rawCombined);
     return mix(1.0, translucentVis, shadowFade);
 }
 
@@ -178,8 +177,8 @@ vec3 NatureShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     float transmission = (backfaceSun * 0.82 + forwardMie * (0.35 + 0.65 * backfaceSun)) *
                          membraneThinness * sssStrength;
 
-    vec3 foliageSSS = baseColor * vec3(1.48, 1.75, 0.52) + vec3(0.03, 0.06, 0.01) * membraneThinness;
-    vec3 petalSSS   = baseColor * vec3(1.68, 1.42, 1.08) + vec3(0.11, 0.06, 0.03) * membraneThinness;
+    vec3 foliageSSS = baseColor * vec3(1.15, 1.35, 0.45) + vec3(0.02, 0.04, 0.01) * membraneThinness;
+    vec3 petalSSS   = baseColor * vec3(1.18, 1.10, 0.95) + vec3(0.04, 0.03, 0.02) * membraneThinness;
     vec3 subsurfaceColor = mix(foliageSSS, petalSSS, bloomMask);
 
     // [ĐỔ BÓNG THỜI GIAN THỰC (SHADOW MAP + CLOUD SHADOW)]:
@@ -219,10 +218,13 @@ vec3 NatureShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
         // Viền kim quang ngược nắng (Fresnel Backlit Rim Scattering)
         float oneMinusNV = clamp(1.0 - max(dot(faceNormal, viewDir), 0.0), 0.0, 1.0);
         float rimAlign = 0.30 + 0.70 * viewSunAlign;
-        float rim = (oneMinusNV * oneMinusNV * sqrt(oneMinusNV)) * mix(0.24, 0.56, bloomMask) * rimAlign * rimScale;
+        float rim = (oneMinusNV * oneMinusNV * sqrt(oneMinusNV)) * mix(0.24, 0.40, bloomMask) * rimAlign * rimScale;
 
-        vec3 directSunTerms = baseColor * (directDiffuse * 1.12)
-                            + subsurfaceColor * (transmission * mix(0.92, 1.52, bloomMask) + rim)
+        // Energy conservation for translucent petals (Filament PBR model)
+        float directWeight = mix(1.12, 0.68, bloomMask);
+        float sssWeight = mix(0.92, 0.48, bloomMask);
+        vec3 directSunTerms = baseColor * (directDiffuse * directWeight)
+                            + subsurfaceColor * (transmission * sssWeight + rim * 0.42)
                             + vec3(spec, spec, spec * 0.94);
         lit += directSunTerms * (effectiveLightColor * sunFactor);
     }
@@ -358,13 +360,13 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
         }
     }
 
-    // Lift root darkness smoothly starting at 6.5m so mid-distance blades (8m..22m)
-    // merge into a velvety continuous meadow instead of "short dark dashes"
-    float distRootLift = FastRamp(6.5, 21.0, distToCam);
-    float rootBlend = (1.0 - FastRamp(0.0, 0.24, h)) * mix(0.16, 0.02, distRootLift);
+    // Lift root darkness smoothly starting at 18.0m so mid-distance blades (20m..40m)
+    // merge into a velvety continuous meadow while near tufts maintain full depth
+    float distRootLift = FastRamp(18.0, 40.0, distToCam);
+    float rootBlend = (1.0 - FastRamp(0.0, 0.24, h)) * mix(0.18, 0.02, distRootLift);
     baseColor = mix(baseColor, rootSubstrateTone, rootBlend);
-    vec3 distantCanopyTone = mix(vec3(0.24, 0.42, 0.15), vec3(0.36, 0.53, 0.19), warmShift * 0.70);
-    baseColor = mix(baseColor, distantCanopyTone, distRootLift * (1.0 - h) * 0.42);
+    vec3 distantCanopyTone = mix(vec3(0.20, 0.36, 0.12), vec3(0.34, 0.44, 0.16), warmShift * 0.70);
+    baseColor = mix(baseColor, distantCanopyTone, distRootLift * (1.0 - h) * 0.40);
 
     vec3 skyAmbient = clamp(u_ambientColor * vec3(1.25, 1.25, 1.35), 0.0, 1.0);
     vec3 groundBounce = clamp(u_ambientColor * vec3(0.55, 0.45, 0.40), 0.0, 1.0);
@@ -373,7 +375,7 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     vec3 ambient = mix(ambientGround, skyAmbient, n.y * 0.5 + 0.5);
 
     // Botanical root self-shadowing anchors close grass tufts without darkening mid-distance meadow
-    float rootAO = mix(mix(0.42, 0.86, distRootLift), 1.0, smoothstep(0.0, 0.42, h));
+    float rootAO = mix(mix(0.32, 0.82, distRootLift), 1.0, smoothstep(0.0, 0.46, h));
     vec3 lit = baseColor * ambient * rootAO;
 
     float nv = max(dot(faceNormal, viewDir), 0.0);
@@ -382,7 +384,6 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     lit += waxSheen * rootAO;
 
     float shadow = FoliageShadowVisibility(lightSpace, staticLightSpace, n, lightDir, worldPosition, distToCam);
-    lit *= mix(0.88, 1.0, shadow);
     if (shadow > 0.001) {
         float cloudVis = 0.92;
         if (distSq < 900.0) {

@@ -633,6 +633,8 @@ void PostFX_Draw(const PostFXConfig *config)
       local.bloomIntensity = s_mapProfile.bloomIntensity;
     if (s_mapProfile.exposure > 0.0f)
       local.exposure = s_mapProfile.exposure;
+    if (s_mapProfile.bloomThreshold > 0.0f)
+      local.bloomThreshold = s_mapProfile.bloomThreshold;
   }
   if (PostFX_HasTransient())
     PostFX_ApplyTransient(&local);
@@ -681,15 +683,16 @@ void PostFX_Draw(const PostFXConfig *config)
     PostFX_BeginOrSwitchTarget(bloomTex, &inTextureMode);
     BeginShaderMode(brightShader);
     float threshold = (s_bloomThresholdOverride > 0.0f) ? s_bloomThresholdOverride
-                                                        : config->bloomThreshold;
-    float exposureVal = (config->exposure > 0.0f) ? config->exposure : 1.0f;
+                                                        : local.bloomThreshold;
+    float exposureVal = (local.exposure > 0.0f) ? local.exposure : 1.0f;
     SetShaderValue(brightShader, brightThresholdLoc, &threshold,
                    SHADER_UNIFORM_FLOAT);
     SetShaderValue(brightShader, brightExposureLoc, &exposureVal,
                    SHADER_UNIFORM_FLOAT);
     SetShaderValue(brightShader, brightMaxEnergyLoc, &s_bloomMaxEnergy,
                    SHADER_UNIFORM_FLOAT);
-    SetShaderValue(brightShader, brightKneeLoc, &s_bloomKnee,
+    float kneeVal = (s_bloomKnee > 0.0f) ? s_bloomKnee : (s_mapProfile.bloomKnee > 0.0f ? s_mapProfile.bloomKnee : 0.0f);
+    SetShaderValue(brightShader, brightKneeLoc, &kneeVal,
                    SHADER_UNIFORM_FLOAT);
 
     Vector2 sourceTexelSize = {1.0f / (float)width, 1.0f / (float)height};
@@ -844,7 +847,8 @@ void PostFX_Draw(const PostFXConfig *config)
       SetShaderValueTexture(compositeShader, exposureTexLoc, et);
   }
 
-  SetShaderValue(compositeShader, hueRestoreLoc, &s_hueRestore, SHADER_UNIFORM_FLOAT);
+  float effectiveHueRestore = (s_hueRestore > 0.0f) ? s_hueRestore : (s_mapProfile.hueRestore > 0.0f ? s_mapProfile.hueRestore : 0.0f);
+  SetShaderValue(compositeShader, hueRestoreLoc, &effectiveHueRestore, SHADER_UNIFORM_FLOAT);
   SetShaderValue(compositeShader, shoulderViewLoc, &s_shoulderView, SHADER_UNIFORM_FLOAT);
 
   // G5 — LUT

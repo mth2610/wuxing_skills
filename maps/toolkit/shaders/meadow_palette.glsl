@@ -13,10 +13,10 @@
 //
 // Colour-space note: values are returned unchanged. Whether the caller treats them as linear
 // or display-referred is decided by the consuming shader, not here.
-const vec3  MEADOW_PALETTE_DEEP_MOSS    = vec3(0.11, 0.23, 0.08);
-const vec3  MEADOW_PALETTE_LUSH_CLOVER  = vec3(0.18, 0.34, 0.11);
-const vec3  MEADOW_PALETTE_SUNLIT_GOLD  = vec3(0.24, 0.37, 0.12);
-const vec3  MEADOW_PALETTE_DRY_CREST    = vec3(0.31, 0.41, 0.14);
+const vec3  MEADOW_PALETTE_DEEP_MOSS    = vec3(0.09, 0.19, 0.09);
+const vec3  MEADOW_PALETTE_LUSH_CLOVER  = vec3(0.17, 0.29, 0.10);
+const vec3  MEADOW_PALETTE_SUNLIT_GOLD  = vec3(0.30, 0.35, 0.12);
+const vec3  MEADOW_PALETTE_DRY_CREST    = vec3(0.42, 0.36, 0.16);
 
 const float MEADOW_PALETTE_CLOVER_EDGE0 = 0.14;
 const float MEADOW_PALETTE_CLOVER_EDGE1 = 0.42;
