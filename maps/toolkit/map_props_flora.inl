@@ -135,11 +135,14 @@ void MapFlora_GenerateFlowerPlacements(
                 float sinA, cosA;
                 Nature_FastSinCos(angle, &sinA, &cosA);
 
-                if (isColony && attempt < 16)
+                if (isColony && attempt < 18)
                 {
                     int tryColony = (colony + (attempt >> 2)) % 3;
-                    float along = cosA * rVal * 0.36f;
-                    float across = sinA * rVal * 0.19f;
+                    // Organic sub-clump nuclei break up uniform Poisson/grid look
+                    float subNucleus = ((i * 7 + c * 13) & 3) * 0.25f;
+                    float clumpTightness = (Nature_Random01(&rng) < 0.62f) ? (rVal * rVal * 0.65f) : (rVal * 1.08f);
+                    float along = cosA * clumpTightness * 0.38f + (subNucleus - 0.375f) * 0.14f;
+                    float across = sinA * clumpTightness * 0.20f + sinf(subNucleus * 6.283f) * 0.08f;
                     float dxNorm = epicenters[tryColony].x + (cosFlow * along - sinFlow * across);
                     float dzNorm = epicenters[tryColony].y + (sinFlow * along + cosFlow * across);
                     x = cl->center.x + dxNorm * rx;
@@ -147,7 +150,7 @@ void MapFlora_GenerateFlowerPlacements(
                 }
                 else
                 {
-                    float fallbackScale = (attempt < 24) ? (0.18f + 0.42f * rVal) : (0.05f + 0.16f * rVal);
+                    float fallbackScale = (attempt < 24) ? (0.16f + 0.46f * rVal * rVal) : (0.04f + 0.18f * rVal);
                     x = cl->center.x + cosA * rx * fallbackScale;
                     z = cl->center.z + sinA * rz * fallbackScale;
                 }
@@ -157,18 +160,21 @@ void MapFlora_GenerateFlowerPlacements(
 
                 foundValid = true;
                 bool tooClose = false;
+                // Variable neighbor distance (3.8cm in dense tuft cores .. 9.2cm in outer drifts)
+                float minSep = (radialNorm < 0.38f) ? 0.038f : (0.056f + radialNorm * 0.036f);
+                float minSepSq = minSep * minSep;
                 int searchStart = (placementCursor - clusterStartIndex > 512)
                                       ? (placementCursor - 512)
                                       : clusterStartIndex;
                 for (int prev = placementCursor - 1; prev >= searchStart; prev--)
                 {
                     float pdx = x - outPlacements[prev].position.x;
-                    if (pdx >= 0.068f || pdx <= -0.068f)
+                    if (pdx >= minSep || pdx <= -minSep)
                         continue;
                     float pdz = z - outPlacements[prev].position.z;
-                    if (pdz >= 0.068f || pdz <= -0.068f)
+                    if (pdz >= minSep || pdz <= -minSep)
                         continue;
-                    if (pdx * pdx + pdz * pdz < 0.068f * 0.068f)
+                    if (pdx * pdx + pdz * pdz < minSepSq)
                     {
                         tooClose = true;
                         break;
@@ -208,13 +214,13 @@ void MapFlora_GenerateFlowerPlacements(
                 variant = speciesOverride & 7;
 
             bool tallAccent = (variant == 2 || variant == 4 || variant == 6);
-            float coreLift = isColony ? (1.0f - 0.10f * radialNorm) : 0.90f;
-            // Nâng nhẹ chiều cao cuống và mở rộng bán kính đài hoa (+25%) để bông hoa vươn lên rõ nét trên thảm cỏ
+            float coreLift = isColony ? (1.0f - 0.14f * radialNorm) : 0.86f;
+            // Wider botanical height & bloom scale variation (0.82x..1.26x) for organic wildflower drifts
             float driftHeightBase = tallAccent ? 0.56f : 0.48f;
-            outPlacements[outIdx].height = (driftHeightBase + (Nature_Random01(&rng) * 0.09f - 0.03f)) * coreLift;
+            outPlacements[outIdx].height = (driftHeightBase + (Nature_Random01(&rng) * 0.14f - 0.06f)) * coreLift;
 
             float baseBloomRadius = tallAccent ? 0.122f : 0.108f;
-            outPlacements[outIdx].bloomRadius = baseBloomRadius * (0.94f + Nature_Random01(&rng) * 0.20f) * (0.92f + 0.10f * coreLift);
+            outPlacements[outIdx].bloomRadius = baseBloomRadius * (0.82f + Nature_Random01(&rng) * 0.42f) * (0.90f + 0.12f * coreLift);
             outPlacements[outIdx].petalColor = MapProp_GetFlowerSpeciesColor(variant, Nature_Random01(&rng) > 0.74f);
             outPlacements[outIdx].petalCount = (unsigned char)(5 + (variant % 3));
             outPlacements[outIdx].bloomVariant = (unsigned char)variant;
@@ -441,8 +447,10 @@ int MapFlora_GenerateMeadowPlacements(
         float tieredBase = 0.22f + 0.12f * (tierFactor * tierFactor * (3.0f - 2.0f * tierFactor));
         float highTypePatch = (patchHash2 > 0.58f) ? (0.06f * clumpCore) : (-0.03f * clumpCore);
         float heightNorm = (localHeight - 0.35f) * (1.0f / 0.21f);
-        clump->height = (tieredBase + heightNorm * 0.08f + highTypePatch) * (0.88f + 0.20f * growth);
-        clump->height *= 0.85f + 0.15f * coverage;
+        float effGrowth = fmaxf(growth, 0.76f);
+        float effCoverage = fmaxf(coverage, 0.84f);
+        clump->height = (tieredBase + heightNorm * 0.08f + highTypePatch) * (0.88f + 0.20f * effGrowth);
+        clump->height *= 0.85f + 0.15f * effCoverage;
 
         if (config.flowerClusters && config.flowerClusterCount > 0)
         {

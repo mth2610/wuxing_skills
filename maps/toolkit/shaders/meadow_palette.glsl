@@ -13,17 +13,17 @@
 //
 // Colour-space note: values are returned unchanged. Whether the caller treats them as linear
 // or display-referred is decided by the consuming shader, not here.
-const vec3  MEADOW_PALETTE_DEEP_MOSS    = vec3(0.12, 0.24, 0.08);
+const vec3  MEADOW_PALETTE_DEEP_MOSS    = vec3(0.11, 0.23, 0.08);
 const vec3  MEADOW_PALETTE_LUSH_CLOVER  = vec3(0.18, 0.34, 0.11);
-const vec3  MEADOW_PALETTE_SUNLIT_GOLD  = vec3(0.30, 0.40, 0.14);
-const vec3  MEADOW_PALETTE_DRY_CREST    = vec3(0.44, 0.42, 0.18);
+const vec3  MEADOW_PALETTE_SUNLIT_GOLD  = vec3(0.24, 0.37, 0.12);
+const vec3  MEADOW_PALETTE_DRY_CREST    = vec3(0.31, 0.41, 0.14);
 
-const float MEADOW_PALETTE_CLOVER_EDGE0 = 0.15;
+const float MEADOW_PALETTE_CLOVER_EDGE0 = 0.14;
 const float MEADOW_PALETTE_CLOVER_EDGE1 = 0.42;
-const float MEADOW_PALETTE_GOLD_EDGE0   = 0.38;
-const float MEADOW_PALETTE_GOLD_EDGE1   = 0.72;
-const float MEADOW_PALETTE_CREST_EDGE0  = 0.68;
-const float MEADOW_PALETTE_CREST_EDGE1  = 0.92;
+const float MEADOW_PALETTE_GOLD_EDGE0   = 0.36;
+const float MEADOW_PALETTE_GOLD_EDGE1   = 0.70;
+const float MEADOW_PALETTE_CREST_EDGE0  = 0.64;
+const float MEADOW_PALETTE_CREST_EDGE1  = 0.90;
 
 vec3 MeadowCanopyColor(float habitat)
 {

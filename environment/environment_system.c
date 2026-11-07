@@ -391,12 +391,12 @@ void Environment_Update(float dt)
                     anyExpired = true;
                     continue;
                 }
-            }
-            if (fv->driftVelocity.x != 0.0f || fv->driftVelocity.y != 0.0f || fv->driftVelocity.z != 0.0f)
-            {
-                fv->position.x += fv->driftVelocity.x * dt;
-                fv->position.y += fv->driftVelocity.y * dt;
-                fv->position.z += fv->driftVelocity.z * dt;
+                if (fv->driftVelocity.x != 0.0f || fv->driftVelocity.y != 0.0f || fv->driftVelocity.z != 0.0f)
+                {
+                    fv->position.x += fv->driftVelocity.x * dt;
+                    fv->position.y += fv->driftVelocity.y * dt;
+                    fv->position.z += fv->driftVelocity.z * dt;
+                }
             }
         }
         if (anyExpired)

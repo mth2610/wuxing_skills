@@ -770,7 +770,7 @@ typedef struct
 } MapWaterConfig;
 
 #define MAX_WATER_RIPPLES 4
-#define MAX_WATER_OBSTACLES 4
+#define MAX_WATER_OBSTACLES 12
 #define WATER_FIELD_SIZE 128
 
 typedef struct

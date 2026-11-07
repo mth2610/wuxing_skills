@@ -270,7 +270,7 @@ void VolumetricFog_PreFrame(void) {
     if (s_fogRenderMode == FOG_MODE_OFF) return;
     AtmosphereProfile atmos = Environment_GetAtmosphereProfile();
     if (!atmos.enabled) return;
-    SceneTargets_RequestSoftDepthRegion((Rectangle){ 0, 0, (float)s_fullWidth, (float)s_fullHeight });
+    SceneTargets_RequestSoftDepthRegion((Rectangle){ 0, 0, (float)SceneTargets_GetWidth(), (float)SceneTargets_GetHeight() });
 }
 
 void VolumetricFog_Render(Camera3D camera) {
@@ -333,16 +333,16 @@ void VolumetricFog_Render(Camera3D camera) {
     float mieAniso       = atmos.optics.mieAnisotropy;
     float density        = atmos.density.baseDensity;
 
-    // Truy xuất tối đa 4 khối sương mù cục bộ (hồ nước, hoa, rừng, skill VFX)
+    // Truy xuất tối đa 8 khối sương mù cục bộ (hồ nước, hoa, rừng, skill VFX)
     // Ưu tiên các khối sương mù nhất thời (transient VFX) để chiêu thức luôn hiển thị
-    Vector4 volPosShape[4] = {0};
-    Vector4 volExtentsDense[4] = {0};
-    Vector4 volColorSoft[4] = {0};
+    Vector4 volPosShape[8] = {0};
+    Vector4 volExtentsDense[8] = {0};
+    Vector4 volColorSoft[8] = {0};
     int volCount = 0;
     int totalActive = FogVolume_GetActiveCount();
 
     // 1. Nhặt các khối sương nhất thời (transient / skill VFX) với fade-in/fade-out mượt mà
-    for (int i = 0; i < totalActive && volCount < 4; i++) {
+    for (int i = 0; i < totalActive && volCount < 8; i++) {
         const LocalFogVolume *v = FogVolume_GetByIndex(i);
         if (v && v->maxLifetime > 0.0f) {
             float effDensity = v->density;
@@ -358,8 +358,8 @@ void VolumetricFog_Render(Camera3D camera) {
         }
     }
 
-    // 2. Nhặt tiếp các khối sương cố định (hồ nước, hoa, rừng) cho đến khi đủ 4
-    for (int i = 0; i < totalActive && volCount < 4; i++) {
+    // 2. Nhặt tiếp các khối sương cố định (hồ nước, hoa, rừng) cho đến khi đủ 8
+    for (int i = 0; i < totalActive && volCount < 8; i++) {
         const LocalFogVolume *v = FogVolume_GetByIndex(i);
         if (v && v->maxLifetime <= 0.0f) {
             volPosShape[volCount] = VolumetricFog_PackPositionShape(v);
@@ -371,6 +371,17 @@ void VolumetricFog_Render(Camera3D camera) {
 
     if (renderMode == FOG_MODE_HEIGHT) {
         SceneTargets_BeginVFXBody();
+
+        rlDrawRenderBatchActive();
+        rlViewport(0, 0, SceneTargets_GetWidth(), SceneTargets_GetHeight());
+        rlMatrixMode(RL_PROJECTION);
+        rlPushMatrix();
+        rlLoadIdentity();
+        rlOrtho(0, SceneTargets_GetWidth(), SceneTargets_GetHeight(), 0, 0.0f, 1.0f);
+        rlMatrixMode(RL_MODELVIEW);
+        rlPushMatrix();
+        rlLoadIdentity();
+
         BeginBlendMode(BLEND_ALPHA_PREMULTIPLY);
         BeginShaderMode(s_heightFogShader);
 
@@ -395,9 +406,9 @@ void VolumetricFog_Render(Camera3D camera) {
         SetShaderValue(s_heightFogShader, s_locHfGodRayIntensity, &godRay, SHADER_UNIFORM_FLOAT);
 
         if (s_locHfVolumeCount >= 0) SetShaderValue(s_heightFogShader, s_locHfVolumeCount, &volCount, SHADER_UNIFORM_INT);
-        if (s_locHfVolPosShape >= 0) SetShaderValueV(s_heightFogShader, s_locHfVolPosShape, volPosShape, SHADER_UNIFORM_VEC4, 4);
-        if (s_locHfVolExtentsDense >= 0) SetShaderValueV(s_heightFogShader, s_locHfVolExtentsDense, volExtentsDense, SHADER_UNIFORM_VEC4, 4);
-        if (s_locHfVolColorSoft >= 0) SetShaderValueV(s_heightFogShader, s_locHfVolColorSoft, volColorSoft, SHADER_UNIFORM_VEC4, 4);
+        if (s_locHfVolPosShape >= 0) SetShaderValueV(s_heightFogShader, s_locHfVolPosShape, volPosShape, SHADER_UNIFORM_VEC4, 8);
+        if (s_locHfVolExtentsDense >= 0) SetShaderValueV(s_heightFogShader, s_locHfVolExtentsDense, volExtentsDense, SHADER_UNIFORM_VEC4, 8);
+        if (s_locHfVolColorSoft >= 0) SetShaderValueV(s_heightFogShader, s_locHfVolColorSoft, volColorSoft, SHADER_UNIFORM_VEC4, 8);
 
         Rectangle srcRect = { 0.0f, 0.0f, (float)sceneDepth.width, -(float)sceneDepth.height };
         Rectangle dstRect = { 0.0f, 0.0f, (float)SceneTargets_GetWidth(), (float)SceneTargets_GetHeight() };
@@ -405,6 +416,14 @@ void VolumetricFog_Render(Camera3D camera) {
 
         EndShaderMode();
         EndBlendMode();
+
+        rlDrawRenderBatchActive();
+        rlMatrixMode(RL_PROJECTION);
+        rlPopMatrix();
+        rlMatrixMode(RL_MODELVIEW);
+        rlPopMatrix();
+        rlViewport(0, 0, GetRenderWidth(), GetRenderHeight());
+
         SceneTargets_EndVFXLayer();
         PASS_MARK("fog_height");
         return;
@@ -449,9 +468,9 @@ void VolumetricFog_Render(Camera3D camera) {
     SetShaderValue(s_raymarchShader, s_locStepCount, &stepCount, SHADER_UNIFORM_INT);
     SetShaderValue(s_raymarchShader, s_locScreenRes, &screenRes, SHADER_UNIFORM_VEC2);
     if (s_locVolumeCount >= 0) SetShaderValue(s_raymarchShader, s_locVolumeCount, &volCount, SHADER_UNIFORM_INT);
-    if (s_locVolPosShape >= 0) SetShaderValueV(s_raymarchShader, s_locVolPosShape, volPosShape, SHADER_UNIFORM_VEC4, 4);
-    if (s_locVolExtentsDense >= 0) SetShaderValueV(s_raymarchShader, s_locVolExtentsDense, volExtentsDense, SHADER_UNIFORM_VEC4, 4);
-    if (s_locVolColorSoft >= 0) SetShaderValueV(s_raymarchShader, s_locVolColorSoft, volColorSoft, SHADER_UNIFORM_VEC4, 4);
+    if (s_locVolPosShape >= 0) SetShaderValueV(s_raymarchShader, s_locVolPosShape, volPosShape, SHADER_UNIFORM_VEC4, 8);
+    if (s_locVolExtentsDense >= 0) SetShaderValueV(s_raymarchShader, s_locVolExtentsDense, volExtentsDense, SHADER_UNIFORM_VEC4, 8);
+    if (s_locVolColorSoft >= 0) SetShaderValueV(s_raymarchShader, s_locVolColorSoft, volColorSoft, SHADER_UNIFORM_VEC4, 8);
 
     SetShaderValueTexture(s_raymarchShader, s_locDepthTex, sceneDepth);
     if (shadowEnabled > 0.5f)

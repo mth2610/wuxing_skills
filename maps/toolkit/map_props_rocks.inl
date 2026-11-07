@@ -281,19 +281,37 @@ static Mesh Nature_BuildProceduralRockMesh(int rockType)
         }
         else if (rockType == MAP_ROCK_RIVER_STONE)
         {
-            // Authentic water-tumbled river cobble / boulder
+            // Water-worn stratified river boulder with bevelled geological facets (not a smooth egg)
             float c1 = cosf(2.0f * angle + 0.35f);
             float c2 = sinf(3.0f * angle - 0.45f);
-            float pebble = 1.0f + 0.14f * c1 + 0.08f * c2;
+            float c3 = cosf(5.0f * angle + 1.15f);
+            float pebble = 1.0f + 0.16f * c1 + 0.10f * c2 + 0.05f * c3;
 
-            vx = cosA * horizR * pebble * 1.12f;
-            vz = sinA * horizR * pebble * 0.88f;
+            vx = cosA * horizR * pebble * 1.14f;
+            vz = sinA * horizR * pebble * 0.86f;
 
-            float topArch = 0.85f + 0.15f * (1.0f - fminf(1.0f, horizR * horizR));
-            vy = y * 0.62f * topArch;
+            float topArch = 0.82f + 0.18f * (1.0f - fminf(1.0f, horizR * horizR));
+            float rawY = y * 0.64f * topArch;
+            // Subtle sedimentary bedding ledges worn smooth by river current
+            float strataTerrace = sinf(rawY * 14.0f + vx * 2.2f) * 0.024f;
+            vy = rawY + strataTerrace;
+
+            // Bevelled fracture planes give river boulders authentic chiseled character
+            for (int p = 0; p < 5; p++)
+            {
+                float dist = vx * kBoulderPlanes[p][0] + vy * kBoulderPlanes[p][1] + vz * kBoulderPlanes[p][2] - kBoulderPlanes[p][3] * 0.82f;
+                if (dist > 0.0f)
+                {
+                    float bevel = Rock_Smoothstep(0.0f, 0.24f, dist) * dist * 0.56f;
+                    vx -= kBoulderPlanes[p][0] * bevel;
+                    vy -= kBoulderPlanes[p][1] * bevel;
+                    vz -= kBoulderPlanes[p][2] * bevel;
+                }
+            }
+
             if (vy < -0.10f)
             {
-                vy = -0.10f + (vy + 0.10f) * 0.60f;
+                vy = -0.10f + (vy + 0.10f) * 0.55f;
             }
         }
         else if (rockType == MAP_ROCK_SCREE)

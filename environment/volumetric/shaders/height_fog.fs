@@ -24,11 +24,11 @@ uniform vec3      u_sigmoidParams;// x: layerAlt, y: layerThickness, z: layerDen
 uniform float     u_mieAnisotropy;// Henyey-Greenstein g
 uniform float     u_godRayIntensity;
 
-// Local Fog Volumes (up to 4 active volumes)
+// Local Fog Volumes (up to 8 active volumes)
 uniform int       u_volumeCount;
-uniform vec4      u_volPosShape[4];     // xyz = position, w = shape
-uniform vec4      u_volExtentsDense[4]; // xyz = extents, w = density
-uniform vec4      u_volColorSoft[4];    // rgb = color, a = edgeSoftness
+uniform vec4      u_volPosShape[8];     // xyz = position, w = shape
+uniform vec4      u_volExtentsDense[8]; // xyz = extents, w = density
+uniform vec4      u_volColorSoft[8];    // rgb = color, a = edgeSoftness
 
 vec3 ReconstructRayDir(vec2 uv) {
     vec4 clip = vec4(uv * 2.0 - 1.0, 1.0, 1.0);
@@ -89,25 +89,27 @@ void main() {
     // 3. Local fog volumes
     vec3 localFogAccum = vec3(0.0);
     float localDensitySum = 0.0;
-    for (int i = 0; i < u_volumeCount; i++) {
-        vec3 center = u_volPosShape[i].xyz;
-        vec3 extents = u_volExtentsDense[i].xyz;
-        float baseDen = u_volExtentsDense[i].w;
-        vec3 col = u_volColorSoft[i].rgb;
-        float softness = clamp(u_volColorSoft[i].a, 0.1, 0.99);
+    if (u_volumeCount > 0 && min(startPos.y, endPos.y) < 8.5) {
+        for (int i = 0; i < u_volumeCount; i++) {
+            vec3 center = u_volPosShape[i].xyz;
+            vec3 extents = u_volExtentsDense[i].xyz;
+            float baseDen = u_volExtentsDense[i].w;
+            vec3 col = u_volColorSoft[i].rgb;
+            float softness = clamp(u_volColorSoft[i].a, 0.1, 0.99);
 
-        // Ray to sphere/box centroid distance
-        vec3 toCenter = center - startPos;
-        float tClosest = clamp(dot(toCenter, rayDir), 0.0, L);
-        vec3 pClosest = startPos + rayDir * tClosest;
-        vec3 delta = abs(pClosest - center);
-        float maxR = max(extents.x, extents.z);
-        if (delta.y < extents.y && delta.x < maxR && delta.z < maxR) {
-            float dist = length((pClosest - center) / max(extents, vec3(0.001)));
-            if (dist < 1.0) {
-                float fade = (1.0 - dist) * baseDen * (1.0 / softness);
-                localDensitySum += fade;
-                localFogAccum += col * fade;
+            // Ray to sphere/box centroid distance
+            vec3 toCenter = center - startPos;
+            float tClosest = clamp(dot(toCenter, rayDir), 0.0, L);
+            vec3 pClosest = startPos + rayDir * tClosest;
+            vec3 delta = abs(pClosest - center);
+            float maxR = max(extents.x, extents.z);
+            if (delta.y < extents.y && delta.x < maxR && delta.z < maxR) {
+                float dist = length((pClosest - center) / max(extents, vec3(0.001)));
+                if (dist < 1.0) {
+                    float fade = (1.0 - dist) * baseDen * (1.0 / softness);
+                    localDensitySum += fade;
+                    localFogAccum += col * fade;
+                }
             }
         }
     }

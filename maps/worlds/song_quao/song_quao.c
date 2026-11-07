@@ -7,6 +7,7 @@
 #include "maps/toolkit/prop_lit.h"
 #include "post_process/camera_context.h"
 #include "post_process/color_grade_lut.h"
+#include "post_process/post_fx.h"
 #include "maps/map_manager.h"
 #include "core/resource_manager.h"
 #include "environment/volumetric/volumetric_fog.h"
@@ -25,7 +26,8 @@
 #define CLOUD_SEA_Y -5.20f
 
 // Broad valley meadow coverage across the celestial island plateau and rolling hills
-#define GRASS_TUFT_CAPACITY 98000
+// Sized above total accepted plateau tufts (~58k) so reservoir sampling never evicts foreground tufts (LANDMINES.md §135)
+#define GRASS_TUFT_CAPACITY 72000
 #define FLOWER_COUNT SONG_QUAO_TOTAL_FLOWERS
 #define REED_COUNT 800
 #define PAMPAS_COUNT 420
@@ -37,8 +39,8 @@
 // Plateau grass elevation & slope thresholds aligned with ground_splat.fs wCliff
 #define GRASS_CLIFF_MIN_Y (-0.95f)
 #define GRASS_CLIFF_FADE_Y (-0.35f)
-#define GRASS_MIN_NORMAL_Y 0.73f
-#define GRASS_FULL_NORMAL_Y 0.86f
+#define GRASS_MIN_NORMAL_Y 0.50f
+#define GRASS_FULL_NORMAL_Y 0.70f
 
 // Shadow focus quantization & hysteresis to prevent boundary flip-flop shimmering
 #define SHADOW_SNAP_STEP 1.0f
@@ -82,6 +84,37 @@ static bool s_shadowWasEnabled = false;
 static bool s_ready = false;
 static unsigned int s_skipMask = 0;
 
+#define SHORE_FIELD_MAX_PIXELS (512 * 768)
+static unsigned char s_shoreField[SHORE_FIELD_MAX_PIXELS];
+static int s_shoreFieldW = 0;
+static int s_shoreFieldH = 0;
+
+static float SongQuaoSampleSignedShore(float x, float z)
+{
+    if (s_shoreFieldW <= 1 || s_shoreFieldH <= 1)
+        return 2.4f;
+    float u = x * (1.0f / MAP_WIDTH);
+    float v = z * (1.0f / MAP_DEPTH);
+    u = (u > 0.0f) ? ((u < 1.0f) ? u : 1.0f) : 0.0f;
+    v = (v > 0.0f) ? ((v < 1.0f) ? v : 1.0f) : 0.0f;
+    float fx = u * (float)(s_shoreFieldW - 1);
+    float fy = v * (float)(s_shoreFieldH - 1);
+    int x0 = (int)fx;
+    int y0 = (int)fy;
+    int x1 = (x0 + 1 < s_shoreFieldW) ? (x0 + 1) : x0;
+    int y1 = (y0 + 1 < s_shoreFieldH) ? (y0 + 1) : y0;
+    float tx = fx - (float)x0;
+    float ty = fy - (float)y0;
+    float s00 = (float)s_shoreField[y0 * s_shoreFieldW + x0];
+    float s10 = (float)s_shoreField[y0 * s_shoreFieldW + x1];
+    float s01 = (float)s_shoreField[y1 * s_shoreFieldW + x0];
+    float s11 = (float)s_shoreField[y1 * s_shoreFieldW + x1];
+    float s0 = s00 + (s10 - s00) * tx;
+    float s1 = s01 + (s11 - s01) * tx;
+    float encShore = (s0 + (s1 - s0) * ty) * (1.0f / 255.0f);
+    return encShore * 5.5f - 3.1f;
+}
+
 // --- Map-Specific Flora Biome Shaping ---
 
 static float SongQuaoGrassDensity(float x, float z, void *userData)
@@ -102,38 +135,25 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
     const float invLakeRadZ = 1.0f / SONG_QUAO_LAKE_RADIUS_Z;
     float dxLake = (x - SONG_QUAO_LAKE_CENTER_X) * invLakeRadX;
     float dzLake = (z - SONG_QUAO_LAKE_CENTER_Z) * invLakeRadZ;
-    if (dxLake * dxLake + dzLake * dzLake <= (1.22f * 1.22f) && pos.y <= SONG_QUAO_LAKE_WATER_Y + 0.06f)
+    if (dxLake * dxLake + dzLake * dzLake <= (1.22f * 1.22f) && pos.y <= SONG_QUAO_LAKE_WATER_Y + 0.04f)
         return 0.0f;
 
     Color splat = MapDem_SampleSplat(&s_dem, x, z);
-    // Keep submerged river channels & rocky cliff rims clean of grass
-    if (splat.a > 115 || splat.g > 175)
-        return 0.0f;
-
+    // Gate scree/cliff rejection strictly by actual steep slope (outer rim vs interior grassy banks)
     float geomSlope = 1.0f - normal.y;
-    float rockScree = ((float)splat.g * (1.0f / 255.0f)) * MapMath_SmoothStep01(0.14f, 0.30f, geomSlope);
-    if (rockScree > 0.65f)
+    float rimSlopeFactor = 1.0f - MapMath_SmoothStep01(-1.10f, 0.15f, pos.y);
+    float slopeScreeGate = fmaxf(MapMath_SmoothStep01(0.44f, 0.58f, geomSlope),
+                                 rimSlopeFactor * MapMath_SmoothStep01(0.24f, 0.38f, geomSlope));
+    float rockScree = ((float)splat.g * (1.0f / 255.0f)) * slopeScreeGate;
+    if (rockScree > 0.72f)
         return 0.0f;
 
-    // Natural, organic shoreline clumping: lush grass pockets reach the bank in cohesive coves
-    float surfaceY = MapDem_SampleWaterHeight(&s_dem, x, z);
-    float shoreFade = 1.0f;
-    if (surfaceY > -CLIFF_DEPTH + 0.5f)
-    {
-        float waterClearance = pos.y - surfaceY;
-        if (waterClearance < 0.035f)
-            return 0.0f;
-
-        if (waterClearance < 0.22f)
-        {
-            float coveNoise = sinf(x * 0.16f + z * 0.12f) * 0.55f +
-                              cosf(z * 0.25f - x * 0.18f + 0.8f) * 0.45f;
-            float minClearance = (coveNoise > 0.10f) ? 0.038f : (0.075f - coveNoise * 0.025f);
-            if (waterClearance < minClearance)
-                return 0.0f;
-            shoreFade = MapMath_SmoothStep01(minClearance, minClearance + 0.06f, waterClearance);
-        }
-    }
+    // Exact metric signed shoreline distance matching ground_splat.fs (decodedDist.g * 5.5 - 3.1):
+    // lush meadow grows across the entire peninsula and riverbanks right down to 15cm from the water.
+    float signedShore = SongQuaoSampleSignedShore(x, z);
+    if (signedShore < 0.03f)
+        return 0.0f;
+    float shoreFade = MapMath_SmoothStep01(0.03f, 0.15f, signedShore);
 
     float rockSuppression = MapProp_EvaluateRockSuppression(
         x, z, SONG_QUAO_ROCK_ITEMS, SONG_QUAO_ROCK_ITEM_COUNT);
@@ -147,27 +167,29 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
 
     float heightFade = MapMath_SmoothStep01(GRASS_CLIFF_MIN_Y, GRASS_CLIFF_FADE_Y, pos.y);
     float slopeFade = MapMath_SmoothStep01(GRASS_MIN_NORMAL_Y, GRASS_FULL_NORMAL_Y, normal.y);
-    // Sparse beach fescue & riverbank tufts feather naturally across the sandbars
-    float sandFade = 1.0f - MapMath_SmoothStep01(45.0f, 95.0f, (float)splat.a) * 0.76f;
-    float rockFade = 1.0f - MapMath_SmoothStep01(0.35f, 0.65f, rockScree);
+    float rockFade = 1.0f - MapMath_SmoothStep01(0.45f, 0.70f, rockScree);
 
-    // Coherent macro meadow swells with organic openings and glades
+    // Coherent macro meadow swells: 100% lush inside central playable river-bend, natural glades on outer hills
     float warpedX = x + sinf(z * 0.12f) * 2.8f;
     float warpedZ = z + cosf(x * 0.11f) * 2.4f;
     float macroField = sinf(warpedX * 0.072f + warpedZ * 0.046f) * 0.55f +
                        sinf(warpedZ * 0.105f - warpedX * 0.038f + 1.2f) * 0.30f +
                        sinf(warpedX * 0.18f + warpedZ * 0.14f) * 0.15f;
-    
-    // Natural clearings / soil glades where grass recedes into low moss & open earth
+
+    float dxBasin = x - 95.0f;
+    float dzBasin = z - 150.0f;
+    float distBasin = sqrtf(dxBasin * dxBasin + dzBasin * dzBasin);
+    float outerHillBlend = MapMath_SmoothStep01(34.0f, 58.0f, distBasin);
+
     float gladeNoise = sinf(x * 0.038f + z * 0.032f) * 0.60f + cosf(z * 0.045f - x * 0.035f + 0.7f) * 0.40f;
-    float gladeClearing = MapMath_SmoothStep01(0.42f, 0.72f, gladeNoise);
+    float gladeClearing = MapMath_SmoothStep01(0.32f, 0.68f, gladeNoise) * outerHillBlend;
 
-    // Patch density: from dense 0.95 in meadow cores down to 0.18 in glades
-    float patch = MapMath_SmoothStep01(-0.28f, 0.38f, macroField);
-    float macro = (0.42f + 0.55f * patch) * (1.0f - gladeClearing * 0.75f);
-    macro = fmaxf(0.14f, macro);
+    float patch = MapMath_SmoothStep01(-0.30f, 0.38f, macroField);
+    float innerMacro = 0.86f + 0.14f * patch;
+    float outerMacro = (0.44f + 0.50f * patch) * (1.0f - gladeClearing * 0.78f);
+    float macro = innerMacro + (outerMacro - innerMacro) * outerHillBlend;
 
-    float density = macro * heightFade * slopeFade * shoreFade * sandFade *
+    float density = macro * heightFade * slopeFade * shoreFade *
                     rockFade * flowerSuppression * rockSuppression;
     return (density > 0.0f) ? ((density < 1.0f) ? density : 1.0f) : 0.0f;
 }
@@ -179,18 +201,19 @@ static float SongQuaoEdgeTaper(float cx, float cz, void *userData)
     if (!MapProp_SampleGroundSurface(&s_ground, kMapCenter, cx, cz, &pos, &normal))
         return 0.5f;
 
-    float waterClearance = pos.y - MapDem_SampleWaterHeight(&s_dem, cx, cz);
-    // Graceful shoreline & cliff-rim taper: peripheral tufts bow down into low cushions
-    float shoreTaper = (waterClearance >= 0.34f)
+    float signedShore = SongQuaoSampleSignedShore(cx, cz);
+    float shoreTaper = (signedShore >= 0.20f)
                            ? 1.0f
-                           : (0.28f + 0.72f * MapMath_SmoothStep01(0.06f, 0.34f, waterClearance));
+                           : (0.64f + 0.36f * MapMath_SmoothStep01(0.03f, 0.20f, signedShore));
     float cliffTaper = (pos.y >= -0.20f)
                            ? 1.0f
                            : (0.35f + 0.65f * MapMath_SmoothStep01(GRASS_CLIFF_MIN_Y, -0.20f, pos.y));
-    float slopeTaper = (normal.y >= 0.88f)
+    float slopeTaper = (normal.y >= 0.72f)
                            ? 1.0f
-                           : (0.45f + 0.55f * MapMath_SmoothStep01(GRASS_MIN_NORMAL_Y, 0.88f, normal.y));
-    return shoreTaper * cliffTaper * slopeTaper;
+                           : (0.68f + 0.32f * MapMath_SmoothStep01(GRASS_MIN_NORMAL_Y, 0.72f, normal.y));
+    float rockTaper = 0.68f + 0.32f * MapProp_EvaluateRockSuppression(
+                                          cx, cz, SONG_QUAO_ROCK_ITEMS, SONG_QUAO_ROCK_ITEM_COUNT);
+    return shoreTaper * cliffTaper * slopeTaper * rockTaper;
 }
 
 static float SongQuaoSampleGroundHeight(float x, float z, void *ctx)
@@ -205,12 +228,14 @@ static bool SongQuaoIsFlowerExcluded(float x, float z, void *ctx)
     Vector3 pos, normal;
     if (!MapProp_SampleGroundSurface(&s_ground, kMapCenter, x, z, &pos, &normal))
         return true;
-    if (pos.y < -0.65f || normal.y < 0.75f)
+    if (pos.y < -0.65f || normal.y < 0.62f)
         return true;
     Color splat = MapDem_SampleSplat(&s_dem, x, z);
-    if (splat.g > 165 || splat.b > 95 || splat.a > 72)
+    float geomSlope = 1.0f - normal.y;
+    float rockScree = ((float)splat.g * (1.0f / 255.0f)) * MapMath_SmoothStep01(0.38f, 0.52f, geomSlope);
+    if (rockScree > 0.65f || splat.b > 110)
         return true;
-    if (MapDem_SampleWaterHeight(&s_dem, x, z) >= pos.y - 0.08f)
+    if (SongQuaoSampleSignedShore(x, z) < 0.20f)
         return true;
     if (MapProp_EvaluateRockSuppression(x, z, SONG_QUAO_ROCK_ITEMS, SONG_QUAO_ROCK_ITEM_COUNT) < 0.65f)
         return true;
@@ -225,7 +250,7 @@ static void BuildFloraPlacements(void)
         (MapFloraMeadowConfig){
             .minBounds = {10.0f, 8.0f},
             .maxBounds = {MAP_WIDTH - 10.0f, MAP_DEPTH - 8.0f},
-            .spacing = 0.34f,
+            .spacing = 0.408f,
             .seed = 0x51a7c3u,
             .densityFn = SongQuaoGrassDensity,
             .ecology = &s_habitat,
@@ -290,14 +315,40 @@ static void BuildRocks(void)
 
 static void RegisterSongQuaoWaterObstacles(void)
 {
-    for (int i = 0; i < s_rocks.count; i++)
+    Vector2 registered[6];
+    int regCount = 0;
+    for (int pass = 0; pass < 2 && regCount < 6; pass++)
     {
-        const MapRockItem *rock = &s_rocks.items[i];
-        float surfaceY = 0.0f, waterDepth = 0.0f;
-        if (GetWaterInfoSongQuaoMap(rock->position.x, rock->position.z, &surfaceY, &waterDepth) &&
-            waterDepth > 0.03f)
+        for (int i = 0; i < s_rocks.count && regCount < 6; i++)
         {
-            MapProp_AddWaterObstacle(&s_river, rock->position, rock->radiusScale * 1.18f, 1.0f);
+            const MapRockItem *rock = &s_rocks.items[i];
+            if (rock->radiusScale < 0.65f)
+                continue;
+            bool isLarge = (rock->radiusScale >= 0.90f);
+            if ((pass == 0 && !isLarge) || (pass == 1 && isLarge))
+                continue;
+
+            bool tooClose = false;
+            for (int r = 0; r < regCount; r++)
+            {
+                float dx = rock->position.x - registered[r].x;
+                float dz = rock->position.z - registered[r].y;
+                if (dx * dx + dz * dz < (2.4f * 2.4f))
+                {
+                    tooClose = true;
+                    break;
+                }
+            }
+            if (tooClose)
+                continue;
+
+            float surfaceY = 0.0f, waterDepth = 0.0f;
+            if (GetWaterInfoSongQuaoMap(rock->position.x, rock->position.z, &surfaceY, &waterDepth) &&
+                waterDepth > 0.02f)
+            {
+                MapProp_AddWaterObstacle(&s_river, rock->position, rock->radiusScale * 1.38f, 1.0f);
+                registered[regCount++] = (Vector2){rock->position.x, rock->position.z};
+            }
         }
     }
 }
@@ -311,8 +362,8 @@ static void SpawnSongQuaoMistVolumes(void)
         .shape = FOG_SHAPE_CYLINDER,
         .position = {104.0f, 6.35f, 75.0f},
         .extents = {14.0f, 0.65f, 22.0f},
-        .color = {230, 244, 252, 255},
-        .density = 0.050f,
+        .color = {244, 238, 228, 255},
+        .density = 0.048f,
         .edgeSoftness = 0.92f,
         .driftVelocity = {0.015f, 0.0f, 0.02f},
         .active = true};
@@ -323,8 +374,8 @@ static void SpawnSongQuaoMistVolumes(void)
         .shape = FOG_SHAPE_CYLINDER,
         .position = {114.0f, 0.45f, 135.0f},
         .extents = {22.0f, 0.55f, 18.0f},
-        .color = {232, 244, 252, 255},
-        .density = 0.055f,
+        .color = {244, 238, 228, 255},
+        .density = 0.052f,
         .edgeSoftness = 0.92f,
         .driftVelocity = {0.02f, 0.0f, 0.01f},
         .active = true};
@@ -335,8 +386,8 @@ static void SpawnSongQuaoMistVolumes(void)
         .shape = FOG_SHAPE_CYLINDER,
         .position = {SONG_QUAO_LAKE_CENTER_X, 0.28f, SONG_QUAO_LAKE_CENTER_Z},
         .extents = {SONG_QUAO_LAKE_RADIUS_X * 1.45f, 0.48f, SONG_QUAO_LAKE_RADIUS_Z * 1.45f},
-        .color = {228, 242, 252, 255},
-        .density = 0.060f,
+        .color = {242, 236, 226, 255},
+        .density = 0.056f,
         .edgeSoftness = 0.92f,
         .driftVelocity = {0.02f, 0.0f, 0.015f},
         .active = true};
@@ -347,8 +398,8 @@ static void SpawnSongQuaoMistVolumes(void)
         .shape = FOG_SHAPE_CYLINDER,
         .position = {94.0f, 0.42f, 150.0f},
         .extents = {16.0f, 0.45f, 12.0f},
-        .color = {236, 246, 252, 255},
-        .density = 0.045f,
+        .color = {246, 240, 230, 255},
+        .density = 0.042f,
         .edgeSoftness = 0.92f,
         .driftVelocity = {0.015f, 0.0f, 0.01f},
         .active = true};
@@ -359,8 +410,8 @@ static void SpawnSongQuaoMistVolumes(void)
         .shape = FOG_SHAPE_CYLINDER,
         .position = {SONG_QUAO_OUTLET_X, -0.40f, SONG_QUAO_OUTLET_Z - 1.5f},
         .extents = {16.0f, 1.65f, 14.0f},
-        .color = {234, 244, 252, 255},
-        .density = 0.14f,
+        .color = {244, 238, 228, 255},
+        .density = 0.13f,
         .edgeSoftness = 0.92f,
         .driftVelocity = {0.0f, -0.02f, 0.04f},
         .active = true};
@@ -403,34 +454,48 @@ void InitSongQuaoMap(void)
         ColorGradeLut_Load("assets/maps/song_quao/song_quao_grade.png");
 
     Environment_SetTimeOfDaySpeed(0.0f);
-    // Ghost of Tsushima / Where Winds Meet cinematic golden-hour lighting:
-    // Sun elevation ~33 deg shortens foliage shadow fans while preserving warm modeling.
-    Environment_SetAmbientColor((Color){96, 122, 146, 255});
-    Environment_SetSunColor((Color){255, 222, 172, 255});
-    Environment_SetSunIntensity(1.65f);
-    Environment_SetSunDirection(Vector3Normalize((Vector3){0.44f, -0.52f, -0.73f}));
-    Environment_SetShadowColor((Color){46, 62, 78, 140});
+    // Ghost of Tsushima / Where Winds Meet cinematic 16:30 golden-hour lighting:
+    // Warm amber sun + cool azure sky bounce + golden-pearl atmospheric aerial perspective.
+    Environment_SetAmbientColor((Color){90, 118, 148, 255});
+    Environment_SetSunColor((Color){255, 206, 146, 255});
+    Environment_SetSunIntensity(1.72f);
+    Environment_SetSunDirection(Vector3Normalize((Vector3){0.46f, -0.47f, -0.75f}));
+    Environment_SetShadowColor((Color){44, 62, 82, 140});
+
+    PostFXMapProfile postProfile = {
+        .enabled = true,
+        .exposure = 1.02f,
+        .contrast = 1.05f,
+        .saturation = 1.04f,
+        .bloomIntensity = 0.38f,
+        .shadowTint = {0.96f, 0.99f, 1.05f},
+        .highlightTint = {1.05f, 1.01f, 0.94f},
+    };
+    if (s_skipMask & MAP_SKIP_GRADE)
+        PostFX_ClearMapProfile();
+    else
+        PostFX_SetMapProfile(postProfile);
 
     AtmosphereProfile atmos = {
-        .color = {222, 232, 244, 255},
-        .start = 25.0f,
-        .end = 200.0f,
+        .color = {236, 228, 218, 255},
+        .start = 18.0f,
+        .end = 165.0f,
         .enabled = true,
         .optics = {
-            .rayleighLMS = {0.0082f, 0.0142f, 0.0275f},
-            .mieScattering = 0.0030f,
-            .mieAnisotropy = 0.78f,
-            .multipleScatteringAmp = 2.10f},
+            .rayleighLMS = {0.0088f, 0.0152f, 0.0285f},
+            .mieScattering = 0.0042f,
+            .mieAnisotropy = 0.80f,
+            .multipleScatteringAmp = 2.25f},
         .density = {
-            .baseDensity = 0.0092f,
-            .heightFalloff = 0.28f,
+            .baseDensity = 0.0112f,
+            .heightFalloff = 0.26f,
             .baseAltitude = -1.5f,
             .enableSigmoidLayer = true,
             .layerAltitude = 2.4f,
-            .layerThickness = 3.2f,
-            .layerDensity = 0.0045f}};
+            .layerThickness = 3.4f,
+            .layerDensity = 0.0052f}};
     Environment_SetAtmosphereProfile(&atmos);
-    VolumetricFog_SetGodRayIntensity((s_skipMask & MAP_SKIP_GODRAYS) ? 0.0f : 0.75f);
+    VolumetricFog_SetGodRayIntensity((s_skipMask & MAP_SKIP_GODRAYS) ? 0.0f : 0.85f);
     VolumetricFog_SetDistantCoverage(2.0f / 3.0f);
 
     EnvCloudShadowConfig cloudConfig = {
@@ -486,6 +551,12 @@ void InitSongQuaoMap(void)
             ImageFormat(&distImg, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
             unsigned char *bytes = (unsigned char *)distImg.data;
             int totalPx = distImg.width * distImg.height;
+            bool cacheShore = (totalPx > 0 && totalPx <= SHORE_FIELD_MAX_PIXELS);
+            if (cacheShore)
+            {
+                s_shoreFieldW = distImg.width;
+                s_shoreFieldH = distImg.height;
+            }
 
             // Pre-folded affine constants for 16-bit big-endian distance field decoding
             const float kPathScale = (32.0f / 65535.0f) * (1.0f / 5.1f);
@@ -509,6 +580,8 @@ void InitSongQuaoMap(void)
                 p[1] = (unsigned char)(encShore * 255.0f + 0.5f);
                 p[2] = 0;
                 p[3] = 255;
+                if (cacheShore)
+                    s_shoreField[i] = p[1];
             }
             s_habitat.distanceTexture = LoadTextureFromImage(distImg);
             UnloadImage(distImg);
@@ -558,19 +631,19 @@ void InitSongQuaoMap(void)
                                              .waveHeight = 0.016f,
                                              .waveScale = 2.2f,
                                              .waveSpeed = 0.68f,
-                                             .flowVelocity = {0.24f, 0.36f},
-                                             .detailScale = 0.35f,
-                                             .detailStrength = 0.32f,
+                                             .flowVelocity = {0.26f, 0.38f},
+                                             .detailScale = 0.38f,
+                                             .detailStrength = 0.36f,
                                              .maxDepth = 1.45f,
-                                             .absorption = {0.42f, 0.10f, 0.035f},
+                                             .absorption = {0.38f, 0.09f, 0.032f},
                                              .scatterColor = {0.14f, 0.74f, 0.68f},
-                                             .scatterCoeff = 0.35f,
-                                             .causticsStrength = 0.65f,
+                                             .scatterCoeff = 0.32f,
+                                             .causticsStrength = 0.82f,
                                              .causticsScale = 3.80f,
-                                             .foamThreshold = 0.085f,
+                                             .foamThreshold = 0.095f,
                                              .deepColor = {10, 68, 88, 225},
                                              .shallowColor = {38, 182, 172, 150},
-                                             .foamColor = {248, 252, 255, 235},
+                                             .foamColor = {248, 252, 255, 240},
                                          });
 
     BuildRocks();
@@ -592,13 +665,13 @@ void InitSongQuaoMap(void)
         (MapFloraStyle){
             .grassRootColor = {18, 28, 14, 255},  // Sắc rêu mùn trầm ấm ăn khớp nền đất
             .grassTipColor = {82, 128, 46, 255},  // Sắc ngọc bích cỏ ba lá tự nhiên
-            .bladesPerClump = 6,
+            .bladesPerClump = 5,
             .bladeSegments = 3,
-            .bladeWidthScale = 0.078f,
+            .bladeWidthScale = 0.095f,
             .lodDistance = 22.0f,
             .midLodDistance = 11.0f,
             .drawDistance = 42.0f,
-            .shadowDistance = 22.0f,
+            .shadowDistance = 17.5f,
             .grassState = MAP_GRASS_STATE_LUSH,
             .reedRootColor = {16, 26, 12, 255},
             .reedTipColor = {88, 124, 48, 255},
@@ -704,6 +777,7 @@ void DrawTransparentSongQuaoMap(void)
 void UnloadSongQuaoMap(void)
 {
     ColorGradeLut_UseNeutral();
+    PostFX_ClearMapProfile();
     Environment_SetSunIntensity(1.0f);
     if (!s_ready)
         return;
@@ -738,6 +812,8 @@ void UnloadSongQuaoMap(void)
     s_reedCount = 0;
     s_pampasCount = 0;
     s_flowerCount = 0;
+    s_shoreFieldW = 0;
+    s_shoreFieldH = 0;
 
 #if !defined(__ANDROID__)
     EnvShadow_SetEnabled(s_shadowWasEnabled);

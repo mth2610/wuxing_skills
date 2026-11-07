@@ -139,6 +139,7 @@
 
 | Date | Editor (human/AI) | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-11-07 | Antigravity | PNG-loaded `MapEcology` shore sampling (`s_owner` guard) and interior terrace slope separation | `maps/toolkit/map_ecology.c`, `maps/worlds/song_quao/song_quao.c`, `maps/toolkit/shaders/ground_splat.fs`, matched 4-view captures | Ground-truth |
 | 2026-10-25 | Antigravity | Slope-gated scree rejection, reservoir-thinning guard, and focal-coupled LOD scaling | `maps/worlds/song_quao/song_quao.c`, `maps/toolkit/map_props_meadow_parametric.inl`, `maps/toolkit/shaders/ground_splat.fs`, `maps/toolkit/shaders/nature_surface.glsl` | Ground-truth |
 | 2026-10-22 | DeepSeek | Ground shader cost model, branch guards, whole-draw frame marginal | `maps/toolkit/shaders/ground_splat.fs` repeat-harness ablations; song_quao paired full-frame runs (base vs `WUXING_SONGQUAO_SKIP=ground`, 3 pairs) | Ground-truth |
 | 2026-10-22 | DeepSeek | Compact-by-default band batching and depth-only caster shader | `maps/toolkit/map_props_meadow.inl`, `maps/toolkit/map_props_meadow_parametric.inl`, `maps/toolkit/shaders/nature_parametric.glsl`, `maps/toolkit/shaders/nature_shadow_parametric.vs`; interleaved cold 170-frame runs (song_quao 1280x720, legacy vs compact) | Ground-truth |
@@ -331,3 +332,11 @@
   2. River stones were tinted `{105, 118, 125, 255}` (0.41 albedo) and darkened by excessive base AO and damp multipliers down to ~0.03 (near black).
   3. `ground_splat.fs` forced `streamBedTint = vec3(0.17, 0.23, 0.18)` and `submergedBed = vec3(0.09, 0.14, 0.13)` whenever `streamWet > 0.50`, obliterating all sand and pebble texture under a dark muddy wash. Oversized $1.5\text{m}$ mid-channel boulders blocked the channel.
 - **Rule:** Average pole vertices ($r = 0$ and $r = rings$) across all slices for both normals and tangents in `map_props_rocks.inl`. In `prop_lit.vs`, transform normals by `transpose(inverse(mat3(matModel)))` so non-uniform scaling preserves perpendicular normals. In `ground_splat.fs`, generate procedural alluvial quartz/feldspar sand with hydrodynamic current ripples and domain-warped multi-hue river pebble clusters (ivory quartz, warm granite, amber jasper, slate shingle) with dome normal perturbation. Scale river stones realistically ($0.18\text{m} - 0.38\text{m}$) and embed them ($sink = 0.28 \cdot hScale$) along shoreline sandbars while keeping the central channel clear.
+
+### `MapEcology_Sample` returns zero on PNG-loaded ecology and `normal.y < 0.73` strips interior riverbanks
+
+- **Symptom:** On `song_quao`, river peninsulas and terrace embankments (`y = +2.9m .. +4.5m`) display bald khaki-tan patches or diagonal rows of sparse tufts even when `ground_splat.fs` uses continuous 16-bit shoreline distance.
+- **Cause:** Two separate mismatches:
+  1. `MapEcology_Sample` in `maps/toolkit/map_ecology.c` checks `m != s_owner` (only populated by `MapEcology_Bake`), returning `{0}` (`distToWater = 0.0f`) when `MapEcology` textures were loaded directly from baked PNGs (`song_quao_habitat_distance.png`).
+  2. Interior river terrace scarps on a ~1m DEM grid have triangle normals `normal.y = 0.55 .. 0.72` (`slope = 0.28 .. 0.45`). Setting `GRASS_MIN_NORMAL_Y = 0.73f` and `wSlope = smoothstep(0.28, 0.48, slope)` treated gentle interior meadow embankments the same as outer island cliff walls, deleting tufts and painting cliff/scree soil.
+- **Rule:** For PNG-loaded `MapEcology`, cache the decoded `encShore` byte array in CPU RAM (`s_shoreField`) during image upload so CPU placement sampling matches `ground_splat.fs` (`encShore * 5.5f - 3.1f`) identically. Separate outer cliff rim slopes (`y < 0.15m`) from interior plateau embankments (`y >= 0.15m`): allow grass tufts down to `GRASS_MIN_NORMAL_Y = 0.50f` and gate `wSlope` / `rockCliff` at `slope >= 0.44 .. 0.64` on interior terrain.

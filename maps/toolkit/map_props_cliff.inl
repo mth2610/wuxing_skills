@@ -509,15 +509,17 @@ static int Cliff_BuildCoastLoop(const MapGroundSurface *ground, Vector3 mapCente
 }
 
 // Find the turfy lip above a low coast contour by marching inland.
-// Follows the profile up from the deep contour until it levels off onto the island plateau.
+// Follows the profile up from the deep contour until it levels off onto the coastal rim,
+// strictly bounded so it never climbs interior hills near the coast.
 static Vector3 Cliff_FindLip(const MapGroundSurface *ground, Vector3 mapCenter,
                              Vector3 contourPoint, Vector2 inward, float contourY)
 {
-    const float step = 0.30f;
-    const int maxSteps = 45; // ~13.5m inland
-    Vector3 samples[48];
-    Vector3 normals[48];
-    bool valid[48];
+    const float step = 0.28f;
+    const int maxSteps = 12; // ~3.36m max inland collar
+    const float maxRimY = contourY + 1.45f;
+    Vector3 samples[16];
+    Vector3 normals[16];
+    bool valid[16];
     int validCount = 0;
     float peakY = -1e9f;
     int peakIdx = 0;
@@ -531,6 +533,8 @@ static Vector3 Cliff_FindLip(const MapGroundSurface *ground, Vector3 mapCenter,
                                                contourPoint.z + inward.y * d, &p, &n);
         if (valid[k])
         {
+            if (p.y > maxRimY)
+                p.y = maxRimY;
             samples[k] = p;
             normals[k] = n;
             validCount++;
@@ -550,30 +554,28 @@ static Vector3 Cliff_FindLip(const MapGroundSurface *ground, Vector3 mapCenter,
     if (validCount == 0)
         return contourPoint;
 
-    // Search from contour inward for the transition onto the plateau
-    for (int k = 1; k < maxSteps - 4; k++)
+    // Search from contour inward for the transition onto the plateau lip
+    for (int k = 1; k < maxSteps - 2; k++)
     {
         if (!valid[k])
             continue;
         float y = samples[k].y;
         float ny = normals[k].y;
 
+        // Stop immediately once we reach the coastal turf lip ceiling
+        if (y >= maxRimY - 0.05f)
+            return samples[k];
+
         // Must have climbed out of the deep drop
-        if (y < contourY + 0.80f && y < -0.30f)
+        if (y < contourY + 0.65f && y < -0.45f)
             continue;
 
-        // Forward rise over next ~1.2m
-        int kAhead = (k + 4 < maxSteps && valid[k + 4]) ? k + 4 : k + 1;
+        int kAhead = (k + 2 < maxSteps && valid[k + 2]) ? k + 2 : k + 1;
         float forwardRise = samples[kAhead].y - y;
 
-        // Condition 1: Leveled off onto plateau (gentle rise and near-upright normal)
-        bool leveledOff = (forwardRise <= 0.30f && ny >= 0.82f);
-
-        // Condition 2: Near the peak elevation of this profile
-        bool nearPeak = (y >= peakY - 0.30f && forwardRise <= 0.20f);
-
-        // Condition 3: Reached local ridge crest (ground starts sloping back down)
-        bool crest = (valid[k + 1] && samples[k + 1].y < y - 0.04f && y >= -0.30f);
+        bool leveledOff = (forwardRise <= 0.22f && ny >= 0.80f);
+        bool nearPeak = (y >= peakY - 0.20f && forwardRise <= 0.16f);
+        bool crest = (valid[k + 1] && samples[k + 1].y < y - 0.03f && y >= -0.45f);
 
         if (leveledOff || nearPeak || crest)
         {
@@ -581,7 +583,6 @@ static Vector3 Cliff_FindLip(const MapGroundSurface *ground, Vector3 mapCenter,
         }
     }
 
-    // Fallback: pick peak point
     if (valid[peakIdx])
         return samples[peakIdx];
     return contourPoint;
@@ -727,9 +728,9 @@ MapCliffSkirt MapProp_CreateCliffSkirt(const MapGroundSurface *ground, Vector3 m
             lip.z + inward.y * 0.22f};
         Vector3 gp, gn;
         if (MapProp_SampleGroundSurface(ground, mapCenter, rimPos[i].x, rimPos[i].z, &gp, &gn))
-            rimY[i] = gp.y;
+            rimY[i] = fminf(gp.y, sliceHeight + 1.45f);
         else
-            rimY[i] = lip.y;
+            rimY[i] = fminf(lip.y, sliceHeight + 1.45f);
     }
 
     // Light smoothing keeps the rim line organic but kills stair steps.

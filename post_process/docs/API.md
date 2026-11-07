@@ -14,6 +14,8 @@ Documents the **Post-Processing** module (`post_process/post_fx.h` and `post_pro
 | `PostFX_UseDirectSource(tex)` | `post_process/post_fx.h` | Points the composite pass directly at an external texture, bypassing intermediate copies when distortion is inactive. |
 | `PostFX_Draw(config)` | `post_process/post_fx.h` | Executes the complete post-fx pipeline (Bloom $\to$ Composite $\to$ FXAA) onto the active framebuffer. |
 | `PostFX_SetMonochrome(intensity)` | `post_process/post_fx.h` | Overrides saturation towards greyscale (used for Cảnh Giới Thái Cực). |
+| `PostFXMapProfile` | `post_process/post_fx.h` | Optional per-map artistic color-grade, split-toning, bloom, and exposure profile. |
+| `PostFX_SetMapProfile(profile)` / `PostFX_ClearMapProfile()` | `post_process/post_fx.h` | Activates or clears a map-scoped post-processing profile without mutating global `PostFXConfig`. |
 | `PostFX_RadialBurst(pos, str, dur)` | `post_process/post_fx.h` | Triggers a transient screen-space burst/shockwave centered at a 3D world position. |
 | `PostFX_UpdateTransient(cam, dt)` | `post_process/post_fx.h` | Decays active bursts and projects world positions to screen UV coordinates. |
 | `ColorGradeLut_Init()` | `post_process/color_grade_lut.h` | Builds and binds the default neutral 16x16 strip LUT. |
@@ -82,6 +84,21 @@ typedef struct {
   float bloomStreakStrength; // Blend of streak vs circular tap [0.0 .. 1.0]
   float bloomStreakAngle;    // Radians (0 = horizontal)
 } PostFXConfig;
+```
+
+### `PostFXMapProfile`
+Optional per-map cinematic grading override applied inside `PostFX_Draw`:
+
+```c
+typedef struct {
+  bool    enabled;
+  float   contrast;
+  float   saturation;
+  Vector3 shadowTint;
+  Vector3 highlightTint;
+  float   bloomIntensity;
+  float   exposure;
+} PostFXMapProfile;
 ```
 
 ---

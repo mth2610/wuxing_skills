@@ -144,4 +144,20 @@ bool PostFX_HasTransient(void);
 // was applied.
 void PostFX_ApplyTransient(PostFXConfig *config);
 
+// Per-map artistic color-grade / exposure / bloom profile (optional).
+// Applied in PostFX_Draw before live tuning overrides so each map can define
+// its own cinematic split-toning and filmic contrast without mutating global config.
+typedef struct {
+  bool    enabled;
+  float   contrast;
+  float   saturation;
+  Vector3 shadowTint;
+  Vector3 highlightTint;
+  float   bloomIntensity;
+  float   exposure;
+} PostFXMapProfile;
+
+void PostFX_SetMapProfile(PostFXMapProfile profile);
+void PostFX_ClearMapProfile(void);
+
 #endif // POST_PROCESS_POST_FX_H

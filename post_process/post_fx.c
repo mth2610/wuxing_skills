@@ -71,6 +71,10 @@ static int lutSizeLoc;
 static float s_lutStrengthOverride = 0.0f;
 static float s_contrastOverride = 0.0f;
 static float s_saturationOverride = 0.0f;
+static PostFXMapProfile s_mapProfile = {0};
+
+void PostFX_SetMapProfile(PostFXMapProfile profile) { s_mapProfile = profile; }
+void PostFX_ClearMapProfile(void) { s_mapProfile = (PostFXMapProfile){0}; }
 
 // Uniform locations — radial blur (E1a, lives in the composite shader)
 static int radialBlurEnabledLoc;
@@ -614,6 +618,22 @@ void PostFX_Draw(const PostFXConfig *config)
     return;
 
   PostFXConfig local = *config;
+  if (s_mapProfile.enabled)
+  {
+    local.colorGradeEnabled = true;
+    if (s_mapProfile.contrast > 0.0f)
+      local.contrast = s_mapProfile.contrast;
+    if (s_mapProfile.saturation > 0.0f)
+      local.saturation = s_mapProfile.saturation;
+    if (s_mapProfile.shadowTint.x + s_mapProfile.shadowTint.y + s_mapProfile.shadowTint.z > 0.0f)
+      local.shadowTint = s_mapProfile.shadowTint;
+    if (s_mapProfile.highlightTint.x + s_mapProfile.highlightTint.y + s_mapProfile.highlightTint.z > 0.0f)
+      local.highlightTint = s_mapProfile.highlightTint;
+    if (s_mapProfile.bloomIntensity > 0.0f)
+      local.bloomIntensity = s_mapProfile.bloomIntensity;
+    if (s_mapProfile.exposure > 0.0f)
+      local.exposure = s_mapProfile.exposure;
+  }
   if (PostFX_HasTransient())
     PostFX_ApplyTransient(&local);
   PostFX_ApplyTuning(&local);

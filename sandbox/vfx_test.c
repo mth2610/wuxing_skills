@@ -1588,14 +1588,15 @@ static void VFXTest_ApplyTimeOfDay(float hour)
     Vector3 sunDir = Vector3Normalize((Vector3){ -sunAzimuth * 0.85f, -sunElevation, -0.52f });
 
     if (sunElevation > 0.04f) {
-        float horizonWarmth = 1.0f - fmaxf(0.0f, fminf(1.0f, (sunElevation - 0.04f) / 0.52f));
+        // Golden hour begins around ~15:30 (sunElevation ~0.60) and peaks at 16:30..17:30 (sunElevation ~0.38..0.15)
+        float horizonWarmth = 1.0f - fmaxf(0.0f, fminf(1.0f, (sunElevation - 0.12f) / 0.56f));
         horizonWarmth = horizonWarmth * horizonWarmth * (3.0f - 2.0f * horizonWarmth);
-        // Smooth atmospheric airmass attenuation when sun is low on the horizon (< 16 deg, e.g. 17:30-17:50)
-        float horizonAtten = fmaxf(0.0f, fminf(1.0f, (sunElevation - 0.04f) / 0.24f));
-        horizonAtten = 0.52f + 0.48f * (horizonAtten * horizonAtten * (3.0f - 2.0f * horizonAtten));
+        // Smooth atmospheric airmass attenuation when sun is low on the horizon (< 14 deg, e.g. 17:30-17:50)
+        float horizonAtten = fmaxf(0.0f, fminf(1.0f, (sunElevation - 0.04f) / 0.22f));
+        horizonAtten = 0.56f + 0.44f * (horizonAtten * horizonAtten * (3.0f - 2.0f * horizonAtten));
 
         Color noonSun = (Color){255, 244, 224, 255};
-        Color sunsetSun = (Color){255, 200, 134, 255};
+        Color sunsetSun = (Color){255, 198, 132, 255};
         Color sunColor = (Color){
             (unsigned char)(noonSun.r * (1.0f - horizonWarmth) + sunsetSun.r * horizonWarmth),
             (unsigned char)(noonSun.g * (1.0f - horizonWarmth) + sunsetSun.g * horizonWarmth),
@@ -1604,7 +1605,7 @@ static void VFXTest_ApplyTimeOfDay(float hour)
         };
 
         Color noonSky = (Color){78, 108, 144, 255};
-        Color sunsetSky = (Color){68, 94, 130, 255};
+        Color sunsetSky = (Color){68, 96, 134, 255};
         Color ambientColor = (Color){
             (unsigned char)(noonSky.r * (1.0f - horizonWarmth) + sunsetSky.r * horizonWarmth),
             (unsigned char)(noonSky.g * (1.0f - horizonWarmth) + sunsetSky.g * horizonWarmth),
@@ -1612,8 +1613,8 @@ static void VFXTest_ApplyTimeOfDay(float hour)
             255
         };
 
-        Color shadowColor = (Color){32, 46, 64, (unsigned char)(96 + 24 * horizonWarmth)};
-        float baseIntensity = 1.52f + 0.50f * horizonWarmth;
+        Color shadowColor = (Color){32, 46, 66, (unsigned char)(96 + 24 * horizonWarmth)};
+        float baseIntensity = 1.56f + 0.48f * horizonWarmth;
         float intensity = baseIntensity * horizonAtten;
 
         Environment_SetSunDirection(sunDir);

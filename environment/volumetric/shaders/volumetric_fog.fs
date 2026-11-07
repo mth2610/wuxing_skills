@@ -35,11 +35,11 @@ uniform vec2      u_screenResolution;// Resolution of the downscaled target
 uniform sampler2D u_jitterTex;       // Immutable balanced blue-noise ranks
 uniform vec2      u_jitterTexel;     // Zero selects midpoint fallback
 
-// Local Fog Volumes (up to 4 active volumes)
+// Local Fog Volumes (up to 8 active volumes)
 uniform int       u_volumeCount;
-uniform vec4      u_volPosShape[4];     // xyz = position, w = shape (0=box, 1=sphere, 2=cylinder)
-uniform vec4      u_volExtentsDense[4]; // xyz = extents, w = density
-uniform vec4      u_volColorSoft[4];    // rgb = color, a = edgeSoftness
+uniform vec4      u_volPosShape[8];     // xyz = position, w = shape (0=box, 1=sphere, 2=cylinder)
+uniform vec4      u_volExtentsDense[8]; // xyz = extents, w = density
+uniform vec4      u_volColorSoft[8];    // rgb = color, a = edgeSoftness
 
 // Reconstruct world-space ray direction from screen UV and inverse ViewProj
 vec3 ReconstructRayDir(vec2 uv) {
@@ -124,6 +124,10 @@ void main() {
 
     vec3 receiverPos = u_camPos + rayDir * rayDist;
     int steps = clamp(u_stepCount, 8, 32);
+    vec3 startRayPos = u_camPos + rayDir * marchStart;
+    bool rayMayHitVolumes = (u_volumeCount > 0)
+        && (min(startRayPos.y, receiverPos.y) <= 8.5)
+        && (max(startRayPos.y, receiverPos.y) >= -3.0);
 
 
     // Static ranks avoid frame-to-frame flicker without a history buffer. The
@@ -194,7 +198,7 @@ void main() {
         // 3. Local fog volumes (lake, meadow, forest hollows)
         vec3 fogColor = u_fogColor;
         float localDensity = 0.0;
-        if (u_volumeCount > 0 && localFade > 0.00001 && samplePos.y <= 6.0 && samplePos.y >= -3.0) {
+        if (rayMayHitVolumes && localFade > 0.00001 && samplePos.y <= 8.5 && samplePos.y >= -3.0) {
             localDensity = EvaluateLocalFog(samplePos, fogColor);
         }
 

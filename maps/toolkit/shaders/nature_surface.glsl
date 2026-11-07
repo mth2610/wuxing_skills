@@ -198,13 +198,13 @@ vec3 NatureShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     vec3 groundBounce = clamp(u_ambientColor * vec3(0.55, 0.45, 0.40), 0.0, 1.0);
 
     // Tạo độ sâu lòng đài hoa (Cup Cavity Ambient Occlusion)
-    float cupCavity = mix(0.66, 1.0, FastRamp(0.64, 0.94, hNorm)) * (1.0 - centerRib * 0.14 * bloomMask);
+    float cupCavity = mix(0.54, 1.0, FastRamp(0.58, 0.94, hNorm)) * (1.0 - centerRib * 0.18 * bloomMask);
     vec3 ambientFloor = mix(groundBounce, skyAmbient, skyWeight) * mix(1.0, cupCavity, bloomMask);
 
     float horizon = 0.76 + 0.24 * max(n.y, 0.0);
     vec3 lit = baseColor * ambientFloor * horizon;
 
-    lit *= mix(0.60, 1.0, shadow) * mix(0.82, 1.0, calyxSelfShadow);
+    lit *= mix(0.60, 1.0, shadow) * mix(0.78, 1.0, calyxSelfShadow);
 
     float sunFactor = canopyExtinction * cloudVis * shadow;
     if (sunFactor > 0.001) {
@@ -219,18 +219,18 @@ vec3 NatureShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
         // Viền kim quang ngược nắng (Fresnel Backlit Rim Scattering)
         float oneMinusNV = clamp(1.0 - max(dot(faceNormal, viewDir), 0.0), 0.0, 1.0);
         float rimAlign = 0.30 + 0.70 * viewSunAlign;
-        float rim = (oneMinusNV * oneMinusNV * sqrt(oneMinusNV)) * mix(0.20, 0.46, bloomMask) * rimAlign * rimScale;
+        float rim = (oneMinusNV * oneMinusNV * sqrt(oneMinusNV)) * mix(0.24, 0.56, bloomMask) * rimAlign * rimScale;
 
-        vec3 directSunTerms = baseColor * (directDiffuse * 1.10)
-                            + subsurfaceColor * (transmission * mix(0.85, 1.35, bloomMask) + rim)
+        vec3 directSunTerms = baseColor * (directDiffuse * 1.12)
+                            + subsurfaceColor * (transmission * mix(0.92, 1.52, bloomMask) + rim)
                             + vec3(spec, spec, spec * 0.94);
         lit += directSunTerms * (effectiveLightColor * sunFactor);
     }
 
-    lit += subsurfaceColor * (transmission * mix(0.14, 0.22, bloomMask)) * skyAmbient * mix(0.35, 1.0, shadow);
+    lit += subsurfaceColor * (transmission * mix(0.16, 0.28, bloomMask)) * skyAmbient * mix(0.35, 1.0, shadow);
 
     float hCurve = hNorm / (0.68 + 0.32 * hNorm);
-    float rootAO = clamp(0.72 + 0.28 * hCurve, 0.72, 1.0);
+    float rootAO = clamp(0.66 + 0.34 * hCurve, 0.66, 1.0);
     lit *= mix(rootAO, 1.0, bloomMask);
 
     if (distSq < 1225.0) {
@@ -263,18 +263,18 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
 
     float fwU = fwidth(u);
     float fwH = fwidth(h);
-    float unresolved = max(FastRamp(0.55, 1.80, fwU), FastRamp(0.16, 0.45, fwH));
-    float tipConvergence = FastRamp(0.82, 0.99, h);
-    float antiShimmer = max(max(unresolved, FastRamp(11.0, 30.0, distToCam)), tipConvergence * 0.75);
+    float unresolved = max(FastRamp(0.50, 1.65, fwU), FastRamp(0.14, 0.42, fwH));
+    float tipConvergence = FastRamp(0.80, 0.98, h);
+    float antiShimmer = max(max(unresolved, FastRamp(8.0, 24.0, distToCam)), tipConvergence * 0.78);
 
     vec3 rawFaceN = vec3(worldNormal.x * 0.72, max(abs(worldNormal.y), 0.48), worldNormal.z * 0.72);
     vec3 faceNormal = rawFaceN * inversesqrt(max(dot(rawFaceN, rawFaceN), 1e-8));
     if (distToCam < 18.0) {
         float sideLenSq = 1.0 - faceNormal.y * faceNormal.y;
         if (sideLenSq > 1e-6) {
-            float nearCurvatureFade = 1.0 - FastRamp(10.0, 18.0, distToCam);
+            float nearCurvatureFade = 1.0 - FastRamp(9.0, 17.0, distToCam);
             vec3 bladeSide = vec3(-faceNormal.z, 0.0, faceNormal.x) * inversesqrt(sideLenSq);
-            float curvature = u * 0.19 * (1.0 - antiShimmer * 0.90) * nearCurvatureFade;
+            float curvature = u * 0.19 * (1.0 - antiShimmer * 0.92) * nearCurvatureFade;
             vec3 curvedN = faceNormal + bladeSide * curvature;
             faceNormal = curvedN * inversesqrt(1.0 + curvature * curvature);
         }
@@ -282,17 +282,17 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
 
     float archWindow = FastRamp(0.16, 0.44, h) * (1.0 - FastRamp(0.68, 0.88, h));
 
-    float groundBlend = (1.0 - FastRamp(0.0, 0.34, h)) * 0.52;
-    float baseCanopySmooth = mix(0.46, 0.88, antiShimmer);
+    float groundBlend = (1.0 - FastRamp(0.0, 0.38, h)) * 0.56;
+    float baseCanopySmooth = mix(0.52, 0.92, antiShimmer);
     float terrainBlend = 1.0 - (1.0 - baseCanopySmooth) * (1.0 - groundBlend);
     vec3 rawCanopyN = mix(faceNormal, vec3(0.0, 1.0, 0.0), terrainBlend);
     vec3 n = rawCanopyN * inversesqrt(max(dot(rawCanopyN, rawCanopyN), 1e-8));
 
     float warmShift = clamp(macroPatch * 0.5 + 0.5, 0.0, 1.0);
-    float tipHeightMask = FastRamp(0.35, 0.92, h);
-    // Organic foliage tones: rich emerald clover & sun-kissed olive tips, never fluorescent
-    vec3 coolEmeraldTip = vec3(0.88, 1.02, 0.82);
-    vec3 warmGoldenTip  = vec3(1.02, 0.98, 0.70);
+    float tipHeightMask = FastRamp(0.32, 0.90, h);
+    // Rich macro botanical contrast: cool emerald hollows vs warm sun-kissed golden-olive crests
+    vec3 coolEmeraldTip = vec3(0.84, 1.04, 0.80);
+    vec3 warmGoldenTip  = vec3(1.12, 1.02, 0.66);
     vec3 tipTone = mix(vec3(1.0), mix(coolEmeraldTip, warmGoldenTip, warmShift), tipHeightMask);
     baseColor *= tipTone;
 
@@ -358,11 +358,13 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
         }
     }
 
-    float distRootLift = FastRamp(10.0, 28.0, distToCam);
-    float rootBlend = (1.0 - FastRamp(0.0, 0.24, h)) * mix(0.20, 0.04, distRootLift);
+    // Lift root darkness smoothly starting at 6.5m so mid-distance blades (8m..22m)
+    // merge into a velvety continuous meadow instead of "short dark dashes"
+    float distRootLift = FastRamp(6.5, 21.0, distToCam);
+    float rootBlend = (1.0 - FastRamp(0.0, 0.24, h)) * mix(0.16, 0.02, distRootLift);
     baseColor = mix(baseColor, rootSubstrateTone, rootBlend);
-    vec3 distantCanopyTone = mix(vec3(0.24, 0.42, 0.15), vec3(0.34, 0.52, 0.19), warmShift * 0.65);
-    baseColor = mix(baseColor, distantCanopyTone, distRootLift * (1.0 - h) * 0.36);
+    vec3 distantCanopyTone = mix(vec3(0.24, 0.42, 0.15), vec3(0.36, 0.53, 0.19), warmShift * 0.70);
+    baseColor = mix(baseColor, distantCanopyTone, distRootLift * (1.0 - h) * 0.42);
 
     vec3 skyAmbient = clamp(u_ambientColor * vec3(1.25, 1.25, 1.35), 0.0, 1.0);
     vec3 groundBounce = clamp(u_ambientColor * vec3(0.55, 0.45, 0.40), 0.0, 1.0);
@@ -370,8 +372,8 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     vec3 ambientGround = mix(groundBounce, greenBounce, 0.48);
     vec3 ambient = mix(ambientGround, skyAmbient, n.y * 0.5 + 0.5);
 
-    // Botanical root self-shadowing anchors individual grass tufts into the dark loam
-    float rootAO = mix(mix(0.24, 0.65, distRootLift), 1.0, smoothstep(0.0, 0.45, h));
+    // Botanical root self-shadowing anchors close grass tufts without darkening mid-distance meadow
+    float rootAO = mix(mix(0.42, 0.86, distRootLift), 1.0, smoothstep(0.0, 0.42, h));
     vec3 lit = baseColor * ambient * rootAO;
 
     float nv = max(dot(faceNormal, viewDir), 0.0);
@@ -394,7 +396,7 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
             vec3 effectiveSunColor = u_lightColor * (horizonEnv / (1.0 + max(lightDir.y - 0.32, 0.0) * 1.18));
 
             float lowSunMacroBlend = 1.0 - smoothstep(0.08, 0.36, lightSunY);
-            float shadingNWeight = mix(0.58, 0.82, lowSunMacroBlend);
+            float shadingNWeight = mix(0.64, 0.86, lowSunMacroBlend);
             vec3 rawShadingN = mix(faceNormal, n, shadingNWeight);
             vec3 shadingN = rawShadingN * inversesqrt(max(dot(rawShadingN, rawShadingN), 1e-8));
             vec3 rawModelL = vec3(lightDir.x + 0.32 * lightDir.y, lightDir.y * 0.76, lightDir.z - 0.24 * lightDir.y);
@@ -404,11 +406,11 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
             float zenithBlend  = clamp((lightDir.y - 0.50) * 1.5, 0.0, 0.60);
             float wrapped = mix(wrappedFace, wrappedModel, zenithBlend);
 
-            float canopyDepth = 0.34 * (1.0 - h) * (1.0 - distRootLift * 0.55);
-            float opticalDepth = canopyDepth * 0.75 / max(lightDir.y, 0.28);
+            float canopyDepth = 0.30 * (1.0 - h) * (1.0 - distRootLift * 0.65);
+            float opticalDepth = canopyDepth * 0.72 / max(lightDir.y, 0.28);
             float expCanopy = 1.0 / (1.0 + opticalDepth + 0.35 * opticalDepth * opticalDepth);
-            float verticalSelfShadow = mix(mix(0.72, 0.90, distRootLift), 1.0, clamp(h * 2.173913, 0.0, 1.0));
-            float canopy = (mix(0.52, 0.76, distRootLift) + mix(0.48, 0.24, distRootLift) * expCanopy) * verticalSelfShadow;
+            float verticalSelfShadow = mix(mix(0.76, 0.94, distRootLift), 1.0, clamp(h * 2.173913, 0.0, 1.0));
+            float canopy = (mix(0.56, 0.82, distRootLift) + mix(0.44, 0.18, distRootLift) * expCanopy) * verticalSelfShadow;
 
             vec3 anisoSpec = vec3(0.0);
             float waxySpec = 0.0;
@@ -439,15 +441,15 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
             float forwardScatter = max(-dot(rawDistortedSun, viewDir) * inversesqrt(max(dot(rawDistortedSun, rawDistortedSun), 1e-8)), 0.0);
             float backLight = max(-dot(faceNormal, modelLightDir), 0.0);
             float forwardLobe = forwardScatter * forwardScatter * (0.85 + 0.55 * forwardScatter);
-            float backLobe = FastPow2(backLight) * (0.38 + 0.62 * forwardScatter);
+            float backLobe = FastPow2(backLight) * (0.42 + 0.65 * forwardScatter);
             float edgeThinness = 0.64 + 0.36 * absU;
-            float sssWindow = FastRamp(0.16, 0.54, h) * (1.0 - FastRamp(0.88, 1.0, h) * 0.20);
-            float transmission = (backLobe * 0.48 + forwardLobe * 0.72 * (0.28 + 0.72 * h)) * sssWindow * edgeThinness * sssScale;
-            vec3 emeraldJadeSSS = baseColor * vec3(0.72, 1.15, 0.42) + vec3(0.010, 0.018, 0.006) * sssScale;
+            float sssWindow = FastRamp(0.14, 0.52, h) * (1.0 - FastRamp(0.88, 1.0, h) * 0.20);
+            float transmission = (backLobe * 0.56 + forwardLobe * 0.84 * (0.30 + 0.70 * h)) * sssWindow * edgeThinness * sssScale;
+            vec3 emeraldJadeSSS = baseColor * vec3(0.84, 1.22, 0.44) + vec3(0.014, 0.022, 0.006) * sssScale;
 
             float diffuseLobe = wrapped * (0.42 + 0.48 * wrapped);
-            vec3 directDiffuse = baseColor * (diffuseLobe * 0.65);
-            vec3 jadeTrans = emeraldJadeSSS * (transmission * 0.80);
+            vec3 directDiffuse = baseColor * (diffuseLobe * 0.66);
+            vec3 jadeTrans = emeraldJadeSSS * (transmission * 0.96);
             vec3 specHighlight = anisoSpec + vec3(waxySpec * 0.34) * baseColor;
 
             vec3 directSun = ((directDiffuse + jadeTrans) * canopy + specHighlight) * sunVis;

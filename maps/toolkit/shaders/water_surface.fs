@@ -57,6 +57,14 @@ uniform vec4 u_obstacle0;
 uniform vec4 u_obstacle1;
 uniform vec4 u_obstacle2;
 uniform vec4 u_obstacle3;
+uniform vec4 u_obstacle4;
+uniform vec4 u_obstacle5;
+uniform vec4 u_obstacle6;
+uniform vec4 u_obstacle7;
+uniform vec4 u_obstacle8;
+uniform vec4 u_obstacle9;
+uniform vec4 u_obstacle10;
+uniform vec4 u_obstacle11;
 
 out vec4 finalColor;
 
@@ -66,25 +74,30 @@ void EvaluateObstacleWake(vec4 obs, vec2 worldXZ, vec2 flowDir, float time,
     if (obs.z <= 0.01) return;
     vec2 toFrag = worldXZ - obs.xy;
     float d2 = dot(toFrag, toFrag);
-    float maxReach = obs.z * 2.35;
+    float maxReach = obs.z * 2.85;
     if (d2 >= maxReach * maxReach || d2 < 1e-6) return;
 
     float invD = inversesqrt(d2);
     float d = d2 * invD;
     vec2 dir = toFrag * invD;
 
-    // Band around stone perimeter (d ~ 0.70 * r .. 1.95 * r)
+    // Band around stone perimeter (d ~ 0.45 * r .. 2.65 * r)
     float normR = d / obs.z;
-    if (normR < 0.55) return;
+    if (normR < 0.42) return;
 
-    float collar = (1.0 - smoothstep(0.75, 1.85, normR)) * smoothstep(0.55, 0.85, normR);
+    float collar = (1.0 - smoothstep(0.85, 2.55, normR)) * smoothstep(0.42, 0.78, normR);
     float downstream = dot(dir, flowDir);
-    float wakeV = sin((normR - 0.85) * 14.0 - time * 3.8 + abs(downstream) * 2.5);
+    float crossStream = abs(dir.x * flowDir.y - dir.y * flowDir.x);
+    float wakeV = sin((normR - 0.72) * 15.0 - time * 4.2 + abs(downstream) * 2.8);
+    float chevron = (downstream > -0.15)
+        ? exp(-abs(crossStream - (normR - 0.65) * 0.38) * 5.5) * (1.0 - smoothstep(0.65, 2.75, normR))
+        : 0.0;
     float strength = clamp(obs.w, 0.2, 1.5);
 
-    ioSlope += dir * (wakeV * collar * 0.22 * strength);
-    float stoneFoam = collar * (0.55 + 0.45 * max(wakeV, 0.0)) * (0.75 + 0.25 * max(-downstream, 0.0));
-    ioFoam = max(ioFoam, stoneFoam * 0.65 * strength);
+    ioSlope += dir * ((wakeV * collar * 0.28 + chevron * 0.22) * strength);
+    float bowBuild = 0.78 + 0.38 * max(-downstream, 0.0);
+    float stoneFoam = collar * (0.62 + 0.38 * max(wakeV, 0.0)) * bowBuild + chevron * 0.52;
+    ioFoam = max(ioFoam, stoneFoam * 0.92 * strength);
 }
 
 void main()
@@ -254,13 +267,23 @@ void main()
         }
     }
 
-    // Evaluate river stone obstacles (u_obstacle0..3)
+    // Evaluate river stone obstacles (prominent separated boulders within 40m)
     float obstacleFoam = 0.0;
-    if (distSq < 2500.0) {
+    if (distSq < 1600.0 && u_obstacle0.z > 0.01) {
         EvaluateObstacleWake(u_obstacle0, fragWorldXZ, normFlowDir, t, interactSlope, obstacleFoam);
         EvaluateObstacleWake(u_obstacle1, fragWorldXZ, normFlowDir, t, interactSlope, obstacleFoam);
         EvaluateObstacleWake(u_obstacle2, fragWorldXZ, normFlowDir, t, interactSlope, obstacleFoam);
         EvaluateObstacleWake(u_obstacle3, fragWorldXZ, normFlowDir, t, interactSlope, obstacleFoam);
+        EvaluateObstacleWake(u_obstacle4, fragWorldXZ, normFlowDir, t, interactSlope, obstacleFoam);
+        EvaluateObstacleWake(u_obstacle5, fragWorldXZ, normFlowDir, t, interactSlope, obstacleFoam);
+        if (u_obstacle6.z > 0.01) {
+            EvaluateObstacleWake(u_obstacle6,  fragWorldXZ, normFlowDir, t, interactSlope, obstacleFoam);
+            EvaluateObstacleWake(u_obstacle7,  fragWorldXZ, normFlowDir, t, interactSlope, obstacleFoam);
+            EvaluateObstacleWake(u_obstacle8,  fragWorldXZ, normFlowDir, t, interactSlope, obstacleFoam);
+            EvaluateObstacleWake(u_obstacle9,  fragWorldXZ, normFlowDir, t, interactSlope, obstacleFoam);
+            EvaluateObstacleWake(u_obstacle10, fragWorldXZ, normFlowDir, t, interactSlope, obstacleFoam);
+            EvaluateObstacleWake(u_obstacle11, fragWorldXZ, normFlowDir, t, interactSlope, obstacleFoam);
+        }
         dynamicWakeFoam = max(dynamicWakeFoam, obstacleFoam * shoreFade);
     }
 
@@ -389,23 +412,26 @@ void main()
 
     vec3 reflectDir = reflect(-viewDir, normal);
     float skyAngle = clamp(reflectDir.y * 0.85 + 0.15, 0.0, 1.0);
-    vec3 skyZenith  = vec3(0.16, 0.48, 0.82) * (0.85 + u_ambientColor.b * 0.35);
-    vec3 skyHorizon = vec3(0.38, 0.68, 0.84) * (0.80 + u_ambientColor.g * 0.25);
+    float sunAzimuth = clamp(dot(normalize(vec2(reflectDir.x, reflectDir.z) + vec2(1e-5)),
+                                 normalize(L.xz + vec2(1e-5))) * 0.5 + 0.5, 0.0, 1.0);
+    vec3 skyZenith  = mix(vec3(0.18, 0.42, 0.70), u_ambientColor * 1.18, 0.45);
+    vec3 skyHorizon = mix(u_ambientColor * 1.32 + vec3(0.10, 0.12, 0.14),
+                          effectiveLight * 0.68, 0.24 + 0.34 * sunAzimuth * sunAzimuth);
     vec3 reflectedSky = mix(skyHorizon, skyZenith, skyAngle);
 
-    // Luminous emerald waterline contact reflection only at immediate bank shoreline
-    vec3 bankCanopyReflect = vec3(0.14, 0.38, 0.22) * (0.85 + u_ambientColor.g * 0.35);
-    float bankReflectMask = (1.0 - smoothstep(0.005, 0.065, waterDepth)) * (1.0 - skyAngle * 0.65);
-    reflectedSky = mix(reflectedSky, bankCanopyReflect, bankReflectMask * 0.35);
+    // Luminous emerald-moss waterline contact reflection along the riverbank
+    vec3 bankCanopyReflect = vec3(0.16, 0.34, 0.18) * (0.82 + u_ambientColor.g * 0.35);
+    float bankReflectMask = (1.0 - smoothstep(0.01, 0.22, waterDepth)) * (1.0 - skyAngle * 0.55);
+    reflectedSky = mix(reflectedSky, bankCanopyReflect, bankReflectMask * 0.42);
 
     float sunReflect = max(0.0, dot(reflectDir, L));
     float sr2 = sunReflect * sunReflect;
     float sr4 = sr2 * sr2;
     float sr8 = sr4 * sr4;
-    reflectedSky += effectiveLight * (sr8 * sr8 * 0.18);
+    reflectedSky += effectiveLight * (sr8 * sr8 * 0.14);
 
-    float crest = smoothstep(0.48, 0.92, waveFacet) * 0.045;
-    vec3 waveHighlight = reflectedSky * (max(waveFacet, 0.0) * 0.038 + crest + wakeCrestHighlight * 0.42);
+    float crest = smoothstep(0.48, 0.92, waveFacet) * 0.042;
+    vec3 waveHighlight = reflectedSky * (max(waveFacet, 0.0) * 0.035 + crest + wakeCrestHighlight * 0.38);
 
     vec3 halfSum = L + viewDir;
     vec3 halfDir = halfSum * inversesqrt(max(dot(halfSum, halfSum), 1e-6));
@@ -421,11 +447,13 @@ void main()
     float nh128 = nh64 * nh64;
     float glintSharp = nh128 * nh128;
     float waveSlopeEnergy = clamp(sqrt(slopeLenSq) * 14.0, 0.14, 1.0);
-    float glintMid = (nh96 * 0.28 + nh64 * 0.12) * waveSlopeEnergy;
+    float glintMid = (nh96 * 0.24 + nh64 * 0.10) * waveSlopeEnergy;
 
-    vec3 sunGlint = effectiveLight * (glintSharp * 2.8 + glintMid * 0.65) * (0.22 + fresnel * 0.78) * detailDistFade;
+    // Soft-knee highlight compression so golden-hour water glints sparkle without clipping white
+    vec3 rawGlint = effectiveLight * (glintSharp * 2.10 + glintMid * 0.52) * (0.20 + fresnel * 0.80) * detailDistFade;
+    vec3 sunGlint = rawGlint / (vec3(1.0) + rawGlint * 0.45);
     float disturbance = clamp(length(interactSlope) * 2.2, 0.0, 1.0);
-    vec3 waveReflection = reflectedSky * (nh12 * disturbance * 0.38);
+    vec3 waveReflection = reflectedSky * (nh12 * disturbance * 0.34);
 
     vec2 rawAzimuth = L.xz + vec2(0.42, -0.34);
     vec2 horizAzimuth = rawAzimuth * inversesqrt(max(dot(rawAzimuth, rawAzimuth), 1e-8));
@@ -433,74 +461,77 @@ void main()
     vec3 waveLighting = effectiveLight * clamp(waveSlopeContrast + (dot(normal, L) - L.y), -0.20, 0.22) * 0.24;
 
     // ── 7. SHORELINE & SUBMERGED CONTACT WATERLINE MENISCUS ──────────────────
-    float foamDist = max(u_foamThreshold, 0.12);
+    float foamDist = clamp(u_foamThreshold, 0.06, 0.13);
     float contactMask = clamp(1.0 - waterDepth / foamDist, 0.0, 1.0);
     float brokenFoam = 0.0;
 
     if (contactMask > 0.001 || dynamicWakeFoam > 0.001) {
-        float meniscusLip = smoothstep(0.002, 0.020, waterDepth) * (1.0 - smoothstep(0.020, 0.085, waterDepth));
-        vec2 foamUV = fragWorldXZ * 0.48 + fract(vec2(t * 0.022, -t * 0.016));
-        float foamNoise = textureGrad(texture0, foamUV, xzDx * 0.48, xzDy * 0.48).r;
-        float contactRipple = sin(waterDepth * 38.0 - t * 4.6) * exp(-waterDepth * 7.0);
+        float meniscusLip = smoothstep(0.002, 0.018, waterDepth) * (1.0 - smoothstep(0.022, 0.085, waterDepth));
+        vec2 foamUV = fragWorldXZ * 0.52 - normFlowDir * fract(t * 0.045);
+        vec2 foamUV2 = fragWorldXZ * 1.35 + normFlowDir * fract(t * 0.075);
+        float foamNoise = textureGrad(texture0, foamUV, xzDx * 0.52, xzDy * 0.52).r;
+        float foamFine  = textureGrad(texture0, foamUV2, xzDx * 1.35, xzDy * 1.35).r;
+        float foamWeb   = foamNoise * 0.62 + foamFine * 0.38;
+        float contactRipple = sin(waterDepth * 36.0 - t * 4.2) * exp(-waterDepth * 7.5);
 
-        float wakeFoamTex = dynamicWakeFoam * smoothstep(0.30, 0.76, foamNoise + dynamicWakeFoam * 0.38);
+        float wakeFoamTex = dynamicWakeFoam * smoothstep(0.24, 0.70, foamWeb + dynamicWakeFoam * 0.45);
         if (u_waterShape == 3) {
-            // Subtle organic meniscus foam along shallow banks & around submerged stepping stones
-            float streamLipFoam = meniscusLip * 0.26 * smoothstep(0.42, 0.74, foamNoise)
-                                + max(contactRipple, 0.0) * 0.08 * contactMask * smoothstep(0.45, 0.75, foamNoise);
-            brokenFoam = clamp(max(streamLipFoam, wakeFoamTex), 0.0, 0.85);
+            // Delicate shoreline meniscus foam, lapping bank ripples, and crisp stone wake lacing
+            float shoreLace = meniscusLip * 0.58 * smoothstep(0.36, 0.68, foamWeb)
+                            + max(contactRipple, 0.0) * 0.24 * contactMask * smoothstep(0.38, 0.70, foamWeb);
+            brokenFoam = clamp(max(shoreLace, wakeFoamTex), 0.0, 0.88);
         } else {
-            brokenFoam = smoothstep(0.49, 0.80, contactMask * 0.58 + (foamNoise - 0.5) * 0.72);
-            brokenFoam = max(brokenFoam, meniscusLip * 0.22 * smoothstep(0.38, 0.68, foamNoise));
-            brokenFoam += max(contactRipple, 0.0) * 0.09 * contactMask;
+            brokenFoam = smoothstep(0.46, 0.78, contactMask * 0.60 + (foamWeb - 0.5) * 0.72);
+            brokenFoam = max(brokenFoam, meniscusLip * 0.38 * smoothstep(0.36, 0.68, foamWeb));
+            brokenFoam += max(contactRipple, 0.0) * 0.14 * contactMask;
             brokenFoam = clamp(max(brokenFoam, wakeFoamTex), 0.0, 1.0);
         }
     }
 
     // ── 8. CRYSTAL CLEAR SEE-THROUGH WATER TRANSPARENCY ──────────────────────
-    // Balanced stylized-realism transparency: luminous turquoise body and crisp sky reflection,
-    // while remaining crystal clear to see riverbed sand and rocks underneath.
+    // Shallow water (0..30cm) stays crystal-clear so riverbed pebbles, sand ripples & caustics
+    // read clearly through the water column, while deeper pools transition to rich emerald-jade.
     float depthOpacity = (u_waterShape == 3)
-        ? (1.0 - exp(-5.2 * waterDepth))
-        : (1.0 - exp(-2.2 * waterDepth));
+        ? (1.0 - exp(-2.05 * waterDepth))
+        : (1.0 - exp(-2.20 * waterDepth));
     float waterColumnAlpha = (u_waterShape == 3)
-        ? clamp(0.38 + 0.48 * depthOpacity, 0.0, 0.88)
+        ? clamp(0.12 + 0.58 * depthOpacity, 0.0, 0.82)
         : (0.18 + 0.52 * depthOpacity);
-    float glintAlphaBoost = clamp(glintSharp * 0.45, 0.0, 0.30);
-    float surfaceAlpha = (fresnel * 0.72) + waterColumnAlpha + glintAlphaBoost;
+    float glintAlphaBoost = clamp(glintSharp * 0.38, 0.0, 0.26);
+    float surfaceAlpha = (fresnel * 0.66) + waterColumnAlpha + glintAlphaBoost;
 
     float shoreEdgeFade = radialEdgeFade;
     if (u_waterShape == 3) {
-        shoreEdgeFade = smoothstep(0.001, 0.038, waterDepth);
+        shoreEdgeFade = smoothstep(0.002, 0.125, waterDepth);
     } else if (u_waterShape != 0) {
-        shoreEdgeFade = smoothstep(0.002, 0.038, waterDepth);
+        shoreEdgeFade = smoothstep(0.002, 0.055, waterDepth);
     }
     surfaceAlpha *= shoreEdgeFade;
 
-    float alpha = clamp(surfaceAlpha + brokenFoam * 0.40 * shoreEdgeFade, 0.0, 0.92);
+    float alpha = clamp(surfaceAlpha + brokenFoam * 0.58 * smoothstep(0.001, 0.035, waterDepth), 0.0, 0.92);
     if (alpha < 0.002) discard;
 
     // ── 9. ENERGY-CONSERVING COMPOSITION ─────────────────────────────────────
-    vec3 shallowTint = mix(u_shallowColor, vec3(0.14, 0.78, 0.72), 0.58);
-    vec3 deepTint    = mix(u_deepColor,    vec3(0.04, 0.34, 0.44), 0.55);
+    vec3 shallowTint = mix(u_shallowColor, vec3(0.16, 0.74, 0.68), 0.52);
+    vec3 deepTint    = mix(u_deepColor,    vec3(0.04, 0.32, 0.42), 0.55);
 
-    vec3 depthBlend = clamp(mix(vec3(1.0 - smoothstep(0.04, 0.85, waterDepth)), transmittance, 0.65), 0.0, 1.0);
+    vec3 depthBlend = clamp(mix(vec3(1.0 - smoothstep(0.06, 0.95, waterDepth)), transmittance, 0.68), 0.0, 1.0);
     vec3 waterVolumeColor = mix(deepTint, shallowTint, depthBlend);
-    waterVolumeColor *= (0.82 + u_ambientColor * 0.35 + effectiveLight * 0.25);
+    waterVolumeColor *= (0.80 + u_ambientColor * 0.35 + effectiveLight * 0.24);
 
-    float shoreFadeOptical = (u_waterShape == 3) ? smoothstep(0.003, 0.075, waterDepth) : 1.0;
+    float shoreFadeOptical = (u_waterShape == 3) ? smoothstep(0.005, 0.18, waterDepth) : 1.0;
 
     float reflectWeight = (u_waterShape == 3)
-        ? clamp((fresnel * 0.75 + 0.18) * shoreFadeOptical, 0.0, 0.86)
-        : clamp(fresnel * 0.75 + 0.12, 0.0, 0.88);
-    vec3 underwaterTerms = waterVolumeColor + causticLight + sssLight + waveLighting;
+        ? clamp((fresnel * 0.68 + 0.10) * shoreFadeOptical, 0.0, 0.78)
+        : clamp(fresnel * 0.72 + 0.12, 0.0, 0.85);
+    vec3 underwaterTerms = waterVolumeColor + causticLight * 1.35 + sssLight + waveLighting;
     vec3 color = mix(underwaterTerms, reflectedSky, reflectWeight);
 
     color += waveHighlight + sunGlint + waveReflection;
     color += effectiveLight * vec3(0.62, 0.76, 0.84) * clamp(waveCurvature, -0.20, 0.20);
 
-    vec3 frothColor = mix(u_foamColor, vec3(0.96, 0.98, 1.0), 0.30) * (0.72 + effectiveLight * 0.22);
-    color = mix(color, frothColor, brokenFoam * 0.62);
+    vec3 frothColor = mix(u_foamColor, vec3(0.98, 0.97, 0.94), 0.35) * (0.76 + effectiveLight * 0.24);
+    color = mix(color, frothColor, brokenFoam * 0.78);
 
     // VFX Point Light response
     color += VFXLights_Accumulate(fragPosition, normal, shallowTint) * 0.65;

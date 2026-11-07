@@ -45,7 +45,7 @@ static int s_waterLocVelocity = -1;
 static int s_waterLocRadius = -1;
 static int s_waterLocRippleRings[MAX_WATER_RIPPLES] = {-1, -1, -1, -1};
 static int s_waterLocRippleParams[MAX_WATER_RIPPLES] = {-1, -1, -1, -1};
-static int s_waterLocObstacles[MAX_WATER_OBSTACLES] = {-1, -1, -1, -1};
+static int s_waterLocObstacles[MAX_WATER_OBSTACLES] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
 static int s_waterLocWaveFieldTex = -1;
 static int s_waterLocWaveFieldEnabled = -1;
 static int s_waterLocLakeRadii = -1;
@@ -1855,7 +1855,10 @@ static Shader Water_GetShader(void)
         static const char *paramArrayNames[] = {"u_rippleParams[0]", "u_rippleParams[1]", "u_rippleParams[2]", "u_rippleParams[3]"};
         static const char *ringLegacyNames[] = {"u_rippleRing0", "u_rippleRing1", "u_rippleRing2", "u_rippleRing3"};
         static const char *paramLegacyNames[] = {"u_rippleParam0", "u_rippleParam1", "u_rippleParam2", "u_rippleParam3"};
-        static const char *obstacleNames[] = {"u_obstacle0", "u_obstacle1", "u_obstacle2", "u_obstacle3"};
+        static const char *obstacleNames[] = {
+            "u_obstacle0", "u_obstacle1", "u_obstacle2", "u_obstacle3",
+            "u_obstacle4", "u_obstacle5", "u_obstacle6", "u_obstacle7",
+            "u_obstacle8", "u_obstacle9", "u_obstacle10", "u_obstacle11"};
         for (int i = 0; i < MAX_WATER_RIPPLES; i++)
         {
             s_waterLocRippleRings[i] = GetShaderLocation(s_waterShader, ringArrayNames[i]);

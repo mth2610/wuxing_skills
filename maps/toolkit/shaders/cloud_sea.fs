@@ -17,8 +17,8 @@ uniform vec4 ambientColor;
 
 out vec4 finalColor;
 
-const vec3 CLOUD_DARK  = vec3(0.56, 0.62, 0.72); // Soft atmospheric pearl shadow in cloud valleys
-const vec3 CLOUD_LIGHT = vec3(0.99, 0.96, 0.90); // Warm luminous sunlight crest
+const vec3 CLOUD_DARK  = vec3(0.46, 0.54, 0.68); // Deep twilight-slate shadow in cloud valleys
+const vec3 CLOUD_LIGHT = vec3(1.02, 0.94, 0.84); // Warm golden-hour sunlight crest
 
 void main()
 {
@@ -47,22 +47,22 @@ void main()
     vec3 skyRay = vec3(v_viewVec.x, max(v_viewVec.y, 0.14), v_viewVec.z);
     vec3 sky = MapSkyRadiance(skyRay, L, u_skyAmbient, u_hazeColor, cloudSunLight);
 
-    // Chân trời hòa nhập 100% vào ánh sáng vòm trời xa ở dist >= 620m
-    float horizon = smoothstep(160.0, 620.0, dist);
+    // Chân trời hòa nhập 100% vào ánh sáng vòm trời xa ở dist >= 540m
+    float horizon = smoothstep(130.0, 540.0, dist);
     vec3 outColor = sky;
 
-    // [TỐI ƯU BĂNG THÔNG TEXTURE]: Khi horizon >= 0.999 (dist >= 620m), mây đã hòa 100% vào bầu trời
+    // [TỐI ƯU BĂNG THÔNG TEXTURE]: Khi horizon >= 0.999 (dist >= 540m), mây đã hòa 100% vào bầu trời
     // nên bỏ qua toàn bộ 4 lần đọc textureGrad và tính toán tán xạ mây.
     if (horizon < 0.999) {
-        float distWeight = 1.0 - smoothstep(45.0, 260.0, dist);
-        float grazingWeight = smoothstep(0.04, 0.32, abs(viewDir.y));
+        float distWeight = 1.0 - smoothstep(45.0, 290.0, dist);
+        float grazingWeight = smoothstep(0.03, 0.30, abs(viewDir.y));
         float octaveWeight = distWeight * grazingWeight;
 
         float n2 = (octaveWeight > 0.001) ? textureGrad(texture0, v_flowUVs.zw, uvDx2, uvDy2).r : 0.5;
-        vec2 warpedFlow1 = v_flowUVs.xy + (n2 - 0.5) * (0.045 * octaveWeight);
+        vec2 warpedFlow1 = v_flowUVs.xy + (n2 - 0.5) * (0.056 * octaveWeight);
         float n1 = textureGrad(texture0, warpedFlow1, uvDx1, uvDy1).r;
 
-        float density = mix(n1, n1 * 0.66 + n2 * 0.34, octaveWeight);
+        float density = mix(n1, n1 * 0.62 + n2 * 0.38, octaveWeight);
 
         vec3 baseN = v_normal * inversesqrt(max(dot(v_normal, v_normal), 1e-8));
         vec3 N;
@@ -70,30 +70,30 @@ void main()
             vec2 stepUV = max(flowFootprint * 1.5, vec2(0.012));
             float nR = textureGrad(texture0, warpedFlow1 + vec2(stepUV.x, 0.0), uvDx1, uvDy1).r;
             float nU = textureGrad(texture0, warpedFlow1 + vec2(0.0, stepUV.y), uvDx1, uvDy1).r;
-            float slopeScale = 2.1 * octaveWeight;
+            float slopeScale = 2.65 * octaveWeight;
             vec3 billowNormal = vec3(-(nR - n1) * slopeScale, 1.0, -(nU - n1) * slopeScale);
             billowNormal *= inversesqrt(dot(billowNormal, billowNormal));
-            vec3 mixedN = mix(baseN, billowNormal, 0.58 * octaveWeight);
+            vec3 mixedN = mix(baseN, billowNormal, 0.68 * octaveWeight);
             N = mixedN * inversesqrt(max(dot(mixedN, mixedN), 1e-8));
         } else {
             N = baseN;
         }
 
-        float edge = smoothstep(0.30, 0.76, density);
-        float verticalAO = clamp(N.y * 0.35 + 0.65, 0.42, 1.0);
-        // Xấp xỉ hữu tỉ cho 1.0 - exp(-density * 2.4) để tiết kiệm hàm siêu việt exp()
-        float dScaled = density * 2.4;
+        float edge = smoothstep(0.26, 0.78, density);
+        float verticalAO = clamp(N.y * 0.42 + 0.58, 0.36, 1.0);
+        // Xấp xỉ hữu tỉ cho 1.0 - exp(-density * 2.6) để tiết kiệm hàm siêu việt exp()
+        float dScaled = density * 2.6;
         float powderEffect = 1.0 - 1.0 / (1.0 + dScaled + 0.48 * dScaled * dScaled);
-        float cloudShading = clamp(edge * verticalAO * mix(0.88, 1.08, powderEffect), 0.0, 1.0);
+        float cloudShading = clamp(edge * verticalAO * mix(0.84, 1.12, powderEffect), 0.0, 1.0);
         vec3 cloudBase = mix(CLOUD_DARK, CLOUD_LIGHT, cloudShading);
 
         float NdotL = max((dot(N, L) + 0.38) * 0.72, 0.0);
 
         float VdotL = max(dot(viewDir, L), 0.0);
         float v2 = VdotL * VdotL;
-        float silverLining = (v2 * v2) * (1.0 - edge * 0.45) * 0.52;
+        float silverLining = (v2 * v2) * (1.0 - edge * 0.42) * 0.68;
 
-        vec3 totalLight = actAmbient * 0.85 + cloudSunLight * (NdotL * 0.78 + silverLining);
+        vec3 totalLight = actAmbient * 0.82 + cloudSunLight * (NdotL * 0.84 + silverLining);
 
         if (L.y < 0.08) {
             vec3 moonRaw = vec3(-L.x, max(-L.y, 0.35), -L.z);

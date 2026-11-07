@@ -86,7 +86,7 @@ void main() {
     vec3 rawB = cross(smoothN, T);
     vec3 B = (dot(rawB, fragBitangent) < 0.0) ? -rawB : rawB;
 
-    normalSample.xy *= 1.25;
+    normalSample.xy *= 1.52;
     normalSample *= inversesqrt(max(dot(normalSample, normalSample), 1e-8));
     vec3 normal = T * normalSample.x + B * normalSample.y + smoothN * normalSample.z;
     vec3 worldNormal = worldRot * normal;
@@ -102,40 +102,42 @@ void main() {
     vec3 actualAmbient = (dot(u_ambientColor, u_ambientColor) > 0.001) ? u_ambientColor : vec3(0.36, 0.42, 0.50);
 
     // Warm mineral & geological strata variation while preserving true lithology tones
-    float strataNoise = sin(worldPosition.y * 3.8 + worldPosition.x * 0.45 - worldPosition.z * 0.35) * 0.5 + 0.5;
-    vec3 rockAlbedo = albedo.rgb * mix(vec3(0.95, 0.94, 0.92), vec3(1.08, 1.04, 0.98), strataNoise);
+    float strataNoise = sin(worldPosition.y * 4.4 + worldPosition.x * 0.52 - worldPosition.z * 0.42) * 0.5 + 0.5;
+    float fineStrata = sin(worldPosition.y * 14.5 + normalSample.x * 2.2) * 0.5 + 0.5;
+    vec3 rockAlbedo = albedo.rgb * mix(vec3(0.90, 0.89, 0.87), vec3(1.12, 1.06, 0.98), strataNoise * 0.72 + fineStrata * 0.28);
 
     // Top-surface moss & lichen colonization harmonized with song_quao meadow palette
     float altitudeMoss = (1.0 - smoothstep(9.5, 13.5, worldPosition.y)) * 0.40 + 0.60;
-    float topMossMask = smoothstep(0.50, 0.80, worldNormal.y) * smoothstep(-0.18, 0.38, fragLocalY)
-                      * smoothstep(0.28, 0.72, albedo.g) * altitudeMoss;
-    topMossMask *= (1.0 - isRiverStone * 0.95);
-    vec3 crownMossAlbedo = mix(vec3(0.18, 0.32, 0.11), vec3(0.30, 0.46, 0.16), albedo.r);
-    vec3 lichenTone = vec3(0.50, 0.48, 0.22);
-    crownMossAlbedo = mix(crownMossAlbedo, lichenTone, smoothstep(0.48, 0.86, albedo.r));
-    rockAlbedo = mix(rockAlbedo, crownMossAlbedo, topMossMask * 0.78);
+    float topMossMask = smoothstep(0.44, 0.76, worldNormal.y) * smoothstep(-0.22, 0.34, fragLocalY)
+                      * smoothstep(0.24, 0.70, albedo.g) * altitudeMoss;
+    topMossMask *= (1.0 - isRiverStone * 0.88);
+    vec3 crownMossAlbedo = mix(vec3(0.15, 0.28, 0.09), vec3(0.28, 0.44, 0.14), albedo.r);
+    vec3 lichenTone = vec3(0.52, 0.49, 0.22);
+    crownMossAlbedo = mix(crownMossAlbedo, lichenTone, smoothstep(0.46, 0.84, albedo.r));
+    rockAlbedo = mix(rockAlbedo, crownMossAlbedo, topMossMask * 0.84);
 
-    // Lower skirt earthy moss & turf grounding blend matching meadow roots
-    float skirtMask = (1.0 - smoothstep(-0.42, 0.16, fragLocalY));
-    skirtMask *= (1.0 - isRiverStone * 0.90);
-    vec3 skirtMossAlbedo = mix(vec3(0.16, 0.28, 0.10), vec3(0.26, 0.42, 0.14), clamp(worldNormal.y, 0.0, 1.0));
-    rockAlbedo = mix(rockAlbedo, skirtMossAlbedo, skirtMask * 0.68);
+    // Lower skirt earthy moss & turf grounding blend matching meadow roots & dark loam
+    float skirtMask = (1.0 - smoothstep(-0.46, 0.22, fragLocalY));
+    skirtMask *= (1.0 - isRiverStone * 0.85);
+    vec3 skirtLoam = vec3(0.15, 0.13, 0.09);
+    vec3 skirtMossAlbedo = mix(skirtLoam, vec3(0.22, 0.36, 0.12), clamp(worldNormal.y * 1.15, 0.0, 1.0));
+    rockAlbedo = mix(rockAlbedo, skirtMossAlbedo, skirtMask * 0.78);
 
-    // Authentic water-tumbled river cobble biofilm, diatom patina & wet meniscus
-    float riverWetBase = 1.0 - smoothstep(-0.48, 0.08, fragLocalY);
-    float diatomMask = isRiverStone * smoothstep(0.22, 0.85, worldNormal.y) * smoothstep(-0.16, 0.38, fragLocalY);
-    vec3 diatomPatina = mix(vec3(0.38, 0.42, 0.24), vec3(0.48, 0.46, 0.22), albedo.g);
-    rockAlbedo = mix(rockAlbedo, diatomPatina, diatomMask * 0.45);
-    rockAlbedo *= mix(1.0, 0.72, isRiverStone * riverWetBase * 0.58);
+    // Authentic water-tumbled river boulder biofilm, diatom patina & wet meniscus
+    float riverWetBase = 1.0 - smoothstep(-0.48, 0.14, fragLocalY);
+    float diatomMask = isRiverStone * smoothstep(0.20, 0.82, worldNormal.y) * smoothstep(-0.18, 0.36, fragLocalY);
+    vec3 diatomPatina = mix(vec3(0.32, 0.38, 0.20), vec3(0.44, 0.44, 0.22), albedo.g);
+    rockAlbedo = mix(rockAlbedo, diatomPatina, diatomMask * 0.52);
+    rockAlbedo *= mix(1.0, 0.64, isRiverStone * riverWetBase * 0.72);
 
-    // Ground & sand contact darkening at the base of every rock
-    float skirtContact = 1.0 - smoothstep(-0.52, 0.02, fragLocalY);
-    rockAlbedo *= mix(1.0, 0.68, skirtContact * (isRiverStone > 0.5 ? 0.48 : 0.52));
+    // Ground & sand contact darkening at the base of every rock so rocks sit firmly in the earth
+    float skirtContact = 1.0 - smoothstep(-0.52, 0.08, fragLocalY);
+    rockAlbedo *= mix(1.0, 0.56, skirtContact * (isRiverStone > 0.5 ? 0.55 : 0.65));
 
     albedo.rgb = rockAlbedo;
-    roughness = mix(roughness, 0.86, max(topMossMask, skirtMask) * 0.78);
-    roughness = mix(roughness, 0.28, isRiverStone);
-    roughness = mix(roughness, 0.16, isRiverStone * riverWetBase * 0.85);
+    roughness = mix(roughness, 0.88, max(topMossMask, skirtMask) * 0.82);
+    roughness = mix(roughness, 0.32, isRiverStone);
+    roughness = mix(roughness, 0.13, isRiverStone * riverWetBase * 0.90);
 
     // Soft micro-wrap diffuse (0.15) brings out chiseled granite facets on the shaded side
     vec3 rawModelL = lightDir + vec3(0.32, -0.18, -0.26) * max(worldLightDir.y - 0.50, 0.0);
