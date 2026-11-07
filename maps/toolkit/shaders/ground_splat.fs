@@ -225,28 +225,26 @@ void main()
         float outerAbyssMask = (1.0 - smoothstep(-2.20, -0.65, fragWorldPos.y)) * smoothstep(0.08, 0.26, slope);
         float rockCliff = smoothstep(0.55, 0.88, rockScree)
                         * max(smoothstep(0.48, 0.65, slope), rimMask * smoothstep(0.22, 0.38, slope));
-        wCliff = clamp(max(wSlope, max(rockCliff, outerAbyssMask)), 0.0, 1.0) * (1.0 - shoreFactor * 0.95);
+        wCliff = clamp(max(wSlope, max(rockCliff, outerAbyssMask)), 0.0, 1.0) * (1.0 - shoreFactor * 0.99);
 
-        // Organic riparian margin modulated by shoreline grain
-        if (u_ecologyEnabled != 0 && smoothSignedShore >= -0.15) {
-            float bankNoise = sin(fragWorldPos.x * 0.45 + fragWorldPos.z * 0.38) * 0.025
-                            + sin(fragWorldPos.z * 0.85 - fragWorldPos.x * 0.58) * 0.015;
+        // Organic riparian margin modulated by multi-octave shoreline meanders
+        if (u_ecologyEnabled != 0 && smoothSignedShore >= -0.45) {
+            float bankNoise = sin(fragWorldPos.x * 0.18 + fragWorldPos.z * 0.14) * 0.35
+                            + cos(fragWorldPos.z * 0.32 - fragWorldPos.x * 0.22) * 0.22;
             float variableShore = smoothSignedShore + bankNoise;
-            float riparianFringe = (1.0 - smoothstep(-0.04, 0.06, variableShore));
-            wWetSoil = max(wWetSoil, riparianFringe * 0.92);
+            // Smoothly feather riparian margin over 0.5m so gravel bars and grassy banks intertwine naturally
+            float riparianFringe = (1.0 - smoothstep(-0.15, 0.35, variableShore));
+            wWetSoil = max(wWetSoil, riparianFringe * 0.70);
+            float grassTaper = smoothstep(-0.08, 0.32, variableShore);
+            // Retain verdant moss substrate right down to the waterline so ground never flashes bare sand
+            float mossSubstrate = smoothstep(-0.04, 0.15, variableShore) * 0.45;
+            wGrass = max(wGrass * grassTaper, mossSubstrate);
         }
 
         wDrySoil = clamp(max(wPathMargin * 0.78, wCliff), 0.0, 1.0)
                        * (1.0 - wWetSoil * 0.85) * (1.0 - wPath * 0.85);
-        wGrass = clamp(1.0 - wPath - wWetSoil - wDrySoil, 0.0, 1.0);
-
-        if (u_ecologyEnabled != 0 && smoothSignedShore >= -0.10 && smoothSignedShore < 0.06) {
-            float bankNoise = sin(fragWorldPos.x * 0.45 + fragWorldPos.z * 0.38) * 0.025
-                            + sin(fragWorldPos.z * 0.85 - fragWorldPos.x * 0.58) * 0.015;
-            float grassTaper = smoothstep(-0.03, 0.04, smoothSignedShore + bankNoise);
-            wGrass *= grassTaper;
-            wWetSoil = clamp(1.0 - wPath - wDrySoil - wGrass, 0.0, 1.0);
-        }
+        wGrass = clamp(wGrass - wPath - wDrySoil, 0.0, 1.0);
+        wWetSoil = clamp(1.0 - wGrass - wPath - wDrySoil, 0.0, 1.0);
     }
 
     vec4 weights = vec4(wGrass, wDrySoil, wWetSoil, wPath);
@@ -254,7 +252,7 @@ void main()
     vec2 litterClasses = vec2(0.5);
     float reliefShadow = 1.0;
 
-    if (soilPossible && u_groundReliefEnabled != 0 && detailResolve > 0.10) {
+    if (soilPossible && u_groundReliefEnabled != 0 && detailResolve > 0.10 && camDistSqXZ < 900.0) {
         float combinedSoil = weights.y + weights.w;
         float dominantWeight = max(max(weights.x, combinedSoil), weights.z);
         bool boundary = dominantWeight < 0.96;
@@ -527,9 +525,9 @@ void main()
             float sinP2 = sin(sandPhase2);
             float sandRipple = (sinP1 * 0.60 + sinP2 * 0.40) * 0.5 + 0.5;
 
-            vec3 drySand = mix(vec3(0.13, 0.11, 0.08), vec3(0.17, 0.14, 0.10), sandRipple * 0.12);
-            vec3 wetSand = mix(vec3(0.09, 0.08, 0.06), vec3(0.12, 0.10, 0.07), sandRipple * 0.12);
-            vec3 submergedSand = mix(vec3(0.12, 0.15, 0.13), vec3(0.17, 0.20, 0.17), sandRipple * 0.15);
+            vec3 drySand = mix(vec3(0.12, 0.11, 0.09), vec3(0.16, 0.15, 0.12), sandRipple * 0.12);
+            vec3 wetSand = mix(vec3(0.09, 0.09, 0.07), vec3(0.13, 0.12, 0.10), sandRipple * 0.12);
+            vec3 submergedSand = mix(vec3(0.12, 0.15, 0.13), vec3(0.16, 0.19, 0.15), sandRipple * 0.15);
 
             float wetLevel = clamp(shoreFactor * 0.85 + streamWet * 0.50, 0.0, 1.0);
             vec3 sandBase = mix(drySand, wetSand, wetLevel);
@@ -570,7 +568,7 @@ void main()
             }
 
             float submergedBed = clamp(lakeDepthFactor * 2.5, 0.0, 1.0);
-            vec3 bankFringeHumus = mix(vec3(0.14, 0.12, 0.08), vec3(0.20, 0.17, 0.12), dirtDetail.g) * (0.86 + 0.30 * colorDirt.rgb);
+            vec3 bankFringeHumus = mix(vec3(0.12, 0.13, 0.09), vec3(0.16, 0.16, 0.12), dirtDetail.g) * (0.88 + 0.30 * colorDirt.rgb);
             wetSoilColor = mix(bankFringeHumus, riverbedBed, submergedBed);
         } else {
             vec3 mossyBank = vec3(0.28, 0.26, 0.20) * (0.85 + 0.35 * dirtDetail.g);
@@ -586,8 +584,8 @@ void main()
     }
 
     float riparianSaturation = clamp(shoreFactor * 0.95 + streamWet * 0.70 + lakeDepthFactor * 1.2, 0.0, 1.0);
-    // Physically based capillary darkening: porous wet sand and bank mud darken naturally
-    float wetCapillaryDarken = smoothstep(0.08, 0.78, riparianSaturation) * 0.45;
+    // Physically based capillary darkening: porous wet sand and bank mud darken naturally without turning grass black
+    float wetCapillaryDarken = smoothstep(0.12, 0.85, riparianSaturation) * 0.28 * (1.0 - wGrass * 0.85);
     blendedAlbedo *= (1.0 - wetCapillaryDarken);
 
     // Subtle submerged bed depth tint: crystal-clear turquoise mountain water revealing golden riverbed pebbles
@@ -606,7 +604,8 @@ void main()
         float grassDebrisAtten = 1.0 - wGrass * 0.72;
 
         if (debris.b > 0.02) {
-            rockContactAO = 1.0 - smoothstep(0.04, 0.85, debris.b) * 0.68 * debrisDistFade;
+            float rawRockAO = 1.0 - smoothstep(0.04, 0.85, debris.b) * 0.68 * debrisDistFade;
+            rockContactAO = mix(rawRockAO, 1.0, clamp(lakeDepthFactor * 2.0, 0.0, 1.0));
         }
 
         float dryWoodlandMask = (1.0 - clamp(shoreFactor + streamWet, 0.0, 1.0)) * debrisDistFade * grassDebrisAtten;

@@ -102,24 +102,15 @@ void EvaluateObstacleWake(vec4 obs, vec2 worldXZ, vec2 flowDir, float time,
 
     float strength = clamp(obs.w, 0.15, 0.90);
     ioSlope += (dir * 0.06 + flowDir * 0.10) * (kelvinWake + bowCushion) * strength;
-    float foam = (bowCushion * 0.22 + kelvinWake * 0.32 * smoothstep(0.0, 1.2, downReach)) * strength;
-    // Delicate meniscus contact foam ring hugging stone waterline
-    float contactFoam = smoothstep(0.42, 0.50, normR) * (1.0 - smoothstep(0.50, 0.68, normR)) * 0.36;
-    ioFoam = max(ioFoam, max(foam, contactFoam * strength));
+    float foam = (bowCushion * 0.32 + kelvinWake * 0.36 * smoothstep(0.0, 1.4, downReach)) * strength;
+    ioFoam = max(ioFoam, foam);
 }
 
 float EvaluateObstacleWaterDepth(vec4 obs, vec2 worldXZ, float inDepth)
 {
-    if (obs.z <= 0.01) return inDepth;
-    vec2 toFrag = worldXZ - obs.xy;
-    float d2 = dot(toFrag, toFrag);
-    float r = obs.z;
-    if (d2 >= r * r * 1.44) return inDepth;
-    float normR = sqrt(d2) / r;
-    // Approximating dome/boulder bathymetry without cutting a hole in the water plane:
-    // Submerged flank slopes down smoothly (normR: 0.35 -> 1.05)
-    float domeDepth = mix(inDepth * 0.35, inDepth, smoothstep(0.35, 1.05, normR));
-    return min(inDepth, domeDepth);
+    // Natural bathymetry preserved: obstacles are rendered as true 3D meshes with depth.
+    // Artificial analytical circular depth clamping removed to eliminate black halos and transparency holes.
+    return inDepth;
 }
 
 void main()
@@ -289,9 +280,9 @@ void main()
         }
     }
 
-    // Evaluate river stone obstacles (prominent separated boulders within 40m)
+    // Evaluate river stone obstacles (prominent separated boulders within 32m)
     float obstacleFoam = 0.0;
-    if (distSq < 1600.0 && u_obstacle0.z > 0.01) {
+    if (distSq < 1024.0 && u_obstacle0.z > 0.01) {
         EvaluateObstacleWake(u_obstacle0, fragWorldXZ, normFlowDir, t, interactSlope, obstacleFoam);
         EvaluateObstacleWake(u_obstacle1, fragWorldXZ, normFlowDir, t, interactSlope, obstacleFoam);
         EvaluateObstacleWake(u_obstacle2, fragWorldXZ, normFlowDir, t, interactSlope, obstacleFoam);
@@ -314,7 +305,7 @@ void main()
     if (u_waterRadius > 0.01 && submerged > 0.01) {
         vec2 toInteractor = fragWorldXZ - u_waterInteractor.xz;
         float iDistSq = dot(toInteractor, toInteractor);
-        float activeRad = u_waterRadius * 2.4;
+        float activeRad = u_waterRadius * 2.8;
 
         if (iDistSq < activeRad * activeRad && iDistSq > 1e-5) {
             float invIDist = inversesqrt(iDistSq);
@@ -323,12 +314,17 @@ void main()
             float speed = length(u_waterVelocity.xz);
             float speedFactor = clamp(speed * 0.35 + 0.15, 0.0, 1.0);
 
-            float outerWakeFade = 1.0 - smoothstep(1.2, 2.4, normDist);
-            float innerFoamFade = 1.0 - smoothstep(0.3, 1.2, normDist);
+            float outerWakeFade = 1.0 - smoothstep(1.2, 2.6, normDist);
+            float innerFoamFade = 1.0 - smoothstep(0.3, 1.4, normDist);
             float bowEnv = exp(-normDist * 1.5) * speedFactor * clamp(submerged, 0.0, 1.5) * outerWakeFade;
             vec2 iDir = toInteractor * invIDist;
-            interactSlope += iDir * (bowEnv * 0.35);
-            dynamicWakeFoam = max(dynamicWakeFoam, innerFoamFade * bowEnv * 0.35 * shoreFade);
+
+            // Alive & dynamic: breathing circular contact ripples & subtle displacement even when stationary
+            float standRipple = sin(normDist * 15.0 - t * 4.2) * exp(-normDist * 2.2);
+            float contactRing = smoothstep(0.35, 0.65, normDist) * (1.0 - smoothstep(0.65, 1.35, normDist));
+            float wakeEnv = (bowEnv * 0.35 + standRipple * 0.22 * clamp(submerged, 0.0, 1.0) * outerWakeFade);
+            interactSlope += iDir * wakeEnv;
+            dynamicWakeFoam = max(dynamicWakeFoam, (innerFoamFade * bowEnv * 0.35 + contactRing * 0.24 * clamp(submerged, 0.0, 1.0)) * shoreFade);
         }
     }
 
@@ -349,23 +345,7 @@ void main()
         hasValidDepth = true;
     }
 
-    // Submerged rock bathymetry relief: smoothly shallow the water over river boulders
-    if (distSq < 1600.0 && u_obstacle0.z > 0.01) {
-        waterDepth = EvaluateObstacleWaterDepth(u_obstacle0, fragWorldXZ, waterDepth);
-        waterDepth = EvaluateObstacleWaterDepth(u_obstacle1, fragWorldXZ, waterDepth);
-        waterDepth = EvaluateObstacleWaterDepth(u_obstacle2, fragWorldXZ, waterDepth);
-        waterDepth = EvaluateObstacleWaterDepth(u_obstacle3, fragWorldXZ, waterDepth);
-        waterDepth = EvaluateObstacleWaterDepth(u_obstacle4, fragWorldXZ, waterDepth);
-        waterDepth = EvaluateObstacleWaterDepth(u_obstacle5, fragWorldXZ, waterDepth);
-        if (u_obstacle6.z > 0.01) {
-            waterDepth = EvaluateObstacleWaterDepth(u_obstacle6, fragWorldXZ, waterDepth);
-            waterDepth = EvaluateObstacleWaterDepth(u_obstacle7, fragWorldXZ, waterDepth);
-            waterDepth = EvaluateObstacleWaterDepth(u_obstacle8, fragWorldXZ, waterDepth);
-            waterDepth = EvaluateObstacleWaterDepth(u_obstacle9, fragWorldXZ, waterDepth);
-            waterDepth = EvaluateObstacleWaterDepth(u_obstacle10, fragWorldXZ, waterDepth);
-            waterDepth = EvaluateObstacleWaterDepth(u_obstacle11, fragWorldXZ, waterDepth);
-        }
-    }
+
 
     // Hardware scene depth buffer refinement (detects submerged stepping stones & exact bank contact)
     if (u_hasDepthTex > 0 && u_resolution.x > 1.0 && u_resolution.y > 1.0) {

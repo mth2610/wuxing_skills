@@ -180,14 +180,19 @@ void main() {
     wrap *= wrap;
     vec3 diffuse = albedo * u_sunColor * wrap * shadow;
 
-    // Hemispheric ambient — near-free, biggest dark-scene win (no flat-black
-    // undersides): sky tint above, ground bounce below, blended by N.y.
+    // Hemispheric ambient — sky tint above, ground/water bounce below.
+    // Upward bounce illuminates downward folds with warm ground or luminous water fill.
     float hemi = N.y * 0.5 + 0.5;
-    vec3 ambient = albedo * mix(u_groundColor, u_skyColor, hemi);
+    vec3 upwardBounce = mix(u_groundColor, max(u_skyColor * 0.65, vec3(0.09, 0.22, 0.26)), 0.45);
+    vec3 ambient = albedo * (mix(upwardBounce, u_skyColor, hemi) + upwardBounce * ((1.0 - hemi) * 0.42));
 
-    // Fresnel rim — the cool silhouette edge that reads as moonlight.
+    // Dual hero rim — omnipresent sky ambient edge keeps the silhouette readable against dark water/cliffs,
+    // plus directional sun kicker that catches golden-hour backlight.
     float fres = pow(1.0 - max(dot(N, V), 0.0), u_rimPower);
-    vec3 rim = u_rimColor * (fres * u_rimStrength);
+    float moonFacing = smoothstep(-0.2, 0.6, dot(N, -L));
+    vec3 skyRim = u_rimColor * (fres * u_rimStrength * 0.45);
+    vec3 sunRim = u_sunColor * (fres * u_rimStrength * 0.70 * moonFacing);
+    vec3 rim = skyRim + sunRim;
 
     vec3 emissive = u_emissiveColor; // additive, BEFORE fog so bloom nurses it
 
@@ -196,16 +201,11 @@ void main() {
 
     vec3 color = ambient + diffuse + vfxLit + rim + emissive;
 
-    // --- MED adds (tier >= 2): Blinn spec sheen + directional-moon rim tint ---
+    // --- MED adds (tier >= 2): Blinn spec sheen + matcap ---
     if (u_qualityTier >= 2) {
         float spec = pow(max(dot(N, H), 0.0), u_shininess) * u_specStrength;
         spec *= smoothstep(0.0, 0.15, ndl);
         color += u_sunColor * spec * shadow;
-
-        // Favour the anti-moon silhouette so the rim reads as real backlight
-        // instead of a uniform halo.
-        float moonFacing = smoothstep(-0.2, 0.6, dot(N, -L));
-        color += rim * (moonFacing - 1.0); // rescale the LOW rim already added above
 
         // Matcap / lit-sphere — huge "expensive material" payoff for near-zero
         // cost; skipped entirely for materials without one (u_hasMatcap = 0).

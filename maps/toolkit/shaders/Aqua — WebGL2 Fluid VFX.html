@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="vi"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Aqua — WebGL2 Fluid VFX</title>
+<style>
+:root{--fg:#e9f6ff;--mu:#8fb3c8;--pn:rgba(8,18,28,.55);--bd:rgba(160,220,255,.2);--ac:#6fdcff;color-scheme:dark;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--fg:#e9f6ff}}
+:root[data-theme="dark"]{--fg:#e9f6ff}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+html,body{margin:0;height:100%;overflow:hidden;background:#03070b;color:var(--fg);font:13px/1.45 "Segoe UI",system-ui,-apple-system,sans-serif}
+canvas{position:fixed;inset:0;width:100%;height:100%;touch-action:none;cursor:grab}
+.hud{position:fixed;inset:0;pointer-events:none;display:flex;flex-direction:column;justify-content:space-between;padding:calc(16px + env(safe-area-inset-top,0px)) 18px calc(16px + env(safe-area-inset-bottom,0px))}
+.hud h1{margin:0;font:600 22px/1.1 Georgia,"Times New Roman",serif;letter-spacing:.02em}
+.hud p{margin:4px 0 0;color:var(--mu);max-width:44ch}
+.chips{display:flex;gap:8px;flex-wrap:wrap;pointer-events:auto}
+button{font:inherit;color:var(--fg);background:var(--pn);border:1px solid var(--bd);border-radius:999px;padding:8px 16px;-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);cursor:pointer;transition:border-color .2s,color .2s}
+button.on{border-color:var(--ac);color:var(--ac)}
+#st{margin:10px 0 0;color:var(--mu);font-variant-numeric:tabular-nums}
+#err{position:fixed;inset:0;display:grid;place-items:center;padding:24px;text-align:center;background:#03070b}
+</style></head><body>
+<canvas id="c"></canvas>
+<div class="hud"><div><h1>Aqua</h1><p>Hạt GPU, trường chuyển động curl và mặt nước metaball 3D, dựng bằng WebGL2.</p></div>
+<div><div class="chips" id="m"><button class="on">Đài phun</button><button>Lốc xoáy</button><button>Thác nước</button></div>
+<div id="st"></div><p>Kéo để xoay, cuộn để zoom, rê chuột để khuấy nước.</p></div></div>
+<div id="err" hidden>Trình duyệt chưa hỗ trợ WebGL2 với render target dạng float.</div>
+<script>
+const $=s=>document.querySelector(s),cv=$('#c'),gl=cv.getContext('webgl2',{antialias:false,alpha:false,depth:false,powerPreference:'high-performance'});
+if(!gl||!gl.getExtension('EXT_color_buffer_float')){$('#err').hidden=false;throw 0}
+const mk=(v,f,tf)=>{const p=gl.createProgram();[[35633,v],[35632,f||'void main(){}']].forEach(([t,s])=>{const o=gl.createShader(t);gl.shaderSource(o,'#version 300 es\nprecision highp float;precision highp int;precision highp sampler2D;\n'+s);gl.compileShader(o);if(!gl.getShaderParameter(o,35713))console.error(gl.getShaderInfoLog(o));gl.attachShader(p,o)});if(tf)gl.transformFeedbackVaryings(p,tf,35980);gl.linkProgram(p);return p};
+const U=(p,o)=>{gl.useProgram(p);const L=p.l||(p.l={});for(const k in o){const v=o[k],l=k in L?L[k]:(L[k]=gl.getUniformLocation(p,k));typeof v=='number'?gl.uniform1f(l,v):v.length==2?gl.uniform2fv(l,v):v.length==3?gl.uniform3fv(l,v):gl.uniform4fv(l,v)}};
+
+/* ---- 1. Mô phỏng hạt trên GPU (transform feedback) + trường chuyển động curl ---- */
+const SIM=`layout(location=0)in vec4 A;layout(location=1)in vec4 B;
+uniform float dt,t,mode;uniform vec4 uP;out vec4 oA;out vec4 oB;
+vec3 h3(vec3 p){p=fract(p*vec3(.1031,.103,.0973));p+=dot(p,p.yxz+33.33);return fract((p.xxy+p.yxx)*p.zyx);}
+vec3 psi(vec3 p){return vec3(sin(p.y+sin(p.z*1.7+t*.5)),sin(p.z+sin(p.x*1.7+t*.4)),sin(p.x+sin(p.y*1.7+t*.6)));}
+vec3 curl(vec3 p){const float e=.08;
+vec3 x=psi(p+vec3(e,0,0))-psi(p-vec3(e,0,0)),y=psi(p+vec3(0,e,0))-psi(p-vec3(0,e,0)),z=psi(p+vec3(0,0,e))-psi(p-vec3(0,0,e));
+return vec3(y.z-z.y,z.x-x.z,x.y-y.x)/(2.*e);}
+void main(){
+vec3 p=A.xyz,v=B.xyz;float a=A.w+dt,sd=B.w,life=3.5+sd*3.;
+if(a<0.){oA=vec4(p,a);oB=B;return;}
+if(a>life||p.y<-5.){
+ vec3 r=h3(vec3(sd*91.7+t*7.3,t*1.7,sd*37.)),s=h3(r*57.+t);
+ float an=r.x*6.2832;vec2 c=vec2(cos(an),sin(an));a=0.;
+ if(mode<.5){float k=sqrt(r.y)*.14;p=vec3(c.x*k,.15,c.y*k);v=vec3(c.x,s.y-.5,c.y)*(.3+r.z*1.4)+vec3(0,7.+s.x*2.6,0);}
+ else if(mode<1.5){float k=.5+.4*r.y;p=vec3(c.x*k,.15,c.y*k);v=vec3(-c.y,0,c.x)*4.5+vec3(c.x,0,c.y)*1.2+vec3(0,6.+s.x*2.,0);}
+ else{float k=sqrt(r.y)*2.6;p=vec3(c.x*k,4.6+s.x*.8,c.y*k);v=vec3(s.y-.5,-2.,s.z-.5)*.8;}
+}
+vec2 q=p.xz;float rr=length(q)+.001;vec2 n=q/rr,sw=vec2(-n.y,n.x);
+vec3 f=vec3(0,-9.8,0)+curl(p*.9)*(mode>1.5?3.:2.2);
+if(mode<.5)f.xz+=sw*1.5;
+else if(mode<1.5){f.xz+=sw*10./(1.+rr)-n*5.*smoothstep(.3,2.,rr);f.y+=11.*exp(-rr*rr*.5)*smoothstep(5.,2.5,p.y);}
+vec3 d=p-uP.xyz;float r2=dot(d,d);
+f+=(d/(sqrt(r2)+.05)*45.+cross(vec3(0,1,0),d)*35.)*exp(-r2*1.3)*uP.w;
+v+=f*dt;v*=1.-.08*dt;p+=v*dt;
+if(p.y<.07){p.y=.07;if(v.y<0.){vec3 s=h3(p*43.+t);float iv=-v.y;v.y=iv*.22;v.xz=v.xz*.8+(s.xy-.5)*(1.+iv*.35);}v.xz*=1.-2.*dt;v.xz+=n*2.*dt;}
+float w=length(p.xz);if(w>3.4){vec2 m=p.xz/w;p.xz=m*3.4;v.xz-=m*dot(v.xz,m)*1.6;}
+oA=vec4(p,a);oB=vec4(v,sd);}`;
+
+/* ---- 2. Sprite cầu: depth + độ dày (nền tảng của metaball screen-space) ---- */
+const SPR=`layout(location=0)in vec4 A;layout(location=1)in vec4 B;
+uniform vec3 uC,uR,uU,uF;uniform vec2 uTn,uZ;uniform float uS,uH;out vec3 vE;out float vV;
+void main(){vec3 d=A.xyz-uC;vec3 e=vec3(dot(d,uR),dot(d,uU),-dot(d,uF));
+gl_Position=(A.w<0.||A.y<-1.)?vec4(2,2,2,1):vec4(e.x/uTn.x,e.y/uTn.y,uZ.x*e.z+uZ.y,-e.z);
+gl_PointSize=uS*uH*.5/(uTn.y*-e.z);vE=e;vV=clamp(length(B.xyz)/9.,0.,1.);}`;
+const DEP=`in vec3 vE;in float vV;uniform float uS;uniform vec2 uZ;out float o;
+void main(){vec2 q=gl_PointCoord*2.-1.;float r2=dot(q,q);if(r2>1.)discard;
+float ez=vE.z+sqrt(1.-r2)*uS*.5;o=-ez;gl_FragDepth=((uZ.x*ez+uZ.y)/-ez)*.5+.5;}`;
+const THK=`in vec3 vE;in float vV;uniform float uS;out vec2 o;
+void main(){vec2 q=gl_PointCoord*2.-1.;float r2=dot(q,q);if(r2>1.)discard;float nz=sqrt(1.-r2);o=vec2(nz,nz*vV)*uS*.7;}`;
+
+/* ---- 3. Bilateral blur: hợp nhất các cầu thành một mặt nước liền mạch ---- */
+const FS=`void main(){gl_Position=vec4(vec2((gl_VertexID<<1)&2,gl_VertexID&2)*2.-1.,0,1);}`;
+const BLR=`uniform sampler2D uD;uniform vec2 uDir,uRes;uniform float uK;out float o;
+float D(ivec2 q){return texelFetch(uD,clamp(q,ivec2(0),ivec2(uRes)-1),0).r;}
+void main(){ivec2 c=ivec2(gl_FragCoord.xy);float d=D(c);if(d>900.){o=d;return;}
+float rad=clamp(uK/d,2.,20.),s=0.,w=0.;
+for(int i=-8;i<=8;i++){float f=float(i)/8.;float e=D(c+ivec2(round(uDir*f*rad)));if(e>900.)continue;float z=e-d,k=exp(-f*f*2.-z*z*44.);s+=e*k;w+=k;}
+o=s/w;}`;
+
+/* ---- 4. Composite: normal, khúc xạ, Fresnel, hấp thụ Beer-Lambert, bọt, caustics, ACES ---- */
+const COM=`uniform sampler2D uD,uQ;uniform vec2 uRes,uTn;uniform vec3 uC,uR,uU,uF;uniform float uTm;out vec4 o;
+const vec3 SUN=normalize(vec3(.5,.7,.35));
+float caus(vec2 p){p*=2.;vec2 i=p;float c=1.,k=uTm*.5;
+for(int n=0;n<3;n++){float t=k*(1.-3.5/float(n+1));i=p+vec2(cos(t-i.x)+sin(t+i.y),sin(t-i.y)+cos(t+i.x));c+=1./(.005*length(vec2(p.x/sin(i.x+t),p.y/cos(i.y+t))));}
+c=1.17-pow(c/3.,1.4);return min(pow(abs(c),8.),4.);}
+vec3 sky(vec3 d){float s=max(dot(d,SUN),0.);vec3 c=mix(vec3(.015,.03,.045),vec3(.08,.18,.26),smoothstep(-.2,.9,d.y));
+c+=vec3(1.,.75,.5)*(pow(s,48.)*.8+pow(s,900.)*40.);
+c+=vec3(.3,.6,1.)*pow(max(dot(d,normalize(vec3(-.7,.3,-.5))),0.),12.)*1.5;return c;}
+vec3 bg(vec3 p0,vec3 d){vec3 c=sky(d);
+if(d.y<-.002){float t=-p0.y/d.y;if(t>0.){vec3 p=p0+d*t;float r=length(p.xz);
+vec3 fl=vec3(.012,.02,.03)+vec3(.03,.07,.1)*smoothstep(7.,0.,r);
+fl+=vec3(.25,.65,.85)*caus(p.xz)*.35*smoothstep(3.7,3.3,r);
+fl+=vec3(.2,.7,1.)*exp(-pow((r-3.55)*10.,2.))*1.2;
+c=mix(c,fl,exp(-t*.025));}}return c;}
+float D(ivec2 q){float v=texelFetch(uD,clamp(q,ivec2(0),ivec2(uRes)-1),0).r;return v>900.?-1.:v;}
+vec3 EP(ivec2 q,float z){return vec3(((vec2(q)+.5)/uRes*2.-1.)*uTn*z,-z);}
+void main(){
+ivec2 c=ivec2(gl_FragCoord.xy);vec2 uv=gl_FragCoord.xy/uRes,q=uv*2.-1.;
+vec3 rd=normalize(uF+uR*q.x*uTn.x+uU*q.y*uTn.y),col=bg(uC,rd);
+float d=D(c);
+if(d>0.){
+ vec2 tk=texelFetch(uQ,c,0).rg;float th=tk.x;
+ float dr=D(c+ivec2(1,0)),dl=D(c-ivec2(1,0)),du=D(c+ivec2(0,1)),db=D(c-ivec2(0,1));
+ if(dr<0.)dr=d;if(dl<0.)dl=d;if(du<0.)du=d;if(db<0.)db=d;
+ vec3 P=EP(c,d);
+ vec3 gx=abs(dr-d)<abs(d-dl)?EP(c+ivec2(1,0),dr)-P:P-EP(c-ivec2(1,0),dl);
+ vec3 gy=abs(du-d)<abs(d-db)?EP(c+ivec2(0,1),du)-P:P-EP(c-ivec2(0,1),db);
+ vec3 e=normalize(cross(gx,gy)),N=normalize(uR*e.x+uU*e.y-uF*e.z);
+ vec3 V=-rd,wp=uC+rd*(d/dot(rd,uF));
+ float ndv=max(dot(N,V),0.),F=.02+.98*pow(1.-ndv,5.),dif=max(dot(N,SUN),0.);
+ vec3 rf=refract(rd,N,.75),beh=bg(wp,rf);
+ beh*=exp(-vec3(.9,.28,.12)*th*1.1);
+ beh+=vec3(.02,.13,.16)*(1.-exp(-th*1.5))*(.4+.6*dif);
+ vec3 H=normalize(SUN+V);
+ vec3 w=mix(beh,bg(wp,reflect(rd,N)),F)+vec3(1.,.85,.6)*pow(max(dot(N,H),0.),260.)*3.;
+ float fm=smoothstep(.45,.85,tk.y/(th+1e-3))*.5*smoothstep(.1,.5,th);
+ w=mix(w,vec3(.85,.95,1.)*(.55+.65*dif),fm);
+ col=mix(col,w,smoothstep(0.,.12,th));
+}
+col*=1.1;col=(col*(2.51*col+.03))/(col*(2.43*col+.59)+.14);col=pow(clamp(col,0.,1.),vec3(.4545));
+col*=1.-.45*dot(uv-.5,uv-.5)*2.;
+col+=(fract(sin(dot(gl_FragCoord.xy,vec2(12.9898,78.233))+uTm)*43758.5453)-.5)/170.;
+o=vec4(col,1);}`;
+
+const pSim=mk(SIM,0,['oA','oB']),pDep=mk(SPR,DEP),pThk=mk(SPR,THK),pBlr=mk(FS,BLR),pCom=mk(FS,COM);
+gl.useProgram(pCom);gl.uniform1i(gl.getUniformLocation(pCom,'uQ'),1);
+
+/* buffer hạt: ping-pong */
+const N=200000,ini=new Float32Array(N*8);
+for(let i=0;i<N;i++){ini[i*8+1]=-9;ini[i*8+3]=-Math.random()*3.5;ini[i*8+7]=Math.random()}
+const bf=[0,1].map(()=>{const b=gl.createBuffer();gl.bindBuffer(34962,b);gl.bufferData(34962,ini,35048);return b});
+const va=bf.map(b=>{const v=gl.createVertexArray();gl.bindVertexArray(v);gl.bindBuffer(34962,b);for(const i of[0,1]){gl.enableVertexAttribArray(i);gl.vertexAttribPointer(i,4,5126,false,32,i*16)}return v});
+
+/* framebuffer */
+let W,H,tD=[],tK,fD=[],fK,rb,rs=1,cnt=140000,cur=0;
+const tx=(a,b,c)=>{const t=gl.createTexture();gl.bindTexture(3553,t);gl.texImage2D(3553,0,a,W,H,0,b,c,null);[[10241,9728],[10240,9728],[10242,33071],[10243,33071]].forEach(([k,v])=>gl.texParameteri(3553,k,v));return t};
+const fb=(t,d)=>{const f=gl.createFramebuffer();gl.bindFramebuffer(36160,f);gl.framebufferTexture2D(36160,36064,3553,t,0);if(d)gl.framebufferRenderbuffer(36160,36096,36161,d);return f};
+function resize(){
+ [...tD,tK].forEach(x=>gl.deleteTexture(x));[...fD,fK].forEach(x=>gl.deleteFramebuffer(x));gl.deleteRenderbuffer(rb);
+ const k=Math.min(devicePixelRatio||1,1.5)*rs;W=cv.width=Math.max(2,innerWidth*k|0);H=cv.height=Math.max(2,innerHeight*k|0);
+ tD=[tx(gl.R32F,gl.RED,gl.FLOAT),tx(gl.R32F,gl.RED,gl.FLOAT)];tK=tx(gl.RG16F,gl.RG,gl.HALF_FLOAT);
+ rb=gl.createRenderbuffer();gl.bindRenderbuffer(36161,rb);gl.renderbufferStorage(36161,gl.DEPTH_COMPONENT24,W,H);
+ fD=[fb(tD[0],rb),fb(tD[1])];fK=fb(tK);gl.viewport(0,0,W,H)}
+addEventListener('resize',resize);resize();
+
+/* camera + điều khiển */
+let yaw=.6,pit=.3,dst=9.5,drag=0,px=0,py=0,mx=0,my=0,pt=0,pw=0,mode=0,time=0,last=performance.now(),fr=0,acc=0;
+cv.onpointerdown=e=>{drag=1;px=e.clientX;py=e.clientY;cv.setPointerCapture(e.pointerId);cv.style.cursor='grabbing'};
+cv.onpointermove=e=>{mx=e.clientX/innerWidth*2-1;my=1-e.clientY/innerHeight*2;if(drag){yaw-=(e.clientX-px)*.006;pit=Math.min(1.2,Math.max(.04,pit+(e.clientY-py)*.005));px=e.clientX;py=e.clientY}else pt=e.pointerType=='mouse'?1:0};
+cv.onpointerup=()=>{drag=0;cv.style.cursor='grab'};cv.onpointerleave=()=>pt=0;
+cv.addEventListener('wheel',e=>{e.preventDefault();dst=Math.min(16,Math.max(4.5,dst*(1+e.deltaY*.001)))},{passive:false});
+$('#m').onclick=e=>{const ch=[...e.currentTarget.children],i=ch.indexOf(e.target);if(i<0)return;mode=i;ch.forEach((b,j)=>b.classList.toggle('on',j==i))};
+
+const ZA=-60.1/59.9,ZB=-12/59.9;
+function frame(now){
+ const dr=Math.min((now-last)/1000,.05);last=now;time+=dr;if(!drag)yaw+=.05*dr;
+ const sy=Math.sin(yaw),cy=Math.cos(yaw),sp=Math.sin(pit),cp=Math.cos(pit);
+ const C=[dst*cp*sy,1.5+dst*sp,dst*cp*cy],F=[-cp*sy,-sp,-cp*cy],R=[cy,0,-sy],Uu=[-sy*sp,cp,-cy*sp];
+ const ty=Math.tan(.3927),tn=[ty*W/H,ty];
+ /* điểm khuấy nước: tia chuột cắt mặt phẳng y=1.4 */
+ const rd=[0,1,2].map(i=>F[i]+R[i]*mx*tn[0]+Uu[i]*my*tn[1]),tt=rd[1]<-.01?Math.min((1.4-C[1])/rd[1],30):30;
+ pw+=((drag?0:pt)-pw)*.15;
+ /* mô phỏng */
+ gl.bindVertexArray(va[cur]);U(pSim,{dt:Math.min(dr,1/30),t:time,mode,uP:[C[0]+rd[0]*tt,C[1]+rd[1]*tt,C[2]+rd[2]*tt,pw]});
+ gl.bindBufferBase(35982,0,bf[1-cur]);gl.enable(35977);gl.beginTransformFeedback(0);gl.drawArrays(0,0,cnt);gl.endTransformFeedback();gl.disable(35977);gl.bindBufferBase(35982,0,null);
+ cur=1-cur;gl.bindVertexArray(va[cur]);
+ const cu={uC:C,uR:R,uU:Uu,uF:F,uTn:tn,uZ:[ZA,ZB],uS:.13*Math.pow(140000/cnt,.33),uH:H};
+ /* depth */
+ gl.bindFramebuffer(36160,fD[0]);gl.clearBufferfv(6144,0,[1e3,0,0,0]);gl.clearBufferfv(6145,0,[1]);
+ gl.enable(2929);U(pDep,cu);gl.drawArrays(0,0,cnt);gl.disable(2929);
+ /* độ dày + bọt */
+ gl.bindFramebuffer(36160,fK);gl.clearBufferfv(6144,0,[0,0,0,0]);gl.enable(3042);gl.blendFunc(1,1);U(pThk,cu);gl.drawArrays(0,0,cnt);gl.disable(3042);
+ /* bilateral blur 4 lượt: kết quả nằm ở tD[0] */
+ gl.bindVertexArray(null);
+ for(let i=0;i<4;i++){const s=i&1;gl.bindFramebuffer(36160,fD[1-s]);gl.bindTexture(3553,tD[s]);U(pBlr,{uDir:s?[0,1]:[1,0],uRes:[W,H],uK:.17*H*1.207});gl.drawArrays(4,0,3)}
+ /* composite ra màn hình */
+ gl.bindFramebuffer(36160,null);gl.bindTexture(3553,tD[0]);gl.activeTexture(33985);gl.bindTexture(3553,tK);gl.activeTexture(33984);
+ U(pCom,{uRes:[W,H],uC:C,uR:R,uU:Uu,uF:F,uTn:tn,uTm:time});gl.drawArrays(4,0,3);
+ /* bộ điều phối hiệu năng: tự co giãn số hạt và độ phân giải */
+ acc+=dr;if(++fr==40){const a=acc/40*1000;fr=0;acc=0;
+  if(a>19){if(cnt>45000)cnt=Math.max(45000,cnt*.86|0);else if(rs>.55){rs-=.15;resize()}}
+  else if(a<13.5){if(rs<1){rs=Math.min(1,rs+.15);resize()}else if(cnt<N)cnt=Math.min(N,cnt*1.1|0)}
+  $('#st').textContent=Math.round(1000/a)+' FPS, '+(cnt/1000|0)+'K hạt, '+W+'×'+H}
+ requestAnimationFrame(frame)}
+requestAnimationFrame(frame);
+</script></body></html>

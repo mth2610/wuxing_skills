@@ -259,7 +259,7 @@ static void BuildFloraPlacements(void)
         (MapFloraMeadowConfig){
             .minBounds = {10.0f, 8.0f},
             .maxBounds = {MAP_WIDTH - 10.0f, MAP_DEPTH - 8.0f},
-            .spacing = 0.302f,
+            .spacing = 0.362f,
             .seed = 0x51a7c3u,
             .densityFn = SongQuaoGrassDensity,
             .ecology = &s_habitat,
@@ -732,14 +732,14 @@ void InitSongQuaoMap(void)
         s_flowerPlacements, SONG_QUAO_FLOWER_CLUSTERS, SONG_QUAO_FLOWER_CLUSTER_COUNT,
         (MapFloraStyle){
             .grassRootColor = {20, 28, 14, 255},  // Sắc rêu mùn trầm ấm ăn khớp nền đất
-            .grassTipColor = {106, 138, 48, 255}, // Sắc olive-viridian tự nhiên
+            .grassTipColor = {92, 122, 46, 255},  // Sắc olive-viridian wuxia tự nhiên, dịu mắt
             .bladesPerClump = 6,
             .bladeSegments = 4,
-            .bladeWidthScale = 0.096f,
-            .lodDistance = 28.0f,
-            .midLodDistance = 16.0f,
-            .drawDistance = 52.0f,
-            .shadowDistance = 22.5f,
+            .bladeWidthScale = 0.084f,
+            .lodDistance = 24.0f,
+            .midLodDistance = 14.0f,
+            .drawDistance = 48.0f,
+            .shadowDistance = 22.0f,
             .grassState = MAP_GRASS_STATE_LUSH,
             .reedRootColor = {16, 26, 12, 255},
             .reedTipColor = {88, 124, 48, 255},

@@ -293,9 +293,9 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     float warmShift = clamp(macroPatch * 0.5 + 0.5, 0.0, 1.0);
     float tipHeightMask = FastRamp(0.24, 0.88, h);
     // Rich macro botanical contrast: cool emerald hollows vs warm sun-kissed golden-olive crests
-    vec3 coolEmeraldTip = vec3(0.78, 1.06, 0.75);
-    vec3 warmGoldenTip  = vec3(1.18, 1.05, 0.58);
-    vec3 midOliveTone   = vec3(0.92, 0.98, 0.78);
+    vec3 coolEmeraldTip = vec3(0.75, 0.98, 0.76);
+    vec3 warmGoldenTip  = vec3(1.10, 1.02, 0.62);
+    vec3 midOliveTone   = vec3(0.92, 0.96, 0.80);
     vec3 macroTone = mix(coolEmeraldTip, warmGoldenTip, warmShift);
     macroTone = mix(midOliveTone, macroTone, tipHeightMask);
     baseColor *= mix(vec3(1.0), macroTone, FastRamp(0.12, 0.85, h));
