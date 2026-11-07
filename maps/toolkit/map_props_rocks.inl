@@ -1082,7 +1082,7 @@ void MapProp_DrawRockSystem(const MapRockSystem *sys, bool drawShadows)
         }
         else if (p->archetype == MAP_ROCK_RIVER_STONE)
         {
-            rockTint = (Color){192, 185, 175, 255};
+            rockTint = (Color){192, 185, 175, 250};
         }
         else if (p->archetype == MAP_ROCK_SCREE)
         {

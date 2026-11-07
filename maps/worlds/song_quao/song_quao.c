@@ -738,23 +738,23 @@ void InitSongQuaoMap(void)
         memcpy(allDebris, SONG_QUAO_DEBRIS_ITEMS, SONG_QUAO_DEBRIS_ITEM_COUNT * sizeof(MapDebrisPlacement));
         int debrisCount = SONG_QUAO_DEBRIS_ITEM_COUNT;
 
-        for (float rz = 24.0f; rz < 268.0f; rz += 1.85f)
+        for (float rz = 20.0f; rz < 270.0f; rz += 0.82f)
         {
-            for (float rx = 34.0f; rx < 162.0f; rx += 1.85f)
+            for (float rx = 30.0f; rx < 170.0f; rx += 0.82f)
             {
                 if (debrisCount >= totalDebrisCapacity)
                     break;
-                float jx = rx + sinf(rz * 3.7f + rx * 1.9f) * 0.65f;
-                float jz = rz + cosf(rx * 2.3f - rz * 2.1f) * 0.65f;
+                float jx = rx + sinf(rz * 3.7f + rx * 1.9f) * 0.38f;
+                float jz = rz + cosf(rx * 2.3f - rz * 2.1f) * 0.38f;
                 float signedShore = SongQuaoSampleSignedShore(jx, jz);
-                if (signedShore >= -0.06f && signedShore <= 0.40f)
+                if (signedShore >= -0.12f && signedShore <= 0.55f)
                 {
                     Vector3 gPos, gNorm;
                     if (MapProp_SampleGroundSurface(&s_ground, kMapCenter, jx, jz, &gPos, &gNorm))
                     {
-                        if (gNorm.y >= 0.68f && gPos.y >= -0.65f)
+                        if (gNorm.y >= 0.62f && gPos.y >= -0.85f)
                         {
-                            float pScale = 0.85f + 0.65f * (0.5f + 0.5f * sinf(jx * 7.1f + jz * 5.3f));
+                            float pScale = 0.65f + 0.60f * (0.5f + 0.5f * sinf(jx * 7.1f + jz * 5.3f));
                             float pRot = (float)fmodf((jx * 137.0f + jz * 83.0f), 360.0f);
                             allDebris[debrisCount++] = (MapDebrisPlacement){
                                 .position = gPos,
