@@ -125,7 +125,7 @@ void main()
         float dispLen = rawBendLen * rootMask;
         float bendRatio = clamp(dispLen / bladeHeightEst, 0.0, 0.60);
         spineCenter.xz += dispXZ;
-        spineCenter.y   = rootLocal.y + bladeSpanY * (1.0 - 0.22 * bendRatio * h);
+        spineCenter.y   = rootLocal.y + bladeSpanY * (1.0 - 0.32 * bendRatio * h);
 
         if (u_geometryLod < 2) {
             // Trực giao hóa Gram-Schmidt 3D chính xác cho lá cỏ cận cảnh / trung cảnh
@@ -176,7 +176,7 @@ void main()
     }
 
     // Neo màu mảng cỏ (macroPatch) theo gốc cây (rootWorld) để màu không bị trôi khi ngọn cỏ nghiêng theo gió
-    v_macroPatch = sin(rootWorld.x * 0.12 + rootWorld.z * 0.08) * 0.55 +
-                   cos(rootWorld.x * -0.07 + rootWorld.z * 0.16) * 0.45;
+    v_macroPatch = sin(rootWorld.x * 0.082 + rootWorld.z * 0.054) * 0.55 +
+                   cos(rootWorld.z * 0.110 - rootWorld.x * 0.048 + 1.2) * 0.45;
     gl_Position = mvp * vec4(local, 1.0);
 }

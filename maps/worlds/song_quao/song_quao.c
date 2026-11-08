@@ -11,6 +11,7 @@
 #include "maps/map_manager.h"
 #include "core/resource_manager.h"
 #include "environment/volumetric/volumetric_fog.h"
+#include "environment/wind/wind_system.h"
 #include "raylib.h"
 #include "raymath.h"
 #include "rlgl.h"
@@ -69,6 +70,7 @@ static MapCliffSkirt s_cliff;
 static MapWaterSurface s_river;
 static MapEcology s_habitat;
 static MapFluffSystem s_fluff;
+static WindMacroConfig s_prevWindMacro = {0};
 
 static MapMeadowPlacement s_grassPlacements[GRASS_TUFT_CAPACITY];
 static MapFlowerPlacement s_flowerPlacements[FLOWER_COUNT];
@@ -197,15 +199,15 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
     float distBasin = sqrtf(dxBasin * dxBasin + dzBasin * dzBasin);
     float outerHillBlend = MapMath_SmoothStep01(34.0f, 58.0f, distBasin);
 
-    // Natural meadow clearings & foot-worn desire channels (~20% negative space exposing soil & pebbles)
-    float clearingNoise = sinf(x * 0.052f + z * 0.044f) * 0.55f +
-                          cosf(z * 0.068f - x * 0.038f + 0.9f) * 0.35f +
-                          sinf(x * 0.14f + z * 0.11f) * 0.10f;
-    float clearing = MapMath_SmoothStep01(0.24f, 0.60f, clearingNoise);
+    // Natural meadow clearings & desire paths (~16% negative space exposing soil, moss & pebbles)
+    float clearingNoise = sinf(x * 0.048f + z * 0.042f) * 0.55f +
+                          cosf(z * 0.065f - x * 0.035f + 0.9f) * 0.35f +
+                          sinf(x * 0.125f + z * 0.095f) * 0.10f;
+    float clearing = MapMath_SmoothStep01(0.32f, 0.68f, clearingNoise);
 
-    // Colony drift wave: 0.90..1.0 in dense tussock colonies, 0.35..0.65 in fringe
-    float patch = MapMath_SmoothStep01(-0.25f, 0.40f, macroField);
-    float colonyDensity = (0.35f + 0.65f * patch) * (1.0f - clearing * 0.35f);
+    // Multi-scale colony drifts: dense core 0.85..1.0, transition fringe 0.45..0.75, clearings 0.0..0.12
+    float patch = MapMath_SmoothStep01(-0.20f, 0.42f, macroField);
+    float colonyDensity = (0.40f + 0.60f * patch) * (1.0f - clearing * 0.88f);
     float outerHillFactor = 1.0f - outerHillBlend * 0.28f;
     float macro = colonyDensity * outerHillFactor;
 
@@ -466,6 +468,18 @@ static void CaptureSongQuaoStaticShadows(void)
 
 void InitSongQuaoMap(void)
 {
+    // Apply dedicated highland valley wind profile
+    s_prevWindMacro = Wind_GetMacro();
+    WindMacroConfig sqWind = {
+        .baseDirection = {2.35f, 0.0f, 1.15f},
+        .gustAmplitude = 0.85f,
+        .noiseScale = 0.052f,
+        .noiseSpeed = 1.15f,
+        .terrainLiftK = 1.35f,
+        .heightGradientK = 0.65f,
+    };
+    Wind_SetMacro(&sqWind);
+
     // Enable s_cliff skirt: sculpted 17-row 3D geological cliff mesh with
     // overhanging turf lip, eroded sub-soil band, and inward floating keel.
     s_skipMask = MapProp_GetSkipMask();
@@ -788,24 +802,24 @@ void InitSongQuaoMap(void)
         s_reedPlacements, s_reedCount,
         s_flowerPlacements, SONG_QUAO_FLOWER_CLUSTERS, SONG_QUAO_FLOWER_CLUSTER_COUNT,
         (MapFloraStyle){
-            .grassRootColor = {20, 28, 14, 255},  // Sắc rêu mùn trầm ấm ăn khớp nền đất
-            .grassTipColor = {92, 122, 46, 255},  // Sắc olive-viridian wuxia tự nhiên, dịu mắt
+            .grassRootColor = {32, 48, 22, 255},  // Sắc rêu mùn xanh ngọc trầm ấm ăn khớp nền đất
+            .grassTipColor = {116, 154, 58, 255}, // Sắc ngọc bích xuân tươi sáng, ấm áp tự nhiên
             .bladesPerClump = 6,
             .bladeSegments = 4,
-            .bladeWidthScale = 0.084f,
+            .bladeWidthScale = 0.078f,
             .lodDistance = 24.0f,
             .midLodDistance = 14.0f,
-            .drawDistance = 48.0f,
+            .drawDistance = 50.0f,
             .shadowDistance = 22.0f,
             .grassState = MAP_GRASS_STATE_LUSH,
-            .reedRootColor = {16, 26, 12, 255},
-            .reedTipColor = {88, 124, 48, 255},
+            .reedRootColor = {20, 32, 16, 255},
+            .reedTipColor = {96, 134, 54, 255},
             .hasReedPlumes = false,
             .botanicalVariation = 1.0f,
             .pampasPlacements = s_pampasPlacements,
             .pampasCount = s_pampasCount,
-            .pampasRootColor = {24, 32, 16, 255},
-            .pampasTipColor = {142, 154, 88, 255},
+            .pampasRootColor = {28, 38, 18, 255},
+            .pampasTipColor = {168, 172, 112, 255},
         });
 
     EnvShadow_SetMapCasterCallback(DrawSongQuaoShadowCasters, NULL);
@@ -911,6 +925,7 @@ void DrawTransparentSongQuaoMap(void)
 
 void UnloadSongQuaoMap(void)
 {
+    Wind_SetMacro(&s_prevWindMacro);
     ColorGradeLut_UseNeutral();
     PostFX_ClearMapProfile();
     Environment_SetSunIntensity(1.0f);

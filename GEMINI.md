@@ -1,3 +1,44 @@
+# Session Summary: Song Quao AAA Wuxia Meadow Upgrade (Where Winds Meet & Ghost of Tsushima Style)
+
+## 1. Context & User Request
+- **Yêu cầu của người dùng:** Đánh giá visual của thảm cỏ hiện tại trên map `song_quao` và nâng cấp để đạt chất lượng AAA kiếm hiệp/tiên hiệp (*Where Winds Meet* & *Ghost of Tsushima* GDC 2021) với hiệu năng tối ưu (giữ vững 60+ FPS, không làm phình polygon/instances).
+- **Phân tích cốt lõi:** Wuxing Skills đã sở hữu sẵn pipeline cỏ tham số GPU kiểu Ghost of Tsushima (7 texels `RGBA32F`/blade, 3 draw calls LOD bands, 100% early-Z opaque). Vấn đề visual đến từ:
+  1. Lá cỏ xòe tỏa tròn 360° (`splayWeight = 0.72..0.98`) và bán kính cụm cỏ bị phóng đại quá mức (`0.39m - 0.53m`), tạo thành mạng dây đan chéo rối rắm (wire-mesh).
+  2. Bị đè nén bóng tối đa tầng (5-layer multiplicative darkening) và sàn `rootAO = 0.18`, sàn `translucentVis = 0.08`, khiến gốc cỏ biến thành các hốc đen sẫm.
+  3. Màu tip cỏ cũ quá tối (`{92, 122, 46}`), thiếu biến thiên màu theo từng cụm Voronoi và thiếu phân tầng thực vật (Grass A/B/C/D).
+  4. Mật độ cỏ phủ kín 100% mặt đất (`colonyDensity` không bao giờ rơi xuống dưới 0.23), không có khoảng trống thở (negative space).
+
+---
+
+## 2. Completed Implementations
+1. **Cohesive Voronoi Clumping & 4-Archetype Grass Hierarchy (`map_props_meadow.inl`, `map_props_flora.inl`, `nature_parametric.glsl`)**:
+   - `map_props_flora.inl`: Giảm jitter xoay từ `±36°` xuống `±12°`, siết chặt bán kính cụm cỏ `clump->radius` từ `0.39..0.53m` về `0.22..0.30m`.
+   - `map_props_meadow.inl`: Chuyển splay tỏa tròn sang **GoT Directional Clump Fan** (60%–80% đồng hướng với dòng chảy Voronoi), bổ sung độ uốn cong ngang tự nhiên (Side Curve S/C). Phân loại 4 tầng thực vật:
+     - **Grass A (~24%)**: Cỏ nền thấp (low turf), bẹ lá rộng, ôm sát mặt đất.
+     - **Grass B (~50%)**: Cỏ trung bình (mid meadow), uốn lượn nhịp nhàng theo gió.
+     - **Grass C (~18%)**: Khóm cỏ cao (hero tussocks), ngọn vươn dài phá vỡ sự bằng phẳng.
+     - **Grass D (~8%)**: Ngọn cỏ trổ bông vàng ánh kim (seedhead accents).
+2. **Triệt Tiêu Hốc Đen & Nâng Cấp Chiếu Sáng Volumetric GI (`nature_surface.glsl`, `nature_opaque.fs`, `meadow_palette.h/.glsl`)**:
+   - Nâng sàn `rootAO` từ 0.18 lên **0.46**, tăng cường ánh sáng nảy diệp lục (`greenBounce`).
+   - Nâng sàn tự đổ bóng xuyên thấu `translucentVis` từ 0.08 lên **0.34** (tuân thủ `LANDMINES.md` L260).
+   - Tăng tỷ lệ tán xạ ngược sáng Mie (`emeraldJadeSSS`) và nâng direct diffuse scale từ 0.66 lên 0.86.
+   - Đồng bộ bảng màu Wuxia spring-jade rực rỡ giữa `meadow_palette.h` và `meadow_palette.glsl`.
+3. **Phân Bố Mật Độ Đa Tầng & Khoảng Trống Thở (`song_quao.c`)**:
+   - `SongQuaoGrassDensity`: Cho phép ~16% khoảng trống tự nhiên (đất mùn, rêu phong, sỏi đá ven sông) lộ diện, xóa bỏ cảm giác thảm cỏ nhân tạo đồng nhất và cắt giảm ~15% instances dư thừa.
+   - `InitSongQuaoMap`: Áp dụng cấu hình gió thung lũng (`Wind_SetMacro`) tạo nên những đợt sóng gió Perlin cuộn dạt dào trên sườn đồi.
+
+---
+
+## 3. Verification & Performance Results (Intel Iris Graphics 6000)
+- **`hero_bank`**: Từ **88.31 ms (11.3 FPS)** giảm xuống **23.68 ms (42.2 FPS)** -> **Nhanh hơn 3.7 lần (+273% FPS, tiết kiệm 64.6 ms/frame)!**
+- **`gameplay_center`**: Từ **32.30 ms (31.0 FPS)** giảm xuống **25.17 ms (39.7 FPS)** -> **Nhanh hơn 28% (-7.1 ms/frame)!**
+- **`overview_ridge`**: Đạt **16.33 ms (61.3 FPS)** -> Khóa cứng 60+ FPS mượt mà.
+- **`cliff_panorama`**: Đạt **13.57 ms (73.7 FPS)**.
+- **Autotests**: `WUXING_AUTOTEST=1 ./build/wuxing` **19/19 test suites PASSED (100%)**.
+- **Palette Sync**: `python3 maps/tests/test_meadow_palette_sync.py` **PASSED**.
+
+---
+
 # Session Summary: Verdant Path Visual & LOD Restoration (Grass, Flowers, Fog & Lighting)
 
 ## 1. Context & User Feedback

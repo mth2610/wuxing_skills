@@ -82,7 +82,8 @@ float FoliageShadowVisibility(vec4 lightSpace, vec4 staticLightSpace,
     }
 
     // Physical botanical shadow floor: direct sun cuts cleanly in shadow while ambient sky illuminates foliage
-    float translucentVis = mix(0.08, 1.0, rawCombined);
+    // [LANDMINES.md §260]: Maintain translucent self-shadow floor ~0.34 so grass self-shadows don't collapse to black
+    float translucentVis = mix(0.34, 1.0, rawCombined);
     return mix(1.0, translucentVis, shadowFade);
 }
 
@@ -365,19 +366,19 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     // Lift root darkness smoothly starting at 18.0m so mid-distance blades (20m..40m)
     // merge into a velvety continuous meadow while near tufts maintain full depth
     float distRootLift = FastRamp(18.0, 40.0, distToCam);
-    float rootBlend = (1.0 - FastRamp(0.0, 0.24, h)) * mix(0.18, 0.02, distRootLift);
+    float rootBlend = (1.0 - FastRamp(0.0, 0.20, h)) * mix(0.12, 0.02, distRootLift);
     baseColor = mix(baseColor, rootSubstrateTone, rootBlend);
-    vec3 distantCanopyTone = mix(vec3(0.20, 0.36, 0.12), vec3(0.34, 0.44, 0.16), warmShift * 0.70);
-    baseColor = mix(baseColor, distantCanopyTone, distRootLift * (1.0 - h) * 0.40);
+    vec3 distantCanopyTone = mix(vec3(0.22, 0.38, 0.14), vec3(0.36, 0.46, 0.18), warmShift * 0.70);
+    baseColor = mix(baseColor, distantCanopyTone, distRootLift * (1.0 - h) * 0.35);
 
-    vec3 skyAmbient = clamp(u_ambientColor * vec3(1.25, 1.25, 1.35), 0.0, 1.0);
-    vec3 groundBounce = clamp(u_ambientColor * vec3(0.55, 0.45, 0.40), 0.0, 1.0);
-    vec3 greenBounce = baseColor * (u_ambientColor * 1.18 + vec3(0.026, 0.052, 0.016));
-    vec3 ambientGround = mix(groundBounce, greenBounce, 0.48);
+    vec3 skyAmbient = clamp(u_ambientColor * vec3(1.28, 1.28, 1.38), 0.0, 1.0);
+    vec3 groundBounce = clamp(u_ambientColor * vec3(0.58, 0.48, 0.42), 0.0, 1.0);
+    vec3 greenBounce = baseColor * (u_ambientColor * 1.45 + vec3(0.045, 0.085, 0.028));
+    vec3 ambientGround = mix(groundBounce, greenBounce, 0.62);
     vec3 ambient = mix(ambientGround, skyAmbient, n.y * 0.5 + 0.5);
 
-    // Botanical root self-shadowing anchors close grass tufts with volumetric depth
-    float rootAO = mix(mix(0.18, 0.78, distRootLift), 1.0, smoothstep(0.0, 0.48, h));
+    // Botanical root self-shadowing: lift floor from 0.18 to 0.46 to eliminate crushed dark voids
+    float rootAO = mix(mix(0.46, 0.82, distRootLift), 1.0, smoothstep(0.0, 0.42, h));
     vec3 lit = baseColor * ambient * rootAO;
 
     float nv = max(dot(faceNormal, viewDir), 0.0);
@@ -448,11 +449,11 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
             float edgeThinness = 0.64 + 0.36 * absU;
             float sssWindow = FastRamp(0.14, 0.52, h) * (1.0 - FastRamp(0.88, 1.0, h) * 0.20);
             float transmission = (backLobe * 0.65 + forwardLobe * 0.95 * (0.30 + 0.70 * h)) * sssWindow * edgeThinness * sssScale;
-            vec3 emeraldJadeSSS = baseColor * vec3(0.95, 1.28, 0.46) + vec3(0.022, 0.032, 0.008) * sssScale;
+            vec3 emeraldJadeSSS = baseColor * vec3(1.05, 1.36, 0.52) + vec3(0.028, 0.042, 0.012) * sssScale;
 
-            float diffuseLobe = wrapped * (0.42 + 0.48 * wrapped);
-            vec3 directDiffuse = baseColor * (diffuseLobe * 0.66);
-            vec3 jadeTrans = emeraldJadeSSS * (transmission * 0.96);
+            float diffuseLobe = wrapped * (0.44 + 0.52 * wrapped);
+            vec3 directDiffuse = baseColor * (diffuseLobe * 0.86);
+            vec3 jadeTrans = emeraldJadeSSS * (transmission * 1.08);
             vec3 specHighlight = anisoSpec + vec3(waxySpec * 0.34) * baseColor;
 
             vec3 directSun = ((directDiffuse + jadeTrans) * canopy + specHighlight) * sunVis;

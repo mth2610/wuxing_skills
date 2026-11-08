@@ -420,7 +420,7 @@ int MapFlora_GenerateMeadowPlacements(
         float flowAngle = -16.0f + macroSwirl + wave1 * 22.0f + eddy * 14.0f + patchAngleOffset;
 
         float hash = Nature_Hash01((unsigned int)i * 747796405u ^ (unsigned int)(cellX * 19349663) ^ (unsigned int)(cellZ * 83492791));
-        clump->rotationDeg = flowAngle + (hash - 0.5f) * 72.0f;
+        clump->rotationDeg = flowAngle + (hash - 0.5f) * 24.0f;
 
         float localHeight = clump->height;
         float localRadius = clump->radius;
@@ -462,9 +462,9 @@ int MapFlora_GenerateMeadowPlacements(
             clump->height *= understorey;
         }
 
-        // Mở rộng bán kính xòe của từng bụi cỏ để các tán lá đan lồng vào nhau không lộ khe đất
-        clump->radius = 0.39f + biome * 0.14f;
-        clump->radius *= 0.94f + 0.16f * (localRadius - 0.27f) * (1.0f / 0.09f);
+        // Tinh chỉnh bán kính cụm cỏ theo GoT Voronoi Clumping: gọn gàng, tránh đâm xuyên 360 độ
+        clump->radius = 0.22f + biome * 0.08f;
+        clump->radius *= 0.92f + 0.16f * (localRadius - 0.27f) * (1.0f / 0.09f);
 
         if (config.edgeTaperFn)
         {
@@ -664,7 +664,7 @@ MapFloraSystem MapProp_CreateFloraSystem(
 {
     MapFloraSystem flora = {0};
     flora.windDirection = (Vector2){0.95f, -0.31f};
-    flora.windStrength = 0.036f;
+    flora.windStrength = 0.052f;
 
     // 1. Valley / Meadow Grass (18m chunk size cuts draw calls & frustum checks while keeping tight culling)
     if (grassPlacements && grassCount > 0)

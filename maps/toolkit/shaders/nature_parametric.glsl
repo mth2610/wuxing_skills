@@ -222,8 +222,8 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     } else {
         // [VISUAL UPGRADE]: Giữ bụng lá cỏ đầy đặn ở 2/3 thân dưới và vuốt thon mượt ở đầu lá,
         // xóa bỏ hoàn toàn hình dáng "bàn chông / tăm nhọn" (spiky needles).
-        float sheath = 0.92 + 0.14 * smoothstep(0.0, 0.22, t);
-        float taper = max(0.0, 1.0 - 0.28 * t - 0.66 * (t2 * t));
+        float sheath = 0.94 + 0.12 * smoothstep(0.0, 0.20, t);
+        float taper = max(0.0, 1.0 - 0.24 * t - 0.70 * (t2 * t));
         profile = sheath * taper;
     }
     float halfWidth = p1.w * 0.54 * profile;
@@ -281,13 +281,13 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     vec3 tipNorm  = tipColor  * (1.0 / 255.0);
     vec3 hueVar = mix(vec3(0.95, 1.02, 0.96), vec3(1.06, 1.02, 0.86), bladeHash);
     tipNorm *= hueVar;
-    vec3 viridianMid = mix(rootNorm, tipNorm, 0.56) * vec3(0.94, 1.04, 0.90);
+    vec3 viridianMid = mix(rootNorm, tipNorm, 0.54) * vec3(0.96, 1.06, 0.92);
 
     float lowerMix = smoothstep(0.0, 0.38, t);
     float upperMix = smoothstep(0.28, 0.86, t);
     vec3 gradCol = mix(mix(rootNorm, viridianMid, lowerMix), tipNorm, upperMix);
 
-    float baseOcclusion = mix(0.82, 1.0, smoothstep(0.0, 0.28, t));
+    float baseOcclusion = mix(0.92, 1.0, smoothstep(0.0, 0.24, t));
     vec3 smoothCol = clamp(gradCol * (baseOcclusion * bladeTone), 0.0, 1.0);
     if (p3.w > 0.5 && t > 0.70) {
         float plumeT = smoothstep(0.70, 0.88, t);
