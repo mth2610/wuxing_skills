@@ -429,25 +429,26 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
         else
             archetype = 3; // Grass D: Seedhead / Flowering Accent (~8%)
 
-        float rootAzimuth = clumpAngle + (float)bladeId * golden + (bHash - 0.5f) * 0.35f;
+        // 360-degree radial rosette distribution: blades evenly cover all directions around clump center
+        int denomBlades = style.bladesPerClump > 1 ? style.bladesPerClump : 1;
+        float bladeAngleStep = 2.0f * PI / (float)denomBlades;
+        float rootAzimuth = clumpAngle + (float)bladeId * bladeAngleStep + (bHash - 0.5f) * 0.35f;
         float radX, radZ;
         Nature_FastSinCos(rootAzimuth, &radZ, &radX);
-        int denomBlades = style.bladesPerClump > 1 ? style.bladesPerClump : 1;
         float diskFrac = ((float)bladeId + 0.5f) / (float)denomBlades;
         // Tight basal collar (0.12..0.24m) so blade roots emerge from a real botanical crown
         float collarRadius = clump->radius * (0.12f + 0.38f * sqrtf(diskFrac)) * (0.86f + 0.28f * bHash3);
         float bx = clump->position.x + radX * collarRadius;
         float bz = clump->position.z + radZ * collarRadius;
 
-        // Directional fan: blades fan outward along the Voronoi clump flow angle (GoT Slide 15)
-        float fanAngle = ((float)bladeId / (float)denomBlades - 0.5f) * 1.55f + (bHash - 0.5f) * 0.28f;
-        float fanX = flowX * cosf(fanAngle) - flowZ * sinf(fanAngle);
-        float fanZ = flowX * sinf(fanAngle) + flowZ * cosf(fanAngle);
-
-        float splayWeight = (archetype == 0) ? (0.42f + 0.16f * diskFrac)   // Grass A: fuller ground rosette
-                                             : (0.18f + 0.22f * diskFrac);  // Grass B/C/D: strong combed flow (60%..80% Voronoi aligned)
-        float splayX = radX * splayWeight + fanX * (1.0f - splayWeight);
-        float splayZ = radZ * splayWeight + fanZ * (1.0f - splayWeight);
+        // Botanical fountain rosette: blades naturally splay outward in 360° away from clump root (radX, radZ),
+        // modulated by a gentle prevailing wind/topography flow bias (flowX, flowZ).
+        // This eliminates unidirectional diagonal striping / resonance while preserving tuft cohesion.
+        float flowBias = (archetype == 0) ? (0.16f + 0.08f * (1.0f - diskFrac))   // Grass A: 16%..24% flow bias
+                                          : (0.22f + 0.10f * (1.0f - diskFrac));  // Grass B/C/D: 22%..32% flow bias
+        float radialWeight = 1.0f - flowBias;                                      // 68%..84% outward radial rosette splay
+        float splayX = radX * radialWeight + flowX * flowBias;
+        float splayZ = radZ * radialWeight + flowZ * flowBias;
         float splayLenSq = splayX * splayX + splayZ * splayZ;
         float dirX = flowX, dirZ = flowZ;
         if (splayLenSq > 1e-4f)
@@ -464,50 +465,51 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
             // Inner arching stalks: graceful reach with soft nodding crest
             lengthScale = 1.05f + 0.10f * bHash2;
             widthScaleVal = 0.96f + 0.08f * bHash3;
-            leanFactor = 0.32f + 0.08f * bHash;
-            droopFactor = 0.14f + 0.06f * bHash3;
+            leanFactor = 0.40f + 0.12f * bHash;
+            droopFactor = 0.22f + 0.08f * bHash3;
         }
         else if (bladeId < 4)
         {
             // Mid arching blades: lush fountain arc
             lengthScale = 0.98f + 0.10f * bHash2;
             widthScaleVal = 1.02f + 0.08f * bHash3;
-            leanFactor = 0.52f + 0.12f * bHash;
-            droopFactor = 0.26f + 0.08f * bHash3;
+            leanFactor = 0.76f + 0.16f * bHash;
+            droopFactor = 0.46f + 0.12f * bHash3;
         }
         else
         {
             // Outer nodding blades: flowing perimeter fronds bowing toward earth
             lengthScale = 0.88f + 0.08f * bHash2;
             widthScaleVal = 1.08f + 0.10f * bHash3;
-            leanFactor = 0.70f + 0.14f * bHash;
-            droopFactor = 0.38f + 0.08f * bHash3;
+            leanFactor = 1.08f + 0.22f * bHash;
+            droopFactor = 0.64f + 0.14f * bHash3;
         }
 
         // Apply archetype morphological adjustments
         if (archetype == 0) // Grass A (turf)
         {
-            lengthScale *= 0.65f;
-            widthScaleVal *= 1.25f;
-            leanFactor *= 1.15f;
-            droopFactor *= 0.75f;
+            lengthScale *= 0.58f;
+            widthScaleVal *= 1.35f;
+            leanFactor *= 1.30f;
+            droopFactor *= 0.85f;
         }
         else if (archetype == 2) // Grass C (tall hero)
         {
-            lengthScale *= 1.32f;
-            widthScaleVal *= 0.92f;
-            leanFactor *= 0.92f;
-            droopFactor *= 1.18f;
+            lengthScale *= 1.35f;
+            widthScaleVal *= 0.94f;
+            leanFactor *= 0.88f;
+            droopFactor *= 1.15f;
         }
         else if (archetype == 3) // Grass D (seedhead)
         {
-            lengthScale *= 1.18f;
-            leanFactor *= 0.58f;
-            droopFactor *= 0.32f;
+            lengthScale *= 1.22f;
+            leanFactor *= 0.60f;
+            droopFactor *= 0.30f;
         }
 
         height = clump->height * lengthScale;
         width = clump->radius * style.bladeWidthScale * widthMultiplier * widthScaleVal;
+        width = fmaxf(0.024f, width); // Giới hạn sàn độ rộng thân cỏ (>= 2.4cm) triệt tiêu tình trạng sợi quá mảnh gây nhấp nháy
         lean = height * leanFactor;
         droopY = height * droopFactor;
         float botanical = fminf(fmaxf(style.botanicalVariation, 0.0f), 1.0f);
@@ -523,6 +525,7 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
             stretch = 1.0f + (stretch - 1.0f) * botanical;
             height *= stretch;
             width /= sqrtf(stretch);
+            width = fmaxf(0.022f, width);
             lean *= stretch * (1.0f + botanical * (0.06f + 0.10f * habit));
             droopY = height * (droopFactor + botanical * 0.08f * habit);
         }
@@ -532,49 +535,50 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
         float latX = -dirZ;
         float latZ = dirX;
 
-        // Botanical cantilever cubic Bézier with natural S/C side curvature (GoT Slide 16)
+        // Botanical cantilever cubic Bézier with natural S/C fountain curves (GoT Slide 16)
         pBase = (Vector3){bx, clump->position.y - 0.014f, bz};
         pP1 = (Vector3){
-            bx + dirX * (lean * 0.12f) + latX * (lean * 0.035f * curlAmt),
-            pBase.y + height * 0.44f,
-            bz + dirZ * (lean * 0.12f) + latZ * (lean * 0.035f * curlAmt)};
+            bx + dirX * (lean * 0.14f) + latX * (lean * 0.04f * curlAmt),
+            pBase.y + height * 0.38f,
+            bz + dirZ * (lean * 0.14f) + latZ * (lean * 0.04f * curlAmt)};
         pP2 = (Vector3){
-            bx + dirX * (lean * 0.58f) + latX * (lean * 0.10f * curlAmt),
-            pBase.y + height * 0.88f,
-            bz + dirZ * (lean * 0.58f) + latZ * (lean * 0.10f * curlAmt)};
+            bx + dirX * (lean * 0.65f) + latX * (lean * 0.14f * curlAmt),
+            pBase.y + height * 0.74f,
+            bz + dirZ * (lean * 0.65f) + latZ * (lean * 0.14f * curlAmt)};
         pP3 = (Vector3){
-            bx + dirX * (lean * 0.94f) + latX * (lean * 0.16f * curlAmt),
-            pBase.y + fmaxf(height * 0.14f, height * 0.86f - droopY),
-            bz + dirZ * (lean * 0.94f) + latZ * (lean * 0.16f * curlAmt)};
+            bx + dirX * (lean * 1.10f) + latX * (lean * 0.22f * curlAmt),
+            pBase.y + fmaxf(height * 0.12f, height * 0.82f - droopY),
+            bz + dirZ * (lean * 1.10f) + latZ * (lean * 0.22f * curlAmt)};
 
         isSeedhead = (archetype == 3 && bladeId < 3);
         float colorField = sinf(clump->position.x * 0.12f + clump->position.z * 0.08f) * 0.55f +
                            sinf(clump->position.z * 0.14f - clump->position.x * 0.06f + 1.2f) * 0.45f;
-        float tone = 1.0f + colorField * 0.08f + (clumpHashVal - 0.5f) * 0.12f + (bHash - 0.5f) * 0.05f;
-        int rR = (int)(style.rootColor.r * tone * 1.04f + 3.0f);
-        int rG = (int)(style.rootColor.g * tone * 1.05f + 5.0f);
-        int rB = (int)(style.rootColor.b * tone * 1.02f + 2.0f);
-        int tR = (int)(style.tipColor.r * tone * 0.98f);
-        int tG = (int)(style.tipColor.g * tone * 1.02f);
-        int tB = (int)(style.tipColor.b * tone * 0.96f);
+        float tone = 0.96f + colorField * 0.08f + (clumpHashVal - 0.5f) * 0.14f + (bHash - 0.5f) * 0.05f;
+        int rR = (int)(style.rootColor.r * tone * 1.02f + 2.0f);
+        int rG = (int)(style.rootColor.g * tone * 1.03f + 4.0f);
+        int rB = (int)(style.rootColor.b * tone * 1.01f + 2.0f);
+        int tR = (int)(style.tipColor.r * tone * 0.94f);
+        int tG = (int)(style.tipColor.g * tone * 0.98f);
+        int tB = (int)(style.tipColor.b * tone * 0.95f);
 
         // Clump color personalities per archetype:
         if (archetype == 0) // Grass A: deep lush emerald turf
         {
-            tG = (int)(tG * 0.94f);
-            tB = (int)(tB * 1.08f);
+            tR = (int)(tR * 0.88f);
+            tG = (int)(tG * 0.95f);
+            tB = (int)(tB * 1.10f);
         }
-        else if (archetype == 2) // Grass C: sun-dappled chartreuse hero
+        else if (archetype == 2) // Grass C: sun-warmed chartreuse/olive hero
         {
-            tR = (int)(tR * 1.08f);
-            tG = (int)(tG * 1.06f);
-            tB = (int)(tB * 0.90f);
+            tR = (int)(tR * 1.12f + 4.0f);
+            tG = (int)(tG * 1.04f);
+            tB = (int)(tB * 0.86f);
         }
         else if (archetype == 3) // Grass D: golden-wheat seed tip
         {
-            tR = (int)(tR * 1.36f + 18.0f);
-            tG = (int)(tG * 1.24f + 14.0f);
-            tB = (int)(tB * 0.74f);
+            tR = (int)(tR * 1.40f + 20.0f);
+            tG = (int)(tG * 1.25f + 14.0f);
+            tB = (int)(tB * 0.70f);
         }
 
         if (bHash2 < 0.12f && bladeId < 2)
@@ -684,7 +688,7 @@ static Model Nature_BuildMeadowChunkFromIndices(const MapMeadowPlacement *placem
         float sheath = fminf(1.0f, 0.65f + 2.5f * tk);
         float body = 0.82f + 0.32f * sinf(PI * fminf(tk * 1.35f, 1.0f));
         float tipT = fmaxf(0.0f, (tk - 0.35f) * (1.0f / 0.65f));
-        float taper = fmaxf(0.0f, 1.0f - tipT * tipT);
+        float taper = fmaxf(0.28f, 1.0f - tipT * tipT * 0.72f);
         float groundAnchor = fmaxf(0.0f, 1.0f - tk * 2.5f);
 
         knotTable[k].tk = tk;

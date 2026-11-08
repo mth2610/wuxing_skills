@@ -220,18 +220,19 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
         float tasselTaper = (t > 0.75) ? max(0.22, 1.0 - (t - 0.75) * 3.1) : 1.0;
         profile = stalk * tasselTaper;
     } else {
-        // [VISUAL UPGRADE]: Giữ bụng lá cỏ đầy đặn ở 2/3 thân dưới và vuốt thon mượt ở đầu lá,
-        // xóa bỏ hoàn toàn hình dáng "bàn chông / tăm nhọn" (spiky needles).
-        float sheath = 0.94 + 0.12 * smoothstep(0.0, 0.20, t);
-        float taper = max(0.0, 1.0 - 0.24 * t - 0.70 * (t2 * t));
+        // [VISUAL UPGRADE]: Vuốt thon mượt liên tục nhưng chặn cận dưới ở mức >= 0.28 để ngọn lá không bị sụp xuống kích thước dưới pixel (subpixel needle)
+        float sheath = 1.0 + 0.16 * (1.0 - smoothstep(0.0, 0.18, t));
+        float taper = max(0.28, 1.0 - 0.48 * t - 0.24 * t2);
         profile = sheath * taper;
     }
     float halfWidth = p1.w * 0.54 * profile;
 
     float fadeAlpha = 1.0;
 #ifdef NATURE_VISIBLE_TUFT_LOD
-    float farAntiAlias = clamp((distToCam - 7.0) * 0.04, 0.0, 1.0);
-    float minPxHalfWidth = farAntiAlias * distToCam * 0.00068 * (1.0 - 0.68 * t);
+    // Khóa cận dưới độ rộng màn hình (Screen-Space Subpixel Anti-Aliasing Clamp):
+    // Đảm bảo ngọn lá và thân cỏ luôn có độ dày tối thiểu ~1.1 pixel trên màn hình ở mọi khoảng cách camera,
+    // triệt tiêu hoàn toàn hiện tượng nhấp nháy / lấp lánh (sparkling/shimmering) khi cỏ đung đưa trong gió.
+    float minPxHalfWidth = distToCam * 0.00048;
     halfWidth = max(halfWidth, minPxHalfWidth);
 #endif
 

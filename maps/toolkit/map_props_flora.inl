@@ -420,7 +420,7 @@ int MapFlora_GenerateMeadowPlacements(
         float flowAngle = -16.0f + macroSwirl + wave1 * 22.0f + eddy * 14.0f + patchAngleOffset;
 
         float hash = Nature_Hash01((unsigned int)i * 747796405u ^ (unsigned int)(cellX * 19349663) ^ (unsigned int)(cellZ * 83492791));
-        clump->rotationDeg = flowAngle + (hash - 0.5f) * 24.0f;
+        clump->rotationDeg = flowAngle + (hash - 0.5f) * 72.0f;
 
         float localHeight = clump->height;
         float localRadius = clump->radius;

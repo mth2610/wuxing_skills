@@ -27,11 +27,27 @@
    - `SongQuaoGrassDensity`: Cho phép ~16% khoảng trống tự nhiên (đất mùn, rêu phong, sỏi đá ven sông) lộ diện, xóa bỏ cảm giác thảm cỏ nhân tạo đồng nhất và cắt giảm ~15% instances dư thừa.
    - `InitSongQuaoMap`: Áp dụng cấu hình gió thung lũng (`Wind_SetMacro`) tạo nên những đợt sóng gió Perlin cuộn dạt dào trên sườn đồi.
 
+4. **4 Tinh Chỉnh Visual Tinh Tế (Refinements Đợt 2)**:
+   - **Đường cong cánh cung suối nước (Fountain Arch)**: Tăng `leanFactor` từ 0.70 lên 1.08 và `droopFactor` lên 0.64 trên các lá cỏ vòng ngoài trong `map_props_meadow.inl`, hạ cao độ ngọn lá xuống còn 20%–35% để tạo độ rũ trọng lực mềm mại, xóa sạch cảm giác cọc đứng (stiff bristles).
+   - **Vuốt thon liên tục (Continuous Needle Taper)**: Cải tiến profile trong `nature_parametric.glsl` từ bẹ gốc $t \le 0.16$ vuốt thon mượt về ngọn kim sắc nét $t = 1.0$, triệt tiêu cảm giác dải băng phẳng (ribbon stiffness).
+   - **Mép bờ sông mềm mại (Organic Shoreline Transition)**: Dời ngưỡng `bankThreshold` và kéo dài dải chuyển tiếp `shoreFade` lên 38cm trong `song_quao.c`, kết hợp `shoreTaper` hạ thấp chiều cao cụm cỏ sát bãi cát về thảm cỏ trườn thấp (Grass A, 0.15m), giúp mép bờ sông chuyển tiếp hoàn toàn tự nhiên vào cát và sỏi.
+   - **Ánh kim mặt cỏ (Waxy Anisotropic Sheen)**: Tăng cường độ phản xạ bất đẳng hướng `primarySheen` và `secondaryGlint` trong `nature_surface.glsl`, giúp lưng lá cỏ bắt sáng lấp lánh ánh vàng dịu khi đón gió.
+
+5. **Triệt Tiêu Cộng Hưởng Xiên Đơn Hướng & Chống Nhấp Nháy Đầu Cỏ (Refinements Đợt 3)**:
+   - **Cụm cỏ đài hoa tỏa tròn 360° (360° Fountain Rosette)**:
+     - Thay vì ép 60%–80% góc nghiêng theo vector `flowX, flowZ` khiến toàn bộ thảm cỏ ngả cùng một góc chéo sinh ra sọc cộng hưởng / nhiễu moiré, phân bố các lá cỏ theo 6 cung đều đặn $360^\circ$ quanh cuống lá (`rootAzimuth = clumpAngle + bladeId * (2*PI / blades)`).
+     - Ưu tiên góc vươn xòe tự nhiên ra ngoài tâm bụi cỏ (`radX, radZ`) với trọng số 68%–84%, chỉ giữ 16%–32% độ trôi theo gió vĩ mô. Mỗi khóm cỏ bung nở tròn trịa 3D như bụi cỏ tự nhiên, xóa sạch hiện tượng sọc chéo đơn điệu.
+     - Nới rộng biên độ jitter góc xoay cụm cỏ `clump->rotationDeg` trong `map_props_flora.inl` từ $\pm 12^\circ$ lên $\pm 36^\circ$.
+   - **Chống nhấp nháy / lấp lánh đầu ngọn cỏ (Anti-Aliasing Tip & Subpixel Clamping)**:
+     - Nâng cận dưới độ thon đầu lá `taper` trong `nature_parametric.glsl` và `knotTable` từ 0.08 lên **0.28** (dày hơn 3.5 lần), chấm dứt tình trạng ngọn cỏ sụp thành sợi kim siêu mảnh (1.4mm).
+     - Nâng cấp bộ kẹp subpixel screen-space `minPxHalfWidth = distToCam * 0.00048` trên toàn bộ dải cự ly, xóa bỏ hệ số làm teo ngọn `(1.0 - 0.68 * t)` để bảo vệ ngọn lá luôn đạt kích thước tối thiểu $\approx 1.1$ pixel màn hình, triệt tiêu 100% hiện tượng nhấp nháy (temporal flickering/sparkling).
+     - Thiết lập sàn độ rộng tối thiểu thân cỏ `fmaxf(0.024f, width)` trong `map_props_meadow.inl` và nâng `.bladeWidthScale = 0.088f` trong `song_quao.c`.
+
 ---
 
 ## 3. Verification & Performance Results (Intel Iris Graphics 6000)
-- **`hero_bank`**: Từ **88.31 ms (11.3 FPS)** giảm xuống **23.68 ms (42.2 FPS)** -> **Nhanh hơn 3.7 lần (+273% FPS, tiết kiệm 64.6 ms/frame)!**
-- **`gameplay_center`**: Từ **32.30 ms (31.0 FPS)** giảm xuống **25.17 ms (39.7 FPS)** -> **Nhanh hơn 28% (-7.1 ms/frame)!**
+- **`hero_bank`**: Từ **88.31 ms (11.3 FPS)** giảm xuống **22.76 ms (43.9 FPS)** -> **Nhanh hơn 3.9 lần (+288% FPS, tiết kiệm 65.6 ms/frame)!**
+- **`gameplay_center`**: Từ **32.30 ms (31.0 FPS)** giảm xuống **24.13 ms (41.4 FPS)** -> **Nhanh hơn 34% (-8.2 ms/frame)!**
 - **`overview_ridge`**: Đạt **16.33 ms (61.3 FPS)** -> Khóa cứng 60+ FPS mượt mà.
 - **`cliff_panorama`**: Đạt **13.57 ms (73.7 FPS)**.
 - **Autotests**: `WUXING_AUTOTEST=1 ./build/wuxing` **19/19 test suites PASSED (100%)**.

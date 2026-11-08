@@ -167,11 +167,11 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
     // Dynamic bank setback (GPU Gems 3 Continuous Riverbank Ecology):
     // Reeds & riverbank sedges grow right down into the waterline (-0.04m .. 0.02m);
     // Gravel bars & pebble beaches transition smoothly without harsh empty trenches
-    float bankThreshold = -0.04f - rosetteJut * 0.05f + rosetteGrain * 0.02f;
+    float bankThreshold = 0.04f - rosetteJut * 0.04f + rosetteGrain * 0.02f;
     float varShore = signedShore + bankNoiseMacro + bankNoiseMed + bankNoiseMicro;
     if (varShore < bankThreshold)
         return 0.0f;
-    float shoreFade = MapMath_SmoothStep01(bankThreshold, bankThreshold + 0.22f, varShore);
+    float shoreFade = MapMath_SmoothStep01(bankThreshold, bankThreshold + 0.36f, varShore);
 
     float rockSuppression = MapProp_EvaluateRockSuppression(
         x, z, SONG_QUAO_ROCK_ITEMS, SONG_QUAO_ROCK_ITEM_COUNT);
@@ -224,9 +224,9 @@ static float SongQuaoEdgeTaper(float cx, float cz, void *userData)
         return 0.5f;
 
     float signedShore = SongQuaoSampleSignedShore(cx, cz);
-    float shoreTaper = (signedShore >= 0.75f)
+    float shoreTaper = (signedShore >= 0.95f)
                            ? 1.0f
-                           : (0.35f + 0.65f * MapMath_SmoothStep01(0.06f, 0.75f, signedShore));
+                           : (0.16f + 0.84f * MapMath_SmoothStep01(0.08f, 0.95f, signedShore));
     float cliffTaper = (pos.y >= -0.20f)
                            ? 1.0f
                            : (0.35f + 0.65f * MapMath_SmoothStep01(GRASS_CLIFF_MIN_Y, -0.20f, pos.y));
@@ -806,7 +806,7 @@ void InitSongQuaoMap(void)
             .grassTipColor = {116, 154, 58, 255}, // Sắc ngọc bích xuân tươi sáng, ấm áp tự nhiên
             .bladesPerClump = 6,
             .bladeSegments = 4,
-            .bladeWidthScale = 0.078f,
+            .bladeWidthScale = 0.088f,
             .lodDistance = 24.0f,
             .midLodDistance = 14.0f,
             .drawDistance = 50.0f,

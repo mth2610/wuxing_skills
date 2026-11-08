@@ -434,10 +434,10 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
                 float sinTH16 = sinTH8 * sinTH8;
                 float sinTHBroad = mix(sinTH16, sinTH4, distRoughness);
 
-                vec3 primarySheen   = mix(baseColor, vec3(0.98, 0.96, 0.82), 0.55) * (sinTH8 * 0.068);
-                vec3 secondaryGlint = mix(baseColor, vec3(0.98, 0.96, 0.88), 0.42) * (sinTHBroad * 0.038 * (1.0 - distRoughness * 0.75));
+                vec3 primarySheen   = mix(baseColor, vec3(0.98, 0.96, 0.82), 0.65) * (sinTH8 * 0.095);
+                vec3 secondaryGlint = mix(baseColor, vec3(0.98, 0.96, 0.88), 0.50) * (sinTHBroad * 0.052 * (1.0 - distRoughness * 0.75));
                 anisoSpec = (primarySheen + secondaryGlint) * (specAA * max(NdotH + 0.20, 0.0));
-                waxySpec = FastPow32(NdotH) * (0.032 * h) * specAA * (1.0 - distRoughness);
+                waxySpec = FastPow32(NdotH) * (0.045 * h) * specAA * (1.0 - distRoughness);
             }
 
             // Tăng cường tán xạ ngược sáng Mie xuyên qua ngọn cỏ mỏng khi nhìn về phía Mặt Trời
