@@ -34,6 +34,11 @@ static struct {Vector3 position;} camera;
 static Matrix shaderFromWorld,uploadedWorldFromShader;
 static Vector3 uploadedLight,uploadedCamera,uploadedSunColor,uploadedAmbient;
 static int activeShader,cloudBindings,shadowBindings;
+static int s_locCloudWorldFromShader = 3;
+static int s_locLightDir = 1;
+static int s_locLightColor = 6;
+static int s_locAmbientColor = 7;
+static int s_locViewPos = 2;
 static Vector3 Vector3Transform(Vector3 p,Matrix m) {
     return (Vector3){m.m0*p.x+m.m4*p.y+m.m8*p.z+m.m12,
                     m.m1*p.x+m.m5*p.y+m.m9*p.z+m.m13,
@@ -57,14 +62,6 @@ static void BeginShaderMode(Shader s) {assert(!activeShader);activeShader=s.id;}
 static void EndShaderMode(void) {assert(activeShader==17);activeShader=0;}
 static void Environment_BindCloudShadowShader(Shader s) {assert(activeShader==(int)s.id);cloudBindings++;}
 static void MapShadow_UpdateShader(Shader s) {assert(activeShader==(int)s.id);shadowBindings++;}
-static int GetShaderLocation(Shader s,const char *name) {
-    (void)s;
-    if(!strcmp(name,"u_lightDir"))return 1;
-    if(!strcmp(name,"u_viewPos"))return 2;
-    if(!strcmp(name,"u_lightColor"))return 6;
-    if(!strcmp(name,"u_ambientColor"))return 7;
-    return 3;
-}
 static void SetShaderValue(Shader s,int location,const void *data,int type) {
     assert(activeShader==(int)s.id && type==SHADER_UNIFORM_VEC3);
     if(location==1)uploadedLight=*(const Vector3 *)data;

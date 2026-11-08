@@ -698,8 +698,8 @@ void InitSongQuaoMap(void)
     MapProp_SetGroundReliefMap(&s_ground, "assets/textures/verdant_terrain_relief.png");
     MapProp_SetGroundDebrisMap(&s_ground, "assets/maps/song_quao/song_quao_debris_map.png");
     MapProp_SetGroundRockMaps(&s_ground,
-                              "assets/textures/rocks/scree_diffuse.png",
-                              "assets/textures/rocks/scree_normal.png");
+                              "assets/textures/rock_diffuse.png",
+                              "assets/textures/rock_normal.png");
 
     s_sky = MapProp_CreateSkyDome();
     s_cloudSea = MapProp_CreateCloudSea(1400.0f, 1400.0f, 65.0f);
@@ -713,7 +713,7 @@ void InitSongQuaoMap(void)
             .opacity = 0.32f,
         });
     if (!(s_skipMask & MAP_SKIP_CLIFF))
-        s_cliff = MapProp_CreateCliffSkirt(&s_ground, kMapCenter, -1.35f, -26.0f);
+        s_cliff = MapProp_CreateCliffSkirt(&s_ground, kMapCenter, -0.45f, -26.0f);
 
     // [VISUAL AAA WATER]: Nước trong ngọc bích, phản chiếu vòm trời và đáy cát ven bờ
     s_river = MapProp_CreateTerrainWater("assets/maps/song_quao/song_quao_water.obj",

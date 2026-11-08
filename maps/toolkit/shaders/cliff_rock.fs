@@ -1,6 +1,7 @@
 #version 330
 #include "core/shaders/common/lighting.glsl"
 #include "core/shaders/common/vfx_lights.glsl"
+#define MAP_SHADOW_NORMAL_OFFSET_TEXELS 2.0
 #include "maps/toolkit/shaders/map_shadow.glsl"
 #include "environment/shaders/cloud_shadow.glsl"
 #include "environment/shaders/hemisphere_lighting.glsl"
@@ -50,7 +51,9 @@ void main() {
     vec3 viewDir = toCam * invCamDist;
 
     vec4 albedo = textureGrad(texture0, fragTexCoord, uvDx, uvDy);
-    // Authentic granite bedrock: rich mineral facets with deep fracture crevices
+    // Authentic mountain cliff bedrock: neutral slate/granite tone matching Where Winds Meet & Ghost of Tsushima
+    vec3 bedrockTint = vec3(0.52, 0.50, 0.48);
+    albedo.rgb = albedo.rgb * bedrockTint * 1.35;
     albedo.rgb *= colDiffuse.rgb;
     vec3 normalSample = textureGrad(texture2, fragTexCoord, uvDx, uvDy).rgb * 2.0 - 1.0;
 
@@ -84,7 +87,7 @@ void main() {
     vec3 rawB = cross(smoothN, T);
     vec3 B = (dot(rawB, fragBitangent) < 0.0) ? -rawB : rawB;
 
-    normalSample.xy *= 0.75;
+    normalSample.xy *= 1.65;
     normalSample *= inversesqrt(max(dot(normalSample, normalSample), 1e-8));
     // T, B, smoothN are mutually orthonormal and normalSample is unit length
     vec3 normal = T * normalSample.x + B * normalSample.y + smoothN * normalSample.z;
@@ -101,20 +104,22 @@ void main() {
     vec3 actualAmbient = (dot(u_ambientColor, u_ambientColor) > 0.001) ? u_ambientColor : vec3(0.36, 0.42, 0.50);
 
     // 1. Natural Granite Geological Strata Tone & Rain Drainage Streaks
-    float strataCoord = worldPosition.y * 0.28 + sin(worldPosition.x * 0.08 + worldPosition.z * 0.06) * 1.2;
-    float strataBand = sin(strataCoord * 3.14159265) * 0.5 + 0.5;
+    float strataMacro = sin(worldPosition.y * 1.25 + sin(worldPosition.x * 0.15 + worldPosition.z * 0.12) * 1.8) * 0.5 + 0.5;
+    float strataShelf = sin(worldPosition.y * 3.40 + normalSample.x * 1.2) * 0.5 + 0.5;
+    float strataMicro = sin(worldPosition.y * 8.50 + normalSample.y * 0.8) * 0.5 + 0.5;
+    float combinedStrata = strataMacro * 0.50 + strataShelf * 0.35 + strataMicro * 0.15;
 
     float drainStreak = sin(worldPosition.x * 0.35 + sin(worldPosition.z * 0.25) * 1.4) * 0.5 + 0.5;
     vec3 streakColor = mix(vec3(0.92, 0.90, 0.88), vec3(1.06, 1.02, 0.96), drainStreak);
 
     vec3 rockBase = albedo.rgb * streakColor;
     rockBase *= mix(vec3(0.88, 0.90, 0.94), vec3(1.06, 1.03, 0.98), fragColor.a);
-    rockBase *= mix(vec3(0.94, 0.94, 0.92), vec3(1.04, 1.02, 0.98), strataBand * 0.20);
+    rockBase *= mix(vec3(0.85, 0.83, 0.80), vec3(1.15, 1.10, 1.02), combinedStrata * 0.35);
 
     // 1b. Sub-Soil Regolith Band (warm earthy loam transition directly below the turf lip)
-    float cliffArcDepth = fragTexCoord.y * (1.0 / 0.38);
+    float cliffArcDepth = fragTexCoord.y * (1.0 / 0.65);
     float soilBand = smoothstep(1.8, 0.3, cliffArcDepth) * (1.0 - smoothstep(0.4, 0.0, cliffArcDepth));
-    vec3 subSoilLoam = mix(vec3(0.24, 0.20, 0.15), vec3(0.32, 0.26, 0.19), strataBand);
+    vec3 subSoilLoam = mix(vec3(0.24, 0.20, 0.15), vec3(0.32, 0.26, 0.19), combinedStrata);
     rockBase = mix(rockBase, subSoilLoam, soilBand * 0.30);
 
     // Turf overhang fringe: only the topmost 25cm collar tucked under the plateau meadow
@@ -130,13 +135,14 @@ void main() {
     vec3 rockAlbedo = mix(rockBase, mossColor, mossMask * 0.82);
 
     // 3. Baked Cavity Ambient Occlusion (clamped to prevent crushing shaded facets to black)
-    float cavityAO = clamp(fragColor.r, 0.44, 1.0);
+    float cavityAO = clamp(fragColor.r, 0.32, 1.0);
+    cavityAO = mix(cavityAO * 0.70, cavityAO, clamp(normalSample.z * 0.8 + 0.2, 0.0, 1.0));
 
     // 4. Wrap diffuse lighting & shadow evaluation
     float NdotL = max((dot(normal, lightDir) + 0.25) * 0.80, 0.0);
     float directAtten = 0.0;
     if (NdotL > 0.0) {
-        directAtten = MapShadowVisibility(fragPosition, normal, lightDir);
+        directAtten = MapShadowVisibility(worldPosition, worldNormal, worldLightDir);
         if (directAtten > 0.001) {
             directAtten *= Environment_CloudVisibility(u_cloudNoise, worldPosition);
         }

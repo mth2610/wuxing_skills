@@ -25,31 +25,171 @@ static inline float Rock_Mix(float a, float b, float t)
     return a * (1.0f - t) + b * t;
 }
 
+// --- Geodesic Icosahedron Mesh Generator (Zero Polar Singularities) ---
+typedef struct {
+    unsigned int key;
+    int mid;
+} RockEdgeMidpoint;
+
+static inline Vector3 Rock_VNorm(Vector3 v)
+{
+    float l = sqrtf(v.x * v.x + v.y * v.y + v.z * v.z);
+    if (l > 1e-6f)
+    {
+        float inv = 1.0f / l;
+        return (Vector3){v.x * inv, v.y * inv, v.z * inv};
+    }
+    return (Vector3){0.0f, 1.0f, 0.0f};
+}
+
+static int Rock_GetMidpoint(int v1, int v2, Vector3 *verts, int *vCount,
+                            RockEdgeMidpoint *hashTable, int hashMask)
+{
+    unsigned int a = (unsigned int)(v1 < v2 ? v1 : v2);
+    unsigned int b = (unsigned int)(v1 < v2 ? v2 : v1);
+    unsigned int key = (a << 16) | b;
+    unsigned int h = (key * 2654435761u) & (unsigned int)hashMask;
+
+    while (hashTable[h].key != 0)
+    {
+        if (hashTable[h].key == key)
+            return hashTable[h].mid;
+        h = (h + 1) & (unsigned int)hashMask;
+    }
+
+    int midIdx = (*vCount)++;
+    Vector3 p1 = verts[a];
+    Vector3 p2 = verts[b];
+    Vector3 m = {(p1.x + p2.x) * 0.5f, (p1.y + p2.y) * 0.5f, (p1.z + p2.z) * 0.5f};
+    verts[midIdx] = Rock_VNorm(m);
+
+    hashTable[h].key = key;
+    hashTable[h].mid = midIdx;
+    return midIdx;
+}
+
+static Mesh Nature_GenMeshIcoSphere(float radius, int subdivisions)
+{
+    Mesh mesh = {0};
+    float t = (1.0f + sqrtf(5.0f)) * 0.5f;
+    Vector3 baseV[12] = {
+        {-1.0f, t, 0.0f}, {1.0f, t, 0.0f}, {-1.0f, -t, 0.0f}, {1.0f, -t, 0.0f},
+        {0.0f, -1.0f, t}, {0.0f, 1.0f, t}, {0.0f, -1.0f, -t}, {0.0f, 1.0f, -t},
+        {t, 0.0f, -1.0f}, {t, 0.0f, 1.0f}, {-t, 0.0f, -1.0f}, {-t, 0.0f, 1.0f}
+    };
+
+    int maxV = 12;
+    int maxT = 20;
+    for (int s = 0; s < subdivisions; s++)
+    {
+        maxV += (maxT * 3) / 2;
+        maxT *= 4;
+    }
+
+    Vector3 *verts = (Vector3 *)RL_MALLOC((size_t)maxV * sizeof(Vector3));
+    if (!verts) return mesh;
+    for (int i = 0; i < 12; i++) verts[i] = Rock_VNorm(baseV[i]);
+    int vCount = 12;
+
+    int (*tris)[3] = (int (*)[3])RL_MALLOC((size_t)maxT * sizeof(int[3]));
+    int (*newTris)[3] = (int (*)[3])RL_MALLOC((size_t)maxT * sizeof(int[3]));
+    if (!tris || !newTris)
+    {
+        RL_FREE(verts);
+        if (tris) RL_FREE(tris);
+        if (newTris) RL_FREE(newTris);
+        return mesh;
+    }
+
+    static const int baseTri[20][3] = {
+        {0, 11, 5}, {0, 5, 1}, {0, 1, 7}, {0, 7, 10}, {0, 10, 11},
+        {1, 5, 9}, {5, 11, 4}, {11, 10, 2}, {10, 7, 6}, {7, 1, 8},
+        {3, 9, 4}, {3, 4, 2}, {3, 2, 6}, {3, 6, 8}, {3, 8, 9},
+        {4, 9, 5}, {2, 4, 11}, {6, 2, 10}, {8, 6, 7}, {9, 8, 1}
+    };
+    memcpy(tris, baseTri, 20 * sizeof(int[3]));
+    int tCount = 20;
+
+    int hashSize = 4096;
+    while (hashSize < maxT * 4) hashSize *= 2;
+    RockEdgeMidpoint *edgeHash = (RockEdgeMidpoint *)RL_CALLOC((size_t)hashSize, sizeof(RockEdgeMidpoint));
+    if (!edgeHash)
+    {
+        RL_FREE(verts);
+        RL_FREE(tris);
+        RL_FREE(newTris);
+        return mesh;
+    }
+
+    for (int s = 0; s < subdivisions; s++)
+    {
+        memset(edgeHash, 0, (size_t)hashSize * sizeof(RockEdgeMidpoint));
+        int newTCount = 0;
+        for (int i = 0; i < tCount; i++)
+        {
+            int i1 = tris[i][0];
+            int i2 = tris[i][1];
+            int i3 = tris[i][2];
+            int m12 = Rock_GetMidpoint(i1, i2, verts, &vCount, edgeHash, hashSize - 1);
+            int m23 = Rock_GetMidpoint(i2, i3, verts, &vCount, edgeHash, hashSize - 1);
+            int m31 = Rock_GetMidpoint(i3, i1, verts, &vCount, edgeHash, hashSize - 1);
+
+            newTris[newTCount][0] = i1;  newTris[newTCount][1] = m12; newTris[newTCount][2] = m31; newTCount++;
+            newTris[newTCount][0] = i2;  newTris[newTCount][1] = m23; newTris[newTCount][2] = m12; newTCount++;
+            newTris[newTCount][0] = i3;  newTris[newTCount][1] = m31; newTris[newTCount][2] = m23; newTCount++;
+            newTris[newTCount][0] = m12; newTris[newTCount][1] = m23; newTris[newTCount][2] = m31; newTCount++;
+        }
+        memcpy(tris, newTris, (size_t)newTCount * sizeof(int[3]));
+        tCount = newTCount;
+    }
+
+    int finalVCount = tCount * 3;
+    mesh.vertexCount = finalVCount;
+    mesh.triangleCount = tCount;
+    mesh.vertices = (float *)RL_MALLOC((size_t)finalVCount * 3u * sizeof(float));
+    mesh.texcoords = (float *)RL_MALLOC((size_t)finalVCount * 2u * sizeof(float));
+    mesh.normals = (float *)RL_MALLOC((size_t)finalVCount * 3u * sizeof(float));
+
+    if (mesh.vertices && mesh.texcoords && mesh.normals)
+    {
+        for (int t = 0; t < tCount; t++)
+        {
+            for (int c = 0; c < 3; c++)
+            {
+                int vi = tris[t][c];
+                Vector3 p = verts[vi];
+                int outIdx = t * 3 + c;
+                mesh.vertices[outIdx * 3 + 0] = p.x * radius;
+                mesh.vertices[outIdx * 3 + 1] = p.y * radius;
+                mesh.vertices[outIdx * 3 + 2] = p.z * radius;
+
+                mesh.normals[outIdx * 3 + 0] = p.x;
+                mesh.normals[outIdx * 3 + 1] = p.y;
+                mesh.normals[outIdx * 3 + 2] = p.z;
+
+                float u = atan2f(p.z, p.x) * (0.5f / PI) + 0.5f;
+                float v = asinf(fmaxf(-1.0f, fminf(1.0f, p.y))) * (1.0f / PI) + 0.5f;
+                mesh.texcoords[outIdx * 2 + 0] = u;
+                mesh.texcoords[outIdx * 2 + 1] = v;
+            }
+        }
+    }
+
+    RL_FREE(edgeHash);
+    RL_FREE(verts);
+    RL_FREE(tris);
+    RL_FREE(newTris);
+    return mesh;
+}
+
 static Mesh Nature_BuildProceduralRockMesh(int rockType)
 {
-    int rings = 22;
-    int slices = 30;
-    if (rockType == MAP_ROCK_CRAG || rockType == MAP_ROCK_LIMESTONE)
+    int subdivisions = 3; // 1280 triangles, 3840 vertices
+    if (rockType == MAP_ROCK_RIVER_STONE || rockType == MAP_ROCK_SCREE)
     {
-        rings = 24;
-        slices = 32;
+        subdivisions = 2; // 320 triangles, 960 vertices
     }
-    else if (rockType == MAP_ROCK_BASALT || rockType == MAP_ROCK_SANDSTONE)
-    {
-        rings = 22;
-        slices = 30;
-    }
-    else if (rockType == MAP_ROCK_SCREE)
-    {
-        rings = 12;
-        slices = 16;
-    }
-    else if (rockType == MAP_ROCK_RIVER_STONE)
-    {
-        rings = 18;
-        slices = 26;
-    }
-    Mesh mesh = GenMeshSphere(1.0f, rings, slices);
+    Mesh mesh = Nature_GenMeshIcoSphere(1.0f, subdivisions);
 
     float *origTexcoords = (float *)RL_MALLOC((size_t)mesh.vertexCount * 2u * sizeof(float));
     if (origTexcoords)
@@ -281,39 +421,40 @@ static Mesh Nature_BuildProceduralRockMesh(int rockType)
         }
         else if (rockType == MAP_ROCK_RIVER_STONE)
         {
-            // Water-worn stratified river boulder with bevelled geological facets (not a smooth egg)
+            // Asymmetric water-worn hydrodynamic river stone (flattened cobble profile)
             float c1 = cosf(2.0f * angle + 0.35f);
             float c2 = sinf(3.0f * angle - 0.45f);
-            float c3 = cosf(5.0f * angle + 1.15f);
-            float pebble = 1.0f + 0.16f * c1 + 0.10f * c2 + 0.05f * c3;
+            float c3 = cosf(4.0f * angle + 1.15f);
+            float pebble = 1.0f + 0.18f * c1 + 0.12f * c2 + 0.06f * c3;
 
-            vx = cosA * horizR * pebble * 1.14f;
-            vz = sinA * horizR * pebble * 0.86f;
+            // Elongate along X (river flow axis), slightly compress along Z
+            vx = cosA * horizR * pebble * 1.28f;
+            vz = sinA * horizR * pebble * 0.92f;
 
-            float topArch = 0.82f + 0.18f * (1.0f - fminf(1.0f, horizR * horizR));
-            float rawY = y * 0.64f * topArch;
-            // Subtle sedimentary bedding ledges worn smooth by river current
-            float strataTerrace = sinf(rawY * 14.0f + vx * 2.2f) * 0.024f;
+            // Distinctly flattened vertical profile (hydro-flattened river cobble)
+            float topArch = 0.70f + 0.30f * (1.0f - fminf(1.0f, horizR * horizR));
+            float rawY = y * 0.42f * topArch;
+            float strataTerrace = sinf(rawY * 12.0f + vx * 2.5f) * 0.020f;
             vy = rawY + strataTerrace;
 
-            // Gentle hydro-smoothed bedding facets (water-tumbled rounded boulder character)
+            // 5 hydro-smoothed planar bevel facets
             for (int p = 0; p < 5; p++)
             {
-                float dist = vx * kBoulderPlanes[p][0] + vy * kBoulderPlanes[p][1] + vz * kBoulderPlanes[p][2] - kBoulderPlanes[p][3] * 0.95f;
+                float dist = vx * kBoulderPlanes[p][0] + vy * kBoulderPlanes[p][1] + vz * kBoulderPlanes[p][2] - kBoulderPlanes[p][3] * 0.88f;
                 if (dist > 0.0f)
                 {
-                    float bevel = Rock_Smoothstep(0.0f, 0.18f, dist) * dist * 0.28f;
+                    float bevel = Rock_Smoothstep(0.0f, 0.22f, dist) * dist * 0.75f;
                     vx -= kBoulderPlanes[p][0] * bevel;
                     vy -= kBoulderPlanes[p][1] * bevel;
                     vz -= kBoulderPlanes[p][2] * bevel;
                 }
             }
 
-            // Natural water-worn rounded bottom so submerged stones have authentic contour without a flat saucer flange
-            if (y < -0.82f)
+            // Flatten bottom so stone rests stably on the riverbed
+            if (y < -0.45f)
             {
-                float baseFlatten = (-0.82f - y) * (1.0f / 0.18f);
-                vy += baseFlatten * 0.05f;
+                float baseFlatten = (-0.45f - y) * (1.0f / 0.55f);
+                vy = vy * (1.0f - baseFlatten * 0.45f) - 0.05f * baseFlatten;
             }
         }
         else if (rockType == MAP_ROCK_SCREE)
@@ -337,7 +478,7 @@ static Mesh Nature_BuildProceduralRockMesh(int rockType)
         }
         else
         {
-            // Granite boulder / Tor: massive polyhedral corestone with onion-skin spheroidal weathering
+            // Granite boulder / Tor: massive polyhedral corestone with crisp cleavage planes
             float c1 = cosf(3.0f * angle + 0.35f);
             float c2 = sinf(4.0f * angle - 0.65f);
             float c3 = cosf(6.0f * angle + 1.2f);
@@ -354,26 +495,26 @@ static Mesh Nature_BuildProceduralRockMesh(int rockType)
                 float nz = kBoulderPlanes[p][2];
                 float d = kBoulderPlanes[p][3];
                 float dist = vx * nx + vy * ny + vz * nz - d;
-                if (dist > -0.08f)
+                if (dist > -0.06f)
                 {
-                    float u = dist + 0.08f;
-                    float softDist = 0.5f * (u + sqrtf(u * u + 0.012f));
-                    const float clipStrength = 0.74f;
+                    float u = dist + 0.06f;
+                    float softDist = 0.5f * (u + sqrtf(u * u + 0.008f));
+                    const float clipStrength = 0.92f;
                     vx -= nx * softDist * clipStrength;
                     vy -= ny * softDist * clipStrength;
                     vz -= nz * softDist * clipStrength;
                 }
             }
 
-            float strata = vy * 8.0f + angle * 1.4f;
-            float terrace = 0.035f * (sinf(strata) + 0.30f * sinf(strata * 2.0f));
+            float strata = vy * 7.5f + angle * 0.9f;
+            float terrace = 0.045f * (sinf(strata) + 0.35f * sinf(strata * 2.0f));
             vy += terrace;
 
-            if (vy < -0.20f)
+            if (vy < -0.22f)
             {
-                float tuck = (-0.20f - vy);
-                vx *= (1.0f - tuck * 0.12f);
-                vz *= (1.0f - tuck * 0.12f);
+                float tuck = (-0.22f - vy);
+                vx *= (1.0f - tuck * 0.14f);
+                vz *= (1.0f - tuck * 0.14f);
             }
         }
 
@@ -434,57 +575,82 @@ static Mesh Nature_BuildProceduralRockMesh(int rockType)
     bool flatFaceted = (rockType == MAP_ROCK_BASALT || rockType == MAP_ROCK_SANDSTONE ||
                         rockType == MAP_ROCK_OBSIDIAN || rockType == MAP_ROCK_SLATE);
 
+    float cosCreaseThreshold = 0.819f; // ~35 deg for chiseled granite/boulders
+    if (rockType == MAP_ROCK_RIVER_STONE)
+    {
+        cosCreaseThreshold = 0.500f; // ~60 deg for water-smoothed river stones
+    }
+    else if (rockType == MAP_ROCK_CRAG || rockType == MAP_ROCK_LIMESTONE)
+    {
+        cosCreaseThreshold = 0.707f; // ~45 deg for fluted karst crags
+    }
+
+    Vector3 *faceNormals = (Vector3 *)RL_MALLOC((size_t)mesh.triangleCount * sizeof(Vector3));
+    if (faceNormals)
+    {
+        for (int t = 0; t < mesh.triangleCount; t++)
+        {
+            int i0 = mesh.indices ? (int)mesh.indices[t * 3 + 0] : (t * 3 + 0);
+            int i1 = mesh.indices ? (int)mesh.indices[t * 3 + 1] : (t * 3 + 1);
+            int i2 = mesh.indices ? (int)mesh.indices[t * 3 + 2] : (t * 3 + 2);
+
+            Vector3 v0 = {mesh.vertices[i0 * 3 + 0], mesh.vertices[i0 * 3 + 1], mesh.vertices[i0 * 3 + 2]};
+            Vector3 v1 = {mesh.vertices[i1 * 3 + 0], mesh.vertices[i1 * 3 + 1], mesh.vertices[i1 * 3 + 2]};
+            Vector3 v2 = {mesh.vertices[i2 * 3 + 0], mesh.vertices[i2 * 3 + 1], mesh.vertices[i2 * 3 + 2]};
+
+            Vector3 e1 = Vector3Subtract(v1, v0);
+            Vector3 e2 = Vector3Subtract(v2, v0);
+            Vector3 n = Vector3CrossProduct(e1, e2);
+            float nLenSq = n.x * n.x + n.y * n.y + n.z * n.z;
+            if (nLenSq > 1e-10f)
+            {
+                float invLen = 1.0f / sqrtf(nLenSq);
+                faceNormals[t] = (Vector3){n.x * invLen, n.y * invLen, n.z * invLen};
+            }
+            else
+            {
+                faceNormals[t] = (Vector3){0.0f, 1.0f, 0.0f};
+            }
+        }
+    }
+
     for (int t = 0; t < mesh.triangleCount; t++)
     {
         int i0 = mesh.indices ? (int)mesh.indices[t * 3 + 0] : (t * 3 + 0);
         int i1 = mesh.indices ? (int)mesh.indices[t * 3 + 1] : (t * 3 + 1);
         int i2 = mesh.indices ? (int)mesh.indices[t * 3 + 2] : (t * 3 + 2);
 
-        Vector3 v0 = {mesh.vertices[i0 * 3 + 0], mesh.vertices[i0 * 3 + 1], mesh.vertices[i0 * 3 + 2]};
-        Vector3 v1 = {mesh.vertices[i1 * 3 + 0], mesh.vertices[i1 * 3 + 1], mesh.vertices[i1 * 3 + 2]};
-        Vector3 v2 = {mesh.vertices[i2 * 3 + 0], mesh.vertices[i2 * 3 + 1], mesh.vertices[i2 * 3 + 2]};
-
-        Vector3 e1 = Vector3Subtract(v1, v0);
-        Vector3 e2 = Vector3Subtract(v2, v0);
-        Vector3 n = Vector3CrossProduct(e1, e2);
+        Vector3 fn = faceNormals ? faceNormals[t] : (Vector3){0.0f, 1.0f, 0.0f};
 
         if (flatFaceted)
         {
-            float nLenSq = n.x * n.x + n.y * n.y + n.z * n.z;
-            if (nLenSq > 1e-10f)
-            {
-                float invLen = 1.0f / sqrtf(nLenSq);
-                n.x *= invLen;
-                n.y *= invLen;
-                n.z *= invLen;
-            }
-            mesh.normals[i0 * 3 + 0] = n.x;
-            mesh.normals[i0 * 3 + 1] = n.y;
-            mesh.normals[i0 * 3 + 2] = n.z;
-            mesh.normals[i1 * 3 + 0] = n.x;
-            mesh.normals[i1 * 3 + 1] = n.y;
-            mesh.normals[i1 * 3 + 2] = n.z;
-            mesh.normals[i2 * 3 + 0] = n.x;
-            mesh.normals[i2 * 3 + 1] = n.y;
-            mesh.normals[i2 * 3 + 2] = n.z;
+            mesh.normals[i0 * 3 + 0] = fn.x;
+            mesh.normals[i0 * 3 + 1] = fn.y;
+            mesh.normals[i0 * 3 + 2] = fn.z;
+            mesh.normals[i1 * 3 + 0] = fn.x;
+            mesh.normals[i1 * 3 + 1] = fn.y;
+            mesh.normals[i1 * 3 + 2] = fn.z;
+            mesh.normals[i2 * 3 + 0] = fn.x;
+            mesh.normals[i2 * 3 + 1] = fn.y;
+            mesh.normals[i2 * 3 + 2] = fn.z;
         }
         else
         {
-            mesh.normals[i0 * 3 + 0] += n.x;
-            mesh.normals[i0 * 3 + 1] += n.y;
-            mesh.normals[i0 * 3 + 2] += n.z;
-            mesh.normals[i1 * 3 + 0] += n.x;
-            mesh.normals[i1 * 3 + 1] += n.y;
-            mesh.normals[i1 * 3 + 2] += n.z;
-            mesh.normals[i2 * 3 + 0] += n.x;
-            mesh.normals[i2 * 3 + 1] += n.y;
-            mesh.normals[i2 * 3 + 2] += n.z;
+            mesh.normals[i0 * 3 + 0] += fn.x;
+            mesh.normals[i0 * 3 + 1] += fn.y;
+            mesh.normals[i0 * 3 + 2] += fn.z;
+            mesh.normals[i1 * 3 + 0] += fn.x;
+            mesh.normals[i1 * 3 + 1] += fn.y;
+            mesh.normals[i1 * 3 + 2] += fn.z;
+            mesh.normals[i2 * 3 + 0] += fn.x;
+            mesh.normals[i2 * 3 + 1] += fn.y;
+            mesh.normals[i2 * 3 + 2] += fn.z;
         }
     }
 
     if (!flatFaceted)
     {
-        // Spatial normal welding across unindexed GenMeshSphere triangles with cached bucket indices
+        // Crease-aware spatial normal welding preserving sharp geological cleavage planes
         float *welded = (float *)RL_MALLOC((size_t)mesh.vertexCount * 3u * sizeof(float));
         int *nextVert = (int *)RL_MALLOC((size_t)mesh.vertexCount * sizeof(int));
         int *vertBucket = (int *)RL_MALLOC((size_t)mesh.vertexCount * sizeof(int));
@@ -512,6 +678,9 @@ static Mesh Nature_BuildProceduralRockMesh(int rockType)
                 float vy = mesh.vertices[i * 3 + 1];
                 float vz = mesh.vertices[i * 3 + 2];
                 int b = vertBucket[i];
+                int ti = i / 3;
+                Vector3 ni = (faceNormals && ti < mesh.triangleCount) ? faceNormals[ti] : (Vector3){0.0f, 1.0f, 0.0f};
+
                 float sx = 0.0f, sy = 0.0f, sz = 0.0f;
                 for (int j = bucketHeads[b]; j != -1; j = nextVert[j])
                 {
@@ -520,10 +689,22 @@ static Mesh Nature_BuildProceduralRockMesh(int rockType)
                     float dz = mesh.vertices[j * 3 + 2] - vz;
                     if (dx * dx + dy * dy + dz * dz < 0.0004f)
                     {
-                        sx += mesh.normals[j * 3 + 0];
-                        sy += mesh.normals[j * 3 + 1];
-                        sz += mesh.normals[j * 3 + 2];
+                        int tj = j / 3;
+                        Vector3 nj = (faceNormals && tj < mesh.triangleCount) ? faceNormals[tj] : (Vector3){0.0f, 1.0f, 0.0f};
+                        float dotN = ni.x * nj.x + ni.y * nj.y + ni.z * nj.z;
+                        if (dotN >= cosCreaseThreshold)
+                        {
+                            sx += nj.x;
+                            sy += nj.y;
+                            sz += nj.z;
+                        }
                     }
+                }
+                if (sx * sx + sy * sy + sz * sz < 1e-6f)
+                {
+                    sx = ni.x;
+                    sy = ni.y;
+                    sz = ni.z;
                 }
                 welded[i * 3 + 0] = sx;
                 welded[i * 3 + 1] = sy;
@@ -559,6 +740,8 @@ static Mesh Nature_BuildProceduralRockMesh(int rockType)
             }
         }
     }
+    if (faceNormals)
+        RL_FREE(faceNormals);
 
     // Compute robust tangents so normal mapping functions seamlessly on unindexed meshes
     if (mesh.tangents == NULL)
@@ -600,60 +783,6 @@ static Mesh Nature_BuildProceduralRockMesh(int rockType)
                 mesh.tangents[vi + 1] += tangent.y;
                 mesh.tangents[vi + 2] += tangent.z;
                 mesh.tangents[vi + 3] = 1.0f;
-            }
-        }
-
-        if (!flatFaceted)
-        {
-            for (int r = 0; r <= rings; r++)
-            {
-                int idx0 = r * (slices + 1);
-                int idx1 = idx0 + slices;
-                if (idx1 < mesh.vertexCount)
-                {
-                    float avgTx = mesh.tangents[idx0 * 4 + 0] + mesh.tangents[idx1 * 4 + 0];
-                    float avgTy = mesh.tangents[idx0 * 4 + 1] + mesh.tangents[idx1 * 4 + 1];
-                    float avgTz = mesh.tangents[idx0 * 4 + 2] + mesh.tangents[idx1 * 4 + 2];
-                    mesh.tangents[idx0 * 4 + 0] = mesh.tangents[idx1 * 4 + 0] = avgTx;
-                    mesh.tangents[idx0 * 4 + 1] = mesh.tangents[idx1 * 4 + 1] = avgTy;
-                    mesh.tangents[idx0 * 4 + 2] = mesh.tangents[idx1 * 4 + 2] = avgTz;
-                }
-            }
-            float topTx = 0.0f, topTy = 0.0f, topTz = 0.0f;
-            float botTx = 0.0f, botTy = 0.0f, botTz = 0.0f;
-            for (int s = 0; s <= slices; s++)
-            {
-                int topIdx = s;
-                int botIdx = rings * (slices + 1) + s;
-                if (topIdx < mesh.vertexCount)
-                {
-                    topTx += mesh.tangents[topIdx * 4 + 0];
-                    topTy += mesh.tangents[topIdx * 4 + 1];
-                    topTz += mesh.tangents[topIdx * 4 + 2];
-                }
-                if (botIdx < mesh.vertexCount)
-                {
-                    botTx += mesh.tangents[botIdx * 4 + 0];
-                    botTy += mesh.tangents[botIdx * 4 + 1];
-                    botTz += mesh.tangents[botIdx * 4 + 2];
-                }
-            }
-            for (int s = 0; s <= slices; s++)
-            {
-                int topIdx = s;
-                int botIdx = rings * (slices + 1) + s;
-                if (topIdx < mesh.vertexCount)
-                {
-                    mesh.tangents[topIdx * 4 + 0] = topTx;
-                    mesh.tangents[topIdx * 4 + 1] = topTy;
-                    mesh.tangents[topIdx * 4 + 2] = topTz;
-                }
-                if (botIdx < mesh.vertexCount)
-                {
-                    mesh.tangents[botIdx * 4 + 0] = botTx;
-                    mesh.tangents[botIdx * 4 + 1] = botTy;
-                    mesh.tangents[botIdx * 4 + 2] = botTz;
-                }
             }
         }
 

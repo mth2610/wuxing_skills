@@ -222,12 +222,11 @@ void main()
         }
 
         // Separate interior grassy terrace embankments and riverbeds from the outer island cliff rim (LANDMINES.md §135)
-        float outerCliffElev = 1.0 - smoothstep(-2.20, -0.65, fragWorldPos.y);
+        float outerCliffElev = 1.0 - smoothstep(-1.80, -0.15, fragWorldPos.y);
         float rimMask = outerCliffElev * (1.0 - smoothstep(0.0, 0.45, shoreFactor));
-        float wSlope = max(smoothstep(0.52, 0.72, slope), rimMask * smoothstep(0.22, 0.40, slope));
-        float outerAbyssMask = (1.0 - smoothstep(-2.20, -0.65, fragWorldPos.y)) * smoothstep(0.08, 0.26, slope);
-        float rockCliff = smoothstep(0.55, 0.88, rockScree)
-                        * max(smoothstep(0.48, 0.65, slope), rimMask * smoothstep(0.22, 0.38, slope));
+        float wSlope = max(smoothstep(0.52, 0.72, slope), rimMask * smoothstep(0.20, 0.38, slope));
+        float outerAbyssMask = outerCliffElev * smoothstep(0.10, 0.28, slope);
+        float rockCliff = max(smoothstep(0.48, 0.82, rockScree), outerAbyssMask * smoothstep(0.18, 0.36, slope));
         wCliff = clamp(max(wSlope, max(rockCliff, outerAbyssMask)), 0.0, 1.0) * (1.0 - shoreFactor * 0.99);
 
         // Organic 3-Zone Riparian & Riverbed System (GPU Gems 3 Continuous Isosurface Blending):
@@ -425,12 +424,12 @@ void main()
 
         vec3 cliffAlbedo = warmLoamColor;
         if (wCliff > 0.01) {
-            vec2 triUVx = fragWorldPos.zy * 0.20;
-            vec2 triUVy = fragWorldPos.xz * 0.20;
-            vec2 triUVz = fragWorldPos.xy * 0.20;
-            vec2 triDxX = wpDx3.zy * 0.20, triDyX = wpDy3.zy * 0.20;
-            vec2 triDxY = wpDx * 0.20, triDyY = wpDy * 0.20;
-            vec2 triDxZ = wpDx3.xy * 0.20, triDyZ = wpDy3.xy * 0.20;
+            vec2 triUVx = fragWorldPos.zy * 0.35;
+            vec2 triUVy = fragWorldPos.xz * 0.35;
+            vec2 triUVz = fragWorldPos.xy * 0.35;
+            vec2 triDxX = wpDx3.zy * 0.35, triDyX = wpDy3.zy * 0.35;
+            vec2 triDxY = wpDx * 0.35, triDyY = wpDy * 0.35;
+            vec2 triDxZ = wpDx3.xy * 0.35, triDyZ = wpDy3.xy * 0.35;
 
             vec3 absN = abs(geomNormal);
             vec3 triWeights = absN * absN * absN * absN;
@@ -500,7 +499,8 @@ void main()
 
             vec3 boulderTint = vec3(0.585, 0.560, 0.525);
             float macroTone = sin(fragWorldPos.x * 0.035 + fragWorldPos.z * 0.026) * 0.5 + 0.5;
-            vec3 stoneTint = mix(boulderTint * 0.94, boulderTint * 1.06, macroTone);
+            float strataNoise = sin(fragWorldPos.y * 3.8 + sin(fragWorldPos.x * 0.35 + fragWorldPos.z * 0.28) * 1.2) * 0.5 + 0.5;
+            vec3 stoneTint = mix(vec3(0.52, 0.50, 0.46), vec3(0.66, 0.62, 0.56), strataNoise) * mix(0.96, 1.04, macroTone);
             vec3 rockBase = triRock * stoneTint * 1.38;
 
             // Velvet moss on upward-facing rock ledges near the plateau
@@ -523,7 +523,7 @@ void main()
             cliffRoughnessMod = (1.0 - normCrevice) * 0.12;
         }
 
-        float cliffMix = smoothstep(0.02, 0.20, wCliff);
+        float cliffMix = smoothstep(0.01, 0.14, wCliff);
         vec3 drySoilColor = mix(warmLoamColor, cliffAlbedo, cliffMix);
 
         // ---- AAA Alluvial Riverbed Sand & Natural Fine River Gravel ----
@@ -811,10 +811,10 @@ void main()
 
     groundLit += VFXLights_AccumulateFlat(fragPosition, blendedAlbedo);
 
-    if (wCliff > 0.04 && fragWorldPos.y < -1.0) {
-        float lowerSkirt = 1.0 - smoothstep(-5.20, -1.00, fragWorldPos.y);
-        float cloudBounceFactor = max(-normal.y * 0.65 + 0.25, 0.0) * lowerSkirt;
-        vec3 cloudBounce = vec3(0.92, 0.90, 0.86) * actualAmbient * cloudBounceFactor * 0.95;
+    if (wCliff > 0.02 && fragWorldPos.y < 0.6) {
+        float lowerSkirt = 1.0 - smoothstep(-5.50, 0.40, fragWorldPos.y);
+        float cloudBounceFactor = max(-normal.y * 0.65 + 0.32, 0.0) * lowerSkirt;
+        vec3 cloudBounce = (actualAmbient * vec3(0.94, 0.95, 0.98) + actualLight * vec3(0.42, 0.38, 0.30)) * (cloudBounceFactor * 1.35);
         groundLit += blendedAlbedo * cloudBounce;
     }
 

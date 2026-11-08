@@ -22,24 +22,24 @@ typedef struct
 } CliffRowProfile;
 
 static const CliffRowProfile kCliffRowProfiles[17] = {
-    // depth, out, noise, ao,   moss, haze, strata
-    {0.00f, -0.60f, 0.00f, 0.95f, 0.85f, 0.00f, 0.55f},  // buried collar under the turf
-    {0.10f, 0.10f, 0.00f, 0.90f, 1.00f, 0.00f, 0.75f},   // turf lip emergence
-    {0.28f, 0.16f, 0.40f, 0.82f, 0.95f, 0.00f, 0.90f},   // overhang lip
-    {0.55f, 0.24f, 0.62f, 0.74f, 0.84f, 0.00f, 1.00f},   // upper mossy face
-    {0.90f, 0.30f, 0.76f, 0.66f, 0.60f, 0.00f, 1.05f},   // first ledge
-    {1.32f, 0.34f, 0.86f, 0.60f, 0.40f, 0.00f, 1.10f},   // upper buttress
-    {1.80f, 0.38f, 0.93f, 0.55f, 0.24f, 0.00f, 1.12f},   // mid wall
-    {2.36f, 0.40f, 0.97f, 0.51f, 0.13f, 0.02f, 1.10f},   // deep wall
-    {3.00f, 0.40f, 0.97f, 0.48f, 0.06f, 0.06f, 1.06f},   // lower wall
-    {3.74f, 0.38f, 0.92f, 0.46f, 0.02f, 0.13f, 1.02f},   // cloud-line entry
-    {4.60f, 0.32f, 0.84f, 0.44f, 0.00f, 0.24f, 0.98f},   // cloud immersion
-    {5.60f, 0.22f, 0.72f, 0.42f, 0.00f, 0.40f, 0.94f},   // under-cloud shoulder
-    {6.90f, 0.08f, 0.58f, 0.40f, 0.00f, 0.58f, 0.90f},   // below the terrain toe
-    {8.80f, -0.70f, 0.42f, 0.38f, 0.00f, 0.72f, 0.86f},  // keel start
-    {11.60f, -2.20f, 0.30f, 0.36f, 0.00f, 0.84f, 0.82f}, // keel
-    {15.60f, -4.60f, 0.18f, 0.35f, 0.00f, 0.93f, 0.78f}, // deep keel
-    {21.00f, -8.00f, 0.10f, 0.34f, 0.00f, 0.98f, 0.74f}, // abyss tip
+    // depth, out, noise, ao, moss, haze, strata
+    {0.00f, -0.15f, 0.05f, 0.95f, 0.95f, 0.00f, 0.60f},  // row 0: tucked right under turf edge
+    {0.25f,  0.05f, 0.60f, 0.88f, 0.90f, 0.00f, 0.80f},  // row 1: sharp overhang lip (immediate sheer drop)
+    {0.60f, -0.08f, 0.90f, 0.70f, 0.78f, 0.00f, 1.05f},  // row 2: undercut fracture slot
+    {1.10f,  0.28f, 1.15f, 0.80f, 0.60f, 0.00f, 1.18f},  // row 3: upper buttress crag shelf
+    {1.75f,  0.18f, 1.30f, 0.62f, 0.40f, 0.00f, 1.22f},  // row 4: vertical faceted wall
+    {2.55f, -0.15f, 1.40f, 0.50f, 0.22f, 0.00f, 1.28f},  // row 5: deep crevice fissure
+    {3.50f,  0.45f, 1.45f, 0.72f, 0.12f, 0.02f, 1.32f},  // row 6: middle prominent rock shelf
+    {4.65f,  0.30f, 1.40f, 0.58f, 0.04f, 0.06f, 1.26f},  // row 7: sheer vertical drop
+    {6.00f,  0.12f, 1.30f, 0.48f, 0.01f, 0.14f, 1.18f},  // row 8: cloud sea immersion line
+    {7.60f,  0.32f, 1.18f, 0.44f, 0.00f, 0.28f, 1.10f},  // row 9: sub-cloud lower bastion
+    {9.50f,  0.08f, 0.98f, 0.40f, 0.00f, 0.45f, 1.00f},  // row 10: lower wall
+    {11.80f,-0.22f, 0.78f, 0.38f, 0.00f, 0.62f, 0.92f},  // row 11: keel drop
+    {14.60f,-0.60f, 0.58f, 0.36f, 0.00f, 0.76f, 0.85f},  // row 12: inward keel
+    {18.00f,-1.20f, 0.42f, 0.35f, 0.00f, 0.88f, 0.80f},  // row 13: deep keel
+    {22.00f,-2.10f, 0.28f, 0.34f, 0.00f, 0.95f, 0.76f},  // row 14: abyss wall
+    {26.80f,-3.40f, 0.18f, 0.34f, 0.00f, 0.98f, 0.72f},  // row 15: abyss taper
+    {32.00f,-5.00f, 0.10f, 0.33f, 0.00f, 1.00f, 0.70f},  // row 16: submerged island root
 };
 
 #define CLIFF_ROW_COUNT 17
@@ -869,7 +869,11 @@ MapCliffSkirt MapProp_CreateCliffSkirt(const MapGroundSurface *ground, Vector3 m
                     t = 0.0f;
                 if (t > 1.0f)
                     t = 1.0f;
-                profD[nextRow * M + i] = prevD + segD * t;
+                float maxRun = kCliffRowProfiles[nextRow].depth * 0.26f + 0.35f;
+                float runVal = prevD + segD * t;
+                if (runVal > maxRun)
+                    runVal = maxRun;
+                profD[nextRow * M + i] = runVal;
                 profNO[nextRow * M + i] = nOut;
                 profNU[nextRow * M + i] = nUp;
                 nextRow++;
@@ -880,7 +884,11 @@ MapCliffSkirt MapProp_CreateCliffSkirt(const MapGroundSurface *ground, Vector3 m
         // Rows the terrain never reached continue straight down from the last probed sample.
         for (int r = nextRow; r < CLIFF_ROW_COUNT; r++)
         {
-            profD[r * M + i] = lastD + 0.08f * (float)(r - nextRow + 1);
+            float maxRun = kCliffRowProfiles[r].depth * 0.26f + 0.35f;
+            float runVal = lastD + 0.08f * (float)(r - nextRow + 1);
+            if (runVal > maxRun)
+                runVal = maxRun;
+            profD[r * M + i] = runVal;
             profNO[r * M + i] = 1.0f;
             profNU[r * M + i] = 0.0f;
         }
@@ -941,19 +949,17 @@ MapCliffSkirt MapProp_CreateCliffSkirt(const MapGroundSurface *ground, Vector3 m
             float nOut = profNO[r * M + i];
             float nUp = profNU[r * M + i];
 
-            float buttress = Cliff_Fbm1(s * 0.030f, 41, 3);
-            float gully = Cliff_Fbm1(s * 0.140f, 73, 2);
-            float groove = Cliff_Noise1(s * 0.58f + (float)r * 2.7f, 97) - 0.5f;
-            float relief = (buttress * 0.70f + gully * 0.34f + groove * 0.18f) * rp->noise + 0.70f * rp->noise;
-            if (relief < 0.0f)
-                relief = 0.0f;
+            float pillar = (Cliff_Fbm1(s * 0.065f, 41, 3) - 0.45f) * 2.6f;
+            float crevice = (Cliff_Fbm1(s * 0.220f, 73, 3) - 0.50f) * 1.3f;
+            float sharpFacet = Cliff_Noise1(s * 0.65f + (float)r * 1.6f, 97) - 0.5f;
+            float strataLedge = sinf(depth * 3.4f + pillar * 0.8f) * 0.25f;
+            float relief = (pillar + crevice + sharpFacet * 0.5f + strataLedge) * rp->noise;
 
-            float lift = rp->out + groove * 0.22f * rp->noise;
-            float outTotal = d + relief + lift * nOut;
+            float outTotal = d + relief + rp->out;
 
             Vector3 vPos = {
                 rimPos[i].x + rimNorm[i].x * outTotal,
-                rimY[i] - depth + lift * nUp,
+                rimY[i] - depth,
                 rimPos[i].z + rimNorm[i].y * outTotal};
             gridPos[r * M + i] = vPos;
 
@@ -965,8 +971,8 @@ MapCliffSkirt MapProp_CreateCliffSkirt(const MapGroundSurface *ground, Vector3 m
                 float az = vPos.z - up.z;
                 rowArc[i] += sqrtf(ax * ax + ay * ay + az * az);
             }
-            float u = (s + Cliff_Noise1(s * 0.05f, 11) * 3.0f) * 0.38f;
-            float v = rowArc[i] * 0.38f;
+            float u = (s + Cliff_Noise1(s * 0.08f, 11) * 2.0f) * 0.65f;
+            float v = rowArc[i] * 0.65f;
             gridUV[r * M + i] = (Vector2){u, v};
 
             // R: cavity AO
@@ -1094,9 +1100,9 @@ MapCliffSkirt MapProp_CreateCliffSkirt(const MapGroundSurface *ground, Vector3 m
         VFXLight_RegisterShader(cliff.shader);
     }
 
-    Texture2D diffTex = MapLoadMippedTexture("assets/textures/rocks/granite_diffuse.png", TEXTURE_WRAP_REPEAT);
-    Texture2D normTex = MapLoadMippedTexture("assets/textures/rocks/granite_normal.png", TEXTURE_WRAP_REPEAT);
-    Texture2D roughTex = MapLoadMippedTexture("assets/textures/rocks/granite_roughness.png", TEXTURE_WRAP_REPEAT);
+    Texture2D diffTex = MapLoadMippedTexture("assets/textures/rock_diffuse.png", TEXTURE_WRAP_REPEAT);
+    Texture2D normTex = MapLoadMippedTexture("assets/textures/rock_normal.png", TEXTURE_WRAP_REPEAT);
+    Texture2D roughTex = MapLoadMippedTexture("assets/textures/rock_roughness.png", TEXTURE_WRAP_REPEAT);
     Texture2D cloudNoise = Environment_GetCloudShadowFrame().noiseTexture;
 
     cliff.chunkCount = numChunks;
