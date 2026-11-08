@@ -494,13 +494,8 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
         plane_smooth = normalized_smooth(water_plane, wet_corridor, 1.85)
         water_plane = np.where(wet_corridor & (lake_blend < 0.25), plane_smooth, water_plane)
 
-    # Add natural stratified rock terrace shelves to outer cliff rim (0.05 < cliff < 0.95)
-    cliff_band = np.clip(4.0 * cliff * (1.0 - cliff), 0.0, 1.0) * valid.astype(float)
-    strata_wave = (np.sin(X * 0.16 + Z * 0.11) * 0.45 +
-                   np.cos(Z * 0.24 - X * 0.19) * 0.35 +
-                   np.sin((X + Z) * 0.42) * 0.20)
-    terrace_step = np.sin(cliff * np.pi * 4.0) * 0.38 + strata_wave * 0.42
-    terrain = terrain * cliff - (1.0 - cliff) * cliff_depth + cliff_band * terrace_step
+    # Outer abyss: all nodes outside the island plateau drop straight to -cliff_depth (-8.0m).
+    # Plateau interior preserves 100% natural elevation; zero artificial heightmap scarp ramp.
     terrain[~valid] = -cliff_depth
 
     rim_water_taper = np.clip((perimeter - (cliff_margin + 1.5)) / 5.5, 0.0, 1.0)

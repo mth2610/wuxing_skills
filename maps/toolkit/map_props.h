@@ -67,6 +67,7 @@ typedef struct
     int *cellItems;                // triangle indices, binned
     const float *verts;            // borrowed from Mesh.vertices
     const unsigned short *indices; // borrowed from Mesh.indices, may be NULL
+    const float *normals;          // borrowed from Mesh.normals, may be NULL
 } MapGroundLookup;
 
 typedef struct

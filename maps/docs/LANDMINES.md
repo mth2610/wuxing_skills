@@ -374,5 +374,29 @@
 - **Cause:** Raylib's `rlSetVertexAttribute` takes `stride` and `offset` which OpenGL uses directly. However, the Vulkan backend (`third_party/vulkan/rlvk/rlvk_texture.inl`) explicitly ignores `stride` (`(void)stride`), binding separate fixed attribute buffers per canonical semantic (`posSlot`, `uvSlot`, `normalSlot`, `tangentSlot`, `uv2Slot`) with hardcoded strides (`3*f32`, `2*f32`, `3*f32`, `4*f32`). Putting multiple attributes into a single interleaved struct and pointing multiple attribute indices at the same buffer causes `rlvk` to stride every attribute incorrectly, scrambling vertex data across byte boundaries. Additionally, using `localPos` instead of `rootLocal + localPos` in `gl_Position` places all instances at world origin `(0,0,0)`.
 - **Rule:** For custom multi-attribute procedural meshes under `rlvk`, use Raylib's canonical `Mesh` struct with `UploadMesh(&mesh, false)`: allocate separate arrays for `mesh.vertices`, `mesh.texcoords`, `mesh.normals`, `mesh.tangents`, and `mesh.texcoords2`. In vertex shaders, declare canonical attribute names (`in vec3 vertexPosition; in vec2 vertexTexCoord; in vec3 vertexNormal; in vec4 vertexTangent; in vec2 vertexTexCoord2;`) so `rlvkCanonicalAttribIndex` accurately maps them to their respective descriptor bindings. Always transform `rootLocal + localPos` into clip space so instances appear at their world locations.
 
+### Heightfield 1m grid staircase aliasing producing jagged rectangular/triangular teeth along diagonal cliff boundaries
+
+- **Symptom:** The perimeter of the plateau turf mesh (`s_ground`) shows a coarse boundary with 90-degree square corners and 45-degree triangular teeth hanging out in mid-air over the sculpted 3D rock cliff (`s_cliff`).
+- **Cause:** Two interrelated raster aliasing mechanisms:
+  1. `Ground_CreateIndexedHeightfield` discards cells at the resolution of whole $1\text{m} \times 1\text{m}$ grid quads (`ya <= 0.75f || yb <= 0.75f || ...`), producing a strictly axis-aligned Manhattan staircase of 1-meter integer steps along diagonal island perimeters.
+  2. `Cliff_FindLip` marched up to 13.4 meters inland searching for peak elevation and then smoothed `rimPos`, placing the 3D cliff face 0.5m–1.5m inland of the outermost heightfield corners. Meanwhile, the cliff profile probe loop cast outward rays that caught these protruding 1m staircase quads, copying the staircase steps directly into the 3D rock mesh.
+- **Rule:** Conformed Boundary Interlock (AAA Terrain/Cliff Junction):
+  1. Detect all topological boundary vertices of `s_ground` (vertices belonging to edges referenced by exactly one triangle).
+  2. In `Cliff_ConformGroundBoundary`, snap each boundary vertex's $(X, Z)$ and elevation $Y$ directly to the closest point on the smoothed 1152-point closed rim spline `rimPos`. Update UV coordinates and recompute boundary normals via `UpdateMeshBuffer`. This converts the 1m rectilinear staircase into the exact smooth spline curve.
+  3. Author Row 0 of `s_cliff` as a horizontal collar flange (`out = -0.55m`, `vPos.y = gp.y - 0.02m`) that tucks 2cm underneath the meadow turf, with Row 1 placed right at `rimPos` (`out = 0.00m`, `depth = 0.06m`) and `profD = 0.0f` (pure procedural rock profile). The meadow turf terminates smoothly on top of the rock collar with zero overhangs, zero triangular teeth, and zero topological gaps.
+
+### Mottled blotches ("vùng loan lổ") and faceted terrain triangles from artificial clearings and over-sensitive cliff slope triggers
+
+- **Symptom:** Bald circular/oval patches appear scattered across the grass meadow exposing flat ground substrate, and dark green/brown faceted triangles with sharp diagonal edges appear near the cliff rim.
+- **Cause:**
+  1. Low-frequency sinusoidal clearing noise in `SongQuaoGrassDensity` abruptly multiplied grass density by `(1.0 - clearing * 0.88)`, punching artificial bald holes through the 3D grass canopy into flat, differently-toned 2D ground mesh.
+  2. Over-broad cliff elevation mask `outerCliffElev = 1.0 - smoothstep(-0.8, 1.6, y)` and hypersensitive slope threshold `slope > 0.03` (just $1.7^\circ$) in `ground_splat.fs` falsely triggered bedrock `wCliff` and suppressed `wGrass` on gentle plateau turf.
+  3. In `Cliff_ConformGroundBoundary`, normals were recomputed only for boundary vertices while adjacent interior vertices retained pre-conformed normals, causing a normal discontinuity across the seam.
+  4. `GroundLookup_Sample` returned raw triangle face normals instead of smoothly interpolated vertex normals, causing stepped, per-triangle grass culling along diagonal tessellation edges.
+- **Rule:**
+  1. Never punch mathematical clearing holes across a grass canopy with arbitrary noise. Negative space must be grounded in physical features: riparian sand/gravel margins (`signedShore`), rock outcrops (`rockSuppression`), and flower patches (`flowerSuppression`). Subtle wind/density drifts must stay in the $[0.70, 1.0]$ range.
+  2. Gate `outerCliffElev` strictly below the plateau rim ($y < -0.15\text{m}$) and require true cliff slopes ($\text{slope} > 0.45$) before engaging `wCliff` rock/dirt dominance.
+  3. When snapping ground boundary vertices, recompute continuous Gouraud normals across the entire mesh and apply boundary neighbor smoothing.
+  4. In `GroundLookup_Sample`, borrow `mesh->normals` into `MapGroundLookup` and interpolate normals using the triangle's barycentric weights ($w_0, w_1, w_2$) to eliminate per-triangle normal faceting.
 
 

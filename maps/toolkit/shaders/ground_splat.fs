@@ -28,6 +28,7 @@ in vec2 fragTexCoord;
 in vec3 fragPosition;
 in vec3 fragNormal;
 in vec3 fragWorldPos;
+in vec3 fragWorldNormal;
 in vec4 v_lightSpace;
 in vec4 v_staticLightSpace;
 in vec2 v_macroPatchAndField;
@@ -169,18 +170,28 @@ void main()
         }
     }
 
+    // Gate river/lake water phenomena to real water elevation (LANDMINES §340):
+    // Terrain dropping below -0.45m into the outer cloud abyss is free air, never a submerged lakebed.
+    float waterElevationMask = smoothstep(-0.45, -0.15, fragWorldPos.y);
+    lakeDepthFactor *= waterElevationMask;
+    shoreFactor *= waterElevationMask;
+
     // ---- 5. Geometry Normal & Slope ----
     vec3 geomNormal = fragNormal * inversesqrt(max(dot(fragNormal, fragNormal), 1e-8));
-    float slope = clamp(1.0 - geomNormal.y, 0.0, 1.0);
+    vec3 geomWorldNormal = fragWorldNormal * inversesqrt(max(dot(fragWorldNormal, fragWorldNormal), 1e-8));
+    float slope = clamp(1.0 - geomWorldNormal.y, 0.0, 1.0);
+
+    // Plateau rim drops into the abyss strictly below -0.15m (LANDMINES.md §135, §340)
+    float outerCliffElev = 1.0 - smoothstep(-1.80, -0.15, fragWorldPos.y);
 
     // ---- 6. Soil Detail ----
     bool soilPossible = distToPath < PATH_INFLUENCE
                      || shoreFactor > 0.015
-                     || smoothSignedShore < 1.45
+                     || (smoothSignedShore < 1.45 && fragWorldPos.y >= -0.45)
                      || streamWet > 0.80
-                     || slope > 0.42
-                     || (fragWorldPos.y < 0.15 && slope > 0.20)
-                     || fragWorldPos.y < -0.95;
+                     || slope > 0.35
+                     || outerCliffElev > 0.05
+                     || fragWorldPos.y < -0.15;
     vec4 colorDirt = vec4(0.5, 0.5, 0.5, 1.0);
     vec3 dirtDetail = vec3(0.5);
     if (soilPossible) {
@@ -222,9 +233,8 @@ void main()
         }
 
         // Separate interior grassy terrace embankments and riverbeds from the outer island cliff rim (LANDMINES.md §135)
-        float outerCliffElev = 1.0 - smoothstep(-1.80, -0.15, fragWorldPos.y);
         float rimMask = outerCliffElev * (1.0 - smoothstep(0.0, 0.45, shoreFactor));
-        float wSlope = max(smoothstep(0.52, 0.72, slope), rimMask * smoothstep(0.20, 0.38, slope));
+        float wSlope = max(smoothstep(0.50, 0.72, slope), rimMask * smoothstep(0.20, 0.38, slope));
         float outerAbyssMask = outerCliffElev * smoothstep(0.10, 0.28, slope);
         float rockCliff = max(smoothstep(0.48, 0.82, rockScree), outerAbyssMask * smoothstep(0.18, 0.36, slope));
         wCliff = clamp(max(wSlope, max(rockCliff, outerAbyssMask)), 0.0, 1.0) * (1.0 - shoreFactor * 0.99);
@@ -253,11 +263,18 @@ void main()
             wWetSoil = max(wWetSoil, riparianFringe * 0.92);
         }
 
+        // When descending off the meadow lip into the cliff, rock bedrock dominates completely:
+        float cliffDomination = smoothstep(0.08, 0.60, wCliff);
+        wGrass *= (1.0 - cliffDomination);
+        wWetSoil *= (1.0 - cliffDomination);
+
         wDrySoil = clamp(max(wPathMargin * 0.78, wCliff), 0.0, 1.0)
                        * (1.0 - wWetSoil * 0.85) * (1.0 - wPath * 0.85);
+        wDrySoil = max(wDrySoil, wCliff);
         wGrass = clamp(wGrass - wPath - wDrySoil, 0.0, 1.0);
         wWetSoil = clamp(1.0 - wGrass - wPath - wDrySoil, 0.0, 1.0);
     }
+
 
     vec4 weights = vec4(wGrass, wDrySoil, wWetSoil, wPath);
     vec4 resolved = weights / max(dot(weights, vec4(1.0)), 0.0001);
@@ -431,8 +448,8 @@ void main()
             vec2 triDxY = wpDx * 0.35, triDyY = wpDy * 0.35;
             vec2 triDxZ = wpDx3.xy * 0.35, triDyZ = wpDy3.xy * 0.35;
 
-            vec3 absN = abs(geomNormal);
-            vec3 triWeights = absN * absN * absN * absN;
+            vec3 absWN = abs(geomWorldNormal);
+            vec3 triWeights = absWN * absWN * absWN * absWN;
             triWeights /= max(triWeights.x + triWeights.y + triWeights.z, 0.0001);
 
             vec3 rockTexX, rockTexY, rockTexZ;
@@ -497,25 +514,39 @@ void main()
             }
             vec3 triRock = rockTexX * triWeights.x + rockTexY * triWeights.y + rockTexZ * triWeights.z;
 
-            vec3 boulderTint = vec3(0.585, 0.560, 0.525);
-            float macroTone = sin(fragWorldPos.x * 0.035 + fragWorldPos.z * 0.026) * 0.5 + 0.5;
-            float strataNoise = sin(fragWorldPos.y * 3.8 + sin(fragWorldPos.x * 0.35 + fragWorldPos.z * 0.28) * 1.2) * 0.5 + 0.5;
-            vec3 stoneTint = mix(vec3(0.52, 0.50, 0.46), vec3(0.66, 0.62, 0.56), strataNoise) * mix(0.96, 1.04, macroTone);
-            vec3 rockBase = triRock * stoneTint * 1.38;
+            // Authentic mountain slate-granite palette synchronized with cliff_rock.fs
+            const float kStrikeAngle = 32.0 * 3.14159265 / 180.0;
+            vec2 strikeDir = vec2(cos(kStrikeAngle), sin(kStrikeAngle));
+            float strikeCoord = dot(fragWorldPos.xz, strikeDir);
+            float strataCoord = fragWorldPos.y * 0.42 + strikeCoord * 0.16;
+            float strataWarp = sin(fragWorldPos.x * 0.14 - fragWorldPos.z * 0.18) * 1.25;
+            float strataMacro = sin(strataCoord * 2.40 + strataWarp) * 0.5 + 0.5;
+            float strataFine  = sin(strataCoord * 6.80 + strataWarp * 1.8) * 0.5 + 0.5;
+            float combinedStrata = strataMacro * 0.65 + strataFine * 0.35;
+
+            vec3 slateBedrock = vec3(0.48, 0.49, 0.52);
+            vec3 feldsparVein = vec3(0.62, 0.58, 0.52);
+            vec3 stoneTint = mix(slateBedrock, feldsparVein, combinedStrata * 0.38) * 1.32;
+            vec3 rockBase = triRock * stoneTint;
 
             // Velvet moss on upward-facing rock ledges near the plateau
-            float ledgeFacing = clamp(geomNormal.y * 1.45 - 0.20, 0.0, 1.0);
-            vec3 ledgeMoss = mix(vec3(0.14, 0.23, 0.09), vec3(0.24, 0.36, 0.12), triRock.g);
-            cliffAlbedo = mix(rockBase, ledgeMoss, ledgeFacing * 0.68);
+            float ledgeFacing = clamp(geomWorldNormal.y * 1.45 - 0.18, 0.0, 1.0);
+            vec3 ledgeMoss = mix(vec3(0.15, 0.25, 0.09), vec3(0.25, 0.38, 0.13), triRock.g);
+            cliffAlbedo = mix(rockBase, ledgeMoss, ledgeFacing * 0.85);
 
-            rockNormX.xy *= 1.45;
-            rockNormY.xy *= 1.45;
-            rockNormZ.xy *= 1.45;
+            rockNormX.xy *= 2.2;
+            rockNormY.xy *= 2.2;
+            rockNormZ.xy *= 2.2;
             vec3 sgnN = sign(geomNormal);
             vec3 worldNx = vec3(rockNormX.z * sgnN.x, rockNormX.y, rockNormX.x * sgnN.x);
             vec3 worldNy = vec3(rockNormY.x, rockNormY.z * sgnN.y, rockNormY.y);
             vec3 worldNz = vec3(rockNormZ.x * sgnN.z, rockNormZ.y, rockNormZ.z * sgnN.z);
             vec3 rawCliffN = worldNx * triWeights.x + worldNy * triWeights.y + worldNz * triWeights.z;
+
+            // Stepped horizontal fracture ledges (80.lv terrace-form rocks)
+            float shelfPhase = fragWorldPos.y * 2.80 + strikeCoord * 0.25;
+            float shelfNormMod = sin(shelfPhase) * 0.25;
+            rawCliffN.y += shelfNormMod * (1.0 - absWN.y);
             cliffTriNormal = rawCliffN * inversesqrt(max(dot(rawCliffN, rawCliffN), 1e-8));
 
             float normCrevice = clamp(rockNormX.z * triWeights.x + rockNormY.z * triWeights.y + rockNormZ.z * triWeights.z, 0.35, 1.0);
@@ -557,7 +588,7 @@ void main()
             }
             sandBase *= (0.84 + 0.36 * microSediment.r) * (0.88 + 0.28 * colorDirt.rgb);
 
-            float beachDryMix = clamp(shoreFactor * 0.35 + riparianSandMargin * 0.70, 0.0, 1.0);
+            float beachDryMix = clamp(shoreFactor * 0.35 + riparianSandMargin * 0.70, 0.0, 1.0) * (1.0 - smoothstep(0.04, 0.35, wCliff));
             drySoilColor = mix(drySoilColor, drySand * (0.88 + 0.28 * colorDirt.rgb), beachDryMix);
 
             vec2 gravelUV = tiledUV * 3.4;
@@ -708,7 +739,7 @@ void main()
         }
         if (wCliff > 0.01) {
             float cliffBlend = smoothstep(0.04, 0.40, wCliff);
-            nRaw = mix(nRaw, cliffTriNormal, cliffBlend * (0.65 + 0.35 * detailResolve));
+            nRaw = mix(nRaw, cliffTriNormal, cliffBlend);
         }
         normal = nRaw * inversesqrt(max(dot(nRaw, nRaw), 1e-8));
     }

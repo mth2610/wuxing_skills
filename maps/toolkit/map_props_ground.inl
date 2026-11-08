@@ -88,6 +88,7 @@ static bool GroundLookup_Build(MapGroundLookup *g, const Mesh *mesh)
 
     g->verts = mesh->vertices;
     g->indices = mesh->indices;
+    g->normals = mesh->normals;
     g->triCount = mesh->triangleCount;
 
     float minX = 1e30f, maxX = -1e30f, minZ = 1e30f, maxZ = -1e30f;
@@ -205,6 +206,8 @@ static bool GroundLookup_Sample(const MapGroundLookup *g, float lx, float lz,
 
     int bestTri = -1;
     float bestY = -1e30f;
+    float bestW0 = 0.0f, bestW1 = 0.0f, bestW2 = 0.0f;
+    int bestI0 = 0, bestI1 = 0, bestI2 = 0;
     const float *verts = g->verts;
     const unsigned short *indices = g->indices;
 
@@ -247,6 +250,12 @@ static bool GroundLookup_Sample(const MapGroundLookup *g, float lx, float lz,
         {
             bestY = y;
             bestTri = t;
+            bestW0 = w0;
+            bestW1 = w1;
+            bestW2 = w2;
+            bestI0 = i0;
+            bestI1 = i1;
+            bestI2 = i2;
         }
     }
     if (bestTri < 0)
@@ -255,12 +264,28 @@ static bool GroundLookup_Sample(const MapGroundLookup *g, float lx, float lz,
         *outY = bestY;
     if (outNormal)
     {
-        Vector3 a, b, c;
-        GroundLookup_Tri(g, bestTri, &a, &b, &c);
-        Vector3 n = Vector3CrossProduct(Vector3Subtract(b, a), Vector3Subtract(c, a));
-        if (n.y < 0.0f)
-            n = Vector3Negate(n);
-        *outNormal = Vector3Normalize(n);
+        if (g->normals)
+        {
+            Vector3 n = {
+                bestW0 * g->normals[bestI0 * 3 + 0] + bestW1 * g->normals[bestI1 * 3 + 0] + bestW2 * g->normals[bestI2 * 3 + 0],
+                bestW0 * g->normals[bestI0 * 3 + 1] + bestW1 * g->normals[bestI1 * 3 + 1] + bestW2 * g->normals[bestI2 * 3 + 1],
+                bestW0 * g->normals[bestI0 * 3 + 2] + bestW1 * g->normals[bestI1 * 3 + 2] + bestW2 * g->normals[bestI2 * 3 + 2]
+            };
+            float lenSq = n.x * n.x + n.y * n.y + n.z * n.z;
+            if (lenSq > 1e-6f)
+                *outNormal = Vector3Scale(n, 1.0f / sqrtf(lenSq));
+            else
+                *outNormal = (Vector3){0.0f, 1.0f, 0.0f};
+        }
+        else
+        {
+            Vector3 a, b, c;
+            GroundLookup_Tri(g, bestTri, &a, &b, &c);
+            Vector3 n = Vector3CrossProduct(Vector3Subtract(b, a), Vector3Subtract(c, a));
+            if (n.y < 0.0f)
+                n = Vector3Negate(n);
+            *outNormal = Vector3Normalize(n);
+        }
     }
     return true;
 }

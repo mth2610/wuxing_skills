@@ -187,7 +187,7 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
     float slopeFade = MapMath_SmoothStep01(GRASS_MIN_NORMAL_Y, GRASS_FULL_NORMAL_Y, normal.y);
     float rockFade = 1.0f - MapMath_SmoothStep01(0.45f, 0.70f, rockScree);
 
-    // Coherent macro meadow swells: multi-scale colonies (45% lush core, 35% transition turf, 20% clearings)
+    // Coherent macro meadow swells: multi-scale colonies (lush core 0.70..1.0, transition turf 0.50..0.70)
     float warpedX = x + sinf(z * 0.12f) * 2.8f;
     float warpedZ = z + cosf(x * 0.11f) * 2.4f;
     float macroField = sinf(warpedX * 0.072f + warpedZ * 0.046f) * 0.55f +
@@ -199,16 +199,10 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
     float distBasin = sqrtf(dxBasin * dxBasin + dzBasin * dzBasin);
     float outerHillBlend = MapMath_SmoothStep01(34.0f, 58.0f, distBasin);
 
-    // Natural meadow clearings & desire paths (~16% negative space exposing soil, moss & pebbles)
-    float clearingNoise = sinf(x * 0.048f + z * 0.042f) * 0.55f +
-                          cosf(z * 0.065f - x * 0.035f + 0.9f) * 0.35f +
-                          sinf(x * 0.125f + z * 0.095f) * 0.10f;
-    float clearing = MapMath_SmoothStep01(0.32f, 0.68f, clearingNoise);
-
-    // Multi-scale colony drifts: dense core 0.85..1.0, transition fringe 0.45..0.75, clearings 0.0..0.12
-    float patch = MapMath_SmoothStep01(-0.20f, 0.42f, macroField);
-    float colonyDensity = (0.40f + 0.60f * patch) * (1.0f - clearing * 0.88f);
-    float outerHillFactor = 1.0f - outerHillBlend * 0.28f;
+    // Continuous, lush turf colony drifts without artificial bald clearing holes
+    float patch = MapMath_SmoothStep01(-0.35f, 0.45f, macroField);
+    float colonyDensity = 0.72f + 0.28f * patch;
+    float outerHillFactor = 1.0f - outerHillBlend * 0.18f;
     float macro = colonyDensity * outerHillFactor;
 
     float density = macro * heightFade * slopeFade * shoreFade *

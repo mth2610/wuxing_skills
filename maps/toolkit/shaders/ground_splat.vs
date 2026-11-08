@@ -16,6 +16,7 @@ out vec2 fragTexCoord;
 out vec3 fragPosition;
 out vec3 fragNormal;
 out vec3 fragWorldPos;
+out vec3 fragWorldNormal;
 out vec4 v_lightSpace;
 out vec4 v_staticLightSpace;
 out vec2 v_macroPatchAndField;
@@ -40,11 +41,8 @@ void main()
     vec4 shaderPos = matModel * worldVertex;
     fragPosition = shaderPos.xyz;
 
-    // Chuẩn hóa pháp tuyến an toàn theo ma trận model và chỉ nghiêng khi sóng địa chấn kích hoạt
-    vec3 worldNormal = mat3(matModel) * vertexNormal;
-    float nLenSq = dot(worldNormal, worldNormal);
-    vec3 baseN = (nLenSq > 1e-8) ? (worldNormal * inversesqrt(nLenSq)) : vec3(0.0, 1.0, 0.0);
-    fragNormal = hasSeismic ? PerturbNormalWithSeismicWave(baseN, seismicSlope) : baseN;
+    fragNormal = vertexNormal;
+    fragWorldNormal = vertexNormal;
 
     fragWorldPos = wp;
     v_lightSpace = u_lightVP * shaderPos;

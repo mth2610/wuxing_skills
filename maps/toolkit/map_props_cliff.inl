@@ -23,23 +23,23 @@ typedef struct
 
 static const CliffRowProfile kCliffRowProfiles[17] = {
     // depth, out, noise, ao, moss, haze, strata
-    {0.00f, -0.15f, 0.05f, 0.95f, 0.95f, 0.00f, 0.60f},  // row 0: tucked right under turf edge
-    {0.25f,  0.05f, 0.60f, 0.88f, 0.90f, 0.00f, 0.80f},  // row 1: sharp overhang lip (immediate sheer drop)
-    {0.60f, -0.08f, 0.90f, 0.70f, 0.78f, 0.00f, 1.05f},  // row 2: undercut fracture slot
-    {1.10f,  0.28f, 1.15f, 0.80f, 0.60f, 0.00f, 1.18f},  // row 3: upper buttress crag shelf
-    {1.75f,  0.18f, 1.30f, 0.62f, 0.40f, 0.00f, 1.22f},  // row 4: vertical faceted wall
-    {2.55f, -0.15f, 1.40f, 0.50f, 0.22f, 0.00f, 1.28f},  // row 5: deep crevice fissure
-    {3.50f,  0.45f, 1.45f, 0.72f, 0.12f, 0.02f, 1.32f},  // row 6: middle prominent rock shelf
-    {4.65f,  0.30f, 1.40f, 0.58f, 0.04f, 0.06f, 1.26f},  // row 7: sheer vertical drop
-    {6.00f,  0.12f, 1.30f, 0.48f, 0.01f, 0.14f, 1.18f},  // row 8: cloud sea immersion line
-    {7.60f,  0.32f, 1.18f, 0.44f, 0.00f, 0.28f, 1.10f},  // row 9: sub-cloud lower bastion
-    {9.50f,  0.08f, 0.98f, 0.40f, 0.00f, 0.45f, 1.00f},  // row 10: lower wall
-    {11.80f,-0.22f, 0.78f, 0.38f, 0.00f, 0.62f, 0.92f},  // row 11: keel drop
-    {14.60f,-0.60f, 0.58f, 0.36f, 0.00f, 0.76f, 0.85f},  // row 12: inward keel
-    {18.00f,-1.20f, 0.42f, 0.35f, 0.00f, 0.88f, 0.80f},  // row 13: deep keel
-    {22.00f,-2.10f, 0.28f, 0.34f, 0.00f, 0.95f, 0.76f},  // row 14: abyss wall
-    {26.80f,-3.40f, 0.18f, 0.34f, 0.00f, 0.98f, 0.72f},  // row 15: abyss taper
-    {32.00f,-5.00f, 0.10f, 0.33f, 0.00f, 1.00f, 0.70f},  // row 16: submerged island root
+    {0.00f, -0.55f, 0.02f, 0.95f, 0.95f, 0.00f, 0.60f},  // row 0: inward collar flange (tucks 0.55m under meadow turf)
+    {0.06f,  0.00f, 0.15f, 0.90f, 0.92f, 0.00f, 0.70f},  // row 1: smooth rounded rock lip directly at rimPos
+    {0.35f,  0.06f, 0.60f, 0.85f, 0.82f, 0.00f, 0.90f},  // row 2: undercut fracture slot
+    {0.85f,  0.22f, 1.05f, 0.78f, 0.65f, 0.00f, 1.10f},  // row 3: upper buttress crag shelf
+    {1.55f,  0.16f, 1.25f, 0.65f, 0.42f, 0.00f, 1.18f},  // row 4: vertical faceted wall
+    {2.45f, -0.12f, 1.35f, 0.52f, 0.25f, 0.00f, 1.25f},  // row 5: deep crevice fissure
+    {3.50f,  0.42f, 1.45f, 0.70f, 0.12f, 0.02f, 1.32f},  // row 6: middle prominent rock shelf
+    {4.80f,  0.28f, 1.40f, 0.58f, 0.04f, 0.06f, 1.26f},  // row 7: sheer vertical drop
+    {6.20f,  0.10f, 1.30f, 0.48f, 0.01f, 0.14f, 1.18f},  // row 8: cloud sea immersion line
+    {7.80f,  0.30f, 1.18f, 0.44f, 0.00f, 0.28f, 1.10f},  // row 9: sub-cloud lower bastion
+    {9.80f,  0.06f, 0.98f, 0.40f, 0.00f, 0.45f, 1.00f},  // row 10: lower wall
+    {12.20f,-0.22f, 0.78f, 0.38f, 0.00f, 0.62f, 0.92f},  // row 11: keel drop
+    {15.00f,-0.60f, 0.58f, 0.36f, 0.00f, 0.76f, 0.85f},  // row 12: inward keel
+    {18.50f,-1.20f, 0.42f, 0.35f, 0.00f, 0.88f, 0.80f},  // row 13: deep keel
+    {22.50f,-2.10f, 0.28f, 0.34f, 0.00f, 0.95f, 0.76f},  // row 14: abyss wall
+    {27.20f,-3.40f, 0.18f, 0.34f, 0.00f, 0.98f, 0.72f},  // row 15: abyss taper
+    {32.50f,-5.00f, 0.10f, 0.33f, 0.00f, 1.00f, 0.70f},  // row 16: submerged island root
 };
 
 #define CLIFF_ROW_COUNT 17
@@ -510,84 +510,257 @@ static int Cliff_BuildCoastLoop(const MapGroundSurface *ground, Vector3 mapCente
     return bestCount;
 }
 
-// Find the turfy lip above a low coast contour by marching inland.
-// Follows the profile up from the deep contour until it levels off onto the coastal rim,
-// strictly bounded so it never climbs interior hills near the coast.
+// Find the turfy lip above a low coast contour by stepping slightly inward.
 static Vector3 Cliff_FindLip(const MapGroundSurface *ground, Vector3 mapCenter,
                              Vector3 contourPoint, Vector2 inward, float contourY)
 {
-    const float step = 0.28f;
-    const int maxSteps = 28; // ~7.84m max inland search to reach tall scarp plateaus
-    const float maxRimY = contourY + 6.8f; // allow finding the true plateau rim (up to +5.4m)
-    Vector3 samples[32];
-    Vector3 normals[32];
-    bool valid[32];
-    int validCount = 0;
-    float peakY = -1e9f;
-    int peakIdx = 0;
-
-    for (int k = 0; k < maxSteps; k++)
+    (void)contourY;
+    const float step = 0.15f;
+    for (int k = 1; k <= 8; k++)
     {
-        float d = (float)(k + 1) * step;
+        float d = (float)k * step;
         Vector3 p, n;
-        valid[k] = MapProp_SampleGroundSurface(ground, mapCenter,
-                                               contourPoint.x + inward.x * d,
-                                               contourPoint.z + inward.y * d, &p, &n);
-        if (valid[k])
+        if (MapProp_SampleGroundSurface(ground, mapCenter,
+                                        contourPoint.x + inward.x * d,
+                                        contourPoint.z + inward.y * d, &p, &n))
         {
-            if (p.y > maxRimY)
-                p.y = maxRimY;
-            samples[k] = p;
-            normals[k] = n;
-            validCount++;
-            if (p.y > peakY)
+            if (p.y > 0.0f)
+                return p;
+        }
+    }
+    return contourPoint;
+}
+
+// Snaps heightfield ground boundary vertices directly to the smooth closed polyline rimPos.
+// Eliminates 1m axis-aligned quad staircase steps and 45-degree triangular teeth.
+static void Cliff_ConformGroundBoundary(MapGroundSurface *ground, Vector3 mapCenter,
+                                        const Vector3 *rimPos, int M)
+{
+    if (!ground || !ground->ready || ground->model.meshCount < 1 || !rimPos || M < 3)
+        return;
+    Mesh *mesh = &ground->model.meshes[0];
+    if (!mesh->vertices || !mesh->indices || mesh->triangleCount < 1)
+        return;
+
+    int vertCount = mesh->vertexCount;
+    int triCount = mesh->triangleCount;
+
+    // Detect boundary edges: edges referenced by exactly one triangle
+    int hashCap = 262144;
+    int hashMask = hashCap - 1;
+    typedef struct {
+        unsigned int v0, v1;
+        int count;
+    } EdgeSlot;
+
+    EdgeSlot *table = MemAlloc((size_t)hashCap * sizeof(EdgeSlot));
+    bool *isBoundary = MemAlloc((size_t)vertCount * sizeof(bool));
+    if (!table || !isBoundary)
+    {
+        if (table) MemFree(table);
+        if (isBoundary) MemFree(isBoundary);
+        return;
+    }
+    memset(table, 0, (size_t)hashCap * sizeof(EdgeSlot));
+    memset(isBoundary, 0, (size_t)vertCount * sizeof(bool));
+
+    for (int t = 0; t < triCount; t++)
+    {
+        unsigned short ids[3] = {
+            mesh->indices[t * 3 + 0],
+            mesh->indices[t * 3 + 1],
+            mesh->indices[t * 3 + 2]
+        };
+        for (int e = 0; e < 3; e++)
+        {
+            unsigned int a = ids[e];
+            unsigned int b = ids[(e + 1) % 3];
+            if (a > b) { unsigned int tmp = a; a = b; b = tmp; }
+            unsigned int h = ((a * 2654435761u) ^ (b * 2246822519u)) & (unsigned int)hashMask;
+            while (table[h].count > 0)
             {
-                peakY = p.y;
-                peakIdx = k;
+                if (table[h].v0 == a && table[h].v1 == b)
+                {
+                    table[h].count++;
+                    goto next_edge;
+                }
+                h = (h + 1u) & (unsigned int)hashMask;
             }
+            table[h].v0 = a;
+            table[h].v1 = b;
+            table[h].count = 1;
+        next_edge:;
+        }
+    }
+
+    int boundaryVertCount = 0;
+    for (int h = 0; h < hashCap; h++)
+    {
+        if (table[h].count == 1)
+        {
+            unsigned int a = table[h].v0;
+            unsigned int b = table[h].v1;
+            if (!isBoundary[a]) { isBoundary[a] = true; boundaryVertCount++; }
+            if (!isBoundary[b]) { isBoundary[b] = true; boundaryVertCount++; }
+        }
+    }
+    MemFree(table);
+
+    float originX = mapCenter.x + ground->drawOffset.x;
+    float originY = mapCenter.y + ground->drawOffset.y;
+    float originZ = mapCenter.z + ground->drawOffset.z;
+    float width = -ground->drawOffset.x * 2.0f;
+    float depth = -ground->drawOffset.z * 2.0f;
+
+    // Snap each boundary vertex to the closest point on the smoothed rim loop
+    int snappedCount = 0;
+    for (int v = 0; v < vertCount; v++)
+    {
+        if (!isBoundary[v])
+            continue;
+
+        float vx = originX + mesh->vertices[v * 3 + 0];
+        float vy = originY + mesh->vertices[v * 3 + 1];
+        float vz = originZ + mesh->vertices[v * 3 + 2];
+
+        float bestDistSq = 1e30f;
+        Vector3 bestP = {vx, vy, vz};
+
+        for (int j = 0; j < M; j++)
+        {
+            int next = (j + 1) % M;
+            Vector3 A = rimPos[j];
+            Vector3 B = rimPos[next];
+            float abX = B.x - A.x;
+            float abZ = B.z - A.z;
+            float abLenSq = abX * abX + abZ * abZ;
+            if (abLenSq < 1e-8f)
+                continue;
+
+            float t = ((vx - A.x) * abX + (vz - A.z) * abZ) / abLenSq;
+            if (t < 0.0f) t = 0.0f;
+            if (t > 1.0f) t = 1.0f;
+
+            float qx = A.x + abX * t;
+            float qz = A.z + abZ * t;
+            float dx = vx - qx;
+            float dz = vz - qz;
+            float dSq = dx * dx + dz * dz;
+            if (dSq < bestDistSq)
+            {
+                bestDistSq = dSq;
+                bestP.x = qx;
+                bestP.z = qz;
+                bestP.y = A.y + (B.y - A.y) * t;
+            }
+        }
+
+        // Only snap if within 4.0m
+        if (bestDistSq <= 16.0f)
+        {
+            mesh->vertices[v * 3 + 0] = bestP.x - originX;
+            mesh->vertices[v * 3 + 1] = bestP.y - originY;
+            mesh->vertices[v * 3 + 2] = bestP.z - originZ;
+            if (mesh->texcoords && width > 1.0f && depth > 1.0f)
+            {
+                mesh->texcoords[v * 2 + 0] = mesh->vertices[v * 3 + 0] / width;
+                mesh->texcoords[v * 2 + 1] = mesh->vertices[v * 3 + 2] / depth;
+            }
+            snappedCount++;
+        }
+    }
+
+    TraceLog(LOG_INFO, "Cliff_ConformGroundBoundary: snapped %d of %d boundary vertices to rim curve",
+             snappedCount, boundaryVertCount);
+
+    // Recompute continuous Gouraud normals across the entire ground mesh so conformed rim blends seamlessly
+    memset(mesh->normals, 0, (size_t)vertCount * 3 * sizeof(float));
+    for (int t = 0; t < triCount; t++)
+    {
+        unsigned short i0 = mesh->indices[t * 3 + 0];
+        unsigned short i1 = mesh->indices[t * 3 + 1];
+        unsigned short i2 = mesh->indices[t * 3 + 2];
+        Vector3 a = {mesh->vertices[i0 * 3], mesh->vertices[i0 * 3 + 1], mesh->vertices[i0 * 3 + 2]};
+        Vector3 b = {mesh->vertices[i1 * 3], mesh->vertices[i1 * 3 + 1], mesh->vertices[i1 * 3 + 2]};
+        Vector3 c = {mesh->vertices[i2 * 3], mesh->vertices[i2 * 3 + 1], mesh->vertices[i2 * 3 + 2]};
+        Vector3 fn = Vector3CrossProduct(Vector3Subtract(b, a), Vector3Subtract(c, a));
+        if (fn.y < 0.0f) fn = Vector3Negate(fn);
+        for (int k = 0; k < 3; k++)
+        {
+            unsigned short vid = mesh->indices[t * 3 + k];
+            mesh->normals[vid * 3 + 0] += fn.x;
+            mesh->normals[vid * 3 + 1] += fn.y;
+            mesh->normals[vid * 3 + 2] += fn.z;
+        }
+    }
+    for (int v = 0; v < vertCount; v++)
+    {
+        Vector3 n = {mesh->normals[v * 3], mesh->normals[v * 3 + 1], mesh->normals[v * 3 + 2]};
+        float lenSq = n.x * n.x + n.y * n.y + n.z * n.z;
+        if (lenSq > 1e-6f)
+        {
+            float invLen = 1.0f / sqrtf(lenSq);
+            mesh->normals[v * 3 + 0] = n.x * invLen;
+            mesh->normals[v * 3 + 1] = n.y * invLen;
+            mesh->normals[v * 3 + 2] = n.z * invLen;
         }
         else
         {
-            samples[k] = contourPoint;
-            normals[k] = (Vector3){0, 1, 0};
+            mesh->normals[v * 3 + 0] = 0.0f;
+            mesh->normals[v * 3 + 1] = 1.0f;
+            mesh->normals[v * 3 + 2] = 0.0f;
         }
     }
 
-    if (validCount == 0)
-        return contourPoint;
-
-    // Search from contour inward for the transition onto the plateau lip
-    for (int k = 1; k < maxSteps - 2; k++)
+    // Smooth boundary and near-boundary vertices to eliminate facet creases
+    float *smoothN = (float *)MemAlloc((size_t)vertCount * 3 * sizeof(float));
+    if (smoothN)
     {
-        if (!valid[k])
-            continue;
-        float y = samples[k].y;
-        float ny = normals[k].y;
-
-        // Stop immediately once we reach the coastal turf lip ceiling
-        if (y >= maxRimY - 0.05f)
-            return samples[k];
-
-        // Must have climbed out of the deep drop
-        if (y < contourY + 0.65f && y < -0.45f)
-            continue;
-
-        int kAhead = (k + 2 < maxSteps && valid[k + 2]) ? k + 2 : k + 1;
-        float forwardRise = samples[kAhead].y - y;
-
-        bool leveledOff = (forwardRise <= 0.16f && ny >= 0.78f);
-        bool nearPeak = (y >= peakY - 0.20f && forwardRise <= 0.14f && ny >= 0.75f);
-        bool crest = (valid[k + 1] && samples[k + 1].y < y - 0.03f && y >= -0.45f);
-
-        if (leveledOff || nearPeak || crest)
+        memcpy(smoothN, mesh->normals, (size_t)vertCount * 3 * sizeof(float));
+        for (int t = 0; t < triCount; t++)
         {
-            return samples[k];
+            unsigned short i0 = mesh->indices[t * 3 + 0];
+            unsigned short i1 = mesh->indices[t * 3 + 1];
+            unsigned short i2 = mesh->indices[t * 3 + 2];
+            if (isBoundary[i0] || isBoundary[i1] || isBoundary[i2])
+            {
+                Vector3 avg = {
+                    (mesh->normals[i0 * 3] + mesh->normals[i1 * 3] + mesh->normals[i2 * 3]) * 0.333333f,
+                    (mesh->normals[i0 * 3 + 1] + mesh->normals[i1 * 3 + 1] + mesh->normals[i2 * 3 + 1]) * 0.333333f,
+                    (mesh->normals[i0 * 3 + 2] + mesh->normals[i1 * 3 + 2] + mesh->normals[i2 * 3 + 2]) * 0.333333f
+                };
+                for (int k = 0; k < 3; k++)
+                {
+                    unsigned short vid = mesh->indices[t * 3 + k];
+                    smoothN[vid * 3 + 0] = smoothN[vid * 3 + 0] * 0.6f + avg.x * 0.4f;
+                    smoothN[vid * 3 + 1] = smoothN[vid * 3 + 1] * 0.6f + avg.y * 0.4f;
+                    smoothN[vid * 3 + 2] = smoothN[vid * 3 + 2] * 0.6f + avg.z * 0.4f;
+                }
+            }
         }
+        for (int v = 0; v < vertCount; v++)
+        {
+            Vector3 n = {smoothN[v * 3], smoothN[v * 3 + 1], smoothN[v * 3 + 2]};
+            float lenSq = n.x * n.x + n.y * n.y + n.z * n.z;
+            if (lenSq > 1e-6f)
+            {
+                float invLen = 1.0f / sqrtf(lenSq);
+                mesh->normals[v * 3 + 0] = n.x * invLen;
+                mesh->normals[v * 3 + 1] = n.y * invLen;
+                mesh->normals[v * 3 + 2] = n.z * invLen;
+            }
+        }
+        MemFree(smoothN);
     }
+    MemFree(isBoundary);
 
-    if (valid[peakIdx])
-        return samples[peakIdx];
-    return contourPoint;
+    UpdateMeshBuffer(*mesh, 0, mesh->vertices, (int)(mesh->vertexCount * 3 * sizeof(float)), 0);
+    if (mesh->texcoords)
+        UpdateMeshBuffer(*mesh, 1, mesh->texcoords, (int)(mesh->vertexCount * 2 * sizeof(float)), 0);
+    if (mesh->normals)
+        UpdateMeshBuffer(*mesh, 2, mesh->normals, (int)(mesh->vertexCount * 3 * sizeof(float)), 0);
+
+    GroundLookup_Build(&ground->lookup, mesh);
 }
 
 MapCliffSkirt MapProp_CreateCliffSkirt(const MapGroundSurface *ground, Vector3 mapCenter, float sliceHeight, float bottomY)
@@ -723,16 +896,8 @@ MapCliffSkirt MapProp_CreateCliffSkirt(const MapGroundSurface *ground, Vector3 m
     {
         Vector2 inward = {-coastNorm[i].x, -coastNorm[i].y};
         Vector3 lip = Cliff_FindLip(ground, mapCenter, coastPos[i], inward, sliceHeight);
-        // Anchor just behind the lip so the collar is buried by the meadow.
-        rimPos[i] = (Vector3){
-            lip.x + inward.x * 0.22f,
-            lip.y,
-            lip.z + inward.y * 0.22f};
-        Vector3 gp, gn;
-        if (MapProp_SampleGroundSurface(ground, mapCenter, rimPos[i].x, rimPos[i].z, &gp, &gn))
-            rimY[i] = fminf(gp.y, sliceHeight + 6.80f);
-        else
-            rimY[i] = fminf(lip.y, sliceHeight + 6.80f);
+        rimPos[i] = lip;
+        rimY[i] = lip.y;
     }
 
     // Light smoothing keeps the rim line organic but kills stair steps.
@@ -768,6 +933,9 @@ MapCliffSkirt MapProp_CreateCliffSkirt(const MapGroundSurface *ground, Vector3 m
     for (int i = 0; i < M; i++)
         rimPos[i].y = rimY[i] - 0.02f;
     MemFree(coastPos);
+
+    // Conform ground boundary vertices to the smooth rim curve so meadow turf terminates cleanly at rimPos
+    Cliff_ConformGroundBoundary((MapGroundSurface *)ground, mapCenter, rimPos, M);
 
     float rimMin = 1e9f, rimMax = -1e9f;
     for (int i = 0; i < M; i++)
@@ -821,88 +989,17 @@ MapCliffSkirt MapProp_CreateCliffSkirt(const MapGroundSurface *ground, Vector3 m
         return cliff;
     }
 
-    const float kProbeStep = 0.28f;
-    const int kProbeMax = 108; // ~30 m of horizontal run
-    int dbgShort = 0, dbgNoDrop = 0;
+    // Pure procedural cliff profile anchored directly at the conformed rim.
+    // Zero heightfield probe artifacts: sheer rock face is 100% smooth all around the island.
     for (int i = 0; i < M; i++)
     {
-        float prevD = 0.0f;
-        float prevY = rimY[i];
-        float lastD = 0.0f;
-        int nextRow = 0;
-        for (int k = 1; k <= kProbeMax && nextRow < CLIFF_ROW_COUNT; k++)
+        for (int r = 0; r < CLIFF_ROW_COUNT; r++)
         {
-            float d = (float)k * kProbeStep;
-            Vector3 gp, gn;
-            float y;
-            if (!MapProp_SampleGroundSurface(ground, mapCenter,
-                                             rimPos[i].x + rimNorm[i].x * d,
-                                             rimPos[i].z + rimNorm[i].y * d, &gp, &gn))
-            {
-                // Beyond mesh bounds: fell off the island edge into the abyss (-8.0m)
-                y = -8.0f;
-            }
-            else
-            {
-                y = gp.y;
-            }
-            if (y > prevY + 0.05f)
-                y = prevY; // keep the profile monotone
-            lastD = d;
-            float segD = d - prevD;
-            float segY = y - prevY;
-            float segLen = sqrtf(segD * segD + segY * segY);
-            float nOut = 1.0f, nUp = 0.0f;
-            if (segLen > 1e-5f)
-            {
-                float invSegLen = 1.0f / segLen;
-                nOut = -segY * invSegLen;
-                nUp = segD * invSegLen;
-            }
-            while (nextRow < CLIFF_ROW_COUNT)
-            {
-                float targetY = rimY[i] - kCliffRowProfiles[nextRow].depth;
-                if (y > targetY)
-                    break;
-                float t = (prevY > y) ? (prevY - targetY) / (prevY - y) : 0.0f;
-                if (t < 0.0f)
-                    t = 0.0f;
-                if (t > 1.0f)
-                    t = 1.0f;
-                float maxRun = kCliffRowProfiles[nextRow].depth * 0.26f + 0.35f;
-                float runVal = prevD + segD * t;
-                if (runVal > maxRun)
-                    runVal = maxRun;
-                profD[nextRow * M + i] = runVal;
-                profNO[nextRow * M + i] = nOut;
-                profNU[nextRow * M + i] = nUp;
-                nextRow++;
-            }
-            prevD = d;
-            prevY = y;
-        }
-        // Rows the terrain never reached continue straight down from the last probed sample.
-        for (int r = nextRow; r < CLIFF_ROW_COUNT; r++)
-        {
-            float maxRun = kCliffRowProfiles[r].depth * 0.26f + 0.35f;
-            float runVal = lastD + 0.08f * (float)(r - nextRow + 1);
-            if (runVal > maxRun)
-                runVal = maxRun;
-            profD[r * M + i] = runVal;
+            profD[r * M + i] = 0.0f;
             profNO[r * M + i] = 1.0f;
             profNU[r * M + i] = 0.0f;
         }
-        if (nextRow > 0 && lastD < 2.5f)
-        {
-            dbgShort++;
-            if (dbgShort < 8)
-                TraceLog(LOG_INFO, "CLIFF_SHORT i=%d rim=(%.1f,%.1f,%.1f) filled=%d lastD=%.2f",
-                         i, rimPos[i].x, rimPos[i].y, rimPos[i].z, nextRow, lastD);
-        }
-        if (nextRow == 0)
-            dbgNoDrop++;
     }
-    TraceLog(LOG_INFO, "CLIFF_PROFILE short=%d nodrop=%d of %d", dbgShort, dbgNoDrop, M);
 
     // ── Build the cliff grid in world space ─────────────────────────────────
     Vector3 *gridPos = MemAlloc((size_t)(M * CLIFF_ROW_COUNT) * sizeof(Vector3));
@@ -949,18 +1046,35 @@ MapCliffSkirt MapProp_CreateCliffSkirt(const MapGroundSurface *ground, Vector3 m
             float nOut = profNO[r * M + i];
             float nUp = profNU[r * M + i];
 
-            float pillar = (Cliff_Fbm1(s * 0.065f, 41, 3) - 0.45f) * 2.6f;
-            float crevice = (Cliff_Fbm1(s * 0.220f, 73, 3) - 0.50f) * 1.3f;
-            float sharpFacet = Cliff_Noise1(s * 0.65f + (float)r * 1.6f, 97) - 0.5f;
-            float strataLedge = sinf(depth * 3.4f + pillar * 0.8f) * 0.25f;
-            float relief = (pillar + crevice + sharpFacet * 0.5f + strataLedge) * rp->noise;
+            float pillar = (Cliff_Fbm1(s * 0.055f, 41, 3) - 0.40f) * 3.4f;
+            float crevice = (Cliff_Fbm1(s * 0.180f, 73, 3) - 0.50f) * 1.6f;
+
+            // Polyhedral cleavage facets (sharp angular granite fractures, 80.lv)
+            float facetPhase = s * 0.42f + (float)r * 0.48f;
+            float facetFold = fabsf(Cliff_Noise1(facetPhase, 97) * 2.0f - 1.0f);
+            float sharpFacet = (facetFold - 0.5f) * 1.8f;
+
+            // Stepped horizontal rock shelves (terrace-form rocks, 80.lv)
+            float shelfStep = floorf(depth * 0.55f) * 0.32f;
+            float shelfEdge = sinf(depth * 3.4f + pillar * 0.7f) * 0.42f;
+            float relief = (pillar + crevice + sharpFacet * 1.35f + shelfStep + shelfEdge) * rp->noise;
+
+            // Lateral shear displacement along rim tangent (breaks cylindrical symmetry)
+            Vector2 rimTan = {-rimNorm[i].y, rimNorm[i].x};
+            float lateralShear = (Cliff_Noise1(s * 0.10f + (float)r * 0.75f, 137) - 0.5f) * 2.2f * rp->noise;
 
             float outTotal = d + relief + rp->out;
 
             Vector3 vPos = {
-                rimPos[i].x + rimNorm[i].x * outTotal,
+                rimPos[i].x + rimNorm[i].x * outTotal + rimTan.x * lateralShear,
                 rimY[i] - depth,
-                rimPos[i].z + rimNorm[i].y * outTotal};
+                rimPos[i].z + rimNorm[i].y * outTotal + rimTan.y * lateralShear};
+            if (r == 0)
+            {
+                Vector3 gp, gn;
+                if (MapProp_SampleGroundSurface(ground, mapCenter, vPos.x, vPos.z, &gp, &gn))
+                    vPos.y = gp.y - 0.02f;
+            }
             gridPos[r * M + i] = vPos;
 
             if (r > 0)
@@ -1073,6 +1187,24 @@ MapCliffSkirt MapProp_CreateCliffSkirt(const MapGroundSurface *ground, Vector3 m
             }
             gridNorm[r * M + i] = n;
             gridTan[r * M + i] = (Vector4){tanS.x, tanS.y, tanS.z, 1.0f};
+
+            // Geometric concavity ambient occlusion (80.lv RTGI Principle)
+            Vector3 pLeft = gridPos[r * M + prevI];
+            Vector3 pRight = gridPos[r * M + nextI];
+            Vector3 pCenter = gridPos[r * M + i];
+            Vector3 pAvg = {
+                (pa.x + pb.x + pLeft.x + pRight.x) * 0.25f,
+                (pa.y + pb.y + pLeft.y + pRight.y) * 0.25f,
+                (pa.z + pb.z + pLeft.z + pRight.z) * 0.25f
+            };
+            float concavity = (pAvg.x - pCenter.x) * n.x +
+                              (pAvg.y - pCenter.y) * n.y +
+                              (pAvg.z - pCenter.z) * n.z;
+            float geomAO = 1.0f - concavity * 2.2f;
+            geomAO = fminf(1.0f, fmaxf(0.22f, geomAO));
+
+            float cavity = (float)gridCol[r * M + i].r * (1.0f / 255.0f) * geomAO;
+            gridCol[r * M + i].r = (unsigned char)(fminf(1.0f, fmaxf(0.18f, cavity)) * 255.0f);
         }
     }
 

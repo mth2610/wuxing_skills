@@ -42,8 +42,10 @@ def generate_rocks():
     wx = xx * sx
     wz = yy * sz
 
-    ARCH_GRANITE = 3     # Weathered rounded granite tor & corestone boulder
+    ARCH_CRAG = 1        # Karst pinnacle / acute knife-edge crag
     ARCH_RIVER_STONE = 2 # Water-worn smooth 3D river cobble & boulder
+    ARCH_GRANITE = 3     # Weathered rounded granite tor & corestone boulder
+    ARCH_SLATE = 8       # Stratified horizontal slate / terrace shelf slab
     ARCH_SCREE = 9       # Small granite gravel & companion talus chip
 
     rock_items = []
@@ -77,6 +79,19 @@ def generate_rocks():
 
         # River stones embed naturally into the alluvial sand/gravel bed (45-55% embedded)
         sink = hScale * 0.48 if arch == ARCH_RIVER_STONE else (hScale * 0.22 if arch == ARCH_SCREE else 0.0)
+        rock_items.append(dict(x=float(x), y=float(gy - sink), z=float(z),
+                               rScale=float(rScale), hScale=float(hScale),
+                               rot=float(rot), archetype=int(arch)))
+        occupied.append((x, z, rScale))
+        return True
+
+    def add_cliff_rock(x, z, rScale, hScale, rot, arch, min_overlap=0.45):
+        gy, sl, wd, val = get_terrain(x, z)
+        if not val or wd > 0.12 or gy < -3.2 or gy > 6.0:
+            return False
+        if not is_free(x, z, rScale, min_overlap=min_overlap):
+            return False
+        sink = hScale * 0.18
         rock_items.append(dict(x=float(x), y=float(gy - sink), z=float(z),
                                rScale=float(rScale), hScale=float(hScale),
                                rot=float(rot), archetype=int(arch)))
