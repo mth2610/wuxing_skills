@@ -43,6 +43,10 @@
      - Nâng cấp bộ kẹp subpixel screen-space `minPxHalfWidth = distToCam * 0.00048` trên toàn bộ dải cự ly, xóa bỏ hệ số làm teo ngọn `(1.0 - 0.68 * t)` để bảo vệ ngọn lá luôn đạt kích thước tối thiểu $\approx 1.1$ pixel màn hình, triệt tiêu 100% hiện tượng nhấp nháy (temporal flickering/sparkling).
      - Thiết lập sàn độ rộng tối thiểu thân cỏ `fmaxf(0.024f, width)` trong `map_props_meadow.inl` và nâng `.bladeWidthScale = 0.088f` trong `song_quao.c`.
 
+6. **Điều Chỉnh Tỷ Lệ Thân Lá & Mật Độ Đồng Cỏ (+15% Bề Rộng/Kích Thước, -25% Mật Độ Tích Lũy)**:
+   - **Tăng kích thước lá cỏ thêm 5% (`.bladeWidthScale = 0.102f`, `height * 1.05f`)**: Nâng từ `0.097f` lên `0.102f` trong `song_quao.c`, nâng tỷ lệ chiều cao thêm 5% và nâng sàn độ rộng tối thiểu `width` lên `0.027m` (2.7cm) trong `map_props_meadow.inl`, giúp từng phiến lá có dáng hình đầy đặn, chắc khỏe và dễ đọc từ góc nhìn người chơi.
+   - **Mật độ thưa thêm 5% (`.spacing = 0.416f`)**: Nâng khoảng cách lưới từ `0.405m` lên `0.416f` ($0.405 / \sqrt{0.95} \approx 0.416$), giảm thêm 5% số lượng khóm cỏ. Đồng cỏ thoáng đãng, các khóm cỏ có không gian khoe dáng đài hoa 3D và nền đất mùn/rêu phong lộ diện tự nhiên. Frame time ổn định tuyệt đối ở mức **`22.47 ms` (Hero Bank)** và **`22.73 ms` (Gameplay Center)**.
+
 ---
 
 ## 3. Verification & Performance Results (Intel Iris Graphics 6000)

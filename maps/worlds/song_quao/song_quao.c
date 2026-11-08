@@ -273,7 +273,7 @@ static void BuildFloraPlacements(void)
         (MapFloraMeadowConfig){
             .minBounds = {10.0f, 8.0f},
             .maxBounds = {MAP_WIDTH - 10.0f, MAP_DEPTH - 8.0f},
-            .spacing = 0.362f,
+            .spacing = 0.416f,
             .seed = 0x51a7c3u,
             .densityFn = SongQuaoGrassDensity,
             .ecology = &s_habitat,
@@ -806,7 +806,7 @@ void InitSongQuaoMap(void)
             .grassTipColor = {116, 154, 58, 255}, // Sắc ngọc bích xuân tươi sáng, ấm áp tự nhiên
             .bladesPerClump = 6,
             .bladeSegments = 4,
-            .bladeWidthScale = 0.088f,
+            .bladeWidthScale = 0.102f,
             .lodDistance = 24.0f,
             .midLodDistance = 14.0f,
             .drawDistance = 50.0f,

@@ -507,9 +507,9 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
             droopFactor *= 0.30f;
         }
 
-        height = clump->height * lengthScale;
+        height = clump->height * lengthScale * 1.05f;
         width = clump->radius * style.bladeWidthScale * widthMultiplier * widthScaleVal;
-        width = fmaxf(0.024f, width); // Giới hạn sàn độ rộng thân cỏ (>= 2.4cm) triệt tiêu tình trạng sợi quá mảnh gây nhấp nháy
+        width = fmaxf(0.027f, width); // Giới hạn sàn độ rộng thân cỏ (~2.7cm) triệt tiêu tình trạng sợi quá mảnh gây nhấp nháy
         lean = height * leanFactor;
         droopY = height * droopFactor;
         float botanical = fminf(fmaxf(style.botanicalVariation, 0.0f), 1.0f);
@@ -525,7 +525,7 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
             stretch = 1.0f + (stretch - 1.0f) * botanical;
             height *= stretch;
             width /= sqrtf(stretch);
-            width = fmaxf(0.022f, width);
+            width = fmaxf(0.025f, width);
             lean *= stretch * (1.0f + botanical * (0.06f + 0.10f * habit));
             droopY = height * (droopFactor + botanical * 0.08f * habit);
         }
