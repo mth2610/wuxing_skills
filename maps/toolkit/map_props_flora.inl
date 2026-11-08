@@ -5,7 +5,7 @@ Color MapProp_GetFlowerSpeciesColor(int variant, bool accent)
 {
     // Painterly Ghost of Tsushima & Where Winds Meet botanical palette:
     // Balanced chroma so petals glow naturally under HDR sun without clipping into flat white cones
-    static const Color primary[8] = {
+    static const Color primary[9] = {
         {248, 242, 224, 255}, // 0: Bạch Cúc / Thiên Sơn Tuyết Liên (Warm Ivory / Snow Lotus)
         {250, 204, 48, 255},  // 1: Hoàng Anh / Kim Cúc Cổ Phong (Golden Amber Buttercup)
         {232, 62, 48, 255},   // 2: Chu Sa Hồng / Bỉ Ngạn Hoa (Vermilion Crimson Spider Lily)
@@ -14,8 +14,9 @@ Color MapProp_GetFlowerSpeciesColor(int variant, bool accent)
         {214, 96, 164, 255},  // 5: Tử Mẫu / Tử Linh Đang (Orchid Magenta Bellflower)
         {164, 134, 234, 255}, // 6: Huân Y Thảo / Tử Vân Anh (Misty Lavender Violet)
         {248, 232, 158, 255}, // 7: Ngọc Lan / Linh Thảo (Soft Primrose Cream)
+        {228, 230, 223, 255}, // 8: Bạch Miên Cỏ Lau (Silver-White Pampas Plume)
     };
-    static const Color secondary[8] = {
+    static const Color secondary[9] = {
         {238, 228, 202, 255},
         {242, 176, 28, 255},
         {204, 38, 36, 255},
@@ -24,8 +25,10 @@ Color MapProp_GetFlowerSpeciesColor(int variant, bool accent)
         {184, 64, 136, 255},
         {138, 104, 216, 255},
         {242, 212, 124, 255},
+        {230, 201, 140, 255}, // 8 Accent: Golden Amber Plume
     };
-    variant &= 7;
+    if (variant < 0 || variant > 8)
+        variant = 0;
     return accent ? secondary[variant] : primary[variant];
 }
 
@@ -211,15 +214,15 @@ void MapFlora_GenerateFlowerPlacements(
                 variant = cl->species[(int)(Nature_Random01(&rng) * 4.0f) & 3];
             }
             if (speciesOverride >= 0)
-                variant = speciesOverride & 7;
+                variant = (speciesOverride <= 8) ? speciesOverride : (speciesOverride & 7);
 
-            bool tallAccent = (variant == 2 || variant == 4 || variant == 6);
+            bool tallAccent = (variant == 2 || variant == 4 || variant == 6 || variant == 8);
             float coreLift = isColony ? (1.0f - 0.14f * radialNorm) : 0.86f;
-            // Wildflower stalks emerge proudly above the waving meadow blades (0.62m..1.05m)
-            float driftHeightBase = tallAccent ? 0.76f : 0.64f;
+            // Wildflower stalks emerge proudly above the waving meadow blades (0.62m..1.05m; Cỏ Lau 2.2m..2.9m)
+            float driftHeightBase = (variant == 8) ? 2.50f : (tallAccent ? 0.76f : 0.64f);
             outPlacements[outIdx].height = (driftHeightBase + (Nature_Random01(&rng) * 0.18f - 0.06f)) * coreLift;
 
-            float baseBloomRadius = tallAccent ? 0.155f : 0.138f;
+            float baseBloomRadius = (variant == 8) ? 0.280f : (tallAccent ? 0.155f : 0.138f);
             outPlacements[outIdx].bloomRadius = baseBloomRadius * (0.88f + Nature_Random01(&rng) * 0.44f) * (0.92f + 0.14f * coreLift);
             outPlacements[outIdx].petalColor = MapProp_GetFlowerSpeciesColor(variant, Nature_Random01(&rng) > 0.74f);
             outPlacements[outIdx].petalCount = (unsigned char)(5 + (variant % 3));
@@ -734,6 +737,58 @@ MapFloraSystem MapProp_CreateFloraSystem(
                                                       .growthForm = MAP_MEADOW_GROWTH_PAMPAS,
                                                   });
         flora.pampasCount = style.pampasCount;
+
+        // 3b. 3D Cỏ Lau Plumes (Camera-Facing Fiber Ribbons, WebGL2 Low Preset)
+        if (style.enableCoLauPlumes || style.coLauPlumeDensity > 0.0f)
+        {
+            float density = (style.coLauPlumeDensity > 0.0f) ? style.coLauPlumeDensity : 0.85f;
+            // Default to riparian reeds (ven suối / ven sông) if available or if style.coLauOnReeds is set
+            bool useReeds = (style.coLauOnReeds || (!style.pampasPlacements && reedPlacements)) && (reedPlacements && reedCount > 0);
+            const MapMeadowPlacement *srcPlacements = useReeds ? reedPlacements : style.pampasPlacements;
+            int srcCount = useReeds ? reedCount : style.pampasCount;
+
+            int plumeCount = (int)((float)srcCount * density);
+            if (plumeCount > 0 && srcPlacements)
+            {
+                MapCoLauPlacement *placements = (MapCoLauPlacement *)RL_MALLOC((size_t)plumeCount * sizeof(MapCoLauPlacement));
+                if (placements)
+                {
+                    unsigned int cRng = 0x6a1f29u;
+                    Color baseTint = (style.coLauPlumeTint.a > 0) ? style.coLauPlumeTint : (Color){228, 230, 223, 255};
+                    int idx = 0;
+                    for (int p = 0; p < srcCount && idx < plumeCount; p++)
+                    {
+                        const MapMeadowPlacement *mp = &srcPlacements[p];
+                        float r = Nature_Random01(&cRng);
+                        if (r > density && (srcCount - p) > (plumeCount - idx))
+                            continue;
+
+                        Color tint = baseTint;
+                        float tintDice = Nature_Random01(&cRng);
+                        if (tintDice > 0.88f)
+                            tint = (Color){232, 169, 173, 255}; // Soft Rose
+                        else if (tintDice > 0.68f)
+                            tint = (Color){230, 201, 140, 255}; // Golden Amber
+
+                        // Natural riverbank reed plume height: ~1.45m - 1.85m (human eye-level)
+                        float h = 1.48f + 0.36f * Nature_Random01(&cRng);
+                        float sc = 0.85f + 0.25f * (mp->radius / 0.30f);
+
+                        placements[idx++] = (MapCoLauPlacement){
+                            .position = mp->position,
+                            .height = h,
+                            .scale = sc,
+                            .rotationDeg = mp->rotationDeg,
+                            .phase = mp->phase,
+                            .tint = tint,
+                        };
+                    }
+                    flora.coLauField = MapProp_CreateCoLauField(placements, idx);
+                    flora.coLauCount = idx;
+                    RL_FREE(placements);
+                }
+            }
+        }
     }
 
     // 4. Clustered Wildflower Fields: 100% Procedural 3D Petals
@@ -772,7 +827,9 @@ MapFloraSystem MapProp_CreateFloraSystem(
     }
 
     flora.time = 0.0f;
-    flora.ready = (flora.valleyMeadow.ready || flora.reedMeadow.ready || flora.pampasMeadow.ready || flora.flowerClusterCount > 0);
+    flora.ready = (flora.valleyMeadow.ready || flora.reedMeadow.ready ||
+                   flora.pampasMeadow.ready || flora.coLauField.ready ||
+                   flora.flowerClusterCount > 0);
     return flora;
 }
 
@@ -827,6 +884,11 @@ void MapProp_DrawFloraSystem(MapFloraSystem *flora)
         MapProp_DrawMeadow(&flora->pampasMeadow, (Vector3){0}, flora->time,
                            flora->windDirection, 0.052f);
     }
+    if (flora->coLauCount > 0 && flora->coLauField.ready)
+    {
+        MapProp_DrawCoLauField(&flora->coLauField, (Vector3){0}, flora->time,
+                               flora->windDirection, flora->windStrength);
+    }
     if (flora->flowerClusterCount > 0 && flora->flowerFields)
     {
         MapProp_DrawFlowerFieldBatch(flora->flowerFields, flora->flowerClusterCount,
@@ -858,11 +920,19 @@ void MapProp_DrawFloraShadowCasters(MapFloraSystem *flora)
                                             flora->windDirection, 0.052f);
         }
     }
-    if (Nature_ShadowCasterTypeEnabled(true) && flora->flowerFields && flora->flowerClusterCount > 0)
+    if (Nature_ShadowCasterTypeEnabled(true))
     {
-        MapProp_DrawFlowerFieldShadowCasterBatch(
-            flora->flowerFields, flora->flowerClusterCount, offset,
-            flora->time, flora->windDirection, 0.032f);
+        if (flora->coLauCount > 0 && flora->coLauField.ready)
+        {
+            MapProp_DrawCoLauFieldShadowCaster(
+                &flora->coLauField, offset, flora->time, flora->windDirection, 0.032f);
+        }
+        if (flora->flowerFields && flora->flowerClusterCount > 0)
+        {
+            MapProp_DrawFlowerFieldShadowCasterBatch(
+                flora->flowerFields, flora->flowerClusterCount, offset,
+                flora->time, flora->windDirection, 0.032f);
+        }
     }
 }
 
@@ -884,6 +954,12 @@ void MapProp_UnloadFloraSystem(MapFloraSystem *flora)
         flora->flowerFields = NULL;
     }
     flora->flowerClusterCount = 0;
+
+    if (flora->coLauCount > 0 && flora->coLauField.ready)
+    {
+        MapProp_UnloadCoLauField(&flora->coLauField);
+        flora->coLauCount = 0;
+    }
 
     if (flora->pampasCount > 0)
     {

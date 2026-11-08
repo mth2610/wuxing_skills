@@ -192,9 +192,9 @@ void MapProp_UnloadSkyDome(MapSkyDome *sky);
 
 ### Generalized Flora, Debris, and Ground Systems (`map_props_flora.inl`, `map_props_debris.inl`, `map_props_ground.inl`)
 
-1. **MapFloraSystem** (Meadow + Reeds + 3D Procedural Wildflowers):
-   - Integrates valley grass meadows (smooth 4-segment Bézier curves, zero stick grass), shoreline reeds (`hasReedPlumes = false` to eliminate white cards), and wildflower colonies into one unified system.
-   - `MapFlora_GenerateFlowerPlacements`: Generates colony-clustered 3D wildflower placements along landscape flow using 3 organic epicenters per cluster, Poisson-disc spacing, and 8 Xianxia botanical palettes:
+1. **MapFloraSystem** (Meadow + Reeds + 3D Procedural Wildflowers + 3D Cỏ Lau Pampas Plumes):
+   - Integrates valley grass meadows (smooth 4-segment Bézier curves, zero stick grass), shoreline reeds (`hasReedPlumes = false` to eliminate white cards), wildflower colonies, and GPU-instanced 3D Cỏ Lau (pampas grass plumes) into one unified system.
+   - `MapFlora_GenerateFlowerPlacements`: Generates colony-clustered 3D wildflower placements along landscape flow using 3 organic epicenters per cluster, Poisson-disc spacing, and 9 Xianxia botanical palettes:
      - 0: Ivory Daisy (Bạch Cúc)
      - 1: Golden Buttercup (Hoàng Anh)
      - 2: Vermilion Poppy (Chu Sa Hồng)
@@ -203,7 +203,10 @@ void MapProp_UnloadSkyDome(MapSkyDome *sky);
      - 5: Orchid Cosmos (Tử Mẫu)
      - 6: Lavender (Huân Y Thảo)
      - 7: Primrose Cream (Ngọc Lan)
+     - 8: Silver-White Pampas Plume (Bạch Miên Cỏ Lau)
    - Procedural 3D Petals: Always passes `petalTexturePath = NULL` to `MapProp_CreateFlowerField`, generating 100% procedural 3D geometric petals and pollen domes with two-sided lighting transmission.
+   - **3D Cỏ Lau Plumes (`map_props_colau.inl`)**: GPU-instanced volumetric plumes based on the optimized WebGL2 Low preset (100 camera-facing ribbon strands + 4-facet cylindrical stem = 516 vertices, 324 triangles per plume). Configurable via `MapFloraStyle` (`enableCoLauPlumes`, `coLauOnReeds` to route to riparian stream reeds, `coLauPlumeDensity`, `coLauPlumeTint`). Shaded via `colau_plume.vs` and `colau_plume.fs` featuring quadratic stem wind bending, high-frequency fiber flutter, backscatter Mie subsurface scattering (SSS), Kajiya-Kay fiber specular, volumetric radial AO, and 100% early-Z alpha-test cutout. Height scaled to natural reed proportions (~1.48m - 1.84m) with slender 1.5cm stems and ~21cm feather-plume width.
+   - Functions: `MapProp_CreateCoLauField`, `MapProp_DrawCoLauField`, `MapProp_DrawCoLauFieldBatch`, `MapProp_DrawCoLauFieldShadowCaster`, `MapProp_DrawCoLauFieldShadowCasterBatch`, `MapProp_UnloadCoLauField`.
    - `MapFlora_EvaluateFlowerUnderstorey`: Smoothly scales grass height down around flower colonies so blooms stand out against an organic meadow underlayer.
    - `MapFlora_EvaluateFlowerSuppression`: Modulates grass density so blossoms have breathing room while connecting organically to the turf.
    - `MapProp_CreateFloraSystem`, `MapProp_UpdateFloraSystem`, `MapProp_DrawFloraSystem`, `MapProp_DrawFloraShadowCasters`, `MapProp_UnloadFloraSystem`.

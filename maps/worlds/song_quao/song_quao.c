@@ -820,6 +820,10 @@ void InitSongQuaoMap(void)
             .pampasCount = s_pampasCount,
             .pampasRootColor = {28, 38, 18, 255},
             .pampasTipColor = {168, 172, 112, 255},
+            .enableCoLauPlumes = true,
+            .coLauOnReeds = true,
+            .coLauPlumeDensity = 0.90f,
+            .coLauPlumeTint = {235, 236, 230, 255}, // Ethereal silver-white (Bạch Miên Cỏ Lau)
         });
 
     EnvShadow_SetMapCasterCallback(DrawSongQuaoShadowCasters, NULL);

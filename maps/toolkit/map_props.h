@@ -456,6 +456,7 @@ typedef enum
     MAP_FLOWER_SPECIES_LINH_DANG = 5,  // Tử Mẫu / Tử Linh Đang
     MAP_FLOWER_SPECIES_HUAN_Y = 6,     // Huân Y Thảo / Tử Vân Anh
     MAP_FLOWER_SPECIES_NGOC_LAN = 7,   // Ngọc Lan / Linh Thảo
+    MAP_FLOWER_SPECIES_CO_LAU = 8,     // Bạch Miên Cỏ Lau / Pampas Plume
 } MapFlowerSpeciesVariant;
 
 typedef struct
@@ -509,7 +510,42 @@ void MapProp_DrawFlowerFieldShadowCasterBatch(MapFlowerField *fields, int fieldC
                                               Vector2 windDirection, float windStrength);
 void MapProp_UnloadFlowerField(MapFlowerField *field);
 
-// Chế độ chọn loài hoa hiển thị trên toàn cánh đồng (-1 = Hỗn hợp tự nhiên, 0..7 = Đồng loạt 1 loài)
+// --- 3D Cỏ Lau (Pampas Plume / Silvergrass) Flora System -------------------
+typedef struct
+{
+    Vector3 position;
+    float height;
+    float scale;
+    float rotationDeg;
+    float phase;
+    Color tint;
+} MapCoLauPlacement;
+
+typedef struct
+{
+    Texture2D instanceTexture;
+    int instanceCount;
+    Vector3 boundsCenter;
+    float boundsRadius;
+    float drawDistance;
+    float lodDistance;
+    float shadowDistance;
+    bool ready;
+} MapCoLauField;
+
+MapCoLauField MapProp_CreateCoLauField(const MapCoLauPlacement *placements, int count);
+void MapProp_DrawCoLauField(MapCoLauField *field, Vector3 worldOffset, float time,
+                            Vector2 windDirection, float windStrength);
+void MapProp_DrawCoLauFieldBatch(MapCoLauField *fields, int fieldCount, Vector3 worldOffset,
+                                 float time, Vector2 windDirection, float windStrength);
+void MapProp_DrawCoLauFieldShadowCaster(MapCoLauField *field, Vector3 worldOffset,
+                                        float time, Vector2 windDirection, float windStrength);
+void MapProp_DrawCoLauFieldShadowCasterBatch(MapCoLauField *fields, int fieldCount,
+                                             Vector3 worldOffset, float time,
+                                             Vector2 windDirection, float windStrength);
+void MapProp_UnloadCoLauField(MapCoLauField *field);
+
+// Chế độ chọn loài hoa hiển thị trên toàn cánh đồng (-1 = Hỗn hợp tự nhiên, 0..8 = Loài hoa)
 void MapProp_SetFlowerSpeciesOverride(int speciesVariant);
 int MapProp_GetFlowerSpeciesOverride(void);
 
@@ -551,6 +587,10 @@ typedef struct
     int pampasCount;
     Color pampasRootColor;
     Color pampasTipColor;
+    bool enableCoLauPlumes;
+    bool coLauOnReeds; // When true (or by default when reeds present), spawns Cỏ Lau plumes along riparian stream/river margins (ven suối)
+    float coLauPlumeDensity;
+    Color coLauPlumeTint;
 } MapFloraStyle;
 
 typedef struct
@@ -561,6 +601,9 @@ typedef struct
     int valleyGrassCount;
     int reedCount;
     int pampasCount;
+
+    MapCoLauField coLauField;
+    int coLauCount;
 
     MapFlowerField *flowerFields;
     int flowerClusterCount;

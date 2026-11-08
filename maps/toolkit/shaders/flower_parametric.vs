@@ -151,6 +151,11 @@ void EvaluateFlowerGeometry(
         wid = petalR * (isInner ? 0.14 : 0.44) * sinShaped;
         cupY = t * len * 0.92;
         radialDist = sin(t * 1.65) * petalR * (isInner ? 0.18 : 0.54) + (t2 * t) * petalR * 0.22;
+    } else if (sp == 8) {
+        len = petalR * (isInner ? 1.25 : 1.65);
+        wid = petalR * (isInner ? 0.16 : 0.24) * sinPiT;
+        cupY = t * len * 0.85;
+        radialDist = sin(t * 1.45) * petalR * 0.35;
     } else {
         len = petalR * (isInner ? 0.56 : 1.05);
         wid = petalR * (isInner ? 0.26 : 0.48) * sinShaped;
@@ -183,7 +188,9 @@ void main()
     vec3 rootLocal = tex0.xyz;
     int rawSpecies = int(floor(tex0.w * 0.01 + 0.01));
     float seed = clamp(tex0.w - float(rawSpecies) * 100.0, 0.0, 0.9999);
-    int sp = (u_speciesOverride >= 0) ? (u_speciesOverride & 7) : (rawSpecies & 7);
+    int sp = (u_speciesOverride >= 0)
+        ? ((u_speciesOverride <= 8) ? u_speciesOverride : (u_speciesOverride & 7))
+        : ((rawSpecies <= 8) ? rawSpecies : (rawSpecies & 7));
 
     float stemH = max(tex1.x, 0.16);
     float petalR = max(tex1.y * 1.32, stemH * 0.32);

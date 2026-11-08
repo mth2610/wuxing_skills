@@ -65,6 +65,13 @@ void GetFlowerSpeciesColors(int sp, float t, float s, float isInner, float seed,
         albedo = mix(core, mix(mid, tip, sMid), sBase);
         if (isInner > 0.5) albedo = mix(vec3(0.98, 0.80, 0.20), vec3(1.00, 0.96, 0.72), t);
         sssColor = vec3(0.82, 0.38, 1.00);
+    } else if (sp == 8) {
+        vec3 core = vec3(0.52, 0.45, 0.30);
+        vec3 mid  = vec3(0.89, 0.90, 0.86) + vec3(hueShift * 0.3);
+        vec3 tip  = vec3(0.98, 0.98, 0.96);
+        albedo = mix(core, mix(mid, tip, sMid), sBase);
+        if (isInner > 0.5) albedo = mix(vec3(0.85, 0.82, 0.76), vec3(0.96, 0.94, 0.90), t);
+        sssColor = vec3(0.98, 0.94, 0.86);
     } else {
         vec3 core = vec3(0.95, 0.68, 0.16);
         vec3 mid  = vec3(0.99, 0.94, 0.82);

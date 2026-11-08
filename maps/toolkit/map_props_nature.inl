@@ -2500,4 +2500,5 @@ static void Nature_UpdateShadowShader(Shader shader, float time, Vector2 windDir
 
 #include "maps/toolkit/map_props_meadow.inl"
 #include "maps/toolkit/map_props_flowers.inl"
+#include "maps/toolkit/map_props_colau.inl"
 #include "maps/toolkit/map_props_water.inl"
