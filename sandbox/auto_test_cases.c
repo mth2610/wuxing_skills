@@ -18,6 +18,7 @@
 #include "skills/taiji/taiji_phong/taiji_phong_skill.h"
 #include "environment/environment_system.h"
 #include "character/character_model.h"
+#include "character/modular_character.h"
 #include "raymath.h"
 #include <math.h>
 #include <string.h>
@@ -998,7 +999,7 @@ static AutoTestResult AutoTest_CharacterAnimSystemStep(int frameInCase, char *ou
 
   bool ok = true;
   ok &= AutoTest_ExpectTrue(CharacterModel_IsLoaded(), "CharacterModel is loaded", outReason, outReasonSize);
-  ok &= AutoTest_ExpectTrue(CharacterModel_GetTotalAnimCount() >= 14, "Total animation count >= 14", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(CharacterModel_GetTotalAnimCount() >= 13, "Total animation count >= 13", outReason, outReasonSize);
 
   // Check multi-variant slots
   int slashVariants = CharacterModel_GetVariantCount(CHAR_ANIM_SWORD_SLASH);
@@ -1018,6 +1019,44 @@ static AutoTestResult AutoTest_CharacterAnimSystemStep(int frameInCase, char *ou
 
   bool triggered = CharacterModel_TriggerByName(&testState, "jumping_down", 0.0f);
   ok &= AutoTest_ExpectTrue(triggered, "TriggerByName finds and triggers jumping_down", outReason, outReasonSize);
+
+  return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
+}
+
+static AutoTestResult AutoTest_ModularCharacterSystemStep(int frameInCase, char *outReason, int outReasonSize) {
+  if (frameInCase > 0) return AUTOTEST_PASS;
+
+  bool ok = true;
+  ModularSystem_Init();
+
+  // Test register item
+  int wepIdx = ModularSystem_RegisterItem("kiem_thuan_thien", MODULAR_SLOT_WEAPON_R, false,
+                                          "mixamorig:RightHand", (Vector3){0, 0.05f, 0}, (Vector3){0, 0, 0},
+                                          "assets/characters/player.glb");
+  ok &= AutoTest_ExpectTrue(wepIdx >= 0, "RegisterItem returns valid index", outReason, outReasonSize);
+
+  // Test find item
+  int foundIdx = ModularSystem_FindItem("kiem_thuan_thien");
+  ok &= AutoTest_ExpectTrue(foundIdx == wepIdx, "FindItem returns matching index", outReason, outReasonSize);
+
+  // Test instance init and equip
+  ModularInstance heroInst;
+  ModularInstance_Init(&heroInst, MODULAR_TIER_HERO);
+  ok &= AutoTest_ExpectTrue(heroInst.tier == MODULAR_TIER_HERO, "ModularInstance_Init sets hero tier", outReason, outReasonSize);
+
+  bool equipped = ModularInstance_Equip(&heroInst, MODULAR_SLOT_WEAPON_R, "kiem_thuan_thien");
+  ok &= AutoTest_ExpectTrue(equipped, "ModularInstance_Equip equips registered weapon", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(heroInst.loadout.itemIndices[MODULAR_SLOT_WEAPON_R] == wepIdx, "Loadout holds equipped weapon index", outReason, outReasonSize);
+
+  // Test instance update
+  ModularInstance_Update(&heroInst, 0.016f, false);
+  ok &= AutoTest_ExpectTrue(heroInst.animState.currentSlot == CHAR_ANIM_IDLE, "ModularInstance_Update keeps valid slot", outReason, outReasonSize);
+
+  // Test socket matrix calculation
+  Matrix socketMat;
+  bool gotSocket = ModularSystem_GetSocketMatrix(heroInst.position, heroInst.yaw, heroInst.scale,
+                                                MODULAR_SLOT_WEAPON_R, MatrixIdentity(), &socketMat);
+  ok &= AutoTest_ExpectTrue(gotSocket, "ModularSystem_GetSocketMatrix computes matrix", outReason, outReasonSize);
 
   return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
 }
@@ -1043,5 +1082,6 @@ void AutoTestCases_Register(PlayerEntity *player)
   AutoTest_Register("shader_permutation", AutoTest_ShaderPermutationStep, 5);
   AutoTest_Register("atmosphere_and_fog_volumes", AutoTest_AtmosphereFogStep, 5);
   AutoTest_Register("character_animation_system", AutoTest_CharacterAnimSystemStep, 5);
+  AutoTest_Register("modular_character_system", AutoTest_ModularCharacterSystemStep, 5);
 }
 

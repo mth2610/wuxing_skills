@@ -1,0 +1,32 @@
+{
+  "id": "hero_kiem_tien",
+  "name": "Lạc Hồng Kiếm Tiên",
+  "tier": "HERO",
+  "scale": 1.0,
+  "loadout": {
+    "base_body": "assets/characters/bodies/human_male_base.glb",
+    "torso": "assets/characters/equipment/torso/ao_giao_linh.glb",
+    "legs": "assets/characters/equipment/legs/quan_wuxia.glb",
+    "weapon_r": "assets/characters/equipment/weapons/kiem_thuan_thien.glb",
+    "headgear": "assets/characters/equipment/headgear/non_la_hiep_khach.glb",
+    "back": "assets/characters/equipment/back/vo_kiem_son_mai.glb"
+  },
+  "socket_offsets": {
+    "weapon_r": {
+      "bone": "mixamorig:RightHand",
+      "pos": [0.35, 0.95, 0.15],
+      "rot": [0.0, 0.0, 0.0]
+    },
+    "headgear": {
+      "bone": "mixamorig:Head",
+      "pos": [0.0, 1.72, -0.02],
+      "rot": [0.0, 0.0, 0.0]
+    },
+    "back": {
+      "bone": "mixamorig:Spine2",
+      "pos": [0.0, 1.35, -0.15],
+      "rot": [0.0, 0.0, 0.0]
+    }
+  },
+  "animations": "assets/characters/player_anims.json"
+}

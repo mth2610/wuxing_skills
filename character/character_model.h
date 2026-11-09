@@ -67,9 +67,13 @@ typedef struct CharacterAnimState {
 
 // Loads (once, cached via core/resource_manager.h) the shared character Model + its
 // animation clips from filePath (e.g. "assets/characters/player.glb").
+// If filePath has no embedded animations, automatically loads from "assets/characters/animations/humanoid_anims.glb".
 // Scans clips and matches them to CharacterAnimSlot slots and variants.
 // Also reads "assets/characters/player_anims.json" if present to override mappings.
 bool CharacterModel_Load(const char *filePath);
+
+// Decoupled loader: loads mesh from meshPath and animation clips from animBankPath.
+bool CharacterModel_LoadEx(const char *meshPath, const char *animBankPath);
 bool CharacterModel_IsLoaded(void);
 
 void CharacterModel_ResetState(CharacterAnimState *state);

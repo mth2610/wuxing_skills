@@ -277,6 +277,7 @@ add_executable(wuxing
     # --- Character (model + animation rendering, counterpart to entities/'s
     # pure gameplay logic) ---
     character/character_model.c
+    character/modular_character.c
 
     # --- Game Screen (production-bound; sandbox/ stays the dev harness) ---
     game/game_screen.c

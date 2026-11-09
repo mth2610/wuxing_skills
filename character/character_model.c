@@ -10,9 +10,11 @@
 #include <math.h>
 
 #define ANIM_FPS 60.0f
+#define CHAR_MAX_TOTAL_ANIMATIONS 64
 
 static Model s_model;
-static ModelAnimation *s_animations = NULL;
+static ModelAnimation s_animPool[CHAR_MAX_TOTAL_ANIMATIONS];
+static ModelAnimation *s_animations = s_animPool;
 static int s_animCount = 0;
 static bool s_loaded = false;
 
@@ -139,7 +141,7 @@ static void LoadAnimManifest(const char *manifestPath) {
     UnloadFileText(text);
 }
 
-bool CharacterModel_Load(const char *filePath) {
+bool CharacterModel_LoadEx(const char *meshPath, const char *animBankPath) {
     s_loaded = false;
     for (int i = 0; i < CHAR_ANIM_COUNT; i++) {
         s_slots[i].count = 0;
@@ -148,20 +150,54 @@ bool CharacterModel_Load(const char *filePath) {
         }
     }
 
-    s_model = ResourceManager_LoadModel(filePath);
+    s_model = ResourceManager_LoadModel(meshPath);
     if (s_model.meshCount == 0) {
         return false;
     }
 
     SurfaceMaterial_Apply(&s_model);
 
-    s_animations = ResourceManager_LoadModelAnimations(filePath, &s_animCount);
-    if (s_animations == NULL || s_animCount == 0) {
-        TraceLog(LOG_WARNING, "CHARACTER_MODEL: %s loaded but has no animations", filePath);
+    s_animCount = 0;
+
+    // 1. Check embedded animations in meshPath
+    int embCount = 0;
+    ModelAnimation *embAnims = ResourceManager_LoadModelAnimations(meshPath, &embCount);
+    if (embAnims && embCount > 0) {
+        for (int i = 0; i < embCount && s_animCount < CHAR_MAX_TOTAL_ANIMATIONS; i++) {
+            s_animPool[s_animCount++] = embAnims[i];
+        }
+    }
+
+    // 2. Check external animation bank path
+    if (animBankPath && animBankPath[0] != '\0' && strcmp(meshPath, animBankPath) != 0) {
+        int bankCount = 0;
+        ModelAnimation *bankAnims = ResourceManager_LoadModelAnimations(animBankPath, &bankCount);
+        if (bankAnims && bankCount > 0) {
+            for (int i = 0; i < bankCount && s_animCount < CHAR_MAX_TOTAL_ANIMATIONS; i++) {
+                bool exists = false;
+                for (int j = 0; j < s_animCount; j++) {
+                    if (strcmp(s_animPool[j].name, bankAnims[i].name) == 0) {
+                        exists = true;
+                        break;
+                    }
+                }
+                if (!exists) {
+                    s_animPool[s_animCount++] = bankAnims[i];
+                }
+            }
+        }
+    }
+
+    if (s_animCount == 0) {
+        TraceLog(LOG_WARNING, "CHARACTER_MODEL: %s has no animations and bank (%s) returned none",
+                 meshPath, animBankPath ? animBankPath : "NULL");
         return false;
     }
 
-    TraceLog(LOG_INFO, "CHARACTER_MODEL: Loaded %s with %d skeletal animation clips:", filePath, s_animCount);
+    s_animations = s_animPool;
+
+    TraceLog(LOG_INFO, "CHARACTER_MODEL: Loaded %s with %d skeletal animation clips (bank: %s):",
+             meshPath, s_animCount, animBankPath ? animBankPath : "none");
     for (int a = 0; a < s_animCount; a++) {
         TraceLog(LOG_INFO, "  [%2d] \"%s\" (%d frames, %.2fs)",
                  a, s_animations[a].name, s_animations[a].keyframeCount,
@@ -228,6 +264,11 @@ bool CharacterModel_Load(const char *filePath) {
 
     s_loaded = true;
     return true;
+}
+
+bool CharacterModel_Load(const char *filePath) {
+    const char *defaultAnimBank = "assets/characters/animations/humanoid_anims.glb";
+    return CharacterModel_LoadEx(filePath, defaultAnimBank);
 }
 
 bool CharacterModel_IsLoaded(void) {

@@ -1,0 +1,22 @@
+{
+  "id": "boss_moclinh",
+  "name": "Mộc Linh Cổ Thần",
+  "tier": "BOSS",
+  "scale": 1.8,
+  "loadout": {
+    "base_body": "assets/characters/bodies/boss_moclinh_base.glb",
+    "torso": "",
+    "legs": "",
+    "weapon_r": "assets/characters/equipment/weapons/kiem_thuan_thien.glb",
+    "headgear": "",
+    "back": ""
+  },
+  "socket_offsets": {
+    "weapon_r": {
+      "bone": "mixamorig:RightHand",
+      "pos": [0.6, 1.8, 0.3],
+      "rot": [0.0, 0.0, 0.0]
+    }
+  },
+  "animations": "assets/models/boss_moclinh_anims.glb"
+}

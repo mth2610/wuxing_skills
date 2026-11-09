@@ -1,21 +1,21 @@
 {
-  "description": "Wuxing Skills - Automated Humanoid Animation Manifest",
+  "description": "Wuxing Skills - Decoupled Humanoid Animation Manifest",
   "slots": {
-    "idle": ["loco_idle_sword", "std_idle"],
-    "walk": ["walking"],
-    "run": ["running"],
+    "idle": ["idle", "loco_idle_sword"],
+    "walk": ["walk"],
+    "run": ["running", "walk"],
     "jump": ["jumping_down"],
     "jump_down": ["jumping_down"],
     "dodge": ["running"],
     "punch": ["punching"],
     "kick": ["kicking"],
     "palm": ["palming"],
-    "sword_idle": ["loco_idle_sword"],
+    "sword_idle": ["idle", "loco_idle_sword"],
     "sword_slash": ["sword_slash_horizontal", "sword_slash_backhand"],
     "sword_parry": ["sword_parry"],
     "sword_block": ["sword_block"],
     "cast": ["casting"],
-    "hit": ["loco_idle_sword"],
-    "knockdown": ["loco_idle_sword"]
+    "hit": ["idle"],
+    "knockdown": ["jumping_down", "idle"]
   }
 }
