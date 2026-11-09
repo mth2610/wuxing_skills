@@ -442,17 +442,21 @@ void CharacterModel_PrintInfo(void) {
     TraceLog(LOG_INFO, "====================================================================");
 }
 
-void CharacterModel_Draw(const CharacterAnimState *state, Vector3 position, float yawRadians, float scale, Color tint) {
-    if (!state || !s_loaded) return;
+void CharacterModel_DrawCustom(Model customModel, const CharacterAnimState *state, Vector3 position, float yawRadians, float scale, Color tint) {
+    if (!state || !s_loaded || customModel.meshCount == 0) return;
 
     int animIndex = state->activeAnimIndex;
-    if (animIndex >= 0 && animIndex < s_animCount && IsModelAnimationValid(s_model, s_animations[animIndex])) {
-        UpdateModelAnimation(s_model, s_animations[animIndex], state->frame);
+    if (animIndex >= 0 && animIndex < s_animCount && IsModelAnimationValid(customModel, s_animations[animIndex])) {
+        UpdateModelAnimation(customModel, s_animations[animIndex], state->frame);
     }
 
     float yawDegrees = yawRadians * RAD2DEG;
-    DrawModelEx(s_model, position, (Vector3){ 0.0f, 1.0f, 0.0f }, yawDegrees,
+    DrawModelEx(customModel, position, (Vector3){ 0.0f, 1.0f, 0.0f }, yawDegrees,
                 (Vector3){ scale, scale, scale }, tint);
+}
+
+void CharacterModel_Draw(const CharacterAnimState *state, Vector3 position, float yawRadians, float scale, Color tint) {
+    CharacterModel_DrawCustom(s_model, state, position, yawRadians, scale, tint);
 }
 
 static MeshAdjacency s_charAdjacency;

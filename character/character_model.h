@@ -120,6 +120,10 @@ void CharacterModel_PrintInfo(void);
 // scaled by `scale`. No-op if CharacterModel_IsLoaded() is false.
 void CharacterModel_Draw(const CharacterAnimState *state, Vector3 position, float yawRadians, float scale, Color tint);
 
+// Draws an arbitrary humanoid Model (boss, minion, hero) posed per state using
+// the shared animation clips loaded by CharacterModel.
+void CharacterModel_DrawCustom(Model customModel, const CharacterAnimState *state, Vector3 position, float yawRadians, float scale, Color tint);
+
 // Getters for integration with visual composer / skill effects
 struct MeshAdjacency;
 Model CharacterModel_GetModel(void);

@@ -842,6 +842,16 @@ static AutoTestResult AutoTest_BossStep(int frameInCase, char *outReason, int ou
   ok = ok && AutoTest_ExpectTrue(!Boss_IsAlive() && Boss_GetPhase() == -1, "boss death ends fight", outReason, outReasonSize);
 
   Entity_ApplyDamage(hero, 1e9f, (Vector3){ 0 });
+
+  // Test Boss Mộc Linh (3D skeletal animated boss)
+  int mocId = Boss_Spawn(&BOSS_MOC_LINH, pos, TEAM_ENEMY);
+  ok = ok && AutoTest_ExpectTrue(mocId >= 0, "moc linh spawned", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectTrue(Boss_GetPhase() == 0, "moc linh starts in phase 0", outReason, outReasonSize);
+  Boss_Draw(); // Tests drawVisual, 3D model loading and animation evaluation
+  Entity_ApplyDamage(mocId, 1e9f, (Vector3){ 0 });
+  Boss_Update(1.0f / 60.0f);
+  ok = ok && AutoTest_ExpectTrue(!Boss_IsAlive() && Boss_GetPhase() == -1, "moc linh death ends fight", outReason, outReasonSize);
+
   return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
 }
 // M3 guard — the INSTANCED shader permutation, on a real graphics context.

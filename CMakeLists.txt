@@ -256,6 +256,7 @@ add_executable(wuxing
     # --- Boss (engine + one _def.c per boss) ---
     boss/boss_system.c
     boss/hac_dien_ton_gia_def.c
+    boss/boss_moclinh_def.c
 
     # --- AI (minion brain — Module 8) ---
     ai/ai.c

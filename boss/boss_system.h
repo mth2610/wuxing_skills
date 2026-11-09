@@ -54,5 +54,6 @@ bool Boss_IsAlive(void);
 
 // --- Boss defs (one extern per boss/<name>_def.c data file) ---
 extern const BossDef BOSS_HAC_DIEN_TON_GIA;
+extern const BossDef BOSS_MOC_LINH;
 
 #endif // BOSS_SYSTEM_H

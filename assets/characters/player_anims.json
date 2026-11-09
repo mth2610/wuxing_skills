@@ -1,18 +1,21 @@
 {
-  "description": "Wuxing Skills - Character Animation Slot & Variant Manifest",
+  "description": "Wuxing Skills - Automated Humanoid Animation Manifest",
   "slots": {
-    "idle": ["idle"],
+    "idle": ["loco_idle_sword", "std_idle"],
     "walk": ["walking"],
     "run": ["running"],
     "jump": ["jumping_down"],
     "jump_down": ["jumping_down"],
+    "dodge": ["running"],
     "punch": ["punching"],
     "kick": ["kicking"],
     "palm": ["palming"],
-    "cast": ["casting"],
     "sword_idle": ["loco_idle_sword"],
     "sword_slash": ["sword_slash_horizontal", "sword_slash_backhand"],
     "sword_parry": ["sword_parry"],
-    "sword_block": ["sword_block"]
+    "sword_block": ["sword_block"],
+    "cast": ["casting"],
+    "hit": ["loco_idle_sword"],
+    "knockdown": ["loco_idle_sword"]
   }
 }

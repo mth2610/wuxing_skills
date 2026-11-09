@@ -284,7 +284,7 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
             {
                 Vector3 bossSpawn = BOSS_SPAWN;
                 bossSpawn.y = MapManager_GetGroundHeightAt(bossSpawn.x, bossSpawn.z);
-                Boss_Spawn(&BOSS_HAC_DIEN_TON_GIA, bossSpawn, TEAM_ENEMY);
+                Boss_Spawn(&BOSS_MOC_LINH, bossSpawn, TEAM_ENEMY);
             }
             else if (!Net_ClientDrivesWorld())
             {
