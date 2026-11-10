@@ -620,3 +620,39 @@ bool CharacterModel_SampleSurfacePoint(Vector3 position, float yawRadians, float
 
     return true;
 }
+
+bool CharacterModel_GetBoneTransform(const char *boneName, const CharacterAnimState *state, Matrix *outBoneMatrix) {
+    if (!s_loaded || !boneName || !outBoneMatrix || s_model.skeleton.boneCount <= 0) return false;
+
+    int boneIdx = -1;
+    for (int i = 0; i < s_model.skeleton.boneCount; i++) {
+        if (strcmp(s_model.skeleton.bones[i].name, boneName) == 0) {
+            boneIdx = i;
+            break;
+        }
+    }
+    if (boneIdx < 0) return false;
+
+    int animIdx = (state) ? state->activeAnimIndex : -1;
+    int frame = (state) ? state->frame : 0;
+    bool hasAnim = (animIdx >= 0 && animIdx < s_animCount && s_animations[animIdx].keyframePoses != NULL);
+
+    Transform t;
+    if (hasAnim && frame >= 0 && frame < s_animations[animIdx].keyframeCount) {
+        t = s_animations[animIdx].keyframePoses[frame][boneIdx];
+    } else if (s_model.currentPose != NULL) {
+        t = s_model.currentPose[boneIdx];
+    } else if (s_model.skeleton.bindPose != NULL) {
+        t = s_model.skeleton.bindPose[boneIdx];
+    } else {
+        return false;
+    }
+
+    Matrix localTrans = MatrixTranslate(t.translation.x, t.translation.y, t.translation.z);
+    Matrix localRot = QuaternionToMatrix(t.rotation);
+    Matrix localScale = MatrixScale(t.scale.x, t.scale.y, t.scale.z);
+    Matrix mat = MatrixMultiply(MatrixMultiply(localScale, localRot), localTrans);
+
+    *outBoneMatrix = mat;
+    return true;
+}

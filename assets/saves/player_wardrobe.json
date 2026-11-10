@@ -3,9 +3,9 @@
   "equipped": {
     "base_body": "human_body",
     "torso": "ao_giao_linh",
-    "legs": "quan_wuxia",
-    "boots": "chien_hai_van_du",
-    "bracers": "",
+    "legs": "",
+    "boots": "",
+    "bracers": "ho_uyen_hac_thiet",
     "headgear": "non_la_hiep_khach",
     "mask": "",
     "hair": "",
@@ -22,6 +22,10 @@
     "chien_hai_van_du",
     "non_la_hiep_khach",
     "vo_kiem_son_mai",
-    "kiem_thuan_thien"
+    "kiem_thuan_thien",
+    "ho_uyen_hac_thiet",
+    "khan_che_mat_da_hanh",
+    "ngoc_boi_thanh_long",
+    "truong_bao_ngan_long"
   ]
 }

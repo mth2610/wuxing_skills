@@ -112,49 +112,65 @@ void ModularInstance_Update(ModularInstance *inst, float dt, bool isMoving) {
     CharacterModel_Update(&inst->animState, dt, isMoving);
 }
 
-bool ModularSystem_GetSocketMatrix(Vector3 charPos, float charYaw, float charScale,
-                                   ModularSlot slot, Matrix localOffset, Matrix *outMatrix) {
+bool ModularSystem_GetSocketMatrixEx(Vector3 charPos, float charYaw, float charScale,
+                                     ModularSlot slot, const char *boneSocket,
+                                     const CharacterAnimState *animState,
+                                     Matrix localOffset, Matrix *outMatrix) {
     if (!outMatrix) return false;
 
-    // Standard default socket anchor offsets relative to humanoid rest center
-    Vector3 anchorPos = {0.0f, 0.0f, 0.0f};
-    switch (slot) {
-        case MODULAR_SLOT_HEADGEAR:
-            anchorPos = (Vector3){ 0.0f, 1.72f * charScale, -0.02f * charScale };
-            break;
-        case MODULAR_SLOT_MASK:
-            anchorPos = (Vector3){ 0.0f, 1.68f * charScale, 0.08f * charScale };
-            break;
-        case MODULAR_SLOT_HAIR:
-            anchorPos = (Vector3){ 0.0f, 1.72f * charScale, 0.0f };
-            break;
-        case MODULAR_SLOT_WAIST:
-            anchorPos = (Vector3){ 0.14f * charScale, 0.98f * charScale, 0.08f * charScale };
-            break;
-        case MODULAR_SLOT_WEAPON_R:
-            anchorPos = (Vector3){ 0.35f * charScale, 0.95f * charScale, 0.15f * charScale };
-            break;
-        case MODULAR_SLOT_WEAPON_L:
-            anchorPos = (Vector3){ -0.35f * charScale, 0.95f * charScale, 0.15f * charScale };
-            break;
-        case MODULAR_SLOT_BACK:
-            anchorPos = (Vector3){ 0.0f, 1.35f * charScale, -0.15f * charScale };
-            break;
-        default:
-            anchorPos = (Vector3){ 0.0f, 0.0f, 0.0f };
-            break;
+    Matrix socketModelMat = MatrixIdentity();
+    bool trackedBone = false;
+
+    if (boneSocket && boneSocket[0] != '\0') {
+        trackedBone = CharacterModel_GetBoneTransform(boneSocket, animState, &socketModelMat);
     }
 
-    Matrix rotY = MatrixRotateY(charYaw);
-    Vector3 rotatedAnchor = Vector3Transform(anchorPos, rotY);
-    Vector3 finalPos = Vector3Add(charPos, rotatedAnchor);
+    if (!trackedBone) {
+        // Fallback to calibrated socket anchor relative to character root (1 unit = 1 meter)
+        Vector3 anchorPos = {0.0f, 0.0f, 0.0f};
+        switch (slot) {
+            case MODULAR_SLOT_HEADGEAR:
+                anchorPos = (Vector3){ 0.0f, 1.74f, 0.0f };
+                break;
+            case MODULAR_SLOT_MASK:
+                anchorPos = (Vector3){ 0.0f, 1.68f, 0.08f };
+                break;
+            case MODULAR_SLOT_HAIR:
+                anchorPos = (Vector3){ 0.0f, 1.72f, 0.0f };
+                break;
+            case MODULAR_SLOT_WAIST:
+                anchorPos = (Vector3){ 0.12f, 0.95f, 0.08f };
+                break;
+            case MODULAR_SLOT_WEAPON_R:
+                anchorPos = (Vector3){ 0.24f, 0.85f, 0.10f };
+                break;
+            case MODULAR_SLOT_WEAPON_L:
+                anchorPos = (Vector3){ -0.24f, 0.85f, 0.10f };
+                break;
+            case MODULAR_SLOT_BACK:
+                anchorPos = (Vector3){ 0.0f, 1.25f, -0.16f };
+                break;
+            default:
+                anchorPos = (Vector3){ 0.0f, 0.0f, 0.0f };
+                break;
+        }
+        socketModelMat = MatrixTranslate(anchorPos.x, anchorPos.y, anchorPos.z);
+    }
 
-    Matrix mat = MatrixMultiply(MatrixScale(charScale, charScale, charScale), localOffset);
-    mat = MatrixMultiply(mat, rotY);
-    mat = MatrixMultiply(mat, MatrixTranslate(finalPos.x, finalPos.y, finalPos.z));
+    // Proper transform hierarchy:
+    // v_world = localOffset * socketModelMat * scale * rotY + charPos
+    Matrix mat = MatrixMultiply(localOffset, socketModelMat);
+    mat = MatrixMultiply(mat, MatrixScale(charScale, charScale, charScale));
+    mat = MatrixMultiply(mat, MatrixRotateY(charYaw));
+    mat = MatrixMultiply(mat, MatrixTranslate(charPos.x, charPos.y, charPos.z));
 
     *outMatrix = mat;
     return true;
+}
+
+bool ModularSystem_GetSocketMatrix(Vector3 charPos, float charYaw, float charScale,
+                                   ModularSlot slot, Matrix localOffset, Matrix *outMatrix) {
+    return ModularSystem_GetSocketMatrixEx(charPos, charYaw, charScale, slot, NULL, NULL, localOffset, outMatrix);
 }
 
 void ModularInstance_Draw(ModularInstance *inst) {
@@ -199,8 +215,9 @@ void ModularInstance_Draw(ModularInstance *inst) {
                                           inst->position, inst->yaw, inst->scale, inst->tint);
             } else {
                 Matrix finalMat;
-                ModularSystem_GetSocketMatrix(inst->position, inst->yaw, inst->scale,
-                                              (ModularSlot)s, item->localOffset, &finalMat);
+                ModularSystem_GetSocketMatrixEx(inst->position, inst->yaw, inst->scale,
+                                                (ModularSlot)s, item->boneSocket, &inst->animState,
+                                                item->localOffset, &finalMat);
 
                 for (int m = 0; m < item->model.meshCount; m++) {
                     DrawMesh(item->model.meshes[m], item->model.materials[m], finalMat);

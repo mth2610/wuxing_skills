@@ -123,7 +123,8 @@ static void RegisterDefaultItems(void) {
             .stats = { 20.0f, 20.0f, 1.02f, 0.05f, 0.05f, 0.08f, "Phong Trần Ẩn Dật: Giảm 20% tầm phát hiện của kẻ địch" },
             .isSkinned = false,
             .boneSocket = "mixamorig:Head",
-            .socketOffsetPos = (Vector3){0.0f, 1.72f, -0.02f},
+            .socketOffsetPos = (Vector3){0.0f, 0.04f, 0.0f},
+            .socketOffsetRot = (Vector3){-4.0f, 0.0f, 0.0f},
             .modelPath = "assets/characters/equipment/headgear/non_la_hiep_khach.glb",
             .uiColor = (Color){210, 180, 120, 255}
         },
@@ -141,7 +142,8 @@ static void RegisterDefaultItems(void) {
             .stats = { 25.0f, 35.0f, 1.04f, 0.06f, 0.06f, 0.12f, "Bóng Đêm Ẩn Tích: Tăng 15% sát thương chí mạng khi đánh lén" },
             .isSkinned = false,
             .boneSocket = "mixamorig:Head",
-            .socketOffsetPos = (Vector3){0.0f, 1.68f, 0.08f},
+            .socketOffsetPos = (Vector3){0.0f, -0.02f, 0.08f},
+            .socketOffsetRot = (Vector3){0.0f, 0.0f, 0.0f},
             .modelPath = "",
             .uiColor = (Color){35, 40, 52, 255}
         },
@@ -159,7 +161,8 @@ static void RegisterDefaultItems(void) {
             .stats = { 40.0f, 60.0f, 1.0f, 0.10f, 0.08f, 0.25f, "Linh Mộc Dưỡng Tâm: Hồi phục 2.5 chân khí mỗi giây trong Thiền Định" },
             .isSkinned = false,
             .boneSocket = "mixamorig:Spine",
-            .socketOffsetPos = (Vector3){0.14f, 0.98f, 0.08f},
+            .socketOffsetPos = (Vector3){0.14f, 0.02f, 0.08f},
+            .socketOffsetRot = (Vector3){0.0f, 0.0f, 0.0f},
             .modelPath = "",
             .uiColor = (Color){60, 180, 110, 255}
         },
@@ -177,7 +180,8 @@ static void RegisterDefaultItems(void) {
             .stats = { 80.0f, 50.0f, 1.05f, 0.25f, 0.15f, 0.05f, "Thuận Thiên Trảm: Khai mở bộ Kiếm Pháp, tăng 25% sát thương kiếm khí Kim" },
             .isSkinned = false,
             .boneSocket = "mixamorig:RightHand",
-            .socketOffsetPos = (Vector3){0.35f, 0.95f, 0.15f},
+            .socketOffsetPos = (Vector3){0.0f, 0.05f, 0.0f},
+            .socketOffsetRot = (Vector3){-10.0f, 0.0f, 5.0f},
             .modelPath = "assets/characters/equipment/weapons/kiem_thuan_thien.glb",
             .uiColor = (Color){255, 215, 0, 255}
         },
@@ -195,7 +199,8 @@ static void RegisterDefaultItems(void) {
             .stats = { 45.0f, 35.0f, 1.02f, 0.08f, 0.10f, 0.10f, "Bạt Kiếm Thuật: Tăng 20% tốc độ rút kiếm xuất chiêu đầu tiên" },
             .isSkinned = false,
             .boneSocket = "mixamorig:Spine2",
-            .socketOffsetPos = (Vector3){0.0f, 1.35f, -0.15f},
+            .socketOffsetPos = (Vector3){0.0f, 0.0f, -0.05f},
+            .socketOffsetRot = (Vector3){15.0f, 0.0f, -38.0f},
             .modelPath = "assets/characters/equipment/back/vo_kiem_son_mai.glb",
             .uiColor = (Color){180, 40, 30, 255}
         },

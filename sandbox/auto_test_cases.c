@@ -1160,6 +1160,20 @@ static AutoTestResult AutoTest_UIWardrobeStep(int frameInCase, char *outReason, 
   if (frameInCase == 2) {
     AutoTest_SaveScreenshot("preview_wardrobe_ui");
     UI_Wardrobe_Close();
+    return AUTOTEST_RUNNING;
+  }
+
+  if (frameInCase == 3) {
+    Vector3 pPos = (s_player) ? s_player->position : (Vector3){ 6.0f, 0.0f, 4.4f };
+    Camera3D cam = {
+        .position = (Vector3){ pPos.x, pPos.y + 1.2f, pPos.z + 2.8f },
+        .target = (Vector3){ pPos.x, pPos.y + 1.0f, pPos.z },
+        .up = (Vector3){ 0.0f, 1.0f, 0.0f },
+        .fovy = 38.0f,
+        .projection = CAMERA_PERSPECTIVE
+    };
+    AutoTest_SaveScreenshotWorld("preview_player_close_up", cam, (Vector3){ pPos.x, pPos.y + 1.0f, pPos.z }, 1.3f);
+    AutoTest_SaveScreenshot("preview_player_equipped_world");
     return AUTOTEST_PASS;
   }
 

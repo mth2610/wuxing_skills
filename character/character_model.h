@@ -138,4 +138,9 @@ struct MeshAdjacency* CharacterModel_GetAdjacency(void);
 bool CharacterModel_SampleSurfacePoint(Vector3 position, float yawRadians, float scale,
                                       Vector3 *outWorldPos, Vector3 *outWorldNormal);
 
+// Queries bone transform in model space for socket attachments (e.g. right hand weapon, headgear, back scabbard).
+// Evaluates active skeletal animation pose if state is provided, otherwise evaluates the bind pose.
+// Returns true if bone was found and outBoneMatrix was populated.
+bool CharacterModel_GetBoneTransform(const char *boneName, const CharacterAnimState *state, Matrix *outBoneMatrix);
+
 #endif // CHARACTER_MODEL_H

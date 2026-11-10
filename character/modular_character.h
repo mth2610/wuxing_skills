@@ -126,9 +126,15 @@ void ModularInstance_Update(ModularInstance *inst, float dt, bool isMoving);
 // Draws a Hero or Boss instance with all equipped clothing and socketed attachments
 void ModularInstance_Draw(ModularInstance *inst);
 
-// Calculates world transform for rigid socket attachment
+// Calculates world transform for rigid socket attachment (fallback to calibrated socket anchors)
 bool ModularSystem_GetSocketMatrix(Vector3 charPos, float charYaw, float charScale,
                                    ModularSlot slot, Matrix localOffset, Matrix *outMatrix);
+
+// Calculates world transform for socket attachment with skeletal bone tracking
+bool ModularSystem_GetSocketMatrixEx(Vector3 charPos, float charYaw, float charScale,
+                                     ModularSlot slot, const char *boneSocket,
+                                     const CharacterAnimState *animState,
+                                     Matrix localOffset, Matrix *outMatrix);
 
 // -----------------------------------------------------------------------------
 // High-Scale Swarm Minion Batch Rendering (50+ Minions at 60+ FPS)
