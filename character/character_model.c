@@ -811,7 +811,16 @@ bool CharacterModel_GetBoneTransform(const char *boneName, const CharacterAnimSt
 
     Transform t;
     if (hasAnim && frame >= 0 && frame < s_animations[animIdx].keyframeCount) {
-        t = s_animations[animIdx].keyframePoses[frame][boneIdx];
+        int nextFrame = (frame + 1) % s_animations[animIdx].keyframeCount;
+        float blend = (state) ? state->frameTimer : 0.0f;
+        if (blend < 0.0f) blend = 0.0f;
+        if (blend > 1.0f) blend = 1.0f;
+
+        Transform t0 = s_animations[animIdx].keyframePoses[frame][boneIdx];
+        Transform t1 = s_animations[animIdx].keyframePoses[nextFrame][boneIdx];
+        t.translation = Vector3Lerp(t0.translation, t1.translation, blend);
+        t.rotation = QuaternionSlerp(t0.rotation, t1.rotation, blend);
+        t.scale = Vector3Lerp(t0.scale, t1.scale, blend);
     } else if (s_model.currentPose != NULL) {
         t = s_model.currentPose[boneIdx];
     } else if (s_model.skeleton.bindPose != NULL) {

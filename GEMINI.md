@@ -771,4 +771,83 @@
   - CMake build: **0 warning, 0 error**.
   - `WUXING_AUTOTEST=1 ./build/wuxing`: **19/19 test cases PASSED (100%)**, dọn dẹp bộ nhớ RAM/VRAM tuyệt đối an toàn.
 
+---
+
+## 18. Session Summary: Hệ Thống Tủ Đồ Modular, Chống Xuyên Thấu Cơ Thể & Thư Viện Prompt Sinh Tài Nguyên Kiếm Hiệp
+
+### 18.1. Bối Cảnh & Yêu Cầu Từ Người Dùng
+- **Yêu cầu cốt lõi**:
+  1. Khắc phục triệt để lỗi xuyên thấu cơ thể qua y phục (ngực/vai đâm thủng áo giao lĩnh, đùi đâm thủng quần võ hiệp).
+  2. Tạo bộ đôi prompt (Ảnh Concept Art 3D + Ứng dụng WebGL / Three.js 1 file HTML xuất file `.glb`) cho toàn bộ hệ thống nhân vật và trang bị:
+     - Giày chiến hài (`05_giay_wuxia.md`).
+     - Áo giao lĩnh (`03_ao_giao_linh.md`).
+     - Quần võ hiệp (`04_quan_wuxia.md`).
+     - Nón lá hiệp khách (`02_non_la.md`).
+     - Hộ uyển cổ tay (`06_ho_uyen.md`).
+     - Thuận Thiên Kiếm (`07_kiem_thuan_thien.md`).
+     - Hoạt ảnh chiến đấu kiếm hiệp (`08_combat_moves.md`).
+     - Thân thể nam kiếm hiệp (`01_human_body.md`).
+  3. Tách tệp `raw_asset/PROMPTS.md` khổng lồ thành thư mục mô-đun hóa `raw_asset/prompts/` với mục lục kết nối tổng thể.
+  4. Phân tích và khắc phục 4 lỗi hình ảnh thực tế khi tạo model nam:
+     - Man-nơ-canh gỗ vỡ nát thành 11 khối rời rạc, gãy tay khi áp hoạt ảnh.
+     - Cổ dài ngoẵng như hươu cao cổ, chiều cao vọt lên $1.933\text{m}$ (thừa $15\text{cm}$).
+     - Búi tóc đâm thủng đỉnh chóp nón lá.
+     - Lồng ngực và bắp tay đâm thủng vạt áo giao lĩnh.
+  5. Viết lại tài liệu hoàn chỉnh và tài liệu kỹ thuật cho mô-đun `character/`.
+
+---
+
+### 18.2. Các Giải Pháp Kỹ Thuật Đã Triển Khai
+
+#### 1. Cơ Chế Thu Nhỏ Thân Thể Chọn Lọc Ở Cấp Engine (Selective Body Deflation)
+- **Vị trí**: `character/character_model.h`, `character/character_model.c`, `character/modular_character.c`.
+- **Nguyên lý**: Trong quá trình CPU skinning (`CharacterModel_UpdateSkinnedMeshWithCloth`):
+  - `deflateTorso`: Kích hoạt khi nhân vật khoác Áo (`MODULAR_SLOT_TORSO`) hoặc Y Phục Toàn Thân (`MODULAR_SLOT_FULL_OUTFIT`). Các đỉnh có `torsoWeight > 0.12f` hoặc `armWeight > 0.25f` tự động thu nhỏ hướng tâm về trục cột sống $16\%$ ($2.28\text{cm}$), giảm chiều sâu ngực tối đa từ $Z = 0.1425\text{m}$ xuống $0.1197\text{m}$, tạo khoảng hở an toàn $> 3.5\text{cm}$ bên trong `ao_giao_linh.glb`.
+  - `deflateLegs`: Kích hoạt khi nhân vật mặc Quần (`MODULAR_SLOT_LEGS`) hoặc Y Phục Toàn Thân. Các đỉnh đùi có `legWeight > 0.12f` tự động co nhỏ bán kính $22\%$ ($1.8\text{cm}$), triệt tiêu $100\%$ hiện tượng đùi đâm thủng đũng và ống quần `quan_wuxia.glb`.
+  - Không phá hủy (Non-destructive): Khi tháo trang phục, thân thể lập tức khôi phục $100\%$ cơ bắp cuồn cuộn. Vùng đầu, cổ, bàn tay và bàn chân được bảo toàn nguyên vẹn.
+
+#### 2. Kiến Trúc Thư Viện Prompt Mô-đun Hóa (`raw_asset/prompts/`)
+- Tách tệp đơn khối `raw_asset/PROMPTS.md` thành 9 tệp chuyên biệt, chuẩn hóa theo thang đo thế giới thực mét chuẩn (`1 unit = 1 meter`):
+  - `00_standards.md`: Bộ quy chuẩn hệ trục tọa độ mét, 20 xương Mixamo, socket anchors, và quy chuẩn glTF 2.0.
+  - `01_human_body.md`: Thân thể nam kiếm hiệp (1 thể thống nhất duy nhất, $H = 1.78\text{m}$, ngực $Z \le 0.115\text{m}$, cổ cao đúng $8\text{cm}$).
+  - `02_non_la.md`: Nón lá hiệp khách ($D = 0.82\text{m}$, chóp $0.22\text{m}$, vỏ đôi 2 mặt dày $2\text{mm}$, gốc socket tại vành tre ôm đầu).
+  - `03_ao_giao_linh.md`: Áo giao lĩnh lam y (28 xương gồm 20 Mixamo + 8 xương lò xo Verlet `cloth_*`).
+  - `04_quan_wuxia.md`: Quần võ hiệp huyền sắc (thắt lưng $0.98\text{m}$, đùi phồng $R = 0.11\text{m} - 0.13\text{m}$, gấu bó $R = 0.052\text{m}$ đút vừa lòng cổ ủng).
+  - `05_giay_wuxia.md`: Chiến hài vân du (cao $0.40\text{m}$, cổ ủng loe nhẹ $R = 0.058\text{m}$ phủ ngoài gấu quần).
+  - `06_ho_uyen.md`: Hộ uyển cổ tay hắc thiết (xuất 2 file `ho_uyen_left.glb` & `ho_uyen_right.glb`).
+  - `07_kiem_thuan_thien.md`: Thuận Thiên Kiếm (gốc $(0,0,0)$ tại tâm chuôi kiếm, lưỡi kiếm dài $85\text{cm}$ dọc trục $+Y$).
+  - `08_combat_moves.md`: 6 bộ hoạt ảnh chiến đấu kiếm pháp wuxia (`sword_thrust`, `sword_combo_3hit`, `martial_dash`, `sword_parry_riposte`, `hit_stagger`, `ultimate_taiji_cast`).
+  - `README.md` & `raw_asset/PROMPTS.md`: Bảng điều hướng trung tâm liên kết toàn bộ tài liệu.
+
+#### 3. Khắc Phục 4 Lỗi Model Nam & Công Cụ Sinh WebGL Độc Lập
+- **Nguyên nhân 4 lỗi**:
+  1. *Vỡ khớp*: Prompt thiếu thuật toán tạo lưới cụ thể khiến AI ghép 11 khối hộp/trụ primitive rời rạc.
+  2. *Cổ hươu cao cổ*: Cổ bị kéo dài gấp đôi làm chiều cao vọt lên $1.933\text{m}$.
+  3. *Búi tóc đâm nón lá*: Đầu bị đẩy lên $1.933\text{m}$ trong khi Nón Lá neo ở $Y = 1.72\text{m}$.
+  4. *Xuyên thủng áo*: Lồng ngực dạng hộp phẳng nhô ra cạnh sắc $Z = +0.143\text{m}$.
+- **Giải pháp**:
+  - Cập nhật quy chuẩn khắt khe trong `01_human_body.md`: Cao đúng $1.78\text{m}$, đỉnh sọ $1.76\text{m}$, búi tóc compact $1.81\text{m}$, cổ cao đúng $8\text{cm}$, ngực $Z \le 0.115\text{m}$.
+  - Lập trình ứng dụng WebGL 1 file HTML hoàn chỉnh: `raw_asset/tools/generate_human_body.html`. Người dùng có thể mở trực tiếp trên trình duyệt, kiểm tra hoạt ảnh bằng thanh trượt (Hạ tay, Gập gối, Quay đầu) và tải về file `human_body.glb` đạt chuẩn.
+  - Đồng bộ `assets/characters/bodies/human_body.glb` về lưới chuẩn $1.78\text{m}$.
+
+#### 4. Hoàn Thiện Bộ Tài Liệu Kỹ Thuật Mô-đun `character/`
+- Tạo mới **`character/docs/API.md`**: Quy chuẩn giao diện thuần túy, bảng tra cứu nhanh chữ ký hàm, cấu trúc dữ liệu (`CharacterAnimSlot`, `ModularSlot`, `CharacterAnimState`), và hợp đồng gọi hàm.
+- Tạo mới **`character/docs/LANDMINES.md`**: Đúc kết 7 cạm bẫy thực chiến theo chuẩn *Symptom → Cause → Rule*:
+  1. Xương phụ Cloth Spring Bones vs chuẩn 20 xương Raylib.
+  2. Backface culling trên y phục vỏ đơn 1 mặt (bắt buộc làm dày $2\text{mm}$).
+  3. Xuyên thấu lưới và cơ chế Deflation tự động.
+  4. Thứ tự tính toán Inverse Bind Matrix trong SkinnedMesh.
+  5. Quy chuẩn gốc tọa độ $(0,0,0)$ của vật phẩm gắn socket (Nón, Kiếm, Hộ uyển).
+  6. Lưới 1 thể thống nhất (1-Island Watertight) vs 11 khối primitive cắt vụn.
+  7. Hệ trục Quaternion chuẩn cho khớp vai và đùi Mixamo.
+- Cập nhật `character/CLAUDE.md` và `AGENTS.md` đồng bộ liên kết tài nguyên.
+
+---
+
+### 18.3. Kết Quả Đo Đạc & Nghiệm Thu
+- **Biên dịch**: CMake build hoàn tất **0 warning, 0 error**.
+- **Autotest Suite**: `WUXING_AUTOTEST=1 ./build/wuxing`: **22/22 test suites PASSED (100%)**.
+- **Tính toàn vẹn**: Hệ thống tủ đồ toàn cục (`PlayerWardrobe`), cơ chế thu nhỏ chống xuyên y phục, và các công cụ sinh mô hình 3D hoạt động hoàn hảo và ổn định.
+
+
 

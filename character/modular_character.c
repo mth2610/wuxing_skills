@@ -85,6 +85,7 @@ void ModularInstance_Init(ModularInstance *inst, ModularTier tier) {
     }
     CharacterModel_ResetState(&inst->animState);
     SpringBone_SetupWuxiaDefaults(&inst->springBones);
+    WeaponTrail_Init(&inst->weaponTrail);
     inst->scale = 1.0f;
     inst->tint = WHITE;
     inst->active = true;
@@ -210,6 +211,7 @@ void ModularInstance_Draw(ModularInstance *inst) {
     }
 
     // 3. Draw remaining equipped items (skip base body, full outfit, and any slots suppressed by full outfit)
+    bool weaponSampled = false;
     for (int s = 0; s < MODULAR_SLOT_COUNT; s++) {
         if (s == MODULAR_SLOT_BASE_BODY || s == MODULAR_SLOT_FULL_OUTFIT) continue;
         if (fullOutfitIdx >= 0 && (inst->occupiedSlotsMask & (1 << s))) continue; // Suppressed by Full Outfit!
@@ -231,9 +233,31 @@ void ModularInstance_Draw(ModularInstance *inst) {
                 for (int m = 0; m < item->model.meshCount; m++) {
                     DrawMesh(item->model.meshes[m], item->model.materials[m], finalMat);
                 }
+
+                // If right-hand weapon is a sword/blade, sample blade ribbon trail
+                if (s == MODULAR_SLOT_WEAPON_R) {
+                    bool isAttackAnim = (inst->animState.currentSlot == CHAR_ANIM_SWORD_SLASH ||
+                                         inst->animState.currentSlot == CHAR_ANIM_SWORD_THRUST ||
+                                         inst->animState.currentSlot == CHAR_ANIM_SWORD_PARRY ||
+                                         inst->animState.currentSlot == CHAR_ANIM_SWORD_BLOCK);
+                    Vector3 bladeBase = (Vector3){ 0.0f, 0.10f, 0.0f };
+                    Vector3 bladeTip  = (Vector3){ 0.0f, 0.85f, 0.0f };
+                    float dt = GetFrameTime();
+                    if (dt > 0.05f) dt = 0.05f;
+                    WeaponTrail_Sample(&inst->weaponTrail, finalMat, bladeBase, bladeTip, dt, isAttackAnim);
+                    weaponSampled = true;
+                }
             }
         }
     }
+
+    // 4. Fade and draw weapon trail in emission pass
+    float dt = GetFrameTime();
+    if (dt > 0.05f) dt = 0.05f;
+    if (!weaponSampled) {
+        WeaponTrail_Fade(&inst->weaponTrail, dt);
+    }
+    WeaponTrail_Draw(&inst->weaponTrail);
 }
 
 void ModularSystem_DrawMinionBatch(int baseBodyItemIndex, int weaponItemIndex,

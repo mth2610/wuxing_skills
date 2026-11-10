@@ -17,6 +17,7 @@
 #include "raylib.h"
 #include "character/character_model.h"
 #include "character/spring_bone.h"
+#include "character/weapon_trail.h"
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -86,6 +87,7 @@ typedef struct {
     uint32_t           occupiedSlotsMask; // Bitmask of slots suppressed by Full Outfit
     bool               hideBaseBody;      // Suppress base naked body to eliminate clipping
     SpringBoneSystem   springBones;       // Secondary bone-driven motion for cloth/robes/sleeves
+    WeaponTrail        weaponTrail;       // Real-time blade ribbon trail (Sweep slash aesthetic)
 } ModularInstance;
 
 // Clustered minion render item

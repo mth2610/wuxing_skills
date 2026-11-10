@@ -95,7 +95,7 @@ Never edit another module's files — ask that module's agent. Never read/list/t
 | **UI Agent** | `ui/` | `entities/entities.h`, `combat/combat.h`, `boss/boss_system.h`, `skills/skill_manager.h`, `ui/docs/API.md` — HUD + auto-target, see `ui/AGENTS.md` |
 | **Formations Agent** | `formations/` | `entities/entities.h`, `combat/combat.h`, `maps/map_manager.h`, core VFX `.h` (chỉ trong `_def.c`), `formations/docs/API.md` — see `formations/AGENTS.md` |
 | **Net Agent** | `net/` | `control/control.h`, `entities/entities.h`, `net/docs/API.md` — wire formats (ENet transport gated), see `net/AGENTS.md` |
-| **Character Agent** | `character/` | `core/resource_manager.h` — model/animation rendering, counterpart to `entities/`'s pure logic, see `character/AGENTS.md` |
+| **Character Agent** | `character/` | `core/resource_manager.h`, `character/docs/API.md` — model/animation rendering, counterpart to `entities/`'s pure logic, see `character/CLAUDE.md` |
 | **Game Agent** | `game/` | `entities/entities.h`, `environment/environment_system.h`, `maps/map_manager.h`, `sandbox/sandbox_core.h`, `character/character_model.h`, `control/control.h`, `boss/boss_system.h`, `game/docs/API.md` — match state machine + zone rule table, see `game/AGENTS.md` |
 | **Post-Process Agent** | `post_process/` | `core/tuning.h`, `core/gfx_quality.h` — see `post_process/CLAUDE.md` |
 | **Sandbox Agent** | `sandbox/` | `.h` headers of ALL modules (dev/test integration harness, not shipped gameplay) — see `sandbox/AGENTS.md` |

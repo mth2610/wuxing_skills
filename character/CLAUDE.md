@@ -18,7 +18,8 @@ right home (see git history / conversation that created this module for the
 full reasoning).
 
 ## Scope
-- **Read/write:** The entire `character/` directory (`.c`, `.h`)
+- **Read/write:** The entire `character/` directory (`.c`, `.h`, `docs/`)
+- **Documentation:** `character/docs/API.md` (interface reference), `character/docs/LANDMINES.md` (runtime traps)
 - **Read (interface only):** `core/resource_manager.h` (Model/ModelAnimation loading + caching)
 - **Never include:** `entities/entities.h` — keep layering clean. Callers
   (sandbox/game) map their own attack-type enum to `CharacterAnimSlot`
