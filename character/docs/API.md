@@ -20,6 +20,7 @@ void CharacterModel_TriggerTimed(CharacterAnimState *state, CharacterAnimSlot sl
 void CharacterModel_TriggerVariant(CharacterAnimState *state, CharacterAnimSlot slot, int variantIndex);
 void CharacterModel_TriggerVariantTimed(CharacterAnimState *state, CharacterAnimSlot slot, int variantIndex, float seconds);
 bool CharacterModel_TriggerByName(CharacterAnimState *state, const char *clipName, float seconds);
+bool CharacterModel_TriggerByIndex(CharacterAnimState *state, int animIndex, float seconds);
 
 void CharacterModel_Draw(const CharacterAnimState *state, Vector3 position, float yawRadians, float scale, Color tint);
 void CharacterModel_DrawCustom(Model customModel, const CharacterAnimState *state, Vector3 position, float yawRadians, float scale, Color tint);

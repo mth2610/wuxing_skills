@@ -354,7 +354,7 @@ void CharacterModel_TriggerVariantTimed(CharacterAnimState *state, CharacterAnim
         float naturalSeconds = (float)s_animations[animIdx].keyframeCount / ANIM_FPS;
         speed = naturalSeconds / seconds;
         if (speed < 0.25f) speed = 0.25f;
-        if (speed > 8.0f)  speed = 8.0f;
+        if (speed > 20.0f) speed = 20.0f;
     }
 
     state->currentSlot = slot;
@@ -374,18 +374,15 @@ void CharacterModel_TriggerAttackTimed(CharacterAnimState *state, CharacterAnimS
     CharacterModel_TriggerTimed(state, slot, seconds);
 }
 
-bool CharacterModel_TriggerByName(CharacterAnimState *state, const char *clipName, float seconds) {
-    if (!state || !s_loaded || !clipName) return false;
-
-    int animIdx = CharacterModel_FindAnimIndex(clipName);
-    if (animIdx < 0) return false;
+bool CharacterModel_TriggerByIndex(CharacterAnimState *state, int animIdx, float seconds) {
+    if (!state || !s_loaded || animIdx < 0 || animIdx >= s_animCount) return false;
 
     float speed = 1.0f;
     if (seconds > 0.0f) {
         float naturalSeconds = (float)s_animations[animIdx].keyframeCount / ANIM_FPS;
         speed = naturalSeconds / seconds;
         if (speed < 0.25f) speed = 0.25f;
-        if (speed > 8.0f)  speed = 8.0f;
+        if (speed > 20.0f) speed = 20.0f;
     }
 
     state->activeAnimIndex = animIdx;
@@ -394,6 +391,13 @@ bool CharacterModel_TriggerByName(CharacterAnimState *state, const char *clipNam
     state->oneShotActive = true;
     state->oneShotSpeed = speed;
     return true;
+}
+
+bool CharacterModel_TriggerByName(CharacterAnimState *state, const char *clipName, float seconds) {
+    if (!state || !s_loaded || !clipName) return false;
+    int animIdx = CharacterModel_FindAnimIndex(clipName);
+    if (animIdx < 0) return false;
+    return CharacterModel_TriggerByIndex(state, animIdx, seconds);
 }
 
 int CharacterModel_GetVariantCount(CharacterAnimSlot slot) {

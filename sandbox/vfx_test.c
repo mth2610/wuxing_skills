@@ -2362,17 +2362,9 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
     }
 
     // -------------------------------------------------------------------------
-    // DEMO MESSIAH VFX FEATURES: [1] Mesh Distort | [2] SSS | [3] Capsule SDF
+    // DEMO MESSIAH VFX FEATURES: [1] Anim Showcase (main.c) | [2] SSS | [3] Capsule SDF
     // -------------------------------------------------------------------------
-    if (IsKeyPressed(KEY_ONE) || IsKeyPressed(KEY_KP_1))
-    {
-        s_demoMeshDistortActive = true;
-        s_demoMeshDistortTimer = 0.0f;
-        s_demoMeshDistortPos = playerPos;
-        s_demoMeshDistortYaw = s_currentPlayerYaw;
-        ScreenDistort_RequestMeshPass();
-        TraceLog(LOG_INFO, "[Messiah VFX Demo] 1: Mesh Distortion Triggered!");
-    }
+    /* Key 1 is now dedicated to Animation Showcase sequence in main.c */
 
     if (IsKeyPressed(KEY_TWO) || IsKeyPressed(KEY_KP_2))
     {

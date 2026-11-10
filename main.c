@@ -73,6 +73,8 @@
 Camera3D camera = {0};
 PlayerEntity player = {0};
 static float s_vfxPlayerYaw = 0.0f;
+static int   s_vfxAnimIndex = -1;
+static float s_vfxAnimBannerTimer = 0.0f;
 
 /* Field-only environment probe: no synthetic particles or arrival blast. */
 static void CastEnvironmentGuide(Vector3 origin, float yaw)
@@ -1413,7 +1415,19 @@ int main(int argc, char **argv) {
             Wind_SpawnGust(footPos, forward, 1.5f, 3.5f, 0.25f);
         }
         if (!renderVFXMode && (IsKeyPressed(KEY_ONE) || IsKeyPressed(KEY_KP_1))) {
-            CharacterModel_TriggerAttackTimed(&player.anim, CHAR_ANIM_PUNCH, 0.40f);
+            int total = CharacterModel_GetTotalAnimCount();
+            if (total > 0) {
+                s_vfxAnimIndex = (s_vfxAnimIndex + 1) % total;
+                CharacterModel_TriggerByIndex(&player.anim, s_vfxAnimIndex, 1.0f);
+                s_vfxAnimBannerTimer = 3.0f;
+                TraceLog(LOG_INFO, "[Anim Step] (%d/%d): %s (1.0s)",
+                         s_vfxAnimIndex + 1, total,
+                         CharacterModel_GetAnimName(s_vfxAnimIndex));
+            }
+        }
+
+        if (s_vfxAnimBannerTimer > 0.0f) {
+            s_vfxAnimBannerTimer -= dt;
         }
         if (!renderVFXMode && (IsKeyPressed(KEY_FOUR) || IsKeyPressed(KEY_KP_4))) {
             CharacterModel_TriggerAttackTimed(&player.anim, CHAR_ANIM_PUNCH, 0.55f);
@@ -2080,6 +2094,20 @@ int main(int argc, char **argv) {
             }
         } else if (currentScreen == SCREEN_VFX_TESTER && (!renderVFXMode || captureVFXUI)) {
             VFXTest_DrawHUD();
+            if (s_vfxAnimBannerTimer > 0.0f && s_vfxAnimIndex >= 0) {
+                int total = CharacterModel_GetTotalAnimCount();
+                const char *clipName = CharacterModel_GetAnimName(s_vfxAnimIndex);
+                float alphaFade = fminf(1.0f, s_vfxAnimBannerTimer);
+                const char *banner = TextFormat("[ANIMATION %d/%d]: %s (1.0s)  |  Phim 1: Tiep theo",
+                                                s_vfxAnimIndex + 1, total,
+                                                clipName ? clipName : "unknown");
+                int bannerWidth = MeasureText(banner, 20);
+                int posX = (GetScreenWidth() - bannerWidth) / 2;
+                int posY = 20;
+                DrawRectangle(posX - 14, posY - 4, bannerWidth + 28, 28, (Color){ 0, 0, 0, (unsigned char)(210 * alphaFade) });
+                DrawRectangleLines(posX - 14, posY - 4, bannerWidth + 28, 28, (Color){ 255, 215, 0, (unsigned char)(255 * alphaFade) });
+                DrawText(banner, posX, posY, 20, (Color){ 255, 235, 120, (unsigned char)(255 * alphaFade) });
+            }
         } else if (currentScreen == SCREEN_GAME) {
             GameScreen_DrawHUD(&player);
         }

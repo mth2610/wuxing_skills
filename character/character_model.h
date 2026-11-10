@@ -104,6 +104,9 @@ void CharacterModel_TriggerAttackTimed(CharacterAnimState *state, CharacterAnimS
 // Returns true if a matching clip was found and triggered, false otherwise.
 bool CharacterModel_TriggerByName(CharacterAnimState *state, const char *clipName, float seconds);
 
+// Directly triggers an animation clip by its raw index (0..CharacterModel_GetTotalAnimCount() - 1).
+bool CharacterModel_TriggerByIndex(CharacterAnimState *state, int animIndex, float seconds);
+
 // Slot & Variant configuration & query:
 int  CharacterModel_GetVariantCount(CharacterAnimSlot slot);
 int  CharacterModel_GetSlotAnimIndex(CharacterAnimSlot slot, int variantIndex);
