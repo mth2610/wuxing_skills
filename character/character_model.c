@@ -1,4 +1,5 @@
 #include "character/character_model.h"
+#include "character/wardrobe_system.h"
 #include "core/resource_manager.h"
 #include "core/surface_material.h"
 #include "core/mesh_adjacency.h"
@@ -497,6 +498,16 @@ void CharacterModel_DrawCustom(Model customModel, const CharacterAnimState *stat
 }
 
 void CharacterModel_Draw(const CharacterAnimState *state, Vector3 position, float yawRadians, float scale, Color tint) {
+    ModularInstance *globalInst = Wardrobe_GetGlobalModularInstance();
+    if (globalInst && globalInst->active) {
+        globalInst->position = position;
+        globalInst->yaw = yawRadians;
+        globalInst->scale = scale;
+        globalInst->tint = tint;
+        if (state) globalInst->animState = *state;
+        ModularInstance_Draw(globalInst);
+        return;
+    }
     CharacterModel_DrawCustom(s_model, state, position, yawRadians, scale, tint);
 }
 

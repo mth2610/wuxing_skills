@@ -1,12 +1,15 @@
 // character/modular_character.h
-// High-performance Modular 3D Asset & Animation Management System for Wuxing Skills.
+// Modular Character Customization & Swarm Minion System for Wuxing Skills.
 //
-// Supports:
-// 1. Online Heroes (up to 4 players): Full modularity (Body + Torso/Robe + Legs/Pants + Sockets).
-// 2. Bosses (up to 2 bosses): Heavy boss rigs + boss skill animations + weapon sockets.
-// 3. Swarm Minions (50+ minions): Clustered animation evaluation (1 skinning pass for entire squad).
-// 4. Shared Animation Library: Universal Mixamo Humanoid rig contract.
-// 5. Zero-Skinning Rigid Sockets: Weapons, Hats (Nón Lá), Scabbards attach via bone matrices.
+// Features:
+// 1. Decoupled Modular Slots: Base body, clothing (torso, legs, boots, bracers),
+//    rigid sockets (headgear, mask, hair, waist, back, weapons), and Full Outfits.
+// 2. Full Outfit & Body Masking: Full robes occupy multiple slots (occupiedSlotsMask)
+//    and suppress underlying modular clothes and base body mesh to eliminate clipping.
+// 3. Shared Skeleton & Animation Retargeting: Reuses standard humanoid rig across
+//    all characters (hero, boss, minion) without duplicate skeletons or memory bloat.
+// 4. Clustered Minion Rendering: Evaluates CPU pose once for a swarm type, then
+//    renders 50+ minion instances with custom scale/position/tint at 60+ FPS.
 
 #ifndef MODULAR_CHARACTER_H
 #define MODULAR_CHARACTER_H
@@ -14,23 +17,37 @@
 #include "raylib.h"
 #include "character/character_model.h"
 #include <stdbool.h>
+#include <stdint.h>
 
-#define MODULAR_MAX_SKINNED_PARTS  4
-#define MODULAR_MAX_SOCKETS       6
-#define MODULAR_MAX_ITEMS       128
-#define MODULAR_MAX_MINION_BATCH 64
+#define MODULAR_MAX_SKINNED_PARTS  8
+#define MODULAR_MAX_SOCKETS        8
+#define MODULAR_MAX_ITEMS        128
+#define MODULAR_MAX_MINION_BATCH  64
 
-// Equipment slots
+// Equipment slots (13 granular slots supporting Modular & Full Outfits)
 typedef enum {
-    MODULAR_SLOT_BASE_BODY = 0, // Master skeleton & naked mesh (hero, boss, minion)
-    MODULAR_SLOT_TORSO,         // Skinned clothing (áo giao lĩnh, giáp ngực)
-    MODULAR_SLOT_LEGS,          // Skinned clothing (quần wuxia, giáp chân)
-    MODULAR_SLOT_WEAPON_R,      // Rigid socket: Right hand (kiếm, đao, quyền)
-    MODULAR_SLOT_WEAPON_L,      // Rigid socket: Left hand (khiên, đoản kiếm)
-    MODULAR_SLOT_HEADGEAR,      // Rigid socket: Head (nón lá, khăn đóng, mặt nạ)
-    MODULAR_SLOT_BACK,          // Rigid socket: Spine2 (vỏ kiếm, phi kiếm, cánh)
+    MODULAR_SLOT_BASE_BODY = 0, // Thân thể (Master skeleton & naked mesh)
+    MODULAR_SLOT_HAIR,          // Mái tóc / Trâm cài (Hair & Hairpins)
+    MODULAR_SLOT_HEADGEAR,      // Nón lá, mũ quan, khăn đóng
+    MODULAR_SLOT_MASK,          // Mặt nạ, khăn che mặt dạ hành
+    MODULAR_SLOT_TORSO,         // Y phục (Áo trong, áo giao lĩnh, giáp ngực)
+    MODULAR_SLOT_LEGS,          // Hạ phục (Quần võ hiệp, thường phục)
+    MODULAR_SLOT_BOOTS,         // Chiến hài, giày da, hia
+    MODULAR_SLOT_BRACERS,       // Hộ uyển, bao tay thép
+    MODULAR_SLOT_WAIST,         // Đai lưng, ngọc bội, túi gấm
+    MODULAR_SLOT_BACK,          // Phi phong, áo choàng, vỏ kiếm sau lưng
+    MODULAR_SLOT_WEAPON_R,      // Binh khí tay phải (Kiếm / Đao / Quyền)
+    MODULAR_SLOT_WEAPON_L,      // Binh khí tay trái (Khiên / Đoản kiếm)
+    MODULAR_SLOT_FULL_OUTFIT,   // Trang phục nguyên bộ (Trường bào, Đạo bào toàn thân)
     MODULAR_SLOT_COUNT
 } ModularSlot;
+
+// Occupied slot bitmasks for Full Outfits
+#define MODULAR_OCCUPIED_TORSO    (1 << MODULAR_SLOT_TORSO)
+#define MODULAR_OCCUPIED_LEGS     (1 << MODULAR_SLOT_LEGS)
+#define MODULAR_OCCUPIED_BOOTS    (1 << MODULAR_SLOT_BOOTS)
+#define MODULAR_OCCUPIED_BRACERS  (1 << MODULAR_SLOT_BRACERS)
+#define MODULAR_OCCUPIED_OUTFIT   (MODULAR_OCCUPIED_TORSO | MODULAR_OCCUPIED_LEGS)
 
 // Entity performance tier
 typedef enum {
@@ -65,6 +82,8 @@ typedef struct {
     float              scale;
     Color              tint;
     bool               active;
+    uint32_t           occupiedSlotsMask; // Bitmask of slots suppressed by Full Outfit
+    bool               hideBaseBody;      // Suppress base naked body to eliminate clipping
 } ModularInstance;
 
 // Clustered minion render item
@@ -107,22 +126,16 @@ void ModularInstance_Update(ModularInstance *inst, float dt, bool isMoving);
 // Draws a Hero or Boss instance with all equipped clothing and socketed attachments
 void ModularInstance_Draw(ModularInstance *inst);
 
+// Calculates world transform for rigid socket attachment
+bool ModularSystem_GetSocketMatrix(Vector3 charPos, float charYaw, float charScale,
+                                   ModularSlot slot, Matrix localOffset, Matrix *outMatrix);
+
 // -----------------------------------------------------------------------------
 // High-Scale Swarm Minion Batch Rendering (50+ Minions at 60+ FPS)
 // -----------------------------------------------------------------------------
 
-// Draws an entire swarm batch of minions sharing the same body/armor/weapon.
-// Evaluates the animation pose ONCE on CPU, then renders all N positions.
 void ModularSystem_DrawMinionBatch(int baseBodyItemIndex, int weaponItemIndex,
                                   const CharacterAnimState *sharedAnimState,
                                   const ModularMinionBatchItem *items, int itemCount);
-
-// -----------------------------------------------------------------------------
-// Utility Helpers
-// -----------------------------------------------------------------------------
-
-// Computes the world matrix of a specific socket in an animated character
-bool ModularSystem_GetSocketMatrix(Vector3 charPos, float charYaw, float charScale,
-                                   ModularSlot slot, Matrix localOffset, Matrix *outMatrix);
 
 #endif // MODULAR_CHARACTER_H

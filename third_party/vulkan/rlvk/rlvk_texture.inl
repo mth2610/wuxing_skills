@@ -491,12 +491,20 @@ static void rlvkDrawMesh(int offset, int count, bool indexed, int instances)
         }
     }
 
-    bool wantUV2 = (a->uv2Slot != 0) && (a->uv2Slot < RLVK_MAX_BUFFER_SLOTS) && (shader->attribLocs[RLVK_ATTRIB_TEXCOORD2] >= 0);
-    bool wantTan = (a->tangentSlot != 0) && (a->tangentSlot < RLVK_MAX_BUFFER_SLOTS) && (shader->attribLocs[RLVK_ATTRIB_TANGENT] >= 0);
+    bool wantUV2 = (a->uv2Slot != 0) && (a->uv2Slot < RLVK_MAX_BUFFER_SLOTS) &&
+                   (RLVK.bufferSlots[a->uv2Slot].buffer != VK_NULL_HANDLE) &&
+                   (shader->attribLocs[RLVK_ATTRIB_TEXCOORD2] >= 0);
+    bool wantTan = (a->tangentSlot != 0) && (a->tangentSlot < RLVK_MAX_BUFFER_SLOTS) &&
+                   (RLVK.bufferSlots[a->tangentSlot].buffer != VK_NULL_HANDLE) &&
+                   (shader->attribLocs[RLVK_ATTRIB_TANGENT] >= 0);
     bool wantBones = (shader->attribLocs[RLVK_ATTRIB_BONEIDS] >= 0) && (shader->attribLocs[RLVK_ATTRIB_BONEWEIGHTS] >= 0);
-    bool wantInst = (instances > 1) && a->instSlot && (a->instSlot < RLVK_MAX_BUFFER_SLOTS) && (shader->attribLocs[RLVK_ATTRIB_INSTANCE_TX] >= 0);
+    bool wantInst = (instances > 1) && a->instSlot && (a->instSlot < RLVK_MAX_BUFFER_SLOTS) &&
+                    (RLVK.bufferSlots[a->instSlot].buffer != VK_NULL_HANDLE) &&
+                    (shader->attribLocs[RLVK_ATTRIB_INSTANCE_TX] >= 0);
     bool realBones = (a->boneIdSlot != 0) && (a->boneWtSlot != 0) &&
-                     (a->boneIdSlot < RLVK_MAX_BUFFER_SLOTS) && (a->boneWtSlot < RLVK_MAX_BUFFER_SLOTS);
+                     (a->boneIdSlot < RLVK_MAX_BUFFER_SLOTS) && (a->boneWtSlot < RLVK_MAX_BUFFER_SLOTS) &&
+                     (RLVK.bufferSlots[a->boneIdSlot].buffer != VK_NULL_HANDLE) &&
+                     (RLVK.bufferSlots[a->boneWtSlot].buffer != VK_NULL_HANDLE);
 
     unsigned short vertexLayout = RLVK_VLAYOUT_MESH;
     if (hasUV)

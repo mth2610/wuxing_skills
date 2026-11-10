@@ -1,0 +1,27 @@
+{
+  "player_id": "Player_1",
+  "equipped": {
+    "base_body": "human_body",
+    "torso": "ao_giao_linh",
+    "legs": "quan_wuxia",
+    "boots": "chien_hai_van_du",
+    "bracers": "",
+    "headgear": "non_la_hiep_khach",
+    "mask": "",
+    "hair": "",
+    "waist": "",
+    "back": "vo_kiem_son_mai",
+    "weapon_r": "kiem_thuan_thien",
+    "weapon_l": "",
+    "full_outfit": ""
+  },
+  "unlocked": [
+    "human_body",
+    "ao_giao_linh",
+    "quan_wuxia",
+    "chien_hai_van_du",
+    "non_la_hiep_khach",
+    "vo_kiem_son_mai",
+    "kiem_thuan_thien"
+  ]
+}

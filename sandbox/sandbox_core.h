@@ -4,6 +4,8 @@
 #include "raylib.h"
 #include "sandbox/ui_panel.h"
 #include "character/character_model.h"
+#include "character/modular_character.h"
+#include "character/wardrobe_system.h"
 #include <math.h>
 
 // Shared chase framing for skill sandbox and VFX defaults (meters).
@@ -114,5 +116,10 @@ int Sandbox_GetPlayerAgentId(void);
 // gọi ngay khi ra đòn/cast chiêu để nhân vật xoay về hướng đánh thay vì giữ
 // hướng di chuyển cuối. Bỏ qua nếu worldPos trùng vị trí player.
 void Sandbox_FacePlayerToward(const PlayerEntity* player, Vector3 worldPos);
+
+// Modular character & wardrobe accessors
+PlayerWardrobe* Sandbox_GetPlayerWardrobe(void);
+ModularInstance* Sandbox_GetPlayerModularInstance(void);
+void Sandbox_DrawWardrobeUI(void);
 
 #endif // SANDBOX_CORE_H

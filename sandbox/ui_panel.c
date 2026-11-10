@@ -1,5 +1,6 @@
 #include "sandbox/ui_panel.h"
 #include "sandbox/sandbox_core.h"
+#include "ui/ui_wardrobe.h"
 #include "entities/entities.h"
 #include "core/particles/gpu/particle_gpu_legacy.h"
 #include "core/tuning.h"
@@ -35,6 +36,8 @@ static Rectangle rectPortalToggle;
 static Rectangle skillButtons[64];
 static Rectangle togglePanelBtn;
 static Rectangle backBtn;
+static Rectangle wardrobeBtn;
+static bool s_wardrobeArmed = false;
 
 // --- Training dummy CC test buttons (entities/entities.h §12) ---
 static Rectangle dummyStunBtn;
@@ -251,6 +254,9 @@ void InitUIPanel(void) {
   // Time-of-day / Sun position slider on top bar
   sunTimeSlider  = (Rectangle){775, 95, 230, 32};
 
+  // Wardrobe / Tu Do button on top bar
+  wardrobeBtn    = (Rectangle){1015, 95, 120, 32};
+
   // Compacted row pitch (36px, was 50px) and button height (28px, was 35px)
   // so this whole control block takes noticeably less vertical space,
   // leaving more room for the (now wider) tuning panel below it.
@@ -343,6 +349,23 @@ void UpdateUIPanel(Vector2 mousePos, UIPanelState *state) {
     s_backArmed = false;
     if (isOverBackBtn) {
       state->requestedBackToMenu = true;
+      return;
+    }
+  }
+
+  Rectangle wardrobeHit = { wardrobeBtn.x, wardrobeBtn.y - 8,
+                            wardrobeBtn.width, wardrobeBtn.height + 34 };
+  bool isOverWardrobeBtn = CheckCollisionPointRec(mousePos, wardrobeHit);
+  if (isOverWardrobeBtn) {
+    state->clickedOnUI = true;
+    if (downNow) s_wardrobeArmed = true;
+  }
+  if (s_wardrobeArmed && !downNow) {
+    s_wardrobeArmed = false;
+    if (isOverWardrobeBtn) {
+      PlayerWardrobe *pw = Sandbox_GetPlayerWardrobe();
+      ModularInstance *inst = Sandbox_GetPlayerModularInstance();
+      if (pw && inst) UI_Wardrobe_Toggle(pw, inst);
       return;
     }
   }
@@ -681,6 +704,19 @@ void DrawUIPanel(const UIPanelState *state) {
     char sunText[48];
     snprintf(sunText, sizeof(sunText), "SUN: %s (%.0f%%)", timeLabel, sunTimeNorm * 100.0f);
     UIText(sunText, sunTimeSlider.x + 10.0f, sunTimeSlider.y + 4.0f, 11, isOver || isDraggingSunSlider ? YELLOW : LIGHTGRAY);
+  }
+
+  // Vẽ nút Tủ Đồ Hiệp Khách (Wardrobe)
+  {
+    bool isOverWardrobe = CheckCollisionPointRec(mousePos, wardrobeBtn);
+    bool isWardrobeOpen = UI_Wardrobe_IsOpen();
+    Color wardCol = isWardrobeOpen ? (Color){ 70, 55, 20, 255 } : (isOverWardrobe ? (Color){ 50, 42, 22, 255 } : (Color){ 30, 26, 18, 255 });
+    DrawRectangleRounded(wardrobeBtn, 0.2f, 10, wardCol);
+    DrawRectangleRoundedLines(wardrobeBtn, 0.2f, 10, isWardrobeOpen ? GOLD : (isOverWardrobe ? (Color){ 255, 215, 90, 255 } : (Color){ 180, 145, 75, 220 }));
+
+    const char *wardText = "[+] TU DO (B)";
+    float wardTextW = UITextWidth(wardText, 13);
+    UIText(wardText, wardrobeBtn.x + (wardrobeBtn.width - wardTextW) / 2, wardrobeBtn.y + 9, 13, GOLD);
   }
 
   // Nếu bảng điều khiển đang đóng, không vẽ gì thêm

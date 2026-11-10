@@ -28,6 +28,8 @@
 #include "environment/volumetric/volumetric_fog.h"
 #include "environment/environment_system.h"
 #include "environment/env_shadow.h"
+#include "sandbox/sandbox_core.h"
+#include "ui/ui_wardrobe.h"
 
 #define TEST_PATH_POINT_COUNT 16
 static Vector3 s_testPathPoints[TEST_PATH_POINT_COUNT];
@@ -1662,7 +1664,8 @@ static VFXTest_UILayout VFXTest_UIGetLayout(void)
     // Right-side buttons
     float rightCursor = ui.header.x + ui.header.width - 4.0f;
     float btnW = ui.header.width < 580.0f ? 52.0f : 62.0f;
-    rightCursor -= (3 * btnW + 8.0f);
+    float wardW = ui.header.width < 580.0f ? 72.0f : 86.0f;
+    rightCursor -= (3 * btnW + 8.0f + wardW + 4.0f);
 
     float fogW = ui.header.width < 700.0f ? 84.0f : 110.0f;
     rightCursor -= (fogW + 6.0f);
@@ -1720,10 +1723,12 @@ static Rectangle VFXTest_UIHeaderButton(VFXTest_UILayout ui, int index)
     float backW = ui.header.width < 580.0f ? 52.0f : 62.0f;
     float helpW = ui.header.width < 580.0f ? 52.0f : 62.0f;
     float fixW = ui.header.width < 580.0f ? 56.0f : 68.0f;
+    float wardW = ui.header.width < 580.0f ? 72.0f : 86.0f;
     float rightEdge = ui.header.x + ui.header.width - 4.0f;
     if (index == 2) return (Rectangle){rightEdge - backW, ui.header.y + 5.0f, backW, 30.0f};
     if (index == 1) return (Rectangle){rightEdge - backW - 4.0f - helpW, ui.header.y + 5.0f, helpW, 30.0f};
-    return (Rectangle){rightEdge - backW - 4.0f - helpW - 4.0f - fixW, ui.header.y + 5.0f, fixW, 30.0f};
+    if (index == 0) return (Rectangle){rightEdge - backW - 4.0f - helpW - 4.0f - fixW, ui.header.y + 5.0f, fixW, 30.0f};
+    return (Rectangle){rightEdge - backW - 4.0f - helpW - 4.0f - fixW - 4.0f - wardW, ui.header.y + 5.0f, wardW, 30.0f};
 }
 
 static Rectangle VFXTest_UIInspectorRow(VFXTest_UILayout ui, int visibleRow)
@@ -1964,6 +1969,11 @@ static bool VFXTest_UIHandleInput(Vector3 playerPos)
     if (VFXTest_UIButtonReleased(VFXTest_UIHeaderButton(ui, 0))) { s_isPanelOpen = !s_isPanelOpen; s_vfxHelpOpen = false; }
     if (VFXTest_UIButtonReleased(VFXTest_UIHeaderButton(ui, 1))) { s_vfxHelpOpen = !s_vfxHelpOpen; s_isPanelOpen = false; }
     if (VFXTest_UIButtonReleased(VFXTest_UIHeaderButton(ui, 2))) back = true;
+    if (VFXTest_UIButtonReleased(VFXTest_UIHeaderButton(ui, 3))) {
+        PlayerWardrobe *pw = Sandbox_GetPlayerWardrobe();
+        ModularInstance *inst = Sandbox_GetPlayerModularInstance();
+        if (pw && inst) UI_Wardrobe_Toggle(pw, inst);
+    }
     if (!s_isPanelOpen && !s_vfxHelpOpen) {
         if (VFXTest_UIButtonReleased(VFXTest_UITiltButton(ui, -1))) s_vfxPendingTiltStep = -1;
         if (VFXTest_UIButtonReleased(VFXTest_UITiltButton(ui, 1))) s_vfxPendingTiltStep = 1;
@@ -2155,6 +2165,7 @@ static void VFXTest_UIDraw(void)
     VFXTest_UIDrawButton(VFXTest_UIHeaderButton(ui, 0), "Fixtures", s_isPanelOpen);
     VFXTest_UIDrawButton(VFXTest_UIHeaderButton(ui, 1), "Help", s_vfxHelpOpen);
     VFXTest_UIDrawButton(VFXTest_UIHeaderButton(ui, 2), "Back", false);
+    VFXTest_UIDrawButton(VFXTest_UIHeaderButton(ui, 3), "Tu Do (B)", UI_Wardrobe_IsOpen());
 
     FogRenderMode fogMode = Fog_GetRenderMode();
     const char *fogLabel = fogMode == FOG_MODE_OFF ? "Fog: None" :
@@ -2256,7 +2267,7 @@ static void VFXTest_UIDraw(void)
         DrawRectangleRounded(ui.help, 0.035f, 4, (Color){15, 20, 27, 248});
         const char *lines[] = {"Preview controls", "Click the scene to cast. Q/E orbit, wheel zoom.",
             "Tab / CapsLock: select. /: next, Shift+/: previous.", "Guided: comma/period edit; Shift+comma/period preset.",
-            "V: fixture clock. B: character. U: hide UI.", "F3: diagnostics. N: background. R: reset view.",
+            "V: fixture clock. H: character. B: wardrobe. U: hide UI.", "F3: diagnostics. N: background. R: reset view.",
             "Wood: ; burst, ' homing, backslash detach.", "Demos: 1 mesh, 2 SSS, 3 particles, 4 slash,",
             "5 Iaido, 6 wind, 7 path flow. Z/C: actions."};
         for (int i = 0; i < 9; ++i) VFXTest_UIText(lines[i], (Rectangle){ui.help.x + 8, ui.help.y + 8 + i * 26.0f, ui.help.width - 16, 24}, i == 0 ? 14 : 12, i == 0 ? RAYWHITE : LIGHTGRAY);
@@ -2268,6 +2279,13 @@ static void VFXTest_UIDraw(void)
 bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Texture2D testAtlasTex,
                                   Texture2D globalParticleTex)
 {
+    if (UI_Wardrobe_IsOpen()) {
+        if (IsKeyPressed(KEY_B) || IsKeyPressed(KEY_ESCAPE)) {
+            UI_Wardrobe_Close();
+        }
+        return false;
+    }
+
     VFXTest_UpdateGuidedFrames(TimeFX_RawDelta());
     // Reset cache count each frame
     g_activeCountCache = 0;
@@ -2322,9 +2340,15 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
      * Xem sandbox/gradient_probe.c. */
     if (IsKeyPressed(KEY_G))
         GradientProbe_Arm();
-    /* B — hiện/ẩn nhân vật tham chiếu tỉ lệ. */
-    if (IsKeyPressed(KEY_B))
+    /* H — hiện/ẩn nhân vật tham chiếu tỉ lệ (Hide character reference). */
+    if (IsKeyPressed(KEY_H))
         s_hideCharacterRef = !s_hideCharacterRef;
+    /* B — Mở/Đóng Tủ Đồ Hiệp Khách (Wardrobe / Equipment). */
+    if (IsKeyPressed(KEY_B)) {
+        PlayerWardrobe *pw = Sandbox_GetPlayerWardrobe();
+        ModularInstance *inst = Sandbox_GetPlayerModularInstance();
+        if (pw && inst) UI_Wardrobe_Toggle(pw, inst);
+    }
     /* F3 — hiện/ẩn HUD debug (pool GPU particle, skill manager, core-test). */
     if (IsKeyPressed(KEY_F3))
         s_hideDebugOverlays = !s_hideDebugOverlays;

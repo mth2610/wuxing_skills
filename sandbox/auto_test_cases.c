@@ -19,6 +19,9 @@
 #include "environment/environment_system.h"
 #include "character/character_model.h"
 #include "character/modular_character.h"
+#include "character/wardrobe_system.h"
+#include "ui/ui_wardrobe.h"
+#include "sandbox/sandbox_core.h"
 #include "raymath.h"
 #include <math.h>
 #include <string.h>
@@ -1032,7 +1035,7 @@ static AutoTestResult AutoTest_ModularCharacterSystemStep(int frameInCase, char 
   // Test register item
   int wepIdx = ModularSystem_RegisterItem("kiem_thuan_thien", MODULAR_SLOT_WEAPON_R, false,
                                           "mixamorig:RightHand", (Vector3){0, 0.05f, 0}, (Vector3){0, 0, 0},
-                                          "assets/characters/player.glb");
+                                          "assets/characters/equipment/weapons/kiem_thuan_thien.glb");
   ok &= AutoTest_ExpectTrue(wepIdx >= 0, "RegisterItem returns valid index", outReason, outReasonSize);
 
   // Test find item
@@ -1061,6 +1064,108 @@ static AutoTestResult AutoTest_ModularCharacterSystemStep(int frameInCase, char 
   return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
 }
 
+static AutoTestResult AutoTest_PlayerWardrobeSystemStep(int frameInCase, char *outReason, int outReasonSize) {
+  if (frameInCase > 0) return AUTOTEST_PASS;
+
+  bool ok = true;
+  Wardrobe_InitCatalog();
+  ok &= AutoTest_ExpectTrue(Wardrobe_GetCatalogCount() >= 10, "Wardrobe catalog has items", outReason, outReasonSize);
+
+  // Initialize player wardrobe (starts with online starter set: body, torso, legs, boots)
+  PlayerWardrobe pw;
+  PlayerWardrobe_Init(&pw, "Hero_Customizer");
+  ok &= AutoTest_ExpectTrue(pw.unlockedCount >= 4, "Player wardrobe starts with online starter set", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(PlayerWardrobe_GetCombatStance(&pw) == COMBAT_STANCE_UNARMED,
+                            "Initial combat stance is UNARMED before finding weapon", outReason, outReasonSize);
+
+  // Unlock and equip sword -> switches to SWORD stance
+  PlayerWardrobe_UnlockItem(&pw, "kiem_thuan_thien");
+  PlayerWardrobe_Equip(&pw, "kiem_thuan_thien");
+  ok &= AutoTest_ExpectTrue(PlayerWardrobe_GetCombatStance(&pw) == COMBAT_STANCE_SWORD,
+                            "Combat stance is SWORD when sword is equipped", outReason, outReasonSize);
+
+  // Unequip weapon -> switches to Tay Khong (Unarmed)
+  PlayerWardrobe_Unequip(&pw, MODULAR_SLOT_WEAPON_R);
+  ok &= AutoTest_ExpectTrue(PlayerWardrobe_GetCombatStance(&pw) == COMBAT_STANCE_UNARMED,
+                            "Combat stance switches to UNARMED when no weapon", outReason, outReasonSize);
+
+  // Re-equip sword
+  PlayerWardrobe_Equip(&pw, "kiem_thuan_thien");
+  ok &= AutoTest_ExpectTrue(PlayerWardrobe_GetCombatStance(&pw) == COMBAT_STANCE_SWORD,
+                            "Combat stance switches back to SWORD", outReason, outReasonSize);
+
+  // Test unlocking newly discovered exploration item (online progression)
+  bool unlockedNew = PlayerWardrobe_UnlockItem(&pw, "vo_kiem_son_mai");
+  ok &= AutoTest_ExpectTrue(unlockedNew, "UnlockItem returns true for newly discovered item", outReason, outReasonSize);
+  bool unlockedAgain = PlayerWardrobe_UnlockItem(&pw, "vo_kiem_son_mai");
+  ok &= AutoTest_ExpectTrue(!unlockedAgain, "UnlockItem returns false when already owned", outReason, outReasonSize);
+
+  // Test Full Outfit and occupied slots suppression
+  bool unlockedOutfit = PlayerWardrobe_UnlockItem(&pw, "truong_bao_ngan_long");
+  ok &= AutoTest_ExpectTrue(unlockedOutfit, "UnlockItem unlocks Full Outfit", outReason, outReasonSize);
+  PlayerWardrobe_Equip(&pw, "truong_bao_ngan_long");
+  ok &= AutoTest_ExpectTrue(strcmp(PlayerWardrobe_GetEquippedId(&pw, MODULAR_SLOT_FULL_OUTFIT), "truong_bao_ngan_long") == 0,
+                            "Equipped full outfit", outReason, outReasonSize);
+
+  // Test apply to 3D modular instance (verify occupied slot mask)
+  ModularInstance inst;
+  ModularInstance_Init(&inst, MODULAR_TIER_HERO);
+  bool applied = PlayerWardrobe_ApplyToInstance(&pw, &inst);
+  ok &= AutoTest_ExpectTrue(applied, "PlayerWardrobe_ApplyToInstance syncs to 3D instance", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue((inst.occupiedSlotsMask & MODULAR_OCCUPIED_TORSO) != 0,
+                            "Full outfit suppresses occupied torso slot", outReason, outReasonSize);
+
+  // Test combat attribute calculation (HP, MP, speed)
+  WardrobeItemStats stats = PlayerWardrobe_GetTotalStats(&pw);
+  ok &= AutoTest_ExpectTrue(stats.bonusHealth > 100.0f, "PlayerWardrobe_GetTotalStats aggregates health", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(stats.speedMultiplier >= 1.0f, "PlayerWardrobe_GetTotalStats aggregates speed", outReason, outReasonSize);
+
+  // Test serialization (Save/Load)
+  const char *testSavePath = "/tmp/test_player_wardrobe.json";
+  bool saved = PlayerWardrobe_SaveToFile(&pw, testSavePath);
+  ok &= AutoTest_ExpectTrue(saved, "PlayerWardrobe_SaveToFile writes JSON", outReason, outReasonSize);
+
+  PlayerWardrobe loadedPw;
+  bool loaded = PlayerWardrobe_LoadFromFile(&loadedPw, testSavePath);
+  ok &= AutoTest_ExpectTrue(loaded, "PlayerWardrobe_LoadFromFile reads JSON", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(strcmp(PlayerWardrobe_GetEquippedId(&loadedPw, MODULAR_SLOT_WEAPON_R), "kiem_thuan_thien") == 0,
+                            "Loaded wardrobe preserves equipped sword", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(strcmp(PlayerWardrobe_GetEquippedId(&loadedPw, MODULAR_SLOT_FULL_OUTFIT), "truong_bao_ngan_long") == 0,
+                            "Loaded wardrobe preserves equipped full outfit", outReason, outReasonSize);
+
+  // Test global wardrobe instance accessors
+  ok &= AutoTest_ExpectTrue(Wardrobe_GetGlobalPlayer() != NULL, "Wardrobe_GetGlobalPlayer returns valid pointer", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(Wardrobe_GetGlobalModularInstance() != NULL, "Wardrobe_GetGlobalModularInstance returns valid pointer", outReason, outReasonSize);
+
+  return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
+}
+
+static AutoTestResult AutoTest_UIWardrobeStep(int frameInCase, char *outReason, int outReasonSize) {
+  PlayerWardrobe *pw = Sandbox_GetPlayerWardrobe();
+  ModularInstance *inst = Sandbox_GetPlayerModularInstance();
+  if (!pw || !inst) {
+    return AutoTest_ExpectTrue(false, "Sandbox player wardrobe initialized", outReason, outReasonSize) ? AUTOTEST_PASS : AUTOTEST_FAIL;
+  }
+
+  if (frameInCase == 0) {
+    AutoTest_SaveScreenshot("preview_sandbox_hud_button");
+    UI_Wardrobe_Open(pw, inst);
+    return AUTOTEST_RUNNING;
+  }
+
+  if (frameInCase == 1) {
+    return AUTOTEST_RUNNING;
+  }
+
+  if (frameInCase == 2) {
+    AutoTest_SaveScreenshot("preview_wardrobe_ui");
+    UI_Wardrobe_Close();
+    return AUTOTEST_PASS;
+  }
+
+  return AUTOTEST_PASS;
+}
+
 void AutoTestCases_Register(PlayerEntity *player)
 {
   s_player = player;
@@ -1083,5 +1188,7 @@ void AutoTestCases_Register(PlayerEntity *player)
   AutoTest_Register("atmosphere_and_fog_volumes", AutoTest_AtmosphereFogStep, 5);
   AutoTest_Register("character_animation_system", AutoTest_CharacterAnimSystemStep, 5);
   AutoTest_Register("modular_character_system", AutoTest_ModularCharacterSystemStep, 5);
+  AutoTest_Register("player_wardrobe_system", AutoTest_PlayerWardrobeSystemStep, 5);
+  AutoTest_Register("ui_wardrobe_system", AutoTest_UIWardrobeStep, 5);
 }
 

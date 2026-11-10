@@ -264,6 +264,7 @@ add_executable(wuxing
     # --- UI (HUD + auto-targeting — Module 9) ---
     ui/ui.c
     ui/ui_lobby.c
+    ui/ui_wardrobe.c
 
     # --- Formations (Trận Pháp engine + one _def.c per formation — Module 10) ---
     formations/formation_system.c
@@ -278,6 +279,7 @@ add_executable(wuxing
     # pure gameplay logic) ---
     character/character_model.c
     character/modular_character.c
+    character/wardrobe_system.c
 
     # --- Game Screen (production-bound; sandbox/ stays the dev harness) ---
     game/game_screen.c

@@ -258,6 +258,39 @@ Do NOT include character hands or body. Only the sword as a rigid socket weapon.
 ## Prompt 8: New Martial Combat Animations (`combat_moves.glb`)
 
 ```markdown
+| Property | Value | Notes |
+|---|---|---|
+| **Scale** | `1 unit = 1 meter` | Real-world metric scale. Total character height is `1.78m`. |
+| **Axes** | `+Y = Up`, `+Z = Forward`, `+X = Left` | Standard glTF 2.0 convention. |
+| **Skeleton Hierarchy** | 20 bones (`mixamorig:*`) | Exact Mixamo bone names and joint coordinates. |
+| **Skinning Type** | SkinnedMesh vs Rigid Socket | Clothing is SkinnedMesh; Weapons, Hats, and Bracers are Rigid Sockets. |
+
+### Mixamo Humanoid Joint Anchors
+```
+mixamorig:Hips           [ 0.00, 0.95, 0.00] (Root)
+├── mixamorig:Spine      [ 0.00, 1.08, 0.00]
+│   └── mixamorig:Spine1 [ 0.00, 1.22, 0.00]
+│       └── mixamorig:Spine2 [ 0.00, 1.36, 0.00]
+│           ├── mixamorig:Neck [ 0.00, 1.52, 0.00]
+│           │   └── mixamorig:Head [ 0.00, 1.66, 0.00]
+│           ├── mixamorig:LeftShoulder [ 0.08, 1.48, 0.00]
+│           │   └── mixamorig:LeftArm [ 0.22, 1.48, 0.00]
+│           │       └── mixamorig:LeftForeArm [ 0.48, 1.48, 0.00]
+│           │           └── mixamorig:LeftHand [ 0.72, 1.48, 0.00]
+│           └── mixamorig:RightShoulder [-0.08, 1.48, 0.00]
+│               └── mixamorig:RightArm [-0.22, 1.48, 0.00]
+│                   └── mixamorig:RightForeArm [-0.48, 1.48, 0.00]
+│                       └── mixamorig:RightHand [-0.72, 1.48, 0.00]
+├── mixamorig:LeftUpLeg  [ 0.10, 0.90, 0.00]
+│   └── mixamorig:LeftLeg [ 0.10, 0.48, 0.00]
+│       └── mixamorig:LeftFoot [ 0.10, 0.08, 0.00]
+└── mixamorig:RightUpLeg [-0.10, 0.90, 0.00]
+    └── mixamorig:RightLeg [-0.10, 0.48, 0.00]
+        └── mixamorig:RightFoot [-0.10, 0.08, 0.00]
+```
+
+---
+
 Create a complete, single-file HTML/WebGL application using Three.js (r160) and GLTFExporter that generates 5 NEW martial arts combat animation clips on the standard 20-bone Mixamo humanoid skeleton:
 
 Bones:

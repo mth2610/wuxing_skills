@@ -30,7 +30,7 @@ full reasoning).
 - `android.wuxing_skills/`
 - `unreal-engine-starter-content-main/` (off-limits without explicit permission)
 
-## Current scope (minimal — DO NOT add beyond this without explicit instruction)
+## Current scope
 
 1. **One shared `Model` + `ModelAnimation[]`**, loaded once via
    `CharacterModel_Load(filePath)` (cached inside `core/resource_manager.h`,
@@ -50,19 +50,16 @@ full reasoning).
    CLI to import any external `.fbx` (e.g. `Jumping Down.fbx`) or `.bvh` directly
    into `character/raw_model/animations/`, rebuild `assets/characters/player.glb`,
    and map to slots/manifest automatically.
-5. **Player-only.** Only one `CharacterAnimState` is driven right now
-   (`sandbox/sandbox_core.h`'s `PlayerEntity.anim` and the same shared player
-   in `game/game_screen.c`). Enemy/dummy still use the old
-   `DrawCharacter3D` stick figure — out of scope until explicitly asked.
-
-## Explicitly OUT of scope for now (do not build until instructed)
-- Animating more than one character instance at a time — raylib's
-  `UpdateModelAnimation` mutates the shared `Model`'s mesh buffer in place
-  (CPU skinning); two instances animating independently in the same frame
-  would clobber each other's pose. Needs per-instance mesh copies or a
-  different technique before a second instance (enemy/boss) can animate.
-- Animation blending/crossfade — hard frame switch on slot change today.
-- Loadout/equipment visuals, cosmetics, multiple character models.
+5. **Modular Character System** (`character/modular_character.h/.c`) —
+   Supports Heroes (players), Bosses, and Swarm Minions (clustered pose sharing).
+   Enables independent equipping of `MODULAR_SLOT_BASE_BODY`, `MODULAR_SLOT_TORSO`,
+   `MODULAR_SLOT_LEGS`, `MODULAR_SLOT_BOOTS`, `MODULAR_SLOT_BRACERS`,
+   `MODULAR_SLOT_HEADGEAR`, `MODULAR_SLOT_BACK`, `MODULAR_SLOT_WEAPON_R`, and `MODULAR_SLOT_WEAPON_L`.
+6. **Player Wardrobe & Collection System** (`character/wardrobe_system.h/.c`) —
+   Declarative JSON catalog (`assets/characters/item_catalog.json`), personal
+   collection unlocking via world exploration, persistent save/load, real-time
+   3D synchronization with `ModularInstance`, and combat stance resolution
+   (`COMBAT_STANCE_SWORD` vs `COMBAT_STANCE_UNARMED`).
 
 ## Hard rules
 - Strict C99. No malloc/free — the `Model`/`ModelAnimation*` come from

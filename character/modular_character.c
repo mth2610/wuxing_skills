@@ -48,16 +48,21 @@ int ModularSystem_RegisterItem(const char *id, ModularSlot slot, bool isSkinned,
     Matrix trans = MatrixTranslate(offsetPos.x, offsetPos.y, offsetPos.z);
     item->localOffset = MatrixMultiply(rot, trans);
 
-    // Load 3D model
-    item->model = ResourceManager_LoadModel(modelGlbPath);
-    if (item->model.meshCount > 0) {
-        SurfaceMaterial_Apply(&item->model);
-        item->loaded = true;
-        TraceLog(LOG_INFO, "MODULAR_SYSTEM: Registered item [%2d] '%s' (slot %d, %s, %d meshes)",
-                 idx, id, (int)slot, isSkinned ? "SKINNED" : "SOCKET", item->model.meshCount);
+    // Load 3D model if path is valid
+    if (modelGlbPath[0] != '\0' && FileExists(modelGlbPath)) {
+        item->model = ResourceManager_LoadModel(modelGlbPath);
+        if (item->model.meshCount > 0) {
+            SurfaceMaterial_Apply(&item->model);
+            item->loaded = true;
+            TraceLog(LOG_INFO, "MODULAR_SYSTEM: Registered item [%2d] '%s' (slot %d, %s, %d meshes)",
+                     idx, id, (int)slot, isSkinned ? "SKINNED" : "SOCKET", item->model.meshCount);
+        } else {
+            item->loaded = false;
+            TraceLog(LOG_WARNING, "MODULAR_SYSTEM: Failed to load model for item '%s' from '%s'", id, modelGlbPath);
+        }
     } else {
+        item->model = (Model){0};
         item->loaded = false;
-        TraceLog(LOG_WARNING, "MODULAR_SYSTEM: Failed to load model for item '%s' from '%s'", id, modelGlbPath);
     }
 
     return idx;
@@ -117,6 +122,15 @@ bool ModularSystem_GetSocketMatrix(Vector3 charPos, float charYaw, float charSca
         case MODULAR_SLOT_HEADGEAR:
             anchorPos = (Vector3){ 0.0f, 1.72f * charScale, -0.02f * charScale };
             break;
+        case MODULAR_SLOT_MASK:
+            anchorPos = (Vector3){ 0.0f, 1.68f * charScale, 0.08f * charScale };
+            break;
+        case MODULAR_SLOT_HAIR:
+            anchorPos = (Vector3){ 0.0f, 1.72f * charScale, 0.0f };
+            break;
+        case MODULAR_SLOT_WAIST:
+            anchorPos = (Vector3){ 0.14f * charScale, 0.98f * charScale, 0.08f * charScale };
+            break;
         case MODULAR_SLOT_WEAPON_R:
             anchorPos = (Vector3){ 0.35f * charScale, 0.95f * charScale, 0.15f * charScale };
             break;
@@ -153,31 +167,44 @@ void ModularInstance_Draw(ModularInstance *inst) {
     } else {
         masterModel = CharacterModel_GetModel();
     }
-    if (masterModel.meshCount == 0) return;
+    if (masterModel.meshCount <= 0 || masterModel.meshes == NULL) return;
 
-    // 1. Draw base body with CPU skinning
-    CharacterModel_DrawCustom(masterModel, &inst->animState, inst->position, inst->yaw, inst->scale, inst->tint);
+    // 1. Draw base body with CPU skinning (unless masked to eliminate clipping)
+    if (!inst->hideBaseBody) {
+        CharacterModel_DrawCustom(masterModel, &inst->animState, inst->position, inst->yaw, inst->scale, inst->tint);
+    }
 
-    // 2. Draw equipped deforming clothes (Torso / Legs)
-    for (int s = MODULAR_SLOT_TORSO; s <= MODULAR_SLOT_LEGS; s++) {
-        int itemIdx = inst->loadout.itemIndices[s];
-        if (itemIdx >= 0 && s_itemRegistry[itemIdx].loaded) {
-            CharacterModel_DrawCustom(s_itemRegistry[itemIdx].model, &inst->animState,
+    // 2. Full Outfit pass (if equipped)
+    int fullOutfitIdx = inst->loadout.itemIndices[MODULAR_SLOT_FULL_OUTFIT];
+    if (fullOutfitIdx >= 0 && s_itemRegistry[fullOutfitIdx].loaded) {
+        ModularItemDef *foItem = &s_itemRegistry[fullOutfitIdx];
+        if (foItem->model.meshCount > 0 && foItem->model.meshes != NULL) {
+            CharacterModel_DrawCustom(foItem->model, &inst->animState,
                                       inst->position, inst->yaw, inst->scale, inst->tint);
         }
     }
 
-    // 3. Draw rigid socket attachments (Weapons, Hats, Back scabbards)
-    for (int s = MODULAR_SLOT_WEAPON_R; s < MODULAR_SLOT_COUNT; s++) {
+    // 3. Draw remaining equipped items (skip base body, full outfit, and any slots suppressed by full outfit)
+    for (int s = 0; s < MODULAR_SLOT_COUNT; s++) {
+        if (s == MODULAR_SLOT_BASE_BODY || s == MODULAR_SLOT_FULL_OUTFIT) continue;
+        if (fullOutfitIdx >= 0 && (inst->occupiedSlotsMask & (1 << s))) continue; // Suppressed by Full Outfit!
+
         int itemIdx = inst->loadout.itemIndices[s];
         if (itemIdx >= 0 && s_itemRegistry[itemIdx].loaded) {
             ModularItemDef *item = &s_itemRegistry[itemIdx];
-            Matrix finalMat;
-            ModularSystem_GetSocketMatrix(inst->position, inst->yaw, inst->scale,
-                                          (ModularSlot)s, item->localOffset, &finalMat);
+            if (item->model.meshCount <= 0 || item->model.meshes == NULL) continue;
 
-            for (int m = 0; m < item->model.meshCount; m++) {
-                DrawMesh(item->model.meshes[m], item->model.materials[m], finalMat);
+            if (item->isSkinned) {
+                CharacterModel_DrawCustom(item->model, &inst->animState,
+                                          inst->position, inst->yaw, inst->scale, inst->tint);
+            } else {
+                Matrix finalMat;
+                ModularSystem_GetSocketMatrix(inst->position, inst->yaw, inst->scale,
+                                              (ModularSlot)s, item->localOffset, &finalMat);
+
+                for (int m = 0; m < item->model.meshCount; m++) {
+                    DrawMesh(item->model.meshes[m], item->model.materials[m], finalMat);
+                }
             }
         }
     }

@@ -8,6 +8,9 @@
 #include "environment/wind/wind_system.h"
 #include "environment/atmosphere.h"
 #include "maps/map_manager.h"
+#include "character/wardrobe_system.h"
+#include "character/modular_character.h"
+#include "ui/ui_wardrobe.h"
 #include "raymath.h"
 #include "rlgl.h"
 #include <stddef.h>
@@ -185,6 +188,9 @@ void InitSandbox(PlayerEntity* player, EnemyEntity* enemy) {
     CharacterModel_Load("assets/characters/player.glb");
     CharacterModel_ResetState(&player->anim);
 
+    // Global Wardrobe & Collection initialization (loads assets/saves/player_wardrobe.json)
+    Wardrobe_InitGlobal(WARDROBE_DEFAULT_SAVE_PATH);
+
     // Cấu hình Enemy
     enemy->position = (Vector3){ 9.0f, 0.0f, 3.5f };
     enemy->position.y = MapManager_GetGroundHeightAt(enemy->position.x, enemy->position.z);
@@ -231,6 +237,16 @@ void Sandbox_FacePlayerToward(const PlayerEntity* player, Vector3 worldPos) {
 
 void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelState* uiState, Vector3* outMouseTarget) {
     Vector2 mousePos = GetMousePosition();
+
+    // Hotkey 'B' toggles Wuxia Wardrobe / Customization UI
+    if (IsKeyPressed(KEY_B)) {
+        UI_Wardrobe_Toggle(Wardrobe_GetGlobalPlayer(), Wardrobe_GetGlobalModularInstance());
+    }
+
+    if (UI_Wardrobe_IsOpen()) {
+        // While customizing wardrobe, freeze player gameplay input & movement
+        return;
+    }
 
     // TAB để bật/tắt phím ảo trên PC (tiện cho việc test chuột)
     if (IsKeyPressed(KEY_TAB)) {
@@ -532,14 +548,26 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
     bool attackPressed = (touchAttack && !prevTouchAttack) ||
                          IsKeyPressed(KEY_Z) || IsKeyPressed(KEY_C);
     if (attackPressed) {
-        BasicAttackType randomType = (BasicAttackType)GetRandomValue(0, 2);
-        CharacterAnimSlot animSlot = (randomType == BASIC_ATTACK_PUNCH) ? CHAR_ANIM_PUNCH :
-                                     (randomType == BASIC_ATTACK_KICK)  ? CHAR_ANIM_KICK : CHAR_ANIM_PALM;
-        CharacterModel_TriggerAttackTimed(&player->anim, animSlot,
-                                          Entity_GetBasicAttackSeconds(randomType));
+        CombatStance stance = PlayerWardrobe_GetCombatStance(Wardrobe_GetGlobalPlayer());
         Vector3 targetPos, wallPos;
-        int wallElement;
-        bool gotWallBonus = Entity_ExecuteBasicAttack(player->agentId, randomType, &targetPos, &wallPos, &wallElement);
+        int wallElement = 0;
+        bool gotWallBonus = false;
+        BasicAttackType randomType = BASIC_ATTACK_PUNCH;
+
+        if (stance == COMBAT_STANCE_SWORD) {
+            int swordType = GetRandomValue(0, 1);
+            CharacterAnimSlot animSlot = (swordType == 0) ? CHAR_ANIM_SWORD_SLASH : CHAR_ANIM_SWORD_THRUST;
+            CharacterModel_TriggerAttackTimed(&player->anim, animSlot, 0.82f);
+            gotWallBonus = Entity_ExecuteBasicAttack(player->agentId, BASIC_ATTACK_PUNCH, &targetPos, &wallPos, &wallElement);
+        } else {
+            randomType = (BasicAttackType)GetRandomValue(0, 2);
+            CharacterAnimSlot animSlot = (randomType == BASIC_ATTACK_PUNCH) ? CHAR_ANIM_PUNCH :
+                                         (randomType == BASIC_ATTACK_KICK)  ? CHAR_ANIM_KICK : CHAR_ANIM_PALM;
+            CharacterModel_TriggerAttackTimed(&player->anim, animSlot,
+                                              Entity_GetBasicAttackSeconds(randomType));
+            gotWallBonus = Entity_ExecuteBasicAttack(player->agentId, randomType, &targetPos, &wallPos, &wallElement);
+        }
+
         // targetPos chỉ được ghi khi auto-target tìm thấy mục tiêu (còn lại
         // giữ (0,0,0)) — có mục tiêu thì quay mặt về hướng đánh.
         if (targetPos.x != 0.0f || targetPos.y != 0.0f || targetPos.z != 0.0f) {
@@ -655,6 +683,40 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
     }
 
     CharacterModel_Update(&player->anim, dt, inputX != 0.0f || inputZ != 0.0f);
+
+    // Modular Wardrobe Customization Hotkeys
+    {
+        PlayerWardrobe *pw = Wardrobe_GetGlobalPlayer();
+        // U: Toggle Sword (Thuận Thiên Kiếm) vs Tay Không (Unarmed)
+        if (IsKeyPressed(KEY_U)) {
+            if (PlayerWardrobe_GetCombatStance(pw) == COMBAT_STANCE_SWORD) {
+                Wardrobe_UnequipGlobal(MODULAR_SLOT_WEAPON_R);
+            } else {
+                Wardrobe_EquipGlobal("kiem_thuan_thien");
+            }
+        }
+        // P: Toggle Nón Lá (Headgear)
+        if (IsKeyPressed(KEY_P)) {
+            if (PlayerWardrobe_GetEquippedId(pw, MODULAR_SLOT_HEADGEAR)[0] != '\0') {
+                Wardrobe_UnequipGlobal(MODULAR_SLOT_HEADGEAR);
+            } else {
+                Wardrobe_EquipGlobal("non_la_hiep_khach");
+            }
+        }
+        // I: Toggle Vỏ Kiếm (Back scabbard)
+        if (IsKeyPressed(KEY_I)) {
+            if (PlayerWardrobe_GetEquippedId(pw, MODULAR_SLOT_BACK)[0] != '\0') {
+                Wardrobe_UnequipGlobal(MODULAR_SLOT_BACK);
+            } else {
+                Wardrobe_EquipGlobal("vo_kiem_son_mai");
+            }
+        }
+
+        ModularInstance *inst = Wardrobe_GetGlobalModularInstance();
+        if (inst) {
+            ModularInstance_Update(inst, dt, inputX != 0.0f || inputZ != 0.0f);
+        }
+    }
 
     if (player->dashCooldown > 0.0f) player->dashCooldown -= dt;
 
@@ -1126,9 +1188,9 @@ void DrawSandboxHUD(void) {
 
     // Vị trí HUD góc dưới bên trái (chồng lên chỗ chữ cũ của main.c)
     int hudX = 10;
-    int hudY = 460;
-    int hudW = 560;
-    int hudH = 255;
+    int hudY = 430;
+    int hudW = 570;
+    int hudH = 285;
 
     // Vẽ panel nền tối sang trọng
     DrawRectangle(hudX, hudY, hudW, hudH, ColorAlpha(GetColor(0x15151CFF), 0.85f));
@@ -1138,27 +1200,47 @@ void DrawSandboxHUD(void) {
     
     // Tiêu đề (Size 20 để nổi bật, spacing = 2.0f cho giãn chữ thoáng đãng)
     DrawTextEx(defaultFont, "[ SYSTEM & CAMERA STATUS ]", (Vector2){ hudX + 15, hudY + 12 }, 20, 2.0f, YELLOW);
+
+    // Nút mở Tủ Đồ Hiệp Khách (Phím B)
+    Rectangle wardrobeBtn = { (float)(hudX + hudW - 140), (float)(hudY + 10), 125.0f, 26.0f };
+    bool wbHover = CheckCollisionPointRec(GetMousePosition(), wardrobeBtn);
+    DrawRectangleRec(wardrobeBtn, wbHover ? (Color){ 70, 55, 20, 255 } : (Color){ 35, 30, 18, 255 });
+    DrawRectangleLinesEx(wardrobeBtn, 1.0f, wbHover ? GOLD : (Color){ 160, 130, 60, 255 });
+    DrawText("TU DO (B)", (int)wardrobeBtn.x + 28, (int)wardrobeBtn.y + 6, 13, GOLD);
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && wbHover) {
+        UI_Wardrobe_Open(Wardrobe_GetGlobalPlayer(), Wardrobe_GetGlobalModularInstance());
+    }
     
     // Thông số Camera (Size 10 pixel-perfect cực nét của Raylib)
     DrawTextEx(defaultFont, TextFormat("Angle: %.1f deg (%.3f rad)", angleDegrees, g_cameraAngle), (Vector2){ hudX + 15, hudY + 38 }, 10, 1.0f, GREEN);
     DrawTextEx(defaultFont, TextFormat("Zoom : %.1f | Radius: %.1f", g_camDist, Vector3Distance(camera.position, camera.target)), (Vector2){ hudX + 15, hudY + 53 }, 10, 1.0f, SKYBLUE);
     DrawTextEx(defaultFont, TextFormat("Pitch: %.1f deg | FOV: %.1f deg", SANDBOX_CAMERA_PITCH_DEGREES, camera.fovy), (Vector2){ hudX + 15, hudY + 68 }, 10, 1.0f, MAGENTA);
 
+    {
+        PlayerWardrobe *pw = Wardrobe_GetGlobalPlayer();
+        CombatStance stance = PlayerWardrobe_GetCombatStance(pw);
+        const char *stanceStr = (stance == COMBAT_STANCE_SWORD) ? "KIEM PHAP (SWORD)" : "TAY KHONG (UNARMED)";
+        Color stanceCol = (stance == COMBAT_STANCE_SWORD) ? GOLD : SKYBLUE;
+        DrawTextEx(defaultFont, TextFormat("Stance: %s | [U] Kiem/Tay Khong | [P] Non La | [I] Vo Kiem", stanceStr),
+                   (Vector2){ hudX + 15, hudY + 83 }, 10, 1.0f, stanceCol);
+    }
+
     // Dòng kẻ phân cách
-    DrawLine(hudX + 15, hudY + 88, hudX + hudW - 15, hudY + 88, ColorAlpha(GetColor(0x353545FF), 0.5f));
+    DrawLine(hudX + 15, hudY + 98, hudX + hudW - 15, hudY + 98, ColorAlpha(GetColor(0x353545FF), 0.5f));
 
     // Phím tắt điều khiển (Size 10 pixel-perfect)
-    DrawTextEx(defaultFont, "CONTROLS & HOTKEYS:", (Vector2){ hudX + 15, hudY + 98 }, 10, 1.0f, GOLD);
-    DrawTextEx(defaultFont, "- Q/E Key        : Rotate Camera around Player", (Vector2){ hudX + 25, hudY + 113 }, 10, 1.0f, LIGHTGRAY);
-    DrawTextEx(defaultFont, "- R/F or Scroll  : Zoom Camera (Adjust Dist & Height)", (Vector2){ hudX + 25, hudY + 128 }, 10, 1.0f, LIGHTGRAY);
-    DrawTextEx(defaultFont, "- WASD / Arrows  : Move Player (Relative to Camera View)", (Vector2){ hudX + 25, hudY + 143 }, 10, 1.0f, LIGHTGRAY);
-    DrawTextEx(defaultFont, "- Space / X Key  : Jump / Dash character", (Vector2){ hudX + 25, hudY + 158 }, 10, 1.0f, LIGHTGRAY);
-    DrawTextEx(defaultFont, "- Z / C Key      : Basic Attack (Spawn Linear Gust & Radial Shockwave)", (Vector2){ hudX + 25, hudY + 173 }, 10, 1.0f, LIGHTGRAY);
-    DrawTextEx(defaultFont, TextFormat("- F8 / 8 Key     : Toggle Wind Debug Gizmo [%s]", s_windDebugEnabled ? "ON" : "OFF"), (Vector2){ hudX + 25, hudY + 188 }, 10, 1.0f, s_windDebugEnabled ? LIME : LIGHTGRAY);
-    DrawTextEx(defaultFont, TextFormat("- F9 / 9 Key     : Cycle Atmosphere [%s]", Atmosphere_GetMode() == ATMO_MODE_WAR_EMBERS ? "War Embers (Tan tro)" : "Moonlight Dust (Bui trang)"), (Vector2){ hudX + 25, hudY + 203 }, 10, 1.0f, ORANGE);
-    DrawTextEx(defaultFont, "- J Key          : Cast Guided Motion (Travel -> Target -> Wind Flow)", (Vector2){ hudX + 25, hudY + 218 }, 10, 1.0f, YELLOW);
-    DrawTextEx(defaultFont, TextFormat("- F10 / 0 Key    : Switch Map [%s]", MapManager_GetName(MapManager_GetActiveIndex())), (Vector2){ hudX + 25, hudY + 233 }, 10, 1.0f, GREEN);
-    DrawTextEx(defaultFont, "- Left Mouse     : Cast Selected Element Skill", (Vector2){ hudX + 25, hudY + 248 }, 10, 1.0f, LIGHTGRAY);
+    DrawTextEx(defaultFont, "CONTROLS & HOTKEYS:", (Vector2){ hudX + 15, hudY + 108 }, 10, 1.0f, GOLD);
+    DrawTextEx(defaultFont, "- Q/E Key        : Rotate Camera around Player", (Vector2){ hudX + 25, hudY + 123 }, 10, 1.0f, LIGHTGRAY);
+    DrawTextEx(defaultFont, "- R/F or Scroll  : Zoom Camera (Adjust Dist & Height)", (Vector2){ hudX + 25, hudY + 138 }, 10, 1.0f, LIGHTGRAY);
+    DrawTextEx(defaultFont, "- WASD / Arrows  : Move Player (Relative to Camera View)", (Vector2){ hudX + 25, hudY + 153 }, 10, 1.0f, LIGHTGRAY);
+    DrawTextEx(defaultFont, "- Space / X Key  : Jump / Dash character", (Vector2){ hudX + 25, hudY + 168 }, 10, 1.0f, LIGHTGRAY);
+    DrawTextEx(defaultFont, "- Z / C Key      : Attack (Sword Slashes if Sword, Martial Arts if Unarmed)", (Vector2){ hudX + 25, hudY + 183 }, 10, 1.0f, LIGHTGRAY);
+    DrawTextEx(defaultFont, TextFormat("- F8 / 8 Key     : Toggle Wind Debug Gizmo [%s]", s_windDebugEnabled ? "ON" : "OFF"), (Vector2){ hudX + 25, hudY + 198 }, 10, 1.0f, s_windDebugEnabled ? LIME : LIGHTGRAY);
+    DrawTextEx(defaultFont, TextFormat("- F9 / 9 Key     : Cycle Atmosphere [%s]", Atmosphere_GetMode() == ATMO_MODE_WAR_EMBERS ? "War Embers (Tan tro)" : "Moonlight Dust (Bui trang)"), (Vector2){ hudX + 25, hudY + 213 }, 10, 1.0f, ORANGE);
+    DrawTextEx(defaultFont, "- J Key          : Cast Guided Motion (Travel -> Target -> Wind Flow)", (Vector2){ hudX + 25, hudY + 228 }, 10, 1.0f, YELLOW);
+    DrawTextEx(defaultFont, TextFormat("- F10 / 0 Key    : Switch Map [%s]", MapManager_GetName(MapManager_GetActiveIndex())), (Vector2){ hudX + 25, hudY + 243 }, 10, 1.0f, GREEN);
+    DrawTextEx(defaultFont, "- Left Mouse     : Cast Selected Element Skill", (Vector2){ hudX + 25, hudY + 258 }, 10, 1.0f, LIGHTGRAY);
+    DrawTextEx(defaultFont, "- U / P / I Keys : Wardrobe Customizer (Toggle Sword, Hat, Scabbard)", (Vector2){ hudX + 25, hudY + 273 }, 10, 1.0f, GOLD);
 }
 
 static void DrawTouchButton(Vector2 center, float radius, const char* label, bool active, Color activeColor) {
@@ -1256,4 +1338,18 @@ void DrawSandboxTouchControls(const PlayerEntity* player) {
 
     EndMode2D();
     EndBlendMode();
+}
+
+PlayerWardrobe* Sandbox_GetPlayerWardrobe(void) {
+    return Wardrobe_GetGlobalPlayer();
+}
+
+ModularInstance* Sandbox_GetPlayerModularInstance(void) {
+    return Wardrobe_GetGlobalModularInstance();
+}
+
+void Sandbox_DrawWardrobeUI(void) {
+    if (UI_Wardrobe_IsOpen()) {
+        UI_Wardrobe_UpdateDraw(Wardrobe_GetGlobalPlayer(), Wardrobe_GetGlobalModularInstance(), GetFrameTime());
+    }
 }

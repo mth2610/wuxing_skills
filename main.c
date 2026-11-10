@@ -23,6 +23,7 @@
 #include "skills/skill_manager.h"
 #include "core/trails/trail_system.h"
 #include "sandbox/ui_panel.h"
+#include "ui/ui_wardrobe.h"
 #include "core/vfx_light.h"
 #include "sandbox/vfx_test.h" // MỚI: Chỉ giữ duy nhất file test này để điều phối
 #include "core/resource_manager.h"
@@ -65,6 +66,7 @@
 #include "formations/formation_system.h"
 #include "net/net.h"
 #include "character/character_model.h"
+#include "character/wardrobe_system.h"
 #include <stdio.h>
 
 // Biến camera toàn cục
@@ -542,6 +544,7 @@ int main(int argc, char **argv) {
   VolumetricFog_Init(screenWidth, screenHeight); // Ghost of Tsushima Volumetric Fog & God-Rays
   Wind_Init();            // Ghost of Tsushima: Global Macro Wind + Vorticles System
   MetaballFX_Init(screenWidth, screenHeight);
+  Wardrobe_InitGlobal(WARDROBE_DEFAULT_SAVE_PATH);
   /* THE DEFAULT PARTICLE SPRITE.
    *
    * Was GenImageGradientRadial(64, 64, 0.0f, WHITE, BLANK) — raylib's built-in,
@@ -923,7 +926,12 @@ int main(int argc, char **argv) {
     // -------------------------------------------------------------------------
     if (!renderVFXMode) {
         if (IsKeyPressed(KEY_V)) g_gamePaused = !g_gamePaused;
-        if (IsKeyPressed(KEY_B)) g_stepNextFrame = true;
+        if (g_gamePaused && (IsKeyPressed(KEY_PERIOD) || IsKeyPressed(KEY_N))) g_stepNextFrame = true;
+        if (IsKeyPressed(KEY_B) && currentScreen != SCREEN_MAIN_MENU && currentScreen != SCREEN_LOBBY) {
+            PlayerWardrobe *pw = Sandbox_GetPlayerWardrobe();
+            ModularInstance *inst = Sandbox_GetPlayerModularInstance();
+            if (pw && inst) UI_Wardrobe_Toggle(pw, inst);
+        }
         if (IsKeyPressed(KEY_M)) g_slowMotion = !g_slowMotion;
         if (IsKeyPressed(KEY_K)) {
             int nextMap = (MapManager_GetActiveIndex() + 1) % MapManager_GetCount();
@@ -2145,6 +2153,9 @@ int main(int argc, char **argv) {
 
     GradientProbe_Readback();
 
+    // Topmost modal overlay: Wuxia Wardrobe & Equipment selection UI
+    Sandbox_DrawWardrobeUI();
+
     if (benchmarkVisible) profileTime[10] = GetTime();
     const float submitMs = (float)((GetTime() - frameClockStart) * 1000.0);
     PASS_MARK("frame_end");
@@ -2230,6 +2241,8 @@ int main(int argc, char **argv) {
   if (visualVerifyMode) {
       exitCode = VisualVerify_GetExitCode();
   }
+
+  Wardrobe_SaveGlobal();
 
   UnloadTexture(globalParticleTex);
   UnloadTexture(testAtlasTex);

@@ -368,6 +368,26 @@ Sound ResourceManager_LoadSound(const char *filePath) {
   return LoadSound(filePath);
 }
 
+static int s_unicodeCodepoints[1024];
+static int s_unicodeCodepointCount = 0;
+
+static void EnsureUnicodeCodepoints(void) {
+  if (s_unicodeCodepointCount > 0) return;
+  int count = 0;
+  // Basic Latin + Latin-1 Supplement (32..255)
+  for (int c = 32; c <= 255; c++) s_unicodeCodepoints[count++] = c;
+  // Latin Extended-A & B (256..591)
+  for (int c = 256; c <= 591; c++) s_unicodeCodepoints[count++] = c;
+  // Latin Extended Additional (Vietnamese vowels: 0x1EA0..0x1EF9)
+  for (int c = 0x1EA0; c <= 0x1EF9; c++) s_unicodeCodepoints[count++] = c;
+  // Symbols & Punctuation: –, —, ', ', ", ", •, …, ₫, ←, →, ◀, ▶, ◆, ○, ⚔, ☯
+  int symbols[] = { 0x2013, 0x2014, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2026, 0x20AB, 0x2190, 0x2192, 0x25C0, 0x25B6, 0x25C6, 0x25CB, 0x2694, 0x262F };
+  for (int i = 0; i < (int)(sizeof(symbols)/sizeof(symbols[0])); i++) {
+    s_unicodeCodepoints[count++] = symbols[i];
+  }
+  s_unicodeCodepointCount = count;
+}
+
 Font ResourceManager_LoadFont(const char *filePath, int baseSize) {
   if (filePath == NULL || filePath[0] == '\0')
     return GetFontDefault();
@@ -388,7 +408,8 @@ Font ResourceManager_LoadFont(const char *filePath, int baseSize) {
   //   return GetFontDefault();
   // }
 
-  Font font = LoadFontEx(filePath, baseSize, NULL, 0);
+  EnsureUnicodeCodepoints();
+  Font font = LoadFontEx(filePath, baseSize, s_unicodeCodepoints, s_unicodeCodepointCount);
   SetTextureFilter(font.texture, TEXTURE_FILTER_BILINEAR);
 
   // 2. Add to cache
