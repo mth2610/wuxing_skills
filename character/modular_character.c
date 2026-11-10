@@ -84,6 +84,7 @@ void ModularInstance_Init(ModularInstance *inst, ModularTier tier) {
         inst->loadout.itemIndices[s] = -1;
     }
     CharacterModel_ResetState(&inst->animState);
+    SpringBone_SetupWuxiaDefaults(&inst->springBones);
     inst->scale = 1.0f;
     inst->tint = WHITE;
     inst->active = true;
@@ -110,6 +111,10 @@ bool ModularInstance_EquipIndex(ModularInstance *inst, ModularSlot slot, int ite
 void ModularInstance_Update(ModularInstance *inst, float dt, bool isMoving) {
     if (!inst || !inst->active) return;
     CharacterModel_Update(&inst->animState, dt, isMoving);
+
+    // Update dynamic cloth spring bones (skirts, sleeves, ribbons)
+    Vector3 windVel = (Vector3){ 0.0f, 0.0f, 0.0f };
+    SpringBone_Update(&inst->springBones, &inst->animState, inst->position, inst->yaw, inst->scale, dt, windVel);
 }
 
 bool ModularSystem_GetSocketMatrixEx(Vector3 charPos, float charYaw, float charScale,
@@ -185,9 +190,13 @@ void ModularInstance_Draw(ModularInstance *inst) {
     }
     if (masterModel.meshCount <= 0 || masterModel.meshes == NULL) return;
 
-    // 1. Draw base body with CPU skinning (unless masked to eliminate clipping)
+    // 1. Draw base body with CPU skinning (deflating covered parts if clothing is worn)
     if (!inst->hideBaseBody) {
-        CharacterModel_DrawCustom(masterModel, &inst->animState, inst->position, inst->yaw, inst->scale, inst->tint);
+        bool hasTorso = (inst->loadout.itemIndices[MODULAR_SLOT_TORSO] >= 0) ||
+                        (inst->loadout.itemIndices[MODULAR_SLOT_FULL_OUTFIT] >= 0);
+        bool hasLegs = (inst->loadout.itemIndices[MODULAR_SLOT_LEGS] >= 0) ||
+                       (inst->loadout.itemIndices[MODULAR_SLOT_FULL_OUTFIT] >= 0);
+        CharacterModel_DrawCustomEx(masterModel, &inst->animState, inst->position, inst->yaw, inst->scale, inst->tint, hasTorso, hasLegs);
     }
 
     // 2. Full Outfit pass (if equipped)

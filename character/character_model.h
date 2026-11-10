@@ -128,6 +128,9 @@ void CharacterModel_Draw(const CharacterAnimState *state, Vector3 position, floa
 // the shared animation clips loaded by CharacterModel.
 void CharacterModel_DrawCustom(Model customModel, const CharacterAnimState *state, Vector3 position, float yawRadians, float scale, Color tint);
 
+// Draws a humanoid Model with optional selective body deflation to eliminate clipping through outerwear (robes, pants).
+void CharacterModel_DrawCustomEx(Model customModel, const CharacterAnimState *state, Vector3 position, float yawRadians, float scale, Color tint, bool deflateTorso, bool deflateLegs);
+
 // Getters for integration with visual composer / skill effects
 struct MeshAdjacency;
 Model CharacterModel_GetModel(void);

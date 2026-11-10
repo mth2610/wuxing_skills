@@ -280,6 +280,7 @@ add_executable(wuxing
     character/character_model.c
     character/modular_character.c
     character/wardrobe_system.c
+    character/spring_bone.c
 
     # --- Game Screen (production-bound; sandbox/ stays the dev harness) ---
     game/game_screen.c

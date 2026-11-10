@@ -1159,7 +1159,7 @@ static AutoTestResult AutoTest_UIWardrobeStep(int frameInCase, char *outReason, 
     PlayerWardrobe_Equip(pw, "ao_giao_linh");
     PlayerWardrobe_Equip(pw, "quan_wuxia");
     PlayerWardrobe_Equip(pw, "chien_hai_van_du");
-    PlayerWardrobe_Equip(pw, "kiem_thuan_thien");
+    PlayerWardrobe_Unequip(pw, MODULAR_SLOT_WEAPON_R);
     PlayerWardrobe_Equip(pw, "vo_kiem_son_mai");
     PlayerWardrobe_Equip(pw, "non_la_hiep_khach");
     PlayerWardrobe_ApplyToInstance(pw, inst);
