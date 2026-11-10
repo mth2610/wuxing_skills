@@ -1148,32 +1148,37 @@ static AutoTestResult AutoTest_UIWardrobeStep(int frameInCase, char *outReason, 
   }
 
   if (frameInCase == 0) {
+    PlayerWardrobe_UnlockItem(pw, "human_body");
+    PlayerWardrobe_UnlockItem(pw, "ao_giao_linh");
+    PlayerWardrobe_UnlockItem(pw, "quan_wuxia");
+    PlayerWardrobe_UnlockItem(pw, "chien_hai_van_du");
+    PlayerWardrobe_UnlockItem(pw, "kiem_thuan_thien");
+    PlayerWardrobe_UnlockItem(pw, "vo_kiem_son_mai");
+    PlayerWardrobe_UnlockItem(pw, "non_la_hiep_khach");
+    PlayerWardrobe_Equip(pw, "human_body");
+    PlayerWardrobe_Equip(pw, "ao_giao_linh");
+    PlayerWardrobe_Equip(pw, "quan_wuxia");
+    PlayerWardrobe_Equip(pw, "chien_hai_van_du");
+    PlayerWardrobe_Equip(pw, "kiem_thuan_thien");
+    PlayerWardrobe_Equip(pw, "vo_kiem_son_mai");
+    PlayerWardrobe_Equip(pw, "non_la_hiep_khach");
+    PlayerWardrobe_ApplyToInstance(pw, inst);
+
     AutoTest_SaveScreenshot("preview_sandbox_hud_button");
     UI_Wardrobe_Open(pw, inst);
+    UI_Wardrobe_SetPreviewYaw(0.0f);
     return AUTOTEST_RUNNING;
   }
 
   if (frameInCase == 1) {
+    AutoTest_SaveScreenshot("preview_wardrobe_ui");
+    UI_Wardrobe_SetPreviewYaw(3.14159f);
     return AUTOTEST_RUNNING;
   }
 
   if (frameInCase == 2) {
-    AutoTest_SaveScreenshot("preview_wardrobe_ui");
+    AutoTest_SaveScreenshot("preview_wardrobe_back");
     UI_Wardrobe_Close();
-    return AUTOTEST_RUNNING;
-  }
-
-  if (frameInCase == 3) {
-    Vector3 pPos = (s_player) ? s_player->position : (Vector3){ 6.0f, 0.0f, 4.4f };
-    Camera3D cam = {
-        .position = (Vector3){ pPos.x, pPos.y + 1.2f, pPos.z + 2.8f },
-        .target = (Vector3){ pPos.x, pPos.y + 1.0f, pPos.z },
-        .up = (Vector3){ 0.0f, 1.0f, 0.0f },
-        .fovy = 38.0f,
-        .projection = CAMERA_PERSPECTIVE
-    };
-    AutoTest_SaveScreenshotWorld("preview_player_close_up", cam, (Vector3){ pPos.x, pPos.y + 1.0f, pPos.z }, 1.3f);
-    AutoTest_SaveScreenshot("preview_player_equipped_world");
     return AUTOTEST_PASS;
   }
 

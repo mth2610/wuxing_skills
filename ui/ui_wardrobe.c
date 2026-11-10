@@ -222,6 +222,10 @@ bool UI_Wardrobe_IsOpen(void) {
     return s_isOpen;
 }
 
+void UI_Wardrobe_SetPreviewYaw(float yaw) {
+    s_previewYaw = yaw;
+}
+
 // -----------------------------------------------------------------------------
 // UI Helper Widgets: Ornate Wuxia Lacquer & Jade Frames
 // -----------------------------------------------------------------------------

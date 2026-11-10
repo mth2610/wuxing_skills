@@ -239,8 +239,8 @@
       "rarity": "legendary",
       "is_skinned": false,
       "bone_socket": "mixamorig:RightHand",
-      "socket_offset_pos": [0.0, 0.05, 0.0],
-      "socket_offset_rot": [-10.0, 0.0, 5.0],
+      "socket_offset_pos": [0.030, -0.070, -0.010],
+      "socket_offset_rot": [-4.0, 4.0, 0.0],
       "model_path": "assets/characters/equipment/weapons/kiem_thuan_thien.glb",
       "ui_color": [255, 215, 0, 255],
       "stats": {
@@ -266,8 +266,8 @@
       "rarity": "rare",
       "is_skinned": false,
       "bone_socket": "mixamorig:Spine2",
-      "socket_offset_pos": [0.0, 0.0, -0.05],
-      "socket_offset_rot": [15.0, 0.0, -38.0],
+      "socket_offset_pos": [0.02, 0.02, -0.19],
+      "socket_offset_rot": [-6.0, 8.0, -36.0],
       "model_path": "assets/characters/equipment/back/vo_kiem_son_mai.glb",
       "ui_color": [180, 40, 30, 255],
       "stats": {

@@ -180,8 +180,8 @@ static void RegisterDefaultItems(void) {
             .stats = { 80.0f, 50.0f, 1.05f, 0.25f, 0.15f, 0.05f, "Thuận Thiên Trảm: Khai mở bộ Kiếm Pháp, tăng 25% sát thương kiếm khí Kim" },
             .isSkinned = false,
             .boneSocket = "mixamorig:RightHand",
-            .socketOffsetPos = (Vector3){0.0f, 0.05f, 0.0f},
-            .socketOffsetRot = (Vector3){-10.0f, 0.0f, 5.0f},
+            .socketOffsetPos = (Vector3){0.030f, -0.070f, -0.010f},
+            .socketOffsetRot = (Vector3){-4.0f, 4.0f, 0.0f},
             .modelPath = "assets/characters/equipment/weapons/kiem_thuan_thien.glb",
             .uiColor = (Color){255, 215, 0, 255}
         },
@@ -199,8 +199,8 @@ static void RegisterDefaultItems(void) {
             .stats = { 45.0f, 35.0f, 1.02f, 0.08f, 0.10f, 0.10f, "Bạt Kiếm Thuật: Tăng 20% tốc độ rút kiếm xuất chiêu đầu tiên" },
             .isSkinned = false,
             .boneSocket = "mixamorig:Spine2",
-            .socketOffsetPos = (Vector3){0.0f, 0.0f, -0.05f},
-            .socketOffsetRot = (Vector3){15.0f, 0.0f, -38.0f},
+            .socketOffsetPos = (Vector3){0.02f, 0.02f, -0.19f},
+            .socketOffsetRot = (Vector3){-6.0f, 8.0f, -36.0f},
             .modelPath = "assets/characters/equipment/back/vo_kiem_son_mai.glb",
             .uiColor = (Color){180, 40, 30, 255}
         },

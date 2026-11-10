@@ -21,6 +21,7 @@ void UI_Wardrobe_Toggle(PlayerWardrobe *pw, ModularInstance *inst);
 void UI_Wardrobe_Open(PlayerWardrobe *pw, ModularInstance *inst);
 void UI_Wardrobe_Close(void);
 bool UI_Wardrobe_IsOpen(void);
+void UI_Wardrobe_SetPreviewYaw(float yaw);
 
 // Updates input (clicks, drags, keyboard) and renders the full-screen wardrobe interface.
 // Call after the main 3D scene pass before EndDrawing().
