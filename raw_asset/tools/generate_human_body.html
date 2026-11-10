@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wuxia Male Base Body Generator - Wuxing Skills</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #1a1c23;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            color: #e0e0e0;
+        }
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+        }
+        #ui-panel {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(20, 22, 30, 0.92);
+            border: 1px solid #3a3f50;
+            border-radius: 8px;
+            padding: 16px 20px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+            max-width: 320px;
+            backdrop-filter: blur(8px);
+        }
+        h2 {
+            margin: 0 0 8px 0;
+            font-size: 16px;
+            color: #e5b289;
+            letter-spacing: 0.5px;
+        }
+        .desc {
+            font-size: 12px;
+            color: #8c93a8;
+            margin-bottom: 14px;
+            line-height: 1.4;
+        }
+        .control-group {
+            margin-bottom: 12px;
+        }
+        label {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            margin-bottom: 4px;
+            color: #b0b8d0;
+        }
+        input[type="range"] {
+            width: 100%;
+            height: 6px;
+            background: #2a2e3d;
+            border-radius: 3px;
+            outline: none;
+            -webkit-appearance: none;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #e5b289;
+            cursor: pointer;
+        }
+        .btn-export {
+            display: block;
+            width: 100%;
+            padding: 10px 0;
+            background: linear-gradient(135deg, #d49560, #b87333);
+            border: none;
+            border-radius: 6px;
+            color: #fff;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 14px;
+            box-shadow: 0 4px 12px rgba(184, 115, 51, 0.3);
+            transition: all 0.2s ease;
+        }
+        .btn-export:hover {
+            background: linear-gradient(135deg, #e5a772, #c88343);
+            transform: translateY(-1px);
+        }
+        .status {
+            margin-top: 10px;
+            font-size: 11px;
+            color: #6bb377;
+            text-align: center;
+        }
+    </style>
+    <!-- Three.js r128, OrbitControls, GLTFExporter -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/GLTFExporter.js"></script>
+</head>
+<body>
+    <div id="canvas-container"></div>
+    <div id="ui-panel">
+        <h2>Thân Thể Nam Kiếm Hiệp</h2>
+        <div class="desc">
+            Chuẩn Metric (1u = 1m), Cao 1.78m, 20 Xương Mixamo, 1-Island Watertight SkinnedMesh. Khớp 100% Áo Giao Lĩnh & Nón Lá.
+        </div>
+        <div class="control-group">
+            <label><span>Hạ tay / Idle:</span> <span id="val-arms">0°</span></label>
+            <input type="range" id="slider-arms" min="0" max="65" value="0">
+        </div>
+        <div class="control-group">
+            <label><span>Gập gối / Squat:</span> <span id="val-legs">0°</span></label>
+            <input type="range" id="slider-legs" min="0" max="45" value="0">
+        </div>
+        <div class="control-group">
+            <label><span>Quay đầu / Look:</span> <span id="val-head">0°</span></label>
+            <input type="range" id="slider-head" min="-45" max="45" value="0">
+        </div>
+        <button class="btn-export" id="btn-export">XUẤT HUMAN_BODY.GLB</button>
+        <div class="status" id="status-text">Sẵn sàng xuất file</div>
+    </div>
+
+    <script>
+        // ---------------------------------------------------------------------
+        // 1. SETUP THREE.JS SCENE, CAMERA, RENDERER
+        // ---------------------------------------------------------------------
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x1a1c23);
+
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 50);
+        camera.position.set(0, 1.25, 3.2);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.outputEncoding = THREE.sRGBEncoding;
+        container.appendChild(renderer.domElement);
+
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.target.set(0, 1.0, 0);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+
+        // Lighting
+        const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444455, 0.7);
+        hemiLight.position.set(0, 20, 0);
+        scene.add(hemiLight);
+
+        const keyLight = new THREE.DirectionalLight(0xfff0dd, 0.9);
+        keyLight.position.set(2.5, 3.5, 3.0);
+        scene.add(keyLight);
+
+        const fillLight = new THREE.DirectionalLight(0x90b0e0, 0.5);
+        fillLight.position.set(-2.5, 2.0, -2.0);
+        scene.add(fillLight);
+
+        const grid = new THREE.GridHelper(4, 20, 0x444d66, 0x242838);
+        grid.position.y = 0;
+        scene.add(grid);
+
+        // ---------------------------------------------------------------------
+        // 2. BUILD EXACT 20-BONE MIXAMO ARMATURE (1 UNIT = 1 METER)
+        // ---------------------------------------------------------------------
+        const bones = [];
+
+        // 0: Hips (Root)
+        const hips = new THREE.Bone(); hips.name = "mixamorig:Hips";
+        hips.position.set(0.00, 0.95, 0.00);
+        hips.quaternion.set(0.0, 0.0, 0.0, 1.0);
+        bones.push(hips);
+
+        // 1-3: Spine Chain
+        const spine = new THREE.Bone(); spine.name = "mixamorig:Spine";
+        spine.position.set(0.00, 0.13, 0.00);
+        spine.quaternion.set(0.0, 0.0, 0.0, 1.0);
+        hips.add(spine); bones.push(spine);
+
+        const spine1 = new THREE.Bone(); spine1.name = "mixamorig:Spine1";
+        spine1.position.set(0.00, 0.14, 0.00);
+        spine1.quaternion.set(0.0, 0.0, 0.0, 1.0);
+        spine.add(spine1); bones.push(spine1);
+
+        const spine2 = new THREE.Bone(); spine2.name = "mixamorig:Spine2";
+        spine2.position.set(0.00, 0.14, 0.00);
+        spine2.quaternion.set(0.0, 0.0, 0.0, 1.0);
+        spine1.add(spine2); bones.push(spine2);
+
+        // 4-5: Neck & Head (Exact Natural Human Proportions: Neck height = 8cm, Skull top = 1.76m)
+        const neck = new THREE.Bone(); neck.name = "mixamorig:Neck";
+        neck.position.set(0.00, 0.16, 0.00); // World Y = 1.52m
+        neck.quaternion.set(0.0, 0.0, 0.0, 1.0);
+        spine2.add(neck); bones.push(neck);
+
+        const head = new THREE.Bone(); head.name = "mixamorig:Head";
+        head.position.set(0.00, 0.14, 0.00); // World Y = 1.66m
+        head.quaternion.set(0.0, 0.0, 0.0, 1.0);
+        neck.add(head); bones.push(head);
+
+        // 6-9: Left Arm (Mixamo Shoulder rotated 90 deg so local +Y points along World +X)
+        const lShoulder = new THREE.Bone(); lShoulder.name = "mixamorig:LeftShoulder";
+        lShoulder.position.set(0.08, 0.12, 0.00);
+        lShoulder.quaternion.set(-0.5, -0.5, -0.5, 0.5);
+        spine2.add(lShoulder); bones.push(lShoulder);
+
+        const lArm = new THREE.Bone(); lArm.name = "mixamorig:LeftArm";
+        lArm.position.set(0.00, 0.14, 0.00); // World X = 0.22m
+        lArm.quaternion.set(0.0, 0.0, 0.0, 1.0);
+        lShoulder.add(lArm); bones.push(lArm);
+
+        const lForeArm = new THREE.Bone(); lForeArm.name = "mixamorig:LeftForeArm";
+        lForeArm.position.set(0.00, 0.26, 0.00); // World X = 0.48m
+        lForeArm.quaternion.set(0.0, 0.0, 0.0, 1.0);
+        lArm.add(lForeArm); bones.push(lForeArm);
+
+        const lHand = new THREE.Bone(); lHand.name = "mixamorig:LeftHand";
+        lHand.position.set(0.00, 0.24, 0.00); // World X = 0.72m
+        lHand.quaternion.set(0.0, 0.0, 0.0, 1.0);
+        lForeArm.add(lHand); bones.push(lHand);
+
+        // 10-13: Right Arm (Symmetric)
+        const rShoulder = new THREE.Bone(); rShoulder.name = "mixamorig:RightShoulder";
+        rShoulder.position.set(-0.08, 0.12, 0.00);
+        rShoulder.quaternion.set(-0.5, 0.5, 0.5, 0.5);
+        spine2.add(rShoulder); bones.push(rShoulder);
+
+        const rArm = new THREE.Bone(); rArm.name = "mixamorig:RightArm";
+        rArm.position.set(0.00, 0.14, 0.00); // World X = -0.22m
+        rArm.quaternion.set(0.0, 0.0, 0.0, 1.0);
+        rShoulder.add(rArm); bones.push(rArm);
+
+        const rForeArm = new THREE.Bone(); rForeArm.name = "mixamorig:RightForeArm";
+        rForeArm.position.set(0.00, 0.26, 0.00); // World X = -0.48m
+        rForeArm.quaternion.set(0.0, 0.0, 0.0, 1.0);
+        rArm.add(rForeArm); bones.push(rForeArm);
+
+        const rHand = new THREE.Bone(); rHand.name = "mixamorig:RightHand";
+        rHand.position.set(0.00, 0.24, 0.00); // World X = -0.72m
+        rHand.quaternion.set(0.0, 0.0, 0.0, 1.0);
+        rForeArm.add(rHand); bones.push(rHand);
+
+        // 14-16: Left Leg (Hips flip 180 deg)
+        const lUpLeg = new THREE.Bone(); lUpLeg.name = "mixamorig:LeftUpLeg";
+        lUpLeg.position.set(0.10, -0.05, 0.00); // World Y = 0.90m
+        lUpLeg.quaternion.set(-1.0, 0.0, 0.0, 0.0);
+        hips.add(lUpLeg); bones.push(lUpLeg);
+
+        const lLeg = new THREE.Bone(); lLeg.name = "mixamorig:LeftLeg";
+        lLeg.position.set(0.00, 0.42, 0.00); // World Y = 0.48m
+        lLeg.quaternion.set(0.0, 0.0, 0.0, 1.0);
+        lUpLeg.add(lLeg); bones.push(lLeg);
+
+        const lFoot = new THREE.Bone(); lFoot.name = "mixamorig:LeftFoot";
+        lFoot.position.set(0.00, 0.40, 0.00); // World Y = 0.08m
+        lFoot.quaternion.set(0.0, 0.0, 0.0, 1.0);
+        lLeg.add(lFoot); bones.push(lFoot);
+
+        // 17-19: Right Leg (Symmetric)
+        const rUpLeg = new THREE.Bone(); rUpLeg.name = "mixamorig:RightUpLeg";
+        rUpLeg.position.set(-0.10, -0.05, 0.00);
+        rUpLeg.quaternion.set(-1.0, 0.0, 0.0, 0.0);
+        hips.add(rUpLeg); bones.push(rUpLeg);
+
+        const rLeg = new THREE.Bone(); rLeg.name = "mixamorig:RightLeg";
+        rLeg.position.set(0.00, 0.42, 0.00);
+        rLeg.quaternion.set(0.0, 0.0, 0.0, 1.0);
+        rUpLeg.add(rLeg); bones.push(rLeg);
+
+        const rFoot = new THREE.Bone(); rFoot.name = "mixamorig:RightFoot";
+        rFoot.position.set(0.00, 0.40, 0.00);
+        rFoot.quaternion.set(0.0, 0.0, 0.0, 1.0);
+        rLeg.add(rFoot); bones.push(rFoot);
+
+        // Add root to scene and initialize skeleton
+        scene.add(hips);
+        scene.updateMatrixWorld(true);
+        hips.updateWorldMatrix(true, true);
+
+        const skeleton = new THREE.Skeleton(bones);
+        skeleton.calculateInverses();
+
+        // ---------------------------------------------------------------------
+        // 3. CONTINUOUS LOFTED BODY GEOMETRY GENERATOR (SINGLE WATERTIGHT MESH)
+        // ---------------------------------------------------------------------
+        const positions = [];
+        const normals = [];
+        const uvs = [];
+        const skinIndices = [];
+        const skinWeights = [];
+        const indices = [];
+
+        function smoothstep(edge0, edge1, x) {
+            const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+            return t * t * (3 - 2 * t);
+        }
+
+        // Helper: Push a vertex with calculated skin weights
+        function addVertex(x, y, z, u, v, bIndices, bWeights) {
+            positions.push(x, y, z);
+            uvs.push(u, v);
+            // Default normal outwards from vertical axis
+            const len = Math.hypot(x, z) || 1.0;
+            normals.push(x / len, 0.1, z / len);
+
+            // Normalize weights
+            let sum = bWeights[0] + bWeights[1] + bWeights[2] + bWeights[3];
+            if (sum <= 0.0001) sum = 1.0;
+            skinIndices.push(bIndices[0], bIndices[1], bIndices[2], bIndices[3]);
+            skinWeights.push(bWeights[0] / sum, bWeights[1] / sum, bWeights[2] / sum, bWeights[3] / sum);
+        }
+
+        // 3.1. Torso, Neck, Head & Hair Bun Lofted Ring Column
+        // Defined profiles along Y: [y, rx, rz, zOffset, vCoord]
+        const torsoRings = [
+            // Pelvis base
+            [0.88, 0.150, 0.100,  0.000, 0.00],
+            [0.92, 0.160, 0.105,  0.000, 0.05],
+            [0.96, 0.165, 0.108,  0.000, 0.10], // Hips bone Y = 0.95
+            [1.02, 0.150, 0.102,  0.000, 0.16],
+            // Waist / Navel
+            [1.08, 0.135, 0.095,  0.002, 0.22], // Spine bone Y = 1.08
+            [1.15, 0.125, 0.092,  0.004, 0.28], // Narrow waist
+            // Ribcage & Chest
+            [1.22, 0.138, 0.098,  0.006, 0.35], // Spine1 bone Y = 1.22
+            [1.28, 0.150, 0.106,  0.008, 0.42],
+            [1.36, 0.158, 0.114,  0.010, 0.50], // Spine2 / Chest apex (Max Z = 0.124m, < 0.150m robe!)
+            [1.44, 0.152, 0.102,  0.004, 0.58], // Upper chest
+            [1.48, 0.125, 0.088,  0.000, 0.62], // Shoulder transition
+            // Neck (Height = 8cm, Natural Proportion!)
+            [1.50, 0.065, 0.065,  0.000, 0.65],
+            [1.54, 0.055, 0.055,  0.000, 0.70], // Neck bone Y = 1.52
+            [1.58, 0.060, 0.065,  0.004, 0.75], // Jaw base
+            // Head & Face
+            [1.62, 0.072, 0.080,  0.008, 0.79], // Chin / Mouth
+            [1.66, 0.078, 0.090,  0.008, 0.84], // Head bone Y = 1.66 / Nose / Eyes
+            [1.72, 0.074, 0.084,  0.002, 0.90], // Forehead
+            [1.76, 0.045, 0.050,  0.000, 0.95], // Skull crown apex (1.76m)
+            // Compact Wuxia Hair Bun (Apex at 1.81m, sits completely inside Nón Lá cavity!)
+            [1.77, 0.024, 0.024, -0.012, 0.97],
+            [1.79, 0.026, 0.026, -0.012, 0.99],
+            [1.81, 0.004, 0.004, -0.012, 1.00]  // Bun apex
+        ];
+
+        const RAD_SEGMENTS = 24;
+        const baseIndex = positions.length / 3;
+
+        for (let r = 0; r < torsoRings.length; r++) {
+            const [y, rx, rz, zOff, v] = torsoRings[r];
+
+            // Calculate spine skinning weights along Y
+            let bIndices = [0, 1, 2, 3];
+            let bWeights = [0, 0, 0, 0];
+
+            if (y <= 1.08) {
+                const t = smoothstep(0.88, 1.08, y);
+                bIndices = [0, 1, 0, 0]; // Hips <-> Spine
+                bWeights = [1.0 - t, t, 0, 0];
+            } else if (y <= 1.22) {
+                const t = smoothstep(1.08, 1.22, y);
+                bIndices = [1, 2, 0, 0]; // Spine <-> Spine1
+                bWeights = [1.0 - t, t, 0, 0];
+            } else if (y <= 1.36) {
+                const t = smoothstep(1.22, 1.36, y);
+                bIndices = [2, 3, 0, 0]; // Spine1 <-> Spine2
+                bWeights = [1.0 - t, t, 0, 0];
+            } else if (y <= 1.50) {
+                const t = smoothstep(1.36, 1.50, y);
+                bIndices = [3, 4, 0, 0]; // Spine2 <-> Neck
+                bWeights = [1.0 - t, t, 0, 0];
+            } else if (y <= 1.58) {
+                const t = smoothstep(1.50, 1.58, y);
+                bIndices = [4, 5, 0, 0]; // Neck <-> Head
+                bWeights = [1.0 - t, t, 0, 0];
+            } else {
+                bIndices = [5, 4, 0, 0]; // Head 100%
+                bWeights = [1.0, 0.0, 0, 0];
+            }
+
+            for (let i = 0; i <= RAD_SEGMENTS; i++) {
+                const theta = (i / RAD_SEGMENTS) * Math.PI * 2;
+                const cosT = Math.cos(theta);
+                const sinT = Math.sin(theta);
+                const x = rx * cosT;
+                const z = rz * sinT + zOff;
+                const u = i / RAD_SEGMENTS;
+
+                addVertex(x, y, z, u, v, bIndices, bWeights);
+            }
+        }
+
+        // Build index buffer for torso rings
+        for (let r = 0; r < torsoRings.length - 1; r++) {
+            for (let i = 0; i < RAD_SEGMENTS; i++) {
+                const current = baseIndex + r * (RAD_SEGMENTS + 1) + i;
+                const next = current + (RAD_SEGMENTS + 1);
+
+                indices.push(current, next, current + 1);
+                indices.push(next, next + 1, current + 1);
+            }
+        }
+
+        // 3.2. Smooth Limb Tube Generator (Arms & Legs)
+        function generateLimbTube(x1, y1, z1, x2, y2, z2, rStart, rEnd, boneA, boneB, vStart, vEnd, uOffset) {
+            const SEG_LENGTH = 12;
+            const RAD_L = 16;
+            const startIdx = positions.length / 3;
+
+            const dx = x2 - x1, dy = y2 - y1, dz = z2 - z1;
+            const len = Math.hypot(dx, dy, dz);
+            const dirX = dx / len, dirY = dy / len, dirZ = dz / len;
+
+            // Compute perpendicular frame
+            let upX = 0, upY = 1, upZ = 0;
+            if (Math.abs(dirY) > 0.95) { upX = 1; upY = 0; upZ = 0; }
+            // Cross product
+            let sideX = upY * dirZ - upZ * dirY;
+            let sideY = upZ * dirX - upX * dirZ;
+            let sideZ = upX * dirY - upY * dirX;
+            const sideLen = Math.hypot(sideX, sideY, sideZ);
+            sideX /= sideLen; sideY /= sideLen; sideZ /= sideLen;
+
+            let normalX = dirY * sideZ - dirZ * sideY;
+            let normalY = dirZ * sideX - dirX * sideZ;
+            let normalZ = dirX * sideY - dirY * sideX;
+
+            for (let s = 0; s <= SEG_LENGTH; s++) {
+                const frac = s / SEG_LENGTH;
+                const cx = x1 + dx * frac;
+                const cy = y1 + dy * frac;
+                const cz = z1 + dz * frac;
+                const rad = rStart + (rEnd - rStart) * frac;
+                const v = vStart + (vEnd - vStart) * frac;
+
+                // Skin weights blend between boneA and boneB
+                const tBlend = smoothstep(0.35, 0.65, frac);
+                const bIndices = [boneA, boneB, 0, 0];
+                const bWeights = [1.0 - tBlend, tBlend, 0, 0];
+
+                for (let i = 0; i <= RAD_L; i++) {
+                    const theta = (i / RAD_L) * Math.PI * 2;
+                    const cosT = Math.cos(theta);
+                    const sinT = Math.sin(theta);
+
+                    const px = cx + (sideX * cosT + normalX * sinT) * rad;
+                    const py = cy + (sideY * cosT + normalY * sinT) * rad;
+                    const pz = cz + (sideZ * cosT + normalZ * sinT) * rad;
+                    const u = uOffset + (i / RAD_L) * 0.25;
+
+                    addVertex(px, py, pz, u, v, bIndices, bWeights);
+                }
+            }
+
+            for (let s = 0; s < SEG_LENGTH; s++) {
+                for (let i = 0; i < RAD_L; i++) {
+                    const current = startIdx + s * (RAD_L + 1) + i;
+                    const next = current + (RAD_L + 1);
+
+                    indices.push(current, next, current + 1);
+                    indices.push(next, next + 1, current + 1);
+                }
+            }
+        }
+
+        // Left Arm: Shoulder -> Forearm -> Hand
+        // Shoulder to Elbow (X: 0.16 -> 0.48, Y: 1.48)
+        generateLimbTube(0.16, 1.48, 0.0, 0.48, 1.48, 0.0, 0.052, 0.044, 7, 8, 0.0, 0.5, 0.0);
+        // Elbow to Wrist (X: 0.48 -> 0.72)
+        generateLimbTube(0.48, 1.48, 0.0, 0.72, 1.48, 0.0, 0.044, 0.034, 8, 9, 0.5, 0.85, 0.0);
+        // Wrist to Hand / Knuckles (X: 0.72 -> 0.84)
+        generateLimbTube(0.72, 1.48, 0.0, 0.84, 1.48, 0.0, 0.034, 0.024, 9, 9, 0.85, 1.0, 0.0);
+
+        // Right Arm: Symmetric (X: -0.16 -> -0.84)
+        generateLimbTube(-0.16, 1.48, 0.0, -0.48, 1.48, 0.0, 0.052, 0.044, 11, 12, 0.0, 0.5, 0.25);
+        generateLimbTube(-0.48, 1.48, 0.0, -0.72, 1.48, 0.0, 0.044, 0.034, 12, 13, 0.5, 0.85, 0.25);
+        generateLimbTube(-0.72, 1.48, 0.0, -0.84, 1.48, 0.0, 0.034, 0.024, 13, 13, 0.85, 1.0, 0.25);
+
+        // Left Leg: Thigh (Y: 0.90 -> 0.48) & Calf (Y: 0.48 -> 0.08) & Foot
+        // Left Thigh
+        generateLimbTube(0.10, 0.90, 0.0, 0.10, 0.48, 0.0, 0.075, 0.058, 14, 15, 0.0, 0.5, 0.50);
+        // Left Shin / Calf (Tapers to 0.044m at ankle, fitting inside boots!)
+        generateLimbTube(0.10, 0.48, 0.0, 0.10, 0.08, 0.0, 0.058, 0.044, 15, 16, 0.5, 0.90, 0.50);
+        // Left Foot (Ankle to Toes)
+        generateLimbTube(0.10, 0.08, -0.04, 0.10, 0.02, 0.15, 0.042, 0.032, 16, 16, 0.90, 1.0, 0.50);
+
+        // Right Leg: Symmetric (X = -0.10m)
+        generateLimbTube(-0.10, 0.90, 0.0, -0.10, 0.48, 0.0, 0.075, 0.058, 17, 18, 0.0, 0.5, 0.75);
+        generateLimbTube(-0.10, 0.48, 0.0, -0.10, 0.08, 0.0, 0.058, 0.044, 18, 19, 0.5, 0.90, 0.75);
+        generateLimbTube(-0.10, 0.08, -0.04, -0.10, 0.02, 0.15, 0.042, 0.032, 19, 19, 0.90, 1.0, 0.75);
+
+        // Build Three.js BufferGeometry
+        const bodyGeometry = new THREE.BufferGeometry();
+        bodyGeometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        bodyGeometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+        bodyGeometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+        bodyGeometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(skinIndices, 4));
+        bodyGeometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute(skinWeights, 4));
+        bodyGeometry.setIndex(indices);
+        bodyGeometry.computeVertexNormals();
+
+        // ---------------------------------------------------------------------
+        // 4. PROCEDURAL CANVAS TEXTURE (1024 x 1024)
+        // ---------------------------------------------------------------------
+        const canvas = document.createElement('canvas');
+        canvas.width = 1024;
+        canvas.height = 1024;
+        const ctx = canvas.getContext('2d');
+
+        // Base warm Asian skin tone
+        ctx.fillStyle = '#E5B289';
+        ctx.fillRect(0, 0, 1024, 1024);
+
+        // Muscle contouring & shading (Pectorals, 6-Pack Abs, Spine Groove)
+        ctx.fillStyle = 'rgba(180, 120, 85, 0.35)';
+        // Pectoral midline
+        ctx.fillRect(508, 320, 8, 220);
+        // Pectoral lower curve
+        ctx.beginPath();
+        ctx.arc(380, 480, 110, 0.1 * Math.PI, 0.7 * Math.PI);
+        ctx.arc(644, 480, 110, 0.3 * Math.PI, 0.9 * Math.PI);
+        ctx.lineWidth = 10;
+        ctx.strokeStyle = 'rgba(180, 120, 85, 0.40)';
+        ctx.stroke();
+
+        // 6-pack abdominal lines
+        ctx.fillRect(440, 520, 144, 6);
+        ctx.fillRect(445, 570, 134, 6);
+        ctx.fillRect(450, 620, 124, 6);
+
+        // Dark Martial Boxer Briefs covering pelvis [V = 0.00 .. 0.16 of torso]
+        ctx.fillStyle = '#1B1C22';
+        ctx.fillRect(0, 0, 1024, 160);
+        // Silver-gray elastic hem
+        ctx.fillStyle = '#787C8A';
+        ctx.fillRect(0, 150, 1024, 10);
+
+        // Black Wuxia Hair & Topknot [V = 0.92 .. 1.00]
+        ctx.fillStyle = '#141518';
+        ctx.fillRect(0, 920, 1024, 104);
+        // Brown wooden hairpin
+        ctx.fillStyle = '#5A3825';
+        ctx.fillRect(400, 970, 224, 14);
+
+        const bodyTexture = new THREE.CanvasTexture(canvas);
+        bodyTexture.encoding = THREE.sRGBEncoding;
+
+        const bodyMaterial = new THREE.MeshStandardMaterial({
+            map: bodyTexture,
+            roughness: 0.65,
+            metalness: 0.08,
+            skinning: true
+        });
+
+        // Create SkinnedMesh
+        const skinnedMesh = new THREE.SkinnedMesh(bodyGeometry, bodyMaterial);
+        skinnedMesh.name = "WuxiaMaleBaseBody";
+        skinnedMesh.add(hips);
+        skinnedMesh.bind(skeleton);
+        scene.add(skinnedMesh);
+
+        // ---------------------------------------------------------------------
+        // 5. ANIMATION POSE TESTING SLIDERS
+        // ---------------------------------------------------------------------
+        const sliderArms = document.getElementById('slider-arms');
+        const sliderLegs = document.getElementById('slider-legs');
+        const sliderHead = document.getElementById('slider-head');
+        const valArms = document.getElementById('val-arms');
+        const valLegs = document.getElementById('val-legs');
+        const valHead = document.getElementById('val-head');
+
+        function updatePose() {
+            const armAngle = (parseFloat(sliderArms.value) * Math.PI) / 180;
+            const legAngle = (parseFloat(sliderLegs.value) * Math.PI) / 180;
+            const headAngle = (parseFloat(sliderHead.value) * Math.PI) / 180;
+
+            valArms.textContent = sliderArms.value + '°';
+            valLegs.textContent = sliderLegs.value + '°';
+            valHead.textContent = sliderHead.value + '°';
+
+            // Mixamo arms rotate downwards around Z
+            lArm.rotation.z = -armAngle;
+            rArm.rotation.z = armAngle;
+
+            // Leg squat bend around X
+            lUpLeg.rotation.x = -legAngle;
+            rUpLeg.rotation.x = -legAngle;
+            lLeg.rotation.x = legAngle * 1.5;
+            rLeg.rotation.x = legAngle * 1.5;
+
+            // Head yaw turn around Y
+            head.rotation.y = headAngle;
+        }
+
+        sliderArms.addEventListener('input', updatePose);
+        sliderLegs.addEventListener('input', updatePose);
+        sliderHead.addEventListener('input', updatePose);
+
+        // ---------------------------------------------------------------------
+        // 6. EXPORT GLB (VALIDATED 20 BONES, STANDARDIZED T-POSE)
+        // ---------------------------------------------------------------------
+        document.getElementById('btn-export').addEventListener('click', () => {
+            const statusText = document.getElementById('status-text');
+            statusText.textContent = "Đang kiểm tra và đóng gói .glb...";
+            statusText.style.color = "#e5b289";
+
+            // 1. Reset all bones to strict T-Pose before export
+            sliderArms.value = 0;
+            sliderLegs.value = 0;
+            sliderHead.value = 0;
+            updatePose();
+
+            lArm.rotation.set(0, 0, 0);
+            rArm.rotation.set(0, 0, 0);
+            lUpLeg.rotation.set(0, 0, 0);
+            rUpLeg.rotation.set(0, 0, 0);
+            lLeg.rotation.set(0, 0, 0);
+            rLeg.rotation.set(0, 0, 0);
+            head.rotation.set(0, 0, 0);
+
+            scene.updateMatrixWorld(true);
+            hips.updateWorldMatrix(true, true);
+            skeleton.calculateInverses();
+
+            // 2. Validate bone count
+            if (skeleton.bones.length !== 20) {
+                alert("Lỗi: Số lượng xương không đúng 20! Hiện có: " + skeleton.bones.length);
+                return;
+            }
+
+            // 3. Export GLB
+            const exporter = new THREE.GLTFExporter();
+            exporter.parse(
+                scene,
+                (gltf) => {
+                    const blob = new Blob([gltf], { type: 'model/gltf-binary' });
+                    const link = document.createElement('a');
+                    link.href = URL.createObjectURL(blob);
+                    link.download = 'human_body.glb';
+                    link.click();
+                    URL.revokeObjectURL(link.href);
+
+                    statusText.textContent = "Xuất thành công: human_body.glb (1.78m, 20 bones)";
+                    statusText.style.color = "#6bb377";
+                },
+                { binary: true, embedImages: true },
+                (err) => {
+                    console.error("Export error:", err);
+                    statusText.textContent = "Lỗi xuất file: " + err.message;
+                    statusText.style.color = "#e05555";
+                }
+            );
+        });
+
+        // ---------------------------------------------------------------------
+        // 7. RENDER LOOP & WINDOW RESIZE
+        // ---------------------------------------------------------------------
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+        animate();
+    </script>
+</body>
+</html>
