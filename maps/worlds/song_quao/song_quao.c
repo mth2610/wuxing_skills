@@ -330,42 +330,42 @@ static void BuildRocks(void)
                               SONG_QUAO_ROCK_ITEMS, SONG_QUAO_ROCK_ITEM_COUNT);
 }
 
-static void RegisterSongQuaoWaterObstacles(void)
+static void UpdateSongQuaoWaterObstacles(Vector3 focusPos)
 {
-    Vector2 registered[6];
+    s_river.obstacleCount = 0;
+    Vector2 registered[MAX_WATER_OBSTACLES];
     int regCount = 0;
-    for (int pass = 0; pass < 2 && regCount < 6; pass++)
+
+    for (int i = 0; i < s_rocks.count && regCount < MAX_WATER_OBSTACLES; i++)
     {
-        for (int i = 0; i < s_rocks.count && regCount < 6; i++)
+        const MapRockItem *rock = &s_rocks.items[i];
+        if (rock->radiusScale < 0.35f)
+            continue;
+        float dx = rock->position.x - focusPos.x;
+        float dz = rock->position.z - focusPos.z;
+        if (dx * dx + dz * dz > (48.0f * 48.0f))
+            continue;
+
+        bool tooClose = false;
+        for (int r = 0; r < regCount; r++)
         {
-            const MapRockItem *rock = &s_rocks.items[i];
-            if (rock->radiusScale < 0.65f)
-                continue;
-            bool isLarge = (rock->radiusScale >= 0.90f);
-            if ((pass == 0 && !isLarge) || (pass == 1 && isLarge))
-                continue;
-
-            bool tooClose = false;
-            for (int r = 0; r < regCount; r++)
+            float sepX = rock->position.x - registered[r].x;
+            float sepZ = rock->position.z - registered[r].y;
+            if (sepX * sepX + sepZ * sepZ < (1.2f * 1.2f))
             {
-                float dx = rock->position.x - registered[r].x;
-                float dz = rock->position.z - registered[r].y;
-                if (dx * dx + dz * dz < (2.4f * 2.4f))
-                {
-                    tooClose = true;
-                    break;
-                }
+                tooClose = true;
+                break;
             }
-            if (tooClose)
-                continue;
+        }
+        if (tooClose)
+            continue;
 
-            float surfaceY = 0.0f, waterDepth = 0.0f;
-            if (GetWaterInfoSongQuaoMap(rock->position.x, rock->position.z, &surfaceY, &waterDepth) &&
-                waterDepth > 0.12f)
-            {
-                MapProp_AddWaterObstacle(&s_river, rock->position, rock->radiusScale * 0.90f, 0.35f);
-                registered[regCount++] = (Vector2){rock->position.x, rock->position.z};
-            }
+        float surfaceY = 0.0f, waterDepth = 0.0f;
+        if (GetWaterInfoSongQuaoMap(rock->position.x, rock->position.z, &surfaceY, &waterDepth) &&
+            waterDepth > 0.02f)
+        {
+            MapProp_AddWaterObstacle(&s_river, rock->position, rock->radiusScale * 0.95f, 0.70f);
+            registered[regCount++] = (Vector2){rock->position.x, rock->position.z};
         }
     }
 }
@@ -735,7 +735,7 @@ void InitSongQuaoMap(void)
                                          });
 
     BuildRocks();
-    RegisterSongQuaoWaterObstacles();
+    UpdateSongQuaoWaterObstacles(kMapCenter);
 
     // Draw small 3D pebbles/twigs around camera focus (< 28m)
     // Supplement static debris with dynamic riverbank pebbles and river chips along the stream banks
@@ -843,6 +843,7 @@ void UpdateSongQuaoMap(float dt)
     MapProp_EndNatureInteraction();
 
     MapProp_UpdateFloraSystem(&s_flora, camera.target, dt);
+    UpdateSongQuaoWaterObstacles(camera.target);
     MapProp_UpdateWaterSurface(&s_river, dt);
     if (!(s_skipMask & MAP_SKIP_FLUFF))
         MapProp_UpdateFluffSystem(&s_fluff, camera.target, &s_ground, kMapCenter, PLAYABLE_BASIN_MIN_Y, dt);

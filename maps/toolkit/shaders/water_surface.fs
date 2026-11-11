@@ -75,7 +75,7 @@ void EvaluateObstacleWake(vec4 obs, vec2 worldXZ, vec2 flowDir, float time,
     vec2 toFrag = worldXZ - obs.xy;
     float d2 = dot(toFrag, toFrag);
     float obsRad = max(obs.z, 0.25);
-    float maxReach = obsRad * 2.2;
+    float maxReach = obsRad * 3.2;
     if (d2 >= maxReach * maxReach || d2 < 1e-6) return;
 
     float d = sqrt(d2);
@@ -84,42 +84,46 @@ void EvaluateObstacleWake(vec4 obs, vec2 worldXZ, vec2 flowDir, float time,
     float signedAcross = dot(toFrag, perpFlow);
     float acrossFlow = abs(signedAcross);
     float sideSign = (signedAcross >= 0.0) ? 1.0 : -1.0;
-    float strength = clamp(obs.w, 0.15, 0.55);
+    float strength = clamp(obs.w, 0.35, 1.0);
 
     // Lateral outward direction curving away from boulder flanks
     vec2 flankOutward = perpFlow * sideSign;
 
-    // 1. Upstream Bow Cushion: river water heaps up gently right against upstream rock face (r = 0.85 .. 1.25 obsRad)
-    if (alongFlow < 0.05 && alongFlow > -obsRad * 0.85) {
-        float cushion = smoothstep(obsRad * 0.80, obsRad * 0.98, d) *
-                        (1.0 - smoothstep(obsRad * 0.98, obsRad * 1.30, d)) *
-                        smoothstep(0.05, -obsRad * 0.45, alongFlow);
-        ioSlope -= flowDir * (cushion * 0.10 * strength);
-        ioFoam = max(ioFoam, cushion * 0.20 * strength);
+    // 1. Waterline Contact Foam Rim (around the entire boulder perimeter at the waterline)
+    float perimeterDist = abs(d - obsRad);
+    float contactRim = smoothstep(obsRad * 0.35, 0.0, perimeterDist);
+    ioFoam = max(ioFoam, contactRim * 0.55 * strength);
+
+    // 2. Upstream Bow Cushion: river water heaps up and splashes against the upstream rock face
+    if (alongFlow < 0.15 && alongFlow > -obsRad * 1.5) {
+        float bowReach = length(vec2(max(-alongFlow, 0.0) * 1.25, acrossFlow));
+        float bowCushion = exp(-bowReach * 2.4 / obsRad) * smoothstep(obsRad * 0.5, obsRad * 1.05, d);
+        ioSlope -= flowDir * (bowCushion * 0.28 * strength);
+        ioFoam = max(ioFoam, bowCushion * 0.75 * strength);
     }
 
-    // 2. Lateral Deflection: stream parts smoothly around the boulder sides
-    if (abs(alongFlow) < obsRad * 0.85 && acrossFlow < obsRad * 1.5) {
-        float flank = smoothstep(obsRad * 0.80, obsRad * 1.02, d) *
-                      (1.0 - smoothstep(obsRad * 1.02, obsRad * 1.45, d));
-        ioSlope += flankOutward * (flank * 0.08 * strength);
+    // 3. Lateral Stream Acceleration: current accelerates and curves around the flanks
+    if (abs(alongFlow) < obsRad * 1.1 && acrossFlow < obsRad * 1.8) {
+        float flank = smoothstep(obsRad * 0.75, obsRad * 1.05, d) * (1.0 - smoothstep(obsRad * 1.05, obsRad * 1.75, d));
+        ioSlope += (flankOutward * 0.85 + flowDir * 0.35) * (flank * 0.20 * strength);
+        ioFoam = max(ioFoam, flank * 0.40 * strength);
     }
 
-    // 3. Downstream Directional Kelvin V-Wake and Aerated Riffles
-    if (alongFlow > 0.05 && alongFlow < obsRad * 2.1) {
+    // 4. Downstream Directional Kelvin V-Wake and Aerated Froth Riffles
+    if (alongFlow > 0.05 && alongFlow < obsRad * 3.0) {
         float downstreamDist = alongFlow;
-        float vWidth = downstreamDist * 0.35 + obsRad * 0.45;
+        float vWidth = downstreamDist * 0.38 + obsRad * 0.45;
         float vDist = abs(acrossFlow - vWidth);
-        float vFade = 1.0 - smoothstep(obsRad * 0.4, obsRad * 2.0, downstreamDist);
-        float vOsc = cos(downstreamDist * 8.0 - time * 3.5) * 0.5 + 0.5;
-        float kelvinWake = exp(-vDist * 3.8 / obsRad) * vOsc * vFade;
+        float vFade = 1.0 - smoothstep(obsRad * 0.3, obsRad * 2.9, downstreamDist);
+        float vOsc = cos(downstreamDist * 9.5 - time * 5.5) * 0.5 + 0.5;
+        float kelvinWake = exp(-vDist * 3.6 / obsRad) * vOsc * vFade;
 
         // Wake normal points outward from the V-wake centerline and slightly downstream
-        vec2 wakeNormal = normalize(flankOutward * 0.85 - flowDir * 0.25);
-        ioSlope += wakeNormal * (kelvinWake * 0.10 * strength);
+        vec2 wakeNormal = normalize(flankOutward * 0.85 - flowDir * 0.35);
+        ioSlope += wakeNormal * (kelvinWake * 0.24 * strength);
 
-        // Subtle aerated wake foam trailing immediately behind boulder
-        float wakeFoam = kelvinWake * smoothstep(obsRad * 0.15, obsRad * 0.95, downstreamDist) * 0.22 * strength;
+        // Aerated white froth trailing behind the boulder in the eddy
+        float wakeFoam = kelvinWake * smoothstep(obsRad * 0.1, obsRad * 0.8, downstreamDist) * 0.65 * strength;
         ioFoam = max(ioFoam, wakeFoam);
     }
 }
@@ -167,32 +171,35 @@ void main()
     }
 
     // ── 1. WAVE NORMALS & MULTI-PHASE FLOW (SIMD Vectorized) ────────────────
-    const vec2 d0 = vec2(0.707, 0.707);
-    const vec2 d1 = vec2(-0.612, 0.791);
-    const vec2 d2 = vec2(0.866, -0.500);
-    const vec2 d3 = vec2(-0.382, -0.924);
-
-    // Continuous macro stream flow across all geometry (eliminates mesh polygon facet & rhombus seams)
     vec2 effectiveFlow = u_flowVelocity;
     float effFlowLenSq = dot(effectiveFlow, effectiveFlow);
     vec2 normFlowDir = (effFlowLenSq > 1e-6) ? (effectiveFlow * inversesqrt(effFlowLenSq)) : vec2(0.55, 0.83);
-    vec2 pFlow = fragWorldXZ - effectiveFlow * mod(u_time * 0.45, 4096.0);
+    vec2 perpFlow = vec2(-normFlowDir.y, normFlowDir.x);
+    float flowSpeed = sqrt(effFlowLenSq);
 
-    vec2 warp = vec2(sin(pFlow.y * 0.55 + t * 0.35), cos(pFlow.x * 0.55 - t * 0.28)) * 0.45;
+    // Multi-phase directional river wave train aligned with current flow (racing downstream)
+    vec2 d0 = normalize(normFlowDir * 0.90 + perpFlow * 0.28);
+    vec2 d1 = normalize(normFlowDir * 0.90 - perpFlow * 0.28);
+    vec2 d2 = normalize(normFlowDir * 0.95 + perpFlow * 0.14);
+    vec2 d3 = normalize(normFlowDir * 0.95 - perpFlow * 0.14);
+
+    // Continuous downstream wave advection
+    vec2 pFlow = fragWorldXZ - normFlowDir * mod(u_time * (flowSpeed * 1.8 + 0.35), 4096.0);
+    vec2 warp = vec2(sin(pFlow.y * 0.45 + t * 0.55), cos(pFlow.x * 0.45 - t * 0.45)) * 0.35;
     vec2 pw = pFlow + warp;
 
     vec4 pWave = vec4(
-        dot(pw, d0) * u_waveScale + t,
-        dot(pw, d1) * (u_waveScale * 1.58) - t * 1.25,
-        dot(pw, d2) * (u_waveScale * 2.14) + t * 0.85,
-        dot(pw, d3) * (u_waveScale * 2.92) - t * 0.62
+        dot(pw, d0) * (u_waveScale * 1.6) - t * 3.6,
+        dot(pw, d1) * (u_waveScale * 2.2) - t * 4.4,
+        dot(pw, d2) * (u_waveScale * 3.4) - t * 6.2,
+        dot(pw, d3) * (u_waveScale * 4.8) - t * 8.0
     );
 
     vec4 cosP = cos(pWave);
     vec4 sinP = sin(pWave);
 
-    vec2 slope = (d0 * (cosP.x * 0.38) + d1 * (cosP.y * 0.32) + d2 * (cosP.z * 0.20) + d3 * (cosP.w * 0.15))
-               * (u_waveScale * u_waveHeight * 1.75 * shoreFade);
+    vec2 slope = (d0 * (cosP.x * 0.38) + d1 * (cosP.y * 0.32) + d2 * (cosP.z * 0.18) + d3 * (cosP.w * 0.12))
+               * (u_waveScale * u_waveHeight * 2.4 * shoreFade);
 
     vec3 viewVec = u_viewPos - fragPosition;
     float distSq = dot(viewVec, viewVec);
@@ -207,21 +214,20 @@ void main()
 
     if (flowSpeedSq > 0.000025) {
         float invFlowSpeed = inversesqrt(flowSpeedSq);
-        float flowSpeed = flowSpeedSq * invFlowSpeed;
         vec2 flowDir = u_flowVelocity * invFlowSpeed;
-        float flowProgress = u_time * flowSpeed * 0.22;
+        float flowProgress = u_time * max(flowSpeed, 0.42) * 0.85;
         float phase0 = fract(flowProgress);
         float phase1 = fract(flowProgress + 0.5);
         float flowWeight = abs(2.0 * phase0 - 1.0);
 
         vec2 baseUV = fragWorldXZ * u_detailScale;
-        vec2 uv0 = baseUV + flowDir * phase0;
+        vec2 uv0 = baseUV - flowDir * phase0 * 1.6;
+        vec2 uv1 = baseUV - flowDir * phase1 * 1.6 + vec2(3.7, 5.1);
         float n0 = textureGrad(texture0, uv0, detDx0, detDy0).r;
         vec2 s0 = vec2(textureGrad(texture0, uv0 + eps.xy, detDx0, detDy0).r,
                        textureGrad(texture0, uv0 + eps.yx, detDx0, detDy0).r) - n0;
 
         if (distSq < 1225.0) {
-            vec2 uv1 = baseUV + flowDir * phase1;
             float n1 = textureGrad(texture0, uv1, detDx0, detDy0).r;
             vec2 s1 = vec2(textureGrad(texture0, uv1 + eps.xy, detDx0, detDy0).r,
                            textureGrad(texture0, uv1 + eps.yx, detDx0, detDy0).r) - n1;
@@ -234,21 +240,7 @@ void main()
         float d0_val = textureGrad(texture0, detailUv0, detDx0, detDy0).r;
         vec2 d0_grad = vec2(textureGrad(texture0, detailUv0 + eps.xy, detDx0, detDy0).r,
                             textureGrad(texture0, detailUv0 + eps.yx, detDx0, detDy0).r) - d0_val;
-
-        if (distSq < 1225.0) {
-            float scale1 = u_detailScale * 0.63;
-            vec2 detDx1 = vec2(-xzDx.y, xzDx.x) * scale1;
-            vec2 detDy1 = vec2(-xzDy.y, xzDy.x) * scale1;
-            vec2 detailUv1 = vec2(-fragWorldXZ.y, fragWorldXZ.x) * scale1
-                           + fract(vec2(-t * 0.006, t * 0.009));
-            float d1_val = textureGrad(texture0, detailUv1, detDx1, detDy1).r;
-            vec2 d1_grad = vec2(textureGrad(texture0, detailUv1 + eps.xy, detDx1, detDy1).r,
-                                textureGrad(texture0, detailUv1 + eps.yx, detDx1, detDy1).r) - d1_val;
-            vec2 blendedGrad = d0_grad * 0.72 + vec2(d1_grad.y, -d1_grad.x) * 0.28;
-            detailSlope = mix(d0_grad, blendedGrad, dualDetailFade);
-        } else {
-            detailSlope = d0_grad;
-        }
+        detailSlope = d0_grad;
     }
 
     slope += detailSlope * (u_detailStrength * 2.40 * shoreFade * detailDistFade);
@@ -307,9 +299,9 @@ void main()
         }
     }
 
-    // Evaluate river stone obstacles (prominent separated boulders within 32m)
+    // Evaluate river stone obstacles (prominent boulders within 50m)
     float obstacleFoam = 0.0;
-    if (distSq < 1024.0 && u_obstacle0.z > 0.01) {
+    if (distSq < 2500.0 && u_obstacle0.z > 0.01) {
         EvaluateObstacleWake(u_obstacle0, fragWorldXZ, normFlowDir, t, interactSlope, obstacleFoam);
         EvaluateObstacleWake(u_obstacle1, fragWorldXZ, normFlowDir, t, interactSlope, obstacleFoam);
         EvaluateObstacleWake(u_obstacle2, fragWorldXZ, normFlowDir, t, interactSlope, obstacleFoam);
@@ -465,11 +457,11 @@ void main()
     vec3 causticLight = vec3(0.0);
     if (depthFadeCaustic * u_causticsStrength > 0.001) {
         vec2 causticRefract = normal.xz * clamp(waterDepth * 0.25, 0.015, 0.18);
-        vec2 causticBase = fragWorldXZ + causticRefract;
+        vec2 causticBase = fragWorldXZ + causticRefract - normFlowDir * (t * 0.45);
         float cScale0 = u_causticsScale * 0.32;
         float cScale1 = u_causticsScale * 0.45;
-        vec2 causticUv0 = causticBase * cScale0 + fract(vec2(t * 0.038, t * 0.024));
-        vec2 causticUv1 = causticBase * cScale1 + fract(vec2(-t * 0.029, t * 0.043));
+        vec2 causticUv0 = causticBase * cScale0 + fract(vec2(t * 0.025, t * 0.018));
+        vec2 causticUv1 = causticBase * cScale1 + fract(vec2(-t * 0.020, t * 0.032)) + vec2(2.3, 3.7);
         float c0 = textureGrad(u_causticTex, causticUv0, xzDx * cScale0, xzDy * cScale0).r;
         float c1 = textureGrad(u_causticTex, causticUv1, xzDx * cScale1, xzDy * cScale1).r;
         float causticMin = min(c0, c1) * 2.2;

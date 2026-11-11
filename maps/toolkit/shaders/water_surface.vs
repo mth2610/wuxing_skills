@@ -56,16 +56,22 @@ void main()
         // Đồng bộ mod() thời gian với water_surface.fs để tránh trôi pha float32 khi game chạy lâu
         float t = mod(u_time * u_waveSpeed, 6283.185307);
         vec2 effectiveFlow = u_flowVelocity;
-        if (u_waterShape == 3 && dot(effectiveFlow, effectiveFlow) < 0.000025) {
-            effectiveFlow = vec2(0.14, 0.22);
-        }
-        vec2 pFlow = world.xz - effectiveFlow * mod(u_time * 0.45, 4096.0);
-        // Non-linear domain warp breaks parallel sinusoidal stripes into natural stream eddies
-        vec2 warp = vec2(sin(pFlow.y * 0.55 + t * 0.35), cos(pFlow.x * 0.55 - t * 0.28)) * 0.45;
+        float effFlowLenSq = dot(effectiveFlow, effectiveFlow);
+        vec2 normFlowDir = (effFlowLenSq > 1e-6) ? (effectiveFlow * inversesqrt(effFlowLenSq)) : vec2(0.55, 0.83);
+        vec2 perpFlow = vec2(-normFlowDir.y, normFlowDir.x);
+        float flowSpeed = sqrt(effFlowLenSq);
+
+        vec2 d0 = normalize(normFlowDir * 0.90 + perpFlow * 0.28);
+        vec2 d1 = normalize(normFlowDir * 0.90 - perpFlow * 0.28);
+        vec2 d2 = normalize(normFlowDir * 0.95 + perpFlow * 0.14);
+
+        // Rushing downstream wave advection
+        vec2 pFlow = world.xz - normFlowDir * mod(u_time * (flowSpeed * 1.8 + 0.35), 4096.0);
+        vec2 warp = vec2(sin(pFlow.y * 0.45 + t * 0.55), cos(pFlow.x * 0.45 - t * 0.45)) * 0.35;
         vec2 pw = pFlow + warp;
-        float w0 = sin(dot(pw, vec2(0.707, 0.707)) * u_waveScale + t);
-        float w1 = sin(dot(pw, vec2(-0.612, 0.791)) * (u_waveScale * 1.58) - t * 1.25);
-        float w2 = sin(dot(pw, vec2(0.866, -0.500)) * (u_waveScale * 2.14) + t * 0.85);
+        float w0 = sin(dot(pw, d0) * (u_waveScale * 1.6) - t * 3.6);
+        float w1 = sin(dot(pw, d1) * (u_waveScale * 2.2) - t * 4.4);
+        float w2 = sin(dot(pw, d2) * (u_waveScale * 3.4) - t * 6.2);
         float dispY = (w0 * 0.45 + w1 * 0.35 + w2 * 0.20) * u_waveHeight * shoreFade;
         local.y += dispY;
         world.y += dispY;
