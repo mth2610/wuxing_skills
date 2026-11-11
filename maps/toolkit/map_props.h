@@ -853,6 +853,7 @@ typedef struct
     Texture2D waveFieldTex;
     float waveStepRemainder;
     float waveWakeTimer;
+    float waveFootstepTimer;
     float waveLastImpulseTime;
     Vector3 waveGridCenter;
     float waveGridRadius;
@@ -861,6 +862,18 @@ typedef struct
     bool ready;
     unsigned char *waveUploadedPixels;
     unsigned int waveUploadedTextureId;
+    // Shallow Water Equations (SWE) Saint-Venant Virtual Pipe Physics Simulation
+    float *bedHeight;
+    float *waterDepth;
+    float *smoothEta;
+    float *fluxL;
+    float *fluxR;
+    float *fluxT;
+    float *fluxB;
+    float *velU;
+    float *velV;
+    Vector3 interactorPrevPos;
+    bool hasInteractorPrev;
 } MapWaterSurface;
 
 MapWaterConfig MapProp_DefaultWaterConfig(MapWaterEcosystem eco);

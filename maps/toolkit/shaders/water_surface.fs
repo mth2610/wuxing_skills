@@ -74,38 +74,54 @@ void EvaluateObstacleWake(vec4 obs, vec2 worldXZ, vec2 flowDir, float time,
     if (obs.z <= 0.01) return;
     vec2 toFrag = worldXZ - obs.xy;
     float d2 = dot(toFrag, toFrag);
-    float maxReach = obs.z * 2.2;
+    float obsRad = max(obs.z, 0.25);
+    float maxReach = obsRad * 2.2;
     if (d2 >= maxReach * maxReach || d2 < 1e-6) return;
 
-    float invD = inversesqrt(d2);
-    float d = d2 * invD;
-    vec2 dir = toFrag * invD;
+    float d = sqrt(d2);
+    float alongFlow = dot(toFrag, flowDir);     // negative = upstream, positive = downstream
+    vec2 perpFlow = vec2(-flowDir.y, flowDir.x);
+    float signedAcross = dot(toFrag, perpFlow);
+    float acrossFlow = abs(signedAcross);
+    float sideSign = (signedAcross >= 0.0) ? 1.0 : -1.0;
+    float strength = clamp(obs.w, 0.15, 0.55);
 
-    // Smooth continuous radial envelope (zero circular boundary cutoff)
-    float reachFade = 1.0 - smoothstep(0.40 * maxReach, maxReach, d);
-    float innerFade = smoothstep(0.35 * obs.z, 0.75 * obs.z, d);
-    float envelope = reachFade * innerFade;
-    if (envelope <= 0.001) return;
+    // Lateral outward direction curving away from boulder flanks
+    vec2 flankOutward = perpFlow * sideSign;
 
-    // Asymmetric downstream hydraulic wake: bow cushion upstream + Kelvin V-chevron downstream
-    float alongFlow = dot(toFrag, flowDir) / obs.z;
-    float acrossFlow = abs(toFrag.x * flowDir.y - toFrag.y * flowDir.x) / obs.z;
+    // 1. Upstream Bow Cushion: river water heaps up gently right against upstream rock face (r = 0.85 .. 1.25 obsRad)
+    if (alongFlow < 0.05 && alongFlow > -obsRad * 0.85) {
+        float cushion = smoothstep(obsRad * 0.80, obsRad * 0.98, d) *
+                        (1.0 - smoothstep(obsRad * 0.98, obsRad * 1.30, d)) *
+                        smoothstep(0.05, -obsRad * 0.45, alongFlow);
+        ioSlope -= flowDir * (cushion * 0.10 * strength);
+        ioFoam = max(ioFoam, cushion * 0.20 * strength);
+    }
 
-    // 1. Upstream bow cushion (soft deflection)
-    float bowZone = smoothstep(-1.2, -0.5, alongFlow) * (1.0 - smoothstep(-0.5, -0.2, alongFlow));
-    float bowCushion = bowZone * exp(-acrossFlow * acrossFlow * 3.0) * 0.12;
+    // 2. Lateral Deflection: stream parts smoothly around the boulder sides
+    if (abs(alongFlow) < obsRad * 0.85 && acrossFlow < obsRad * 1.5) {
+        float flank = smoothstep(obsRad * 0.80, obsRad * 1.02, d) *
+                      (1.0 - smoothstep(obsRad * 1.02, obsRad * 1.45, d));
+        ioSlope += flankOutward * (flank * 0.08 * strength);
+    }
 
-    // 2. Downstream parabolic Kelvin wake (subtle water displacement)
-    float downReach = max(alongFlow - 0.25, 0.0);
-    float vSpread = sqrt(downReach) * 0.58;
-    float wakeDist = abs(acrossFlow - vSpread);
-    float vWave = cos(downReach * 8.0 - time * 4.2) * 0.5 + 0.5;
-    float kelvinWake = exp(-wakeDist * 4.5) * (1.0 - smoothstep(0.4, 2.4, downReach)) * vWave;
+    // 3. Downstream Directional Kelvin V-Wake and Aerated Riffles
+    if (alongFlow > 0.05 && alongFlow < obsRad * 2.1) {
+        float downstreamDist = alongFlow;
+        float vWidth = downstreamDist * 0.35 + obsRad * 0.45;
+        float vDist = abs(acrossFlow - vWidth);
+        float vFade = 1.0 - smoothstep(obsRad * 0.4, obsRad * 2.0, downstreamDist);
+        float vOsc = cos(downstreamDist * 8.0 - time * 3.5) * 0.5 + 0.5;
+        float kelvinWake = exp(-vDist * 3.8 / obsRad) * vOsc * vFade;
 
-    float strength = clamp(obs.w, 0.10, 0.55) * envelope;
-    ioSlope += (dir * 0.04 + flowDir * 0.06) * (kelvinWake + bowCushion) * strength;
-    float foam = (bowCushion * 0.12 + kelvinWake * 0.14 * smoothstep(0.0, 1.0, downReach)) * strength;
-    ioFoam = max(ioFoam, foam);
+        // Wake normal points outward from the V-wake centerline and slightly downstream
+        vec2 wakeNormal = normalize(flankOutward * 0.85 - flowDir * 0.25);
+        ioSlope += wakeNormal * (kelvinWake * 0.10 * strength);
+
+        // Subtle aerated wake foam trailing immediately behind boulder
+        float wakeFoam = kelvinWake * smoothstep(obsRad * 0.15, obsRad * 0.95, downstreamDist) * 0.22 * strength;
+        ioFoam = max(ioFoam, wakeFoam);
+    }
 }
 
 float EvaluateObstacleWaterDepth(vec4 obs, vec2 worldXZ, float inDepth)
@@ -123,16 +139,6 @@ void main()
     vec2 xzDy = dFdy(fragWorldXZ);
     vec2 lakeDx = dFdx(fragLakeCoord) * 0.5;
     vec2 lakeDy = dFdy(fragLakeCoord) * 0.5;
-
-    // Analytical stream channel downhill gradient derived from geometric mesh normal
-    vec3 posDx = dFdx(fragPosition);
-    vec3 posDy = dFdy(fragPosition);
-    vec3 rawFaceN = cross(posDx, posDy);
-    float rawFaceLenSq = dot(rawFaceN, rawFaceN);
-    vec3 faceN = (rawFaceLenSq > 1e-8) ? (rawFaceN * inversesqrt(rawFaceLenSq)) : vec3(0.0, 1.0, 0.0);
-    if (faceN.y < 0.0) faceN = -faceN;
-    vec2 streamSlope = faceN.xz;
-    float slopeMag = length(streamSlope);
 
     float t = mod(u_time * u_waveSpeed, 6283.185307);
 
@@ -166,16 +172,8 @@ void main()
     const vec2 d2 = vec2(0.866, -0.500);
     const vec2 d3 = vec2(-0.382, -0.924);
 
+    // Continuous macro stream flow across all geometry (eliminates mesh polygon facet & rhombus seams)
     vec2 effectiveFlow = u_flowVelocity;
-    if (u_waterShape == 3) {
-        float slopeWeight = smoothstep(0.003, 0.025, slopeMag);
-        if (slopeMag > 0.0005) {
-            vec2 streamDir = streamSlope / slopeMag;
-            float streamSpeed = clamp(0.24 + slopeMag * 7.5, 0.28, 0.88);
-            vec2 dynamicStreamFlow = streamDir * streamSpeed;
-            effectiveFlow = mix(u_flowVelocity, dynamicStreamFlow, slopeWeight);
-        }
-    }
     float effFlowLenSq = dot(effectiveFlow, effectiveFlow);
     vec2 normFlowDir = (effFlowLenSq > 1e-6) ? (effectiveFlow * inversesqrt(effFlowLenSq)) : vec2(0.55, 0.83);
     vec2 pFlow = fragWorldXZ - effectiveFlow * mod(u_time * 0.45, 4096.0);
@@ -265,14 +263,25 @@ void main()
         vec2 waveUv = fragLakeCoord * 0.5 + 0.5;
         float gridFade = 1.0;
         if (u_waterShape == 3) {
-            vec2 edge = smoothstep(vec2(0.72), vec2(0.96), abs(fragLakeCoord));
+            vec2 edge = smoothstep(vec2(0.68), vec2(0.92), abs(fragLakeCoord));
             gridFade = (1.0 - edge.x) * (1.0 - edge.y);
         }
-        vec4 waveField = textureGrad(u_waveFieldTex, waveUv, lakeDx, lakeDy);
-        interactSlope = (waveField.rg - 0.5) * (2.45 * gridFade);
-        waveCurvature = (waveField.a - 0.5) * (5.0 * gridFade);
-        wakeCrestHighlight = max(0.0, waveField.b - 0.5) * (0.52 * gridFade);
-        dynamicWakeFoam = clamp((wakeCrestHighlight * 1.6 + max(0.0, waveCurvature) * 0.22 - 0.12) * shoreFade * gridFade, 0.0, 0.65);
+        if (gridFade > 0.001) {
+            vec4 waveField = textureGrad(u_waveFieldTex, waveUv, lakeDx, lakeDy);
+            vec2 waveDev = waveField.rg - vec2(128.0 / 255.0);
+            if (abs(waveDev.x) > 0.003 || abs(waveDev.y) > 0.003) {
+                interactSlope += waveDev * (2.8 * gridFade);
+            }
+            float waveCrest = max(0.0, waveField.b - (128.0 / 255.0));
+            if (waveCrest > 0.003) {
+                wakeCrestHighlight = max(wakeCrestHighlight, waveCrest * (0.85 * gridFade));
+                waveCurvature = wakeCrestHighlight * 2.5;
+            }
+            float simFoam = waveField.a * gridFade;
+            if (simFoam > 0.01) {
+                dynamicWakeFoam = max(dynamicWakeFoam, simFoam * 0.75);
+            }
+        }
     }
 
     // Evaluate analytical expanding ripple rings (u_rippleRings[0..3])
@@ -287,12 +296,12 @@ void main()
                 float invR = inversesqrt(rDistSq);
                 float rDist = rDistSq * invR;
                 float band = abs(rDist - ring.w);
-                float wl = max(rParam.y, 0.15);
-                if (band < wl * 1.8) {
-                    float env = (1.0 - band / (wl * 1.8)) * rParam.x;
+                float wl = max(rParam.y, 0.22);
+                if (band < wl * 1.5) {
+                    float env = (1.0 - band / (wl * 1.5)) * rParam.x;
                     float wavePhase = (rDist - ring.w) * (6.2831853 / wl);
-                    interactSlope += (toRing * invR) * (cos(wavePhase) * env * 0.35);
-                    dynamicWakeFoam = max(dynamicWakeFoam, max(sin(wavePhase), 0.0) * env * 0.28);
+                    interactSlope += (toRing * invR) * (cos(wavePhase) * env * 0.20);
+                    dynamicWakeFoam = max(dynamicWakeFoam, max(sin(wavePhase), 0.0) * env * 0.22);
                 }
             }
         }
@@ -322,28 +331,61 @@ void main()
     float submerged = (u_waterSubmerged > 0.0) ? u_waterSubmerged : u_waterInteractor.y;
     if (u_waterRadius > 0.01 && submerged > 0.01) {
         vec2 toInteractor = fragWorldXZ - u_waterInteractor.xz;
-        float iDistSq = dot(toInteractor, toInteractor);
-        float activeRad = u_waterRadius * 2.8;
+        float iDist = length(toInteractor);
+        float playerRad = max(u_waterRadius, 0.35);
+        float normDist = iDist / playerRad;
+        float speed = length(u_waterVelocity.xz);
+        vec2 moveDir = (speed > 0.05) ? (u_waterVelocity.xz / speed) : vec2(0.0);
 
-        if (iDistSq < activeRad * activeRad && iDistSq > 1e-5) {
-            float invIDist = inversesqrt(iDistSq);
-            float iDist = iDistSq * invIDist;
-            float normDist = iDist / u_waterRadius;
-            float speed = length(u_waterVelocity.xz);
-            float speedFactor = clamp(speed * 0.35 + 0.15, 0.0, 1.0);
+        // 1. Waterline Contact Meniscus (right around the legs/body perimeter, r = 0.7 .. 1.4)
+        if (normDist < 2.0) {
+            vec2 iDir = (iDist > 1e-4) ? (toInteractor / iDist) : vec2(0.0);
+            float contactRing = smoothstep(0.65, 0.95, normDist) * (1.0 - smoothstep(0.95, 1.45, normDist));
+            interactSlope += iDir * (contactRing * 0.20 * clamp(submerged, 0.0, 1.0));
 
-            float outerWakeFade = 1.0 - smoothstep(1.2, 2.6, normDist);
-            float innerFoamFade = 1.0 - smoothstep(0.3, 1.4, normDist);
-            float bowEnv = exp(-normDist * 1.5) * speedFactor * clamp(submerged, 0.0, 1.5) * outerWakeFade;
-            vec2 iDir = toInteractor * invIDist;
-
-            // Alive & dynamic: breathing circular contact ripples & subtle displacement even when stationary
-            float standRipple = sin(normDist * 15.0 - t * 4.2) * exp(-normDist * 2.2);
-            float contactRing = smoothstep(0.35, 0.65, normDist) * (1.0 - smoothstep(0.65, 1.35, normDist));
-            float wakeEnv = (bowEnv * 0.35 + standRipple * 0.22 * clamp(submerged, 0.0, 1.0) * outerWakeFade);
-            interactSlope += iDir * wakeEnv;
-            dynamicWakeFoam = max(dynamicWakeFoam, (innerFoamFade * bowEnv * 0.35 + contactRing * 0.24 * clamp(submerged, 0.0, 1.0)) * shoreFade);
+            // Crisp contact foam rim right at the waterline
+            float contactFoam = smoothstep(0.70, 0.95, normDist) * (1.0 - smoothstep(0.95, 1.35, normDist)) * 0.50;
+            dynamicWakeFoam = max(dynamicWakeFoam, contactFoam * clamp(submerged, 0.0, 1.0));
         }
+
+        // 2. Directional Kelvin Wake & Trailing Froth (when moving / wading / running)
+        if (speed > 0.08 && normDist < 7.0) {
+            float alongMove = dot(toInteractor, moveDir);   // > 0 is in front, < 0 is behind
+            vec2 perpDir = vec2(-moveDir.y, moveDir.x);
+            float signedAcross = dot(toInteractor, perpDir);
+            float acrossMove = abs(signedAcross);
+            float sideSign = (signedAcross >= 0.0) ? 1.0 : -1.0;
+            float speedFactor = clamp(speed * 0.40 + 0.20, 0.0, 1.1);
+
+            // A. Bow cushion in front (+alongMove)
+            if (alongMove > -0.15 && alongMove < playerRad * 1.6) {
+                float bowDist = length(vec2(max(alongMove, 0.0) * 1.4, acrossMove));
+                float bowEnvelope = exp(-bowDist * 2.8 / playerRad) * speedFactor * clamp(submerged, 0.0, 1.0);
+                interactSlope += moveDir * (bowEnvelope * 0.22);
+                dynamicWakeFoam = max(dynamicWakeFoam, bowEnvelope * 0.40);
+            }
+
+            // B. Trailing Kelvin V-shaped wake behind (-alongMove)
+            float trailDist = -alongMove;
+            if (trailDist > 0.08 && trailDist < 3.5) {
+                float vWidth = trailDist * 0.36 + playerRad * 0.45;
+                float vDist = abs(acrossMove - vWidth);
+                float trailFade = 1.0 - smoothstep(playerRad * 0.8, 3.4, trailDist);
+                float vOsc = cos(trailDist * 8.5 - t * 4.5) * 0.5 + 0.5;
+                float vWave = exp(-vDist * 3.8 / playerRad) * vOsc * trailFade * speedFactor;
+
+                // Geometrically correct outward wake normal (true world space, perpendicular to V-wake arm)
+                vec2 wakeOutward = normalize(perpDir * sideSign - moveDir * 0.35);
+                interactSlope += wakeOutward * (vWave * 0.18);
+                dynamicWakeFoam = max(dynamicWakeFoam, vWave * 0.35 * smoothstep(0.12, 0.75, trailDist));
+            }
+        }
+    }
+
+    // Soft-clamp accumulated interaction slope to prevent normal inversion and dark horizon reflection artifacts
+    float iSlopeLenSq = dot(interactSlope, interactSlope);
+    if (iSlopeLenSq > 0.09) {
+        interactSlope *= 0.30 * inversesqrt(iSlopeLenSq);
     }
 
     slope += interactSlope * shoreFade;
@@ -406,7 +448,13 @@ void main()
     }
 
     float NdotV = max(dot(normal, viewDir), 0.001);
-    float opticalPath = waterDepth / max(NdotV, 0.32);
+
+    // 3D Snell refraction raycast path (from Saint-Venant shallow water simulation)
+    vec3 N_refract = normalize(vec3(normal.x * 0.45 * 1.2, 1.0, normal.z * 0.45 * 1.2));
+    vec3 R_refract = refract(-viewDir, N_refract, 0.75);
+    if (dot(R_refract, R_refract) < 0.01) R_refract = -viewDir;
+    float raySlant = max(0.35, -R_refract.y);
+    float opticalPath = clamp(waterDepth / raySlant, 0.01, 5.0);
 
     // Beer-Lambert spectral attenuation
     vec3 absorptionCoeff = max(u_absorption, vec3(0.52, 0.18, 0.10));
@@ -432,7 +480,7 @@ void main()
         causticLight = effectiveLight * (causticIntensity * transmittance);
     }
 
-    // ── 5. SINGLE-LAYER WATER SUBSURFACE SCATTERING (Wave-Crest SSS) ─────────
+    // ── 5. SINGLE-LAYER WATER SUBSURFACE SCATTERING (Wave-Crest SSS + Mie Backlight) ─────────
     float waveFacet = dot(sinP, vec4(0.42, 0.30, 0.18, 0.10));
     vec3 rawScatterDir = L + vec3(normal.x, 0.0, normal.z) * 0.65;
     vec3 scatterLightDir = rawScatterDir * inversesqrt(max(dot(rawScatterDir, rawScatterDir), 1e-8));
@@ -441,6 +489,11 @@ void main()
     float sssFactor = (bl2 * backlight * 0.78 + 0.14) * u_scatterCoeff;
     float crestThickness = clamp((1.0 - normal.y * 0.88) + max(0.0, waveFacet) * 0.32 + wakeCrestHighlight * 0.75, 0.0, 1.0);
     vec3 sssLight = effectiveLight * u_scatterColor * (sssFactor * (1.0 - exp(-2.0 * waterDepth)) * crestThickness * 0.75);
+
+    // Fast Mie backlight SSS term (cubic forward-scattering)
+    float sssMie = clamp(dot(viewDir, -L + normal * 0.45), 0.0, 1.0);
+    float sssMie3 = sssMie * sssMie * sssMie;
+    sssLight += effectiveLight * vec3(0.06, 0.36, 0.28) * (sssMie3 * 0.38 * clamp(waterDepth * 1.5, 0.0, 1.0) * u_scatterCoeff);
 
     // ── 6. HYBRID FRESNEL & ENVIRONMENT REFLECTION (Energy-Conserving) ───────
     const float F0 = 0.04;
@@ -483,12 +536,13 @@ void main()
     float nh64  = nh32 * nh32;
     float nh96  = nh64 * nh32;
     float nh128 = nh64 * nh64;
-    float glintSharp = nh128 * nh128;
+    float glintSharp = nh128 * nh128; // nh256 sharp specular crest
     float waveSlopeEnergy = clamp(sqrt(slopeLenSq) * 14.0, 0.14, 1.0);
     float glintMid = (nh96 * 0.24 + nh64 * 0.10) * waveSlopeEnergy;
+    float glintUltra = (nh64 * 0.35 + glintSharp * 3.2);
 
     // Soft-knee highlight compression so golden-hour water glints sparkle without clipping white
-    vec3 rawGlint = effectiveLight * (glintSharp * 2.10 + glintMid * 0.52) * (0.20 + fresnel * 0.80) * detailDistFade;
+    vec3 rawGlint = effectiveLight * (glintUltra * 1.65 + glintMid * 0.52) * (0.20 + fresnel * 0.80) * detailDistFade;
     vec3 sunGlint = rawGlint / (vec3(1.0) + rawGlint * 0.45);
     float disturbance = clamp(length(interactSlope) * 2.2, 0.0, 1.0);
     vec3 waveReflection = reflectedSky * (nh12 * disturbance * 0.34);
@@ -512,19 +566,19 @@ void main()
         float foamWeb   = foamNoise * 0.62 + foamFine * 0.38;
         float contactRipple = sin(waterDepth * 36.0 - t * 4.2) * exp(-waterDepth * 7.5);
 
-        float wakeFoamTex = dynamicWakeFoam * smoothstep(0.24, 0.70, foamWeb + dynamicWakeFoam * 0.45);
+        float wakeFoamTex = dynamicWakeFoam * smoothstep(0.12, 0.55, foamWeb + 0.35);
         if (u_waterShape == 3) {
             // Natural stream aeration: foam gathers in cascade riffles and active wakes, not static contour lines
-            float flowAeration = smoothstep(0.018, 0.065, slopeMag);
+            float flowAeration = clamp(length(u_flowVelocity) * 1.5, 0.0, 0.75);
             float riffleStress = flowAeration * (1.0 - smoothstep(0.04, 0.35, waterDepth));
-            float riffleLacing = riffleStress * smoothstep(0.42, 0.72, foamWeb) * 0.28;
-            float wakeLacing   = wakeFoamTex * smoothstep(0.35, 0.68, foamWeb) * 0.45;
-            brokenFoam = clamp(max(riffleLacing, wakeLacing), 0.0, 0.60);
+            float riffleLacing = riffleStress * smoothstep(0.42, 0.72, foamWeb) * 0.22;
+            float wakeLacing   = max(wakeFoamTex * 0.90, dynamicWakeFoam * 0.55);
+            brokenFoam = clamp(max(riffleLacing, wakeLacing), 0.0, 0.85);
         } else {
             brokenFoam = smoothstep(0.46, 0.78, contactMask * 0.60 + (foamWeb - 0.5) * 0.72);
             brokenFoam = max(brokenFoam, meniscusLip * 0.38 * smoothstep(0.36, 0.68, foamWeb));
             brokenFoam += max(contactRipple, 0.0) * 0.14 * contactMask;
-            brokenFoam = clamp(max(brokenFoam, wakeFoamTex), 0.0, 1.0);
+            brokenFoam = clamp(max(brokenFoam, max(wakeFoamTex, dynamicWakeFoam * 0.60)), 0.0, 0.95);
         }
     }
 

@@ -23,7 +23,7 @@
     chạy dọc khắc 4 chữ Hán 'Thuận Thiên Kiếm Ý' tỏa ánh lam quang dịu nhẹ. Thép gập hoa văn damascus bóng loáng.
     2. Đốc kiếm & Tai kiếm (Crossguard): Tai kiếm bằng đồng cổ khảm vàng hình rồng uốn lượn, ở giữa nạm một viên ngọc bích lam ngọc lục giác.
     3. Chuôi kiếm (Hilt): Cán dài 20cm bọc da cá đuối sẫm màu đan dây chỉ vàng chống trơn trượt, cầm vừa cả 1 tay hoặc 2 tay.
-    4. Chuôi kiếm & Tua kiếm (Pommel & Tassel): Núm đuôi kiếm khuyên vàng cổ, đính đôi dây lụa đỏ buộc ngọc bội và tua kiếm đỏ thắm rủ dài 25cm.
+    4. Chuôi kiếm (Pommel): Núm đuôi kiếm khuyên vàng.
 
     Phông nền xám tối đơn sắc sạch sẽ, ánh sáng studio lấp lánh phản chiếu kim loại thép bóng và ngọc bích, 
     chuẩn phong cách 3D game AAA của Where Winds Meet và Black Myth: Wukong.

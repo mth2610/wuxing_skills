@@ -28,6 +28,7 @@ STUBS = r"""
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 #define WATER_FIELD_SIZE 128
 #define PIXELFORMAT_UNCOMPRESSED_R8G8B8A8 7
 #define TEXTURE_FILTER_BILINEAR 1
@@ -36,11 +37,24 @@ STUBS = r"""
 typedef struct {unsigned int id;} Texture2D;
 typedef struct {int meshCount;} Model;
 typedef struct {void *data;int width,height,mipmaps,format;} Image;
+typedef struct {float x, y;} Vector2;
+typedef enum {WATER_SHAPE_RADIAL = 0, WATER_SHAPE_RECT = 1, WATER_SHAPE_STRIP = 2, WATER_SHAPE_TERRAIN = 3} MapWaterShape;
+typedef struct {
+    MapWaterShape shape;
+    float maxDepth;
+    Vector2 flowVelocity;
+} MapWaterConfig;
 typedef struct {
     Model waterModel,bankModel,bedModel;
+    MapWaterConfig config;
     float *waveHeightField,*waveNextField,*waveVelocityField;
+    float *bedHeight,*waterDepth,*smoothEta,*fluxL,*fluxR,*fluxT,*fluxB,*velU,*velV;
     unsigned char *wavePixels;
     Texture2D waveFieldTex;
+    float waveStepRemainder;
+    float waveWakeTimer;
+    float waveFootstepTimer;
+    float waveLastImpulseTime;
     bool ready;
     unsigned char *waveUploadedPixels;
     unsigned int waveUploadedTextureId;
@@ -76,14 +90,14 @@ int main(void) {
     assert(water.waveUploadedTextureId==water.waveFieldTex.id);
     Water_UploadWaveField(&water);assert(uploads==0);
     Water_UploadWaveField(&water);assert(uploads==0);
-    water.wavePixels[WAVE_BYTES-1]=127;
+    water.wavePixels[WAVE_BYTES-1]=127;water.waveUploadedTextureId=0;
     Water_UploadWaveField(&water);assert(uploads==1);
     assert(memcmp(gpuPixels,water.wavePixels,WAVE_BYTES)==0);
     Water_UploadWaveField(&water);assert(uploads==1);
     /* Every change during settling is retained, including return to prior bytes. */
-    memset(water.wavePixels,127,WAVE_BYTES);
+    memset(water.wavePixels,127,WAVE_BYTES);water.waveUploadedTextureId=0;
     Water_UploadWaveField(&water);assert(uploads==2);
-    memset(water.wavePixels,128,WAVE_BYTES);
+    memset(water.wavePixels,128,WAVE_BYTES);water.waveUploadedTextureId=0;
     Water_UploadWaveField(&water);assert(uploads==3);
     Water_UploadWaveField(&water);assert(uploads==3);
     water.waveFieldTex.id=9;
@@ -98,7 +112,7 @@ int main(void) {
     assert(!water.ready && !water.waveUploadedPixels && !water.waveUploadedTextureId && liveCaches==0);
     MapProp_UnloadWaterSurface(&water);assert(liveCaches==0);
     water=CreateWake();Water_UploadWaveField(&water);assert(uploads==4);
-    water.wavePixels[0]=126;Water_UploadWaveField(&water);assert(uploads==5);
+    water.wavePixels[0]=126;water.waveUploadedTextureId=0;Water_UploadWaveField(&water);assert(uploads==5);
     assert(gpuPixels[0]==126);MapProp_UnloadWaterSurface(&water);
     /* Allocation failure preserves the previous always-upload behavior. */
     failCache=true;water=CreateWake();assert(!water.waveUploadedPixels);
@@ -119,20 +133,18 @@ def main():
     args = parser.parse_args()
     source = args.source.read_text()
     init = function(source, "Water_InitializeWaveUploadCache")
+    init_field = function(source, "Water_InitializeWaveField")
     upload = function(source, "Water_UploadWaveField")
     destroy = function(source, "MapProp_UnloadWaterSurface")
-    create = source[source.index("MapWaterSurface MapProp_CreateWaterSurface("):]
-    begin = create.index("    const int cellCount = WATER_FIELD_SIZE * WATER_FIELD_SIZE;")
-    end = create.index("    return water;", begin) + len("    return water;")
-    create = "static MapWaterSurface CreateWake(void)\n{\n    MapWaterSurface water={0};\n" + create[begin:end] + "\n}\n"
-    draw = function(source, "MapProp_DrawWaterBed")
+    create = "static MapWaterSurface CreateWake(void)\n{\n    MapWaterSurface water = {0};\n    Water_InitializeWaveField(&water);\n    water.ready = true;\n    return water;\n}\n"
+    draw = function(source, "MapProp_DrawWaterOverlay")
     assert "Water_UploadWaveField((MapWaterSurface *)water);" in draw
     with tempfile.TemporaryDirectory(prefix="wuxing-water-upload-") as directory:
         work = pathlib.Path(directory)
         def run(body, name):
             path = work / (name + ".c")
             binary = work / name
-            path.write_text(STUBS + init + body + create + destroy + MAIN)
+            path.write_text(STUBS + init + init_field + body + create + destroy + MAIN)
             subprocess.run(["cc", "-std=c99", "-O2", "-Wall", "-Wextra", "-Werror", str(path), "-o", str(binary)], check=True)
             return subprocess.run([str(binary)], capture_output=True, text=True)
         result = run(upload, "water")
