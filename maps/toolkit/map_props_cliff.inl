@@ -24,22 +24,22 @@ typedef struct
 static const CliffRowProfile kCliffRowProfiles[17] = {
     // depth, out, noise, ao, moss, haze, strata
     {0.00f, -0.55f, 0.02f, 0.95f, 0.95f, 0.00f, 0.60f},  // row 0: inward collar flange (tucks 0.55m under meadow turf)
-    {0.06f,  0.00f, 0.15f, 0.90f, 0.92f, 0.00f, 0.70f},  // row 1: smooth rounded rock lip directly at rimPos
-    {0.35f,  0.06f, 0.60f, 0.85f, 0.82f, 0.00f, 0.90f},  // row 2: undercut fracture slot
-    {0.85f,  0.22f, 1.05f, 0.78f, 0.65f, 0.00f, 1.10f},  // row 3: upper buttress crag shelf
-    {1.55f,  0.16f, 1.25f, 0.65f, 0.42f, 0.00f, 1.18f},  // row 4: vertical faceted wall
+    {0.06f, 0.00f, 0.15f, 0.90f, 0.92f, 0.00f, 0.70f},   // row 1: smooth rounded rock lip directly at rimPos
+    {0.35f, 0.06f, 0.60f, 0.85f, 0.82f, 0.00f, 0.90f},   // row 2: undercut fracture slot
+    {0.85f, 0.22f, 1.05f, 0.78f, 0.65f, 0.00f, 1.10f},   // row 3: upper buttress crag shelf
+    {1.55f, 0.16f, 1.25f, 0.65f, 0.42f, 0.00f, 1.18f},   // row 4: vertical faceted wall
     {2.45f, -0.12f, 1.35f, 0.52f, 0.25f, 0.00f, 1.25f},  // row 5: deep crevice fissure
-    {3.50f,  0.42f, 1.45f, 0.70f, 0.12f, 0.02f, 1.32f},  // row 6: middle prominent rock shelf
-    {4.80f,  0.28f, 1.40f, 0.58f, 0.04f, 0.06f, 1.26f},  // row 7: sheer vertical drop
-    {6.20f,  0.10f, 1.30f, 0.48f, 0.01f, 0.14f, 1.18f},  // row 8: cloud sea immersion line
-    {7.80f,  0.30f, 1.18f, 0.44f, 0.00f, 0.28f, 1.10f},  // row 9: sub-cloud lower bastion
-    {9.80f,  0.06f, 0.98f, 0.40f, 0.00f, 0.45f, 1.00f},  // row 10: lower wall
-    {12.20f,-0.22f, 0.78f, 0.38f, 0.00f, 0.62f, 0.92f},  // row 11: keel drop
-    {15.00f,-0.60f, 0.58f, 0.36f, 0.00f, 0.76f, 0.85f},  // row 12: inward keel
-    {18.50f,-1.20f, 0.42f, 0.35f, 0.00f, 0.88f, 0.80f},  // row 13: deep keel
-    {22.50f,-2.10f, 0.28f, 0.34f, 0.00f, 0.95f, 0.76f},  // row 14: abyss wall
-    {27.20f,-3.40f, 0.18f, 0.34f, 0.00f, 0.98f, 0.72f},  // row 15: abyss taper
-    {32.50f,-5.00f, 0.10f, 0.33f, 0.00f, 1.00f, 0.70f},  // row 16: submerged island root
+    {3.50f, 0.42f, 1.45f, 0.70f, 0.12f, 0.02f, 1.32f},   // row 6: middle prominent rock shelf
+    {4.80f, 0.28f, 1.40f, 0.58f, 0.04f, 0.06f, 1.26f},   // row 7: sheer vertical drop
+    {6.20f, 0.10f, 1.30f, 0.48f, 0.01f, 0.14f, 1.18f},   // row 8: cloud sea immersion line
+    {7.80f, 0.30f, 1.18f, 0.44f, 0.00f, 0.28f, 1.10f},   // row 9: sub-cloud lower bastion
+    {9.80f, 0.06f, 0.98f, 0.40f, 0.00f, 0.45f, 1.00f},   // row 10: lower wall
+    {12.20f, -0.22f, 0.78f, 0.38f, 0.00f, 0.62f, 0.92f}, // row 11: keel drop
+    {15.00f, -0.60f, 0.58f, 0.36f, 0.00f, 0.76f, 0.85f}, // row 12: inward keel
+    {18.50f, -1.20f, 0.42f, 0.35f, 0.00f, 0.88f, 0.80f}, // row 13: deep keel
+    {22.50f, -2.10f, 0.28f, 0.34f, 0.00f, 0.95f, 0.76f}, // row 14: abyss wall
+    {27.20f, -3.40f, 0.18f, 0.34f, 0.00f, 0.98f, 0.72f}, // row 15: abyss taper
+    {32.50f, -5.00f, 0.10f, 0.33f, 0.00f, 1.00f, 0.70f}, // row 16: submerged island root
 };
 
 #define CLIFF_ROW_COUNT 17
@@ -548,7 +548,8 @@ static void Cliff_ConformGroundBoundary(MapGroundSurface *ground, Vector3 mapCen
     // Detect boundary edges: edges referenced by exactly one triangle
     int hashCap = 262144;
     int hashMask = hashCap - 1;
-    typedef struct {
+    typedef struct
+    {
         unsigned int v0, v1;
         int count;
     } EdgeSlot;
@@ -557,8 +558,10 @@ static void Cliff_ConformGroundBoundary(MapGroundSurface *ground, Vector3 mapCen
     bool *isBoundary = MemAlloc((size_t)vertCount * sizeof(bool));
     if (!table || !isBoundary)
     {
-        if (table) MemFree(table);
-        if (isBoundary) MemFree(isBoundary);
+        if (table)
+            MemFree(table);
+        if (isBoundary)
+            MemFree(isBoundary);
         return;
     }
     memset(table, 0, (size_t)hashCap * sizeof(EdgeSlot));
@@ -569,13 +572,17 @@ static void Cliff_ConformGroundBoundary(MapGroundSurface *ground, Vector3 mapCen
         unsigned short ids[3] = {
             mesh->indices[t * 3 + 0],
             mesh->indices[t * 3 + 1],
-            mesh->indices[t * 3 + 2]
-        };
+            mesh->indices[t * 3 + 2]};
         for (int e = 0; e < 3; e++)
         {
             unsigned int a = ids[e];
             unsigned int b = ids[(e + 1) % 3];
-            if (a > b) { unsigned int tmp = a; a = b; b = tmp; }
+            if (a > b)
+            {
+                unsigned int tmp = a;
+                a = b;
+                b = tmp;
+            }
             unsigned int h = ((a * 2654435761u) ^ (b * 2246822519u)) & (unsigned int)hashMask;
             while (table[h].count > 0)
             {
@@ -600,8 +607,16 @@ static void Cliff_ConformGroundBoundary(MapGroundSurface *ground, Vector3 mapCen
         {
             unsigned int a = table[h].v0;
             unsigned int b = table[h].v1;
-            if (!isBoundary[a]) { isBoundary[a] = true; boundaryVertCount++; }
-            if (!isBoundary[b]) { isBoundary[b] = true; boundaryVertCount++; }
+            if (!isBoundary[a])
+            {
+                isBoundary[a] = true;
+                boundaryVertCount++;
+            }
+            if (!isBoundary[b])
+            {
+                isBoundary[b] = true;
+                boundaryVertCount++;
+            }
         }
     }
     MemFree(table);
@@ -638,8 +653,10 @@ static void Cliff_ConformGroundBoundary(MapGroundSurface *ground, Vector3 mapCen
                 continue;
 
             float t = ((vx - A.x) * abX + (vz - A.z) * abZ) / abLenSq;
-            if (t < 0.0f) t = 0.0f;
-            if (t > 1.0f) t = 1.0f;
+            if (t < 0.0f)
+                t = 0.0f;
+            if (t > 1.0f)
+                t = 1.0f;
 
             float qx = A.x + abX * t;
             float qz = A.z + abZ * t;
@@ -684,7 +701,8 @@ static void Cliff_ConformGroundBoundary(MapGroundSurface *ground, Vector3 mapCen
         Vector3 b = {mesh->vertices[i1 * 3], mesh->vertices[i1 * 3 + 1], mesh->vertices[i1 * 3 + 2]};
         Vector3 c = {mesh->vertices[i2 * 3], mesh->vertices[i2 * 3 + 1], mesh->vertices[i2 * 3 + 2]};
         Vector3 fn = Vector3CrossProduct(Vector3Subtract(b, a), Vector3Subtract(c, a));
-        if (fn.y < 0.0f) fn = Vector3Negate(fn);
+        if (fn.y < 0.0f)
+            fn = Vector3Negate(fn);
         for (int k = 0; k < 3; k++)
         {
             unsigned short vid = mesh->indices[t * 3 + k];
@@ -727,8 +745,7 @@ static void Cliff_ConformGroundBoundary(MapGroundSurface *ground, Vector3 mapCen
                 Vector3 avg = {
                     (mesh->normals[i0 * 3] + mesh->normals[i1 * 3] + mesh->normals[i2 * 3]) * 0.333333f,
                     (mesh->normals[i0 * 3 + 1] + mesh->normals[i1 * 3 + 1] + mesh->normals[i2 * 3 + 1]) * 0.333333f,
-                    (mesh->normals[i0 * 3 + 2] + mesh->normals[i1 * 3 + 2] + mesh->normals[i2 * 3 + 2]) * 0.333333f
-                };
+                    (mesh->normals[i0 * 3 + 2] + mesh->normals[i1 * 3 + 2] + mesh->normals[i2 * 3 + 2]) * 0.333333f};
                 for (int k = 0; k < 3; k++)
                 {
                     unsigned short vid = mesh->indices[t * 3 + k];
@@ -1195,8 +1212,7 @@ MapCliffSkirt MapProp_CreateCliffSkirt(const MapGroundSurface *ground, Vector3 m
             Vector3 pAvg = {
                 (pa.x + pb.x + pLeft.x + pRight.x) * 0.25f,
                 (pa.y + pb.y + pLeft.y + pRight.y) * 0.25f,
-                (pa.z + pb.z + pLeft.z + pRight.z) * 0.25f
-            };
+                (pa.z + pb.z + pLeft.z + pRight.z) * 0.25f};
             float concavity = (pAvg.x - pCenter.x) * n.x +
                               (pAvg.y - pCenter.y) * n.y +
                               (pAvg.z - pCenter.z) * n.z;

@@ -3,6 +3,25 @@
 
 static int s_bedLocBankPass = -2;
 
+// Cache các uniform môi trường dùng chung trong cùng 1 frame khi có nhiều mặt nước/suối
+static unsigned int s_waterEnvFrameId = 0;
+static Vector3 s_waterCachedLightDir = {0};
+static Vector3 s_waterCachedSunRgb = {0};
+static Vector3 s_waterCachedAmbientRgb = {0};
+
+static inline void Water_RefreshFrameLightingCache(void)
+{
+    if (s_waterEnvFrameId == s_natureRenderFrameId)
+        return;
+    s_waterEnvFrameId = s_natureRenderFrameId;
+    s_waterCachedLightDir = Vector3Negate(Environment_GetSunDirection());
+    Vector4 sun = ColorNormalize(Environment_GetSunColor());
+    Vector4 ambient = ColorNormalize(Environment_GetAmbientColor());
+    float sunIntensity = Environment_GetSunIntensity();
+    s_waterCachedSunRgb = (Vector3){sun.x * sunIntensity, sun.y * sunIntensity, sun.z * sunIntensity};
+    s_waterCachedAmbientRgb = (Vector3){ambient.x, ambient.y, ambient.z};
+}
+
 static inline unsigned char Water_EncodeUnorm8(float v)
 {
     v = (v > 0.0f) ? ((v < 1.0f) ? v : 1.0f) : 0.0f;
@@ -47,10 +66,15 @@ static inline void Water_SetBedVertex(Mesh *mesh, int index, Vector3 p, Vector3 
 static inline float Water_EdgeBonus(float angle, unsigned int seed)
 {
     float seedPhase = (float)(seed & 1023u) * 0.0173f;
-    return sinf(angle * 2.0f + seedPhase) * 0.095f +
-           cosf(angle * 3.0f - seedPhase * 0.70f) * 0.065f +
-           sinf(angle * 5.0f + 1.2f) * 0.038f +
-           sinf(angle * 11.0f - seedPhase * 0.40f) * 0.018f;
+    float s2, c2, s3, c3, s5, c5, s11, c11;
+    Nature_FastSinCos(angle * 2.0f + seedPhase, &s2, &c2);
+    Nature_FastSinCos(angle * 3.0f - seedPhase * 0.70f, &s3, &c3);
+    Nature_FastSinCos(angle * 5.0f + 1.2f, &s5, &c5);
+    Nature_FastSinCos(angle * 11.0f - seedPhase * 0.40f, &s11, &c11);
+    return s2 * 0.095f +
+           c3 * 0.065f +
+           s5 * 0.038f +
+           s11 * 0.018f;
 }
 
 static float Water_EdgeScale(float angle, float radial, unsigned int seed)
@@ -189,6 +213,63 @@ static void Water_InitializeWaveUploadCache(MapWaterSurface *water)
     water->waveUploadedTextureId = water->waveFieldTex.id;
 }
 
+// Sử dụng bộ đệm waveNextField (vốn chỉ dùng làm scratch khi dịch chuyển lưới)
+// để lưu cache mặt nạ bờ & vật cản tĩnh, loại bỏ hoàn toàn vòng lặp kiểm tra vật cản mỗi frame.
+static void Water_RebuildBlockedMask(MapWaterSurface *water)
+{
+    if (!water || !water->waveNextField)
+        return;
+    const int n = WATER_FIELD_SIZE;
+    float radX = (water->config.shape == WATER_SHAPE_TERRAIN) ? water->waveGridRadius : water->config.radiusX;
+    float radZ = (water->config.shape == WATER_SHAPE_TERRAIN) ? water->waveGridRadius : water->config.radiusZ;
+    Vector3 center = (water->config.shape == WATER_SHAPE_TERRAIN) ? water->waveGridCenter : water->config.center;
+    const float invNMinus1 = 2.0f / (float)(n - 1);
+    const bool radialShape = (water->config.shape == WATER_SHAPE_RADIAL);
+
+    int obsCount = water->obstacleCount;
+    if (obsCount > MAX_WATER_OBSTACLES)
+        obsCount = MAX_WATER_OBSTACLES;
+    float obsX[MAX_WATER_OBSTACLES];
+    float obsZ[MAX_WATER_OBSTACLES];
+    float obsRadSq[MAX_WATER_OBSTACLES];
+    for (int k = 0; k < obsCount; k++)
+    {
+        obsX[k] = water->obstacles[k].x;
+        obsZ[k] = water->obstacles[k].y;
+        obsRadSq[k] = water->obstacles[k].z * water->obstacles[k].z;
+    }
+
+    for (int z = 0; z < n; z++)
+    {
+        float nz = (float)z * invNMinus1 - 1.0f;
+        float nz2 = nz * nz;
+        float wz = center.z + nz * radZ;
+        int row = z * n;
+        for (int x = 0; x < n; x++)
+        {
+            float nx = (float)x * invNMinus1 - 1.0f;
+            float nx2 = nx * nx;
+            float distMetric = radialShape ? (nx2 + nz2) : fmaxf(fabsf(nx), fabsf(nz));
+            bool blocked = (distMetric >= 0.94f);
+            if (!blocked && obsCount > 0)
+            {
+                float wx = center.x + nx * radX;
+                for (int k = 0; k < obsCount; k++)
+                {
+                    float ox = wx - obsX[k];
+                    float oz = wz - obsZ[k];
+                    if (ox * ox + oz * oz < obsRadSq[k])
+                    {
+                        blocked = true;
+                        break;
+                    }
+                }
+            }
+            water->waveNextField[row + x] = blocked ? 1.0f : 0.0f;
+        }
+    }
+}
+
 static void Water_InitializeWaveField(MapWaterSurface *water)
 {
     const int cellCount = WATER_FIELD_SIZE * WATER_FIELD_SIZE;
@@ -220,6 +301,7 @@ static void Water_InitializeWaveField(MapWaterSurface *water)
             water->velU[idx] = 0.0f;
             water->velV[idx] = 0.0f;
         }
+        water->waveNextField[0] = -1.0f; // Đánh dấu cần khởi tạo mặt nạ bờ/vật cản
 
         memset(water->wavePixels, 128, (size_t)cellCount * 4u);
         for (int p = 0; p < cellCount; p++)
@@ -274,7 +356,6 @@ static void Water_UploadWaveField(MapWaterSurface *water)
 {
     if (!water->waveFieldTex.id || !water->wavePixels)
         return;
-    // Fast O(1) check: waveUploadedTextureId is invalidated to 0 whenever wavePixels are modified
     if (water->waveUploadedPixels && water->waveUploadedTextureId == water->waveFieldTex.id)
         return;
 
@@ -311,7 +392,6 @@ MapWaterSurface MapProp_CreateWaterSurface(MapWaterConfig config)
     config.shape = WATER_SHAPE_RADIAL;
     water.config = config;
 
-    // Precompute angular trig and shoreline noise once for all rings across surface, bed, and bank meshes
     float cosTable[193];
     float sinTable[193];
     float edgeBonusTable[193];
@@ -402,8 +482,8 @@ MapWaterSurface MapProp_CreateWaterSurface(MapWaterConfig config)
 
         float slope0 = 1.6f * powf(fmaxf(0.01f, r0), 0.6f) * invMaxRad;
         float slope1 = 1.6f * powf(fmaxf(0.01f, r1), 0.6f) * invMaxRad;
-        float invNorm0 = 1.0f / sqrtf(slope0 * slope0 + 1.0f);
-        float invNorm1 = 1.0f / sqrtf(slope1 * slope1 + 1.0f);
+        float invNorm0 = Nature_FastInvSqrt(slope0 * slope0 + 1.0f);
+        float invNorm1 = Nature_FastInvSqrt(slope1 * slope1 + 1.0f);
 
         for (int segment = 0; segment < config.segments; segment++)
         {
@@ -469,10 +549,13 @@ MapWaterSurface MapProp_CreateWaterSurface(MapWaterConfig config)
             float c1 = cosTable[segment + 1], sin1 = sinTable[segment + 1];
             float inner0 = 1.0f + edgeBonusTable[segment];
             float inner1 = 1.0f + edgeBonusTable[segment + 1];
-            float habitat0 = 0.5f + 0.34f * sinf(a0 * 4.0f + seedPhase) + 0.16f * sinf(a0 * 9.0f - seedPhase * 0.61f);
-            float habitat1 = 0.5f + 0.34f * sinf(a1 * 4.0f + seedPhase) + 0.16f * sinf(a1 * 9.0f - seedPhase * 0.61f);
-            habitat0 = fmaxf(0.0f, fminf(1.0f, habitat0));
-            habitat1 = fmaxf(0.0f, fminf(1.0f, habitat1));
+            float sh0_4, ch0_4, sh0_9, ch0_9, sh1_4, ch1_4, sh1_9, ch1_9;
+            Nature_FastSinCos(a0 * 4.0f + seedPhase, &sh0_4, &ch0_4);
+            Nature_FastSinCos(a0 * 9.0f - seedPhase * 0.61f, &sh0_9, &ch0_9);
+            Nature_FastSinCos(a1 * 4.0f + seedPhase, &sh1_4, &ch1_4);
+            Nature_FastSinCos(a1 * 9.0f - seedPhase * 0.61f, &sh1_9, &ch1_9);
+            float habitat0 = fmaxf(0.0f, fminf(1.0f, 0.5f + 0.34f * sh0_4 + 0.16f * sh0_9));
+            float habitat1 = fmaxf(0.0f, fminf(1.0f, 0.5f + 0.34f * sh1_4 + 0.16f * sh1_9));
             float width0 = config.bankWidth * (0.10f + 1.04f * habitat0 * habitat0);
             float width1 = config.bankWidth * (0.10f + 1.04f * habitat1 * habitat1);
             float rx00 = config.radiusX * inner0 + width0 * s0;
@@ -489,8 +572,11 @@ MapWaterSurface MapProp_CreateWaterSurface(MapWaterConfig config)
             Vector3 p01 = {c1 * rx01, y0, sin1 * rz01};
             Vector3 p10 = {c0 * rx10, y1, sin0 * rz10};
             Vector3 p11 = {c1 * rx11, y1, sin1 * rz11};
-            float shade0 = 0.88f + 0.16f * (0.5f + 0.5f * sinf(a0 * 7.0f - seedPhase * 0.7f));
-            float shade1 = 0.88f + 0.16f * (0.5f + 0.5f * sinf(a1 * 7.0f - seedPhase * 0.7f));
+            float ss0, cs0, ss1, cs1;
+            Nature_FastSinCos(a0 * 7.0f - seedPhase * 0.7f, &ss0, &cs0);
+            Nature_FastSinCos(a1 * 7.0f - seedPhase * 0.7f, &ss1, &cs1);
+            float shade0 = 0.88f + 0.16f * (0.5f + 0.5f * ss0);
+            float shade1 = 0.88f + 0.16f * (0.5f + 0.5f * ss1);
             Color bank00 = Nature_ScaleColor(col0, 1.0f + (shade0 - 1.0f) * s0);
             Color bank01 = Nature_ScaleColor(col0, 1.0f + (shade1 - 1.0f) * s0);
             Color bank10 = Nature_ScaleColor(col1, 1.0f + (shade0 - 1.0f) * s1);
@@ -622,10 +708,10 @@ MapWaterSurface MapProp_CreateWaterPatch(Vector3 center, float width, float dept
             Vector3 p11 = {x1, y11, z1};
             Vector3 p01 = {x0, y01, z1};
 
-            Vector3 n00 = Vector3Normalize((Vector3){cosU0 * sinV0 * slopeScaleX, 1.0f, sinU0 * cosV0 * slopeScaleZ});
-            Vector3 n10 = Vector3Normalize((Vector3){cosU1 * sinV0 * slopeScaleX, 1.0f, sinU1 * cosV0 * slopeScaleZ});
-            Vector3 n11 = Vector3Normalize((Vector3){cosU1 * sinV1 * slopeScaleX, 1.0f, sinU1 * cosV1 * slopeScaleZ});
-            Vector3 n01 = Vector3Normalize((Vector3){cosU0 * sinV1 * slopeScaleX, 1.0f, sinU0 * cosV1 * slopeScaleZ});
+            Vector3 n00 = Nature_FastNormalize((Vector3){cosU0 * sinV0 * slopeScaleX, 1.0f, sinU0 * cosV0 * slopeScaleZ});
+            Vector3 n10 = Nature_FastNormalize((Vector3){cosU1 * sinV0 * slopeScaleX, 1.0f, sinU1 * cosV0 * slopeScaleZ});
+            Vector3 n11 = Nature_FastNormalize((Vector3){cosU1 * sinV1 * slopeScaleX, 1.0f, sinU1 * cosV1 * slopeScaleZ});
+            Vector3 n01 = Nature_FastNormalize((Vector3){cosU0 * sinV1 * slopeScaleX, 1.0f, sinU0 * cosV1 * slopeScaleZ});
 
             Vector2 uv00 = {p00.x * 0.16f, p00.z * 0.16f};
             Vector2 uv10 = {p10.x * 0.16f, p10.z * 0.16f};
@@ -775,8 +861,8 @@ MapWaterSurface MapProp_CreateWaterStrip(Vector3 start, Vector3 end, float width
 
             float g0 = -nw0 * slopeScale;
             float g1 = -nw1 * slopeScale;
-            Vector3 n0 = Vector3Normalize((Vector3){right.x * g0, 1.0f, right.z * g0});
-            Vector3 n1 = Vector3Normalize((Vector3){right.x * g1, 1.0f, right.z * g1});
+            Vector3 n0 = Nature_FastNormalize((Vector3){right.x * g0, 1.0f, right.z * g0});
+            Vector3 n1 = Nature_FastNormalize((Vector3){right.x * g1, 1.0f, right.z * g1});
 
             Vector2 uv00 = {p00.x * 0.16f, p00.z * 0.16f};
             Vector2 uv01 = {p01.x * 0.16f, p01.z * 0.16f};
@@ -836,7 +922,7 @@ MapWaterSurface MapProp_CreateTerrainWater(const char *meshPath, MapWaterConfig 
         water.waterModel.materials[i].shader = Water_GetShader();
         water.waterModel.materials[i].maps[MATERIAL_MAP_DIFFUSE].texture = detail;
     }
-    water.waveGridRadius = 16.0f; // 16m radius = 32m local fluid simulation domain
+    water.waveGridRadius = 16.0f;
     water.waveGridCenter = (Vector3){0};
     Water_InitializeWaveField(&water);
     water.ready = true;
@@ -896,14 +982,20 @@ MapWaterSurface MapProp_CreateWaterSpline(const Vector3 *points, const float *wi
         {
             Vector3 t1 = Vector3Subtract(points[i], points[i - 1]);
             Vector3 t2 = Vector3Subtract(points[i + 1], points[i]);
-            t = Vector3Add(Vector3Normalize(t1), Vector3Normalize(t2));
+            t = Vector3Add(Nature_FastNormalize(t1), Nature_FastNormalize(t2));
         }
         t.y = 0.0f;
-        float tLen = Vector3Length(t);
-        if (tLen > 1e-4f)
-            t = Vector3Scale(t, 1.0f / tLen);
+        float tLenSq = t.x * t.x + t.z * t.z;
+        if (tLenSq > 1e-8f)
+        {
+            float invLen = Nature_FastInvSqrt(tLenSq);
+            t.x *= invLen;
+            t.z *= invLen;
+        }
         else
+        {
             t = (Vector3){0.0f, 0.0f, 1.0f};
+        }
         normals[i] = (Vector3){-t.z, 0.0f, t.x};
     }
 
@@ -1021,7 +1113,7 @@ bool MapProp_SampleWaterBed(const MapWaterSurface *water, float x, float z,
         {
             float slope = 1.6f * powf(fmaxf(0.01f, r), 0.6f) * (water->config.maxDepth / fmaxf(rx, rz));
             Vector3 n = {nx * slope, 1.0f, nz * slope};
-            *outNormal = Vector3Normalize(n);
+            *outNormal = Nature_FastNormalize(n);
         }
         return true;
     }
@@ -1048,7 +1140,7 @@ bool MapProp_SampleWaterBed(const MapWaterSurface *water, float x, float z,
         {
             float gx = cosU * sinV * (water->config.maxDepth * PI / (2.0f * halfW));
             float gz = sinU * cosV * (water->config.maxDepth * PI / (2.0f * halfD));
-            *outNormal = Vector3Normalize((Vector3){gx, 1.0f, gz});
+            *outNormal = Nature_FastNormalize((Vector3){gx, 1.0f, gz});
         }
         return true;
     }
@@ -1057,8 +1149,10 @@ bool MapProp_SampleWaterBed(const MapWaterSurface *water, float x, float z,
         float dx = x - water->config.center.x;
         float dz = z - water->config.center.z;
         Vector2 flowDir = {water->config.flowVelocity.x, water->config.flowVelocity.y};
-        float flowLen = Vector2Length(flowDir);
-        Vector3 forward = (flowLen > 0.001f) ? (Vector3){flowDir.x / flowLen, 0.0f, flowDir.y / flowLen} : (Vector3){1.0f, 0.0f, 0.0f};
+        float flowLenSq = flowDir.x * flowDir.x + flowDir.y * flowDir.y;
+        Vector3 forward = (flowLenSq > 1e-6f)
+                              ? (Vector3){flowDir.x * Nature_FastInvSqrt(flowLenSq), 0.0f, flowDir.y * Nature_FastInvSqrt(flowLenSq)}
+                              : (Vector3){1.0f, 0.0f, 0.0f};
         Vector3 right = {-forward.z, 0.0f, forward.x};
 
         float distLong = dx * forward.x + dz * forward.z;
@@ -1077,7 +1171,7 @@ bool MapProp_SampleWaterBed(const MapWaterSurface *water, float x, float z,
         if (outNormal)
         {
             float g = -w * (2.0f * water->config.maxDepth / halfWid);
-            *outNormal = Vector3Normalize((Vector3){right.x * g, 1.0f, right.z * g});
+            *outNormal = Nature_FastNormalize((Vector3){right.x * g, 1.0f, right.z * g});
         }
         return true;
     }
@@ -1087,74 +1181,76 @@ bool MapProp_SampleWaterBed(const MapWaterSurface *water, float x, float z,
 
 void MapProp_DrawWaterBed(const MapWaterSurface *water, float time)
 {
-    if (!water || !water->ready)
+    if (!water || !water->ready || water->bedModel.meshCount <= 0)
         return;
-    Vector3 position = water->config.center;
 
-    Vector3 lightDir = Vector3Negate(Environment_GetSunDirection());
-    Vector4 sun = ColorNormalize(Environment_GetSunColor());
-    Vector4 ambient = ColorNormalize(Environment_GetAmbientColor());
+    Vector3 position = water->config.center;
+    if (water->boundsRadius > 0.0f)
+    {
+        Nature_RefreshFrustumCache();
+        Vector3 boundsPos = Vector3Add(position, water->boundsCenter);
+        if (!Nature_IsChunkVisibleFast(boundsPos, water->boundsRadius + water->config.bankWidth))
+            return;
+    }
+
+    Water_RefreshFrameLightingCache();
+
     Vector4 deep = ColorNormalize(water->config.deepColor);
     Vector4 shallow = ColorNormalize(water->config.shallowColor);
-    Vector3 sunRgb = Vector3Scale((Vector3){sun.x, sun.y, sun.z}, Environment_GetSunIntensity());
-    Vector3 ambientRgb = {ambient.x, ambient.y, ambient.z};
     Vector3 deepRgb = {deep.x, deep.y, deep.z};
     Vector3 shallowRgb = {shallow.x, shallow.y, shallow.z};
 
-    if (water->bedModel.meshCount > 0)
+    Shader bedShader = Water_GetBedShader();
+    if (s_bedLocBankPass == -2)
+        s_bedLocBankPass = GetShaderLocation(bedShader, "u_bankPass");
+
+    BeginShaderMode(bedShader);
+    SetShaderValue(bedShader, s_bedLocTime, &time, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(bedShader, s_bedLocWaterHeight, &water->config.center.y, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(bedShader, s_bedLocLightDir, &s_waterCachedLightDir, SHADER_UNIFORM_VEC3);
+    SetShaderValue(bedShader, s_bedLocLightColor, &s_waterCachedSunRgb, SHADER_UNIFORM_VEC3);
+    SetShaderValue(bedShader, s_bedLocAmbientColor, &s_waterCachedAmbientRgb, SHADER_UNIFORM_VEC3);
+    SetShaderValue(bedShader, s_bedLocViewPos, &camera.position, SHADER_UNIFORM_VEC3);
+    SetShaderValue(bedShader, s_bedLocCausticsStrength, &water->config.causticsStrength, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(bedShader, s_bedLocCausticsScale, &water->config.causticsScale, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(bedShader, s_bedLocAbsorption, &water->config.absorption, SHADER_UNIFORM_VEC3);
+    SetShaderValue(bedShader, s_bedLocDeepColor, &deepRgb, SHADER_UNIFORM_VEC3);
+    SetShaderValue(bedShader, s_bedLocShallowColor, &shallowRgb, SHADER_UNIFORM_VEC3);
+    if (s_bedLocModelPos >= 0)
+        SetShaderValue(bedShader, s_bedLocModelPos, &position, SHADER_UNIFORM_VEC3);
+
+    unsigned int causticId = (water->causticTex.id > 0)
+                                 ? water->causticTex.id
+                                 : (s_defaultCausticTex.id > 0 ? s_defaultCausticTex.id : rlGetTextureIdDefault());
+    rlActiveTextureSlot(1);
+    rlEnableTexture(causticId);
+    rlActiveTextureSlot(0);
+
+    int bankPass = 0;
+    if (s_bedLocBankPass >= 0)
+        SetShaderValue(bedShader, s_bedLocBankPass, &bankPass, SHADER_UNIFORM_INT);
+    DrawModel(water->bedModel, position, 1.0f, WHITE);
+    if (water->bankModel.meshCount > 0)
     {
-        Shader bedShader = Water_GetBedShader();
-        if (s_bedLocBankPass == -2)
-            s_bedLocBankPass = GetShaderLocation(bedShader, "u_bankPass");
-
-        BeginShaderMode(bedShader);
-        SetShaderValue(bedShader, s_bedLocTime, &time, SHADER_UNIFORM_FLOAT);
-        SetShaderValue(bedShader, s_bedLocWaterHeight, &water->config.center.y, SHADER_UNIFORM_FLOAT);
-        SetShaderValue(bedShader, s_bedLocLightDir, &lightDir, SHADER_UNIFORM_VEC3);
-        SetShaderValue(bedShader, s_bedLocLightColor, &sunRgb, SHADER_UNIFORM_VEC3);
-        SetShaderValue(bedShader, s_bedLocAmbientColor, &ambientRgb, SHADER_UNIFORM_VEC3);
-        SetShaderValue(bedShader, s_bedLocViewPos, &camera.position, SHADER_UNIFORM_VEC3);
-        SetShaderValue(bedShader, s_bedLocCausticsStrength, &water->config.causticsStrength, SHADER_UNIFORM_FLOAT);
-        SetShaderValue(bedShader, s_bedLocCausticsScale, &water->config.causticsScale, SHADER_UNIFORM_FLOAT);
-        SetShaderValue(bedShader, s_bedLocAbsorption, &water->config.absorption, SHADER_UNIFORM_VEC3);
-        SetShaderValue(bedShader, s_bedLocDeepColor, &deepRgb, SHADER_UNIFORM_VEC3);
-        SetShaderValue(bedShader, s_bedLocShallowColor, &shallowRgb, SHADER_UNIFORM_VEC3);
-        if (s_bedLocModelPos >= 0)
-            SetShaderValue(bedShader, s_bedLocModelPos, &position, SHADER_UNIFORM_VEC3);
-
-        unsigned int causticId = (water->causticTex.id > 0)
-                                     ? water->causticTex.id
-                                     : (s_defaultCausticTex.id > 0 ? s_defaultCausticTex.id : rlGetTextureIdDefault());
-        rlActiveTextureSlot(1);
-        rlEnableTexture(causticId);
-        rlActiveTextureSlot(0);
-
-        int bankPass = 0;
+        rlDrawRenderBatchActive();
+        bankPass = 1;
         if (s_bedLocBankPass >= 0)
             SetShaderValue(bedShader, s_bedLocBankPass, &bankPass, SHADER_UNIFORM_INT);
-        DrawModel(water->bedModel, position, 1.0f, WHITE);
-        if (water->bankModel.meshCount > 0)
-        {
-            rlDrawRenderBatchActive();
-            bankPass = 1;
-            if (s_bedLocBankPass >= 0)
-                SetShaderValue(bedShader, s_bedLocBankPass, &bankPass, SHADER_UNIFORM_INT);
-            BeginBlendMode(BLEND_ALPHA);
-            rlDisableDepthMask();
-            DrawModel(water->bankModel, position, 1.0f, WHITE);
-            rlDrawRenderBatchActive();
-            rlEnableDepthMask();
-            EndBlendMode();
-            bankPass = 0;
-            if (s_bedLocBankPass >= 0)
-                SetShaderValue(bedShader, s_bedLocBankPass, &bankPass, SHADER_UNIFORM_INT);
-        }
-
-        rlActiveTextureSlot(1);
-        rlDisableTexture();
-        rlActiveTextureSlot(0);
-        EndShaderMode();
+        BeginBlendMode(BLEND_ALPHA);
+        rlDisableDepthMask();
+        DrawModel(water->bankModel, position, 1.0f, WHITE);
+        rlDrawRenderBatchActive();
+        rlEnableDepthMask();
+        EndBlendMode();
+        bankPass = 0;
+        if (s_bedLocBankPass >= 0)
+            SetShaderValue(bedShader, s_bedLocBankPass, &bankPass, SHADER_UNIFORM_INT);
     }
+
+    rlActiveTextureSlot(1);
+    rlDisableTexture();
+    rlActiveTextureSlot(0);
+    EndShaderMode();
 }
 
 void MapProp_DrawWaterOverlay(const MapWaterSurface *water, float time)
@@ -1164,30 +1260,21 @@ void MapProp_DrawWaterOverlay(const MapWaterSurface *water, float time)
     Vector3 position = (water->config.shape == WATER_SHAPE_TERRAIN) ? water->waveGridCenter : water->config.center;
     Vector3 drawPos = (water->config.shape == WATER_SHAPE_TERRAIN) ? (Vector3){0} : position;
 
-    // The whole surface is one draw call, so skip it entirely when its bounding
-    // sphere is outside the camera frustum (map_props_cull.inl). Conservative:
-    // a surface that is even partly on screen is always drawn.
     if (water->boundsRadius > 0.0f)
     {
-        MapPropViewFrustum frustum;
-        if (MapProp_BuildViewFrustum(&frustum))
-        {
-            Vector3 boundsPos = Vector3Add(drawPos, water->boundsCenter);
-            if (MapProp_FrustumCullsSphere(&frustum, boundsPos, water->boundsRadius))
-                return;
-        }
+        Nature_RefreshFrustumCache();
+        Vector3 boundsPos = Vector3Add(drawPos, water->boundsCenter);
+        if (!Nature_IsChunkVisibleFast(boundsPos, water->boundsRadius))
+            return;
     }
 
     Water_UploadWaveField((MapWaterSurface *)water);
+    Water_RefreshFrameLightingCache();
 
-    Vector3 lightDir = Vector3Negate(Environment_GetSunDirection());
-    Vector4 sun = ColorNormalize(Environment_GetSunColor());
-    Vector4 ambient = ColorNormalize(Environment_GetAmbientColor());
+    GfxQuality quality = GfxQuality_Get();
     Vector4 deep = ColorNormalize(water->config.deepColor);
     Vector4 shallow = ColorNormalize(water->config.shallowColor);
     Vector4 foam = ColorNormalize(water->config.foamColor);
-    Vector3 sunRgb = Vector3Scale((Vector3){sun.x, sun.y, sun.z}, Environment_GetSunIntensity());
-    Vector3 ambientRgb = {ambient.x, ambient.y, ambient.z};
     Vector3 deepRgb = {deep.x, deep.y, deep.z};
     Vector3 shallowRgb = {shallow.x, shallow.y, shallow.z};
     Vector3 foamRgb = {foam.x, foam.y, foam.z};
@@ -1204,9 +1291,9 @@ void MapProp_DrawWaterOverlay(const MapWaterSurface *water, float time)
     int shapeInt = (int)water->config.shape;
     SetShaderValue(shader, s_waterLocWaterShape, &shapeInt, SHADER_UNIFORM_INT);
 
-    SetShaderValue(shader, s_waterLocLightDir, &lightDir, SHADER_UNIFORM_VEC3);
-    SetShaderValue(shader, s_waterLocLightColor, &sunRgb, SHADER_UNIFORM_VEC3);
-    SetShaderValue(shader, s_waterLocAmbientColor, &ambientRgb, SHADER_UNIFORM_VEC3);
+    SetShaderValue(shader, s_waterLocLightDir, &s_waterCachedLightDir, SHADER_UNIFORM_VEC3);
+    SetShaderValue(shader, s_waterLocLightColor, &s_waterCachedSunRgb, SHADER_UNIFORM_VEC3);
+    SetShaderValue(shader, s_waterLocAmbientColor, &s_waterCachedAmbientRgb, SHADER_UNIFORM_VEC3);
     SetShaderValue(shader, s_waterLocViewPos, &camera.position, SHADER_UNIFORM_VEC3);
     if (s_waterLocModelPos >= 0)
         SetShaderValue(shader, s_waterLocModelPos, &position, SHADER_UNIFORM_VEC3);
@@ -1242,8 +1329,6 @@ void MapProp_DrawWaterOverlay(const MapWaterSurface *water, float time)
     if (s_waterLocRadius >= 0)
         SetShaderValue(shader, s_waterLocRadius, &water->interactorRadius, SHADER_UNIFORM_FLOAT);
 
-    // Pre-evaluate current expanding ring radius & decayed amplitude on CPU once per frame
-    // to match water_surface.fs contract (rings.xy=pos, rings.z=maxRad, rings.w=curRad; params.x=amp, params.y=wavelength)
     Vector4 rings[MAX_WATER_RIPPLES];
     Vector4 params[MAX_WATER_RIPPLES];
     for (int i = 0; i < MAX_WATER_RIPPLES; i++)
@@ -1310,7 +1395,9 @@ void MapProp_DrawWaterOverlay(const MapWaterSurface *water, float time)
     if (s_waterLocResolution >= 0)
         SetShaderValue(shader, s_waterLocResolution, &screenRes, SHADER_UNIFORM_VEC2);
 
-    bool needsSceneDepth = (water->config.shape != WATER_SHAPE_RADIAL &&
+    // Mobile TBDR: bỏ qua depth resolve toàn màn hình trên GFX_LOW để tránh tốn băng thông bộ nhớ tile
+    bool needsSceneDepth = (quality >= GFX_MED) &&
+                           (water->config.shape != WATER_SHAPE_RADIAL &&
                             water->config.shape != WATER_SHAPE_TERRAIN);
     if (needsSceneDepth)
         SceneTargets_RequestSoftDepthRegion((Rectangle){0, 0, screenRes.x, screenRes.y});
@@ -1393,8 +1480,6 @@ void MapProp_AddWaterRipple(MapWaterSurface *water, Vector3 position, float radi
     water->ripples[idx].active = true;
     water->nextRipple = (water->nextRipple + 1) % MAX_WATER_RIPPLES;
 
-    // Only inject SWE grid shockwaves for heavy non-footstep impulses (e.g. skill blasts, splashes)
-    // to avoid duplicating footstep ripple rings that u_rippleRings already renders with sub-pixel precision.
     if (!footstep && water->waterDepth && water->fluxL)
     {
         const int n = WATER_FIELD_SIZE;
@@ -1408,10 +1493,9 @@ void MapProp_AddWaterRipple(MapWaterSurface *water, Vector3 position, float radi
             float invRadX = 1.0f / radX;
             float invRadZ = 1.0f / radZ;
             float cellMin = fmaxf(dx * 0.95f, dz * 0.95f);
-            float sigma = fmaxf(cellMin, footstep ? 0.35f : 0.55f);
+            float sigma = fmaxf(cellMin, 0.55f);
             float invTwoSigmaSq = 1.0f / (2.0f * sigma * sigma);
-            float impulse = footstep ? fminf(1.4f, intensity * 2.8f)
-                                     : fminf(1.8f, fmaxf(0.0f, intensity * 1.5f));
+            float impulse = fminf(1.8f, fmaxf(0.0f, intensity * 1.5f));
             int cx = (int)roundf((position.x - center.x + radX) / dx);
             int cz = (int)roundf((position.z - center.z + radZ) / dz);
             int reachX = (int)ceilf(3.2f * sigma / dx);
@@ -1446,14 +1530,16 @@ void MapProp_AddWaterRipple(MapWaterSurface *water, Vector3 position, float radi
                     float falloff = expf(-q);
                     int idx = row + x;
 
-                    // Shockwave outward flux in virtual pipes (Saint-Venant model from HTML)
                     float shock = impulse * 0.45f * falloff;
-                    if (dxPos < 0.0f) water->fluxL[idx] += shock;
-                    if (dxPos > 0.0f) water->fluxR[idx] += shock;
-                    if (dzPos < 0.0f) water->fluxT[idx] += shock;
-                    if (dzPos > 0.0f) water->fluxB[idx] += shock;
+                    if (dxPos < 0.0f)
+                        water->fluxL[idx] += shock;
+                    if (dxPos > 0.0f)
+                        water->fluxR[idx] += shock;
+                    if (dzPos < 0.0f)
+                        water->fluxT[idx] += shock;
+                    if (dzPos > 0.0f)
+                        water->fluxB[idx] += shock;
 
-                    // Surface displacement wave
                     float waveRing = sinf(sqrtf(dist2) * 10.5f) * 0.026f * impulse * falloff;
                     water->waterDepth[idx] = fmaxf(0.01f, water->waterDepth[idx] + waveRing);
                     if (water->waveVelocityField)
@@ -1471,6 +1557,8 @@ void MapProp_AddWaterObstacle(MapWaterSurface *water, Vector3 position, float ra
     if (!water || !water->ready || water->obstacleCount >= MAX_WATER_OBSTACLES || radius <= 0.0f)
         return;
     water->obstacles[water->obstacleCount++] = (Vector4){position.x, position.z, radius, strength};
+    if (water->waveNextField)
+        water->waveNextField[0] = -1.0f;
 }
 
 static void Water_ShiftField(float *field, float *temp, int n, int shiftX, int shiftZ, float defaultVal)
@@ -1508,6 +1596,8 @@ void MapProp_UpdateWaterSurface(MapWaterSurface *water, float dt)
         {
             water->waveGridCenter = water->interactorPos;
             water->config.center = water->waveGridCenter;
+            if (water->waveNextField)
+                water->waveNextField[0] = -1.0f;
         }
 
         if (water->interactorPos.x != 0.0f || water->interactorPos.z != 0.0f)
@@ -1531,8 +1621,10 @@ void MapProp_UpdateWaterSurface(MapWaterSurface *water, float dt)
                         water->fluxB[idx] = 0.0f;
                         water->velU[idx] = 0.0f;
                         water->velV[idx] = 0.0f;
-                        if (water->waveHeightField) water->waveHeightField[idx] = 0.0f;
-                        if (water->waveVelocityField) water->waveVelocityField[idx] = 0.0f;
+                        if (water->waveHeightField)
+                            water->waveHeightField[idx] = 0.0f;
+                        if (water->waveVelocityField)
+                            water->waveVelocityField[idx] = 0.0f;
                     }
                     if (water->wavePixels)
                     {
@@ -1558,16 +1650,17 @@ void MapProp_UpdateWaterSurface(MapWaterSurface *water, float dt)
                         Water_ShiftField(water->waveHeightField, water->waveNextField, n, shiftX, shiftZ, 0.0f);
                     if (water->waveVelocityField)
                         Water_ShiftField(water->waveVelocityField, water->waveNextField, n, shiftX, shiftZ, 0.0f);
-                    memset(water->waveNextField, 0, (size_t)(n * n) * sizeof(float));
                 }
                 water->waveGridCenter.x += (float)shiftX * dx;
                 water->waveGridCenter.z += (float)shiftZ * dx;
                 water->config.center = water->waveGridCenter;
+                if (water->waveNextField)
+                    water->waveNextField[0] = -1.0f;
             }
         }
     }
 
-    // 2. Continuous interactor physics & momentum drag (from HTML reference)
+    // 2. Continuous interactor physics & momentum drag
     const int n = WATER_FIELD_SIZE;
     float radX = (water->config.shape == WATER_SHAPE_TERRAIN) ? water->waveGridRadius : water->config.radiusX;
     float radZ = (water->config.shape == WATER_SHAPE_TERRAIN) ? water->waveGridRadius : water->config.radiusZ;
@@ -1589,16 +1682,18 @@ void MapProp_UpdateWaterSurface(MapWaterSurface *water, float dt)
         water->interactorPrevPos = water->interactorPos;
         water->hasInteractorPrev = true;
 
-        float dragLen = sqrtf(moveDx * moveDx + moveDz * moveDz);
-        // Only push fluid momentum when actually moving; stationary idle has zero artificial waves
-        if (dragLen > 0.005f)
+        float dragLenSq = moveDx * moveDx + moveDz * moveDz;
+        if (dragLenSq > 0.000025f)
         {
-            float dirX = moveDx / dragLen;
-            float dirZ = moveDz / dragLen;
+            float dragLen = sqrtf(dragLenSq);
+            float invDragLen = 1.0f / dragLen;
+            float dirX = moveDx * invDragLen;
+            float dirZ = moveDz * invDragLen;
             float dragStrength = fminf(1.0f, dragLen * 3.5f + 0.15f) * fminf(1.0f, water->interactorSubmerged);
             float brushRad = fmaxf(0.8f, water->interactorRadius * 2.0f);
+            float brushRadSq = brushRad * brushRad;
             int rCells = (int)ceilf(brushRad / dx);
-            float invR = 1.0f / brushRad;
+            float invRSq = 1.0f / brushRadSq;
 
             int ci = (int)roundf((water->interactorPos.x - center.x + radX) / dx);
             int cj = (int)roundf((water->interactorPos.z - center.z + radZ) / dz);
@@ -1606,30 +1701,35 @@ void MapProp_UpdateWaterSurface(MapWaterSurface *water, float dt)
             for (int dj = -rCells; dj <= rCells; dj++)
             {
                 int nj = cj + dj;
-                if (nj < 1 || nj >= n - 1) continue;
+                if (nj < 1 || nj >= n - 1)
+                    continue;
                 float dzOffset = (float)dj * dz;
+                float dzSq = dzOffset * dzOffset;
                 int row = nj * n;
                 for (int di = -rCells; di <= rCells; di++)
                 {
                     int ni = ci + di;
-                    if (ni < 1 || ni >= n - 1) continue;
+                    if (ni < 1 || ni >= n - 1)
+                        continue;
                     float dxOffset = (float)di * dx;
-                    float distSq = dxOffset * dxOffset + dzOffset * dzOffset;
-                    if (distSq > brushRad * brushRad) continue;
+                    float distSq = dxOffset * dxOffset + dzSq;
+                    if (distSq > brushRadSq)
+                        continue;
 
-                    float dist = sqrtf(distSq);
-                    float normD = dist * invR;
-                    float falloff = expf(-normD * normD * 2.5f) * dragStrength;
                     int idx = row + ni;
-
                     if (water->waterDepth[idx] > 0.02f)
                     {
+                        float falloff = expf(-distSq * invRSq * 2.5f) * dragStrength;
                         float push = 0.06f * falloff;
-                        if (dirX > 0.0f) water->fluxR[idx] += push * dirX;
-                        else             water->fluxL[idx] += push * (-dirX);
+                        if (dirX > 0.0f)
+                            water->fluxR[idx] += push * dirX;
+                        else
+                            water->fluxL[idx] += push * (-dirX);
 
-                        if (dirZ > 0.0f) water->fluxB[idx] += push * dirZ;
-                        else             water->fluxT[idx] += push * (-dirZ);
+                        if (dirZ > 0.0f)
+                            water->fluxB[idx] += push * dirZ;
+                        else
+                            water->fluxT[idx] += push * (-dirZ);
                     }
                 }
             }
@@ -1640,10 +1740,9 @@ void MapProp_UpdateWaterSurface(MapWaterSurface *water, float dt)
         water->hasInteractorPrev = false;
     }
 
-    // Footstep discrete trigger
-    float motionSpeed = sqrtf(water->interactorVel.x * water->interactorVel.x +
-                              water->interactorVel.z * water->interactorVel.z);
-    if (interactorActive && motionSpeed > 0.22f)
+    float motionSpeedSq = water->interactorVel.x * water->interactorVel.x +
+                          water->interactorVel.z * water->interactorVel.z;
+    if (interactorActive && motionSpeedSq > 0.0484f)
     {
         water->waveFootstepTimer += dt;
         if (water->waveFootstepTimer >= 0.20f)
@@ -1661,7 +1760,11 @@ void MapProp_UpdateWaterSurface(MapWaterSurface *water, float dt)
     if (!water->waveFieldTex.id || !water->waterDepth || !water->fluxL)
         return;
 
-    const float step = 1.0f / 60.0f;
+    GfxQuality quality = GfxQuality_Get();
+    const float step = (quality >= GFX_HIGH) ? (1.0f / 60.0f)
+                                             : (quality == GFX_MED ? (1.0f / 45.0f) : (1.0f / 30.0f));
+    const float maxAccum = (quality >= GFX_HIGH) ? (3.0f * step)
+                                                 : (quality == GFX_MED ? (2.0f * step) : (1.5f * step));
     const float cellArea = dx * dz;
     const float invCellArea = step / cellArea;
     const float pipeFactor = (step * 9.81f) / dx;
@@ -1669,19 +1772,6 @@ void MapProp_UpdateWaterSurface(MapWaterSurface *water, float dt)
     const float invNMinus1 = 2.0f / (float)(n - 1);
     const bool radialShape = (water->config.shape == WATER_SHAPE_RADIAL);
     const float baseDepth = (water->config.maxDepth > 0.05f) ? water->config.maxDepth : 0.85f;
-
-    int obsCount = water->obstacleCount;
-    if (obsCount > MAX_WATER_OBSTACLES)
-        obsCount = MAX_WATER_OBSTACLES;
-    float obsX[MAX_WATER_OBSTACLES];
-    float obsZ[MAX_WATER_OBSTACLES];
-    float obsRadSq[MAX_WATER_OBSTACLES];
-    for (int k = 0; k < obsCount; k++)
-    {
-        obsX[k] = water->obstacles[k].x;
-        obsZ[k] = water->obstacles[k].y;
-        obsRadSq[k] = water->obstacles[k].z * water->obstacles[k].z;
-    }
 
     if (interactorActive)
     {
@@ -1692,45 +1782,25 @@ void MapProp_UpdateWaterSurface(MapWaterSurface *water, float dt)
     if (water->waveStepRemainder < 0.0f)
         return;
 
-    water->waveStepRemainder = fminf(water->waveStepRemainder + dt, 3.0f * step);
-    bool stepped = false;
+    if (water->waveNextField && water->waveNextField[0] < 0.0f)
+        Water_RebuildBlockedMask(water);
+
+    const float *restrict blockedMask = water->waveNextField;
+    water->waveStepRemainder = fminf(water->waveStepRemainder + dt, maxAccum);
     float maxEnergy = 0.0f;
 
     while (water->waveStepRemainder >= step)
     {
         water->waveStepRemainder -= step;
-        stepped = true;
         maxEnergy = 0.0f;
+        bool isFinalSubstep = (water->waveStepRemainder < step);
 
-        // Obstacles and Shoreline Masking
-        for (int z = 0; z < n; z++)
+        // Pass 1: Áp dụng mặt nạ bờ & vật cản đã tiền tính toán O(1) mỗi ô
+        if (blockedMask)
         {
-            float nz = (float)z * invNMinus1 - 1.0f;
-            float nz2 = nz * nz;
-            float wz = center.z + nz * radZ;
-            int row = z * n;
-            for (int x = 0; x < n; x++)
+            for (int idx = 0; idx < n * n; idx++)
             {
-                int idx = row + x;
-                float nx = (float)x * invNMinus1 - 1.0f;
-                float nx2 = nx * nx;
-                float distMetric = radialShape ? (nx2 + nz2) : fmaxf(fabsf(nx), fabsf(nz));
-                bool blocked = (distMetric >= 0.94f);
-                if (!blocked && obsCount > 0)
-                {
-                    float wx = center.x + nx * radX;
-                    for (int k = 0; k < obsCount; k++)
-                    {
-                        float ox = wx - obsX[k];
-                        float oz = wz - obsZ[k];
-                        if (ox * ox + oz * oz < obsRadSq[k])
-                        {
-                            blocked = true;
-                            break;
-                        }
-                    }
-                }
-                if (blocked)
+                if (blockedMask[idx] > 0.5f)
                 {
                     water->fluxL[idx] = 0.0f;
                     water->fluxR[idx] = 0.0f;
@@ -1742,7 +1812,7 @@ void MapProp_UpdateWaterSurface(MapWaterSurface *water, float dt)
             }
         }
 
-        // Virtual Pipe Flux Update
+        // Pass 2: Virtual Pipe Flux Update
         for (int j = 0; j < n; j++)
         {
             int row = j * n;
@@ -1764,22 +1834,26 @@ void MapProp_UpdateWaterSurface(MapWaterSurface *water, float dt)
                 if (i > 0)
                 {
                     fL = water->fluxL[idx] * damping + pipeFactor * (eta0 - (water->bedHeight[idx - 1] + water->waterDepth[idx - 1]));
-                    if (fL < 0.0f) fL = 0.0f;
+                    if (fL < 0.0f)
+                        fL = 0.0f;
                 }
                 if (i < n - 1)
                 {
                     fR = water->fluxR[idx] * damping + pipeFactor * (eta0 - (water->bedHeight[idx + 1] + water->waterDepth[idx + 1]));
-                    if (fR < 0.0f) fR = 0.0f;
+                    if (fR < 0.0f)
+                        fR = 0.0f;
                 }
                 if (j > 0)
                 {
                     fT = water->fluxT[idx] * damping + pipeFactor * (eta0 - (water->bedHeight[idx - n] + water->waterDepth[idx - n]));
-                    if (fT < 0.0f) fT = 0.0f;
+                    if (fT < 0.0f)
+                        fT = 0.0f;
                 }
                 if (j < n - 1)
                 {
                     fB = water->fluxB[idx] * damping + pipeFactor * (eta0 - (water->bedHeight[idx + n] + water->waterDepth[idx + n]));
-                    if (fB < 0.0f) fB = 0.0f;
+                    if (fB < 0.0f)
+                        fB = 0.0f;
                 }
                 else if (hasStreamFlow && flowV > 0.0f)
                 {
@@ -1790,7 +1864,10 @@ void MapProp_UpdateWaterSurface(MapWaterSurface *water, float dt)
                 if (sumOut * step > h0 * cellArea && sumOut > 1e-6f)
                 {
                     float K = (h0 * cellArea) / (sumOut * step);
-                    fL *= K; fR *= K; fT *= K; fB *= K;
+                    fL *= K;
+                    fR *= K;
+                    fT *= K;
+                    fB *= K;
                 }
                 water->fluxL[idx] = fL;
                 water->fluxR[idx] = fR;
@@ -1799,23 +1876,24 @@ void MapProp_UpdateWaterSurface(MapWaterSurface *water, float dt)
             }
         }
 
-        // Depth & Velocity Integration
+        // Pass 3: Depth & Velocity Integration
         for (int j = 0; j < n; j++)
         {
             int row = j * n;
             for (int i = 0; i < n; i++)
             {
                 int idx = row + i;
-                float inL = (i > 0)     ? water->fluxR[idx - 1] : 0.0f;
+                float inL = (i > 0) ? water->fluxR[idx - 1] : 0.0f;
                 float inR = (i < n - 1) ? water->fluxL[idx + 1] : 0.0f;
-                float inT = (j > 0)     ? water->fluxB[idx - n] : 0.0f;
+                float inT = (j > 0) ? water->fluxB[idx - n] : 0.0f;
                 float inB = (j < n - 1) ? water->fluxT[idx + n] : 0.0f;
 
                 float netRate = (inL + inR + inT + inB) -
                                 (water->fluxL[idx] + water->fluxR[idx] + water->fluxT[idx] + water->fluxB[idx]);
                 float hPrev = water->waterDepth[idx];
                 float hNew = hPrev + netRate * invCellArea;
-                if (hNew < 0.0f) hNew = 0.0f;
+                if (hNew < 0.0f)
+                    hNew = 0.0f;
                 water->waterDepth[idx] = hNew;
 
                 if (hNew > 0.008f)
@@ -1823,8 +1901,14 @@ void MapProp_UpdateWaterSurface(MapWaterSurface *water, float dt)
                     float invDenom = 0.5f / (dx * fmaxf(0.04f, 0.5f * (hPrev + hNew)));
                     float u = (inL - water->fluxL[idx] + water->fluxR[idx] - inR) * invDenom;
                     float v = (inT - water->fluxT[idx] + water->fluxB[idx] - inB) * invDenom;
-                    if (u > 3.5f) u = 3.5f; else if (u < -3.5f) u = -3.5f;
-                    if (v > 3.5f) v = 3.5f; else if (v < -3.5f) v = -3.5f;
+                    if (u > 3.5f)
+                        u = 3.5f;
+                    else if (u < -3.5f)
+                        u = -3.5f;
+                    if (v > 3.5f)
+                        v = 3.5f;
+                    else if (v < -3.5f)
+                        v = -3.5f;
                     water->velU[idx] = water->velU[idx] * 0.65f + u * 0.35f;
                     water->velV[idx] = water->velV[idx] * 0.65f + v * 0.35f;
                 }
@@ -1840,66 +1924,78 @@ void MapProp_UpdateWaterSurface(MapWaterSurface *water, float dt)
             }
         }
 
-        // Surface Smoothing and Normal Field
-        const float inv2Dx = 1.0f / (2.0f * dx);
-        const float inv2Dz = 1.0f / (2.0f * dz);
-        for (int j = 0; j < n; j++)
+        // Pass 4: Chỉ mã hóa texture pháp tuyến & bọt ở bước con cuối cùng của frame
+        if (isFinalSubstep)
         {
-            int row = j * n;
-            int rowT = (j > 0 ? j - 1 : 0) * n;
-            int rowB = (j < n - 1 ? j + 1 : n - 1) * n;
-            for (int i = 0; i < n; i++)
+            const float inv2Dx = 1.0f / (2.0f * dx);
+            const float inv2Dz = 1.0f / (2.0f * dz);
+            for (int j = 0; j < n; j++)
             {
-                int idx = row + i;
-                float b0 = water->bedHeight[idx], h0 = water->waterDepth[idx];
-                float eta0 = (h0 > 0.006f) ? (b0 + h0) : (b0 - 0.025f);
-
-                int idxL = row + (i > 0 ? i - 1 : 0);
-                int idxR = row + (i < n - 1 ? i + 1 : n - 1);
-                int idxT = rowT + i;
-                int idxB = rowB + i;
-
-                float etaL = (water->waterDepth[idxL] > 0.008f) ? (water->bedHeight[idxL] + water->waterDepth[idxL]) : eta0;
-                float etaR = (water->waterDepth[idxR] > 0.008f) ? (water->bedHeight[idxR] + water->waterDepth[idxR]) : eta0;
-                float etaT = (water->waterDepth[idxT] > 0.008f) ? (water->bedHeight[idxT] + water->waterDepth[idxT]) : eta0;
-                float etaB = (water->waterDepth[idxB] > 0.008f) ? (water->bedHeight[idxB] + water->waterDepth[idxB]) : eta0;
-
-                float sEta = eta0 * 0.5f + 0.125f * (etaL + etaR + etaT + etaB);
-                water->smoothEta[idx] = sEta;
-                if (water->waveHeightField)
-                    water->waveHeightField[idx] = sEta - (b0 + h0);
-
-                float nx = -(etaR - etaL) * inv2Dx;
-                float nz = -(etaB - etaT) * inv2Dz;
-                if (nx > 1.2f) nx = 1.2f; else if (nx < -1.2f) nx = -1.2f;
-                if (nz > 1.2f) nz = 1.2f; else if (nz < -1.2f) nz = -1.2f;
-
-                float u = water->velU[idx], v = water->velV[idx];
-                float speedSq = u * u + v * v;
-                float slopeSq = nx * nx + nz * nz;
-                float foam = (slopeSq - 0.03f) * 2.5f + (speedSq - 0.25f) * 0.35f;
-                if (foam < 0.0f) foam = 0.0f; else if (foam > 1.0f) foam = 1.0f;
-
-                // Ensure perimeter boundary and blocked cells remain strictly neutral
+                int row = j * n;
+                int rowT = (j > 0 ? j - 1 : 0) * n;
+                int rowB = (j < n - 1 ? j + 1 : n - 1) * n;
                 float nzMetric = (float)j * invNMinus1 - 1.0f;
-                float nxMetric = (float)i * invNMinus1 - 1.0f;
-                float bndMetric = radialShape ? (nxMetric * nxMetric + nzMetric * nzMetric) : fmaxf(fabsf(nxMetric), fabsf(nzMetric));
-                if (bndMetric >= 0.91f)
+                float nzMetricSq = nzMetric * nzMetric;
+                for (int i = 0; i < n; i++)
                 {
-                    nx = 0.0f;
-                    nz = 0.0f;
-                    foam = 0.0f;
-                }
+                    int idx = row + i;
+                    float b0 = water->bedHeight[idx], h0 = water->waterDepth[idx];
+                    float eta0 = (h0 > 0.006f) ? (b0 + h0) : (b0 - 0.025f);
 
-                int p4 = idx * 4;
-                float disp = (h0 > 0.005f) ? (h0 - baseDepth) : 0.0f;
-                water->wavePixels[p4 + 0] = Water_EncodeUnorm8(0.5f + nx * 0.45f);
-                water->wavePixels[p4 + 1] = Water_EncodeUnorm8(0.5f + nz * 0.45f);
-                water->wavePixels[p4 + 2] = Water_EncodeUnorm8(0.5f + disp * 4.0f);
-                water->wavePixels[p4 + 3] = Water_EncodeUnorm8(foam);
+                    int idxL = row + (i > 0 ? i - 1 : 0);
+                    int idxR = row + (i < n - 1 ? i + 1 : n - 1);
+                    int idxT = rowT + i;
+                    int idxB = rowB + i;
+
+                    float etaL = (water->waterDepth[idxL] > 0.008f) ? (water->bedHeight[idxL] + water->waterDepth[idxL]) : eta0;
+                    float etaR = (water->waterDepth[idxR] > 0.008f) ? (water->bedHeight[idxR] + water->waterDepth[idxR]) : eta0;
+                    float etaT = (water->waterDepth[idxT] > 0.008f) ? (water->bedHeight[idxT] + water->waterDepth[idxT]) : eta0;
+                    float etaB = (water->waterDepth[idxB] > 0.008f) ? (water->bedHeight[idxB] + water->waterDepth[idxB]) : eta0;
+
+                    float sEta = eta0 * 0.5f + 0.125f * (etaL + etaR + etaT + etaB);
+                    water->smoothEta[idx] = sEta;
+                    if (water->waveHeightField)
+                        water->waveHeightField[idx] = sEta - (b0 + h0);
+
+                    float nx = -(etaR - etaL) * inv2Dx;
+                    float nz = -(etaB - etaT) * inv2Dz;
+                    if (nx > 1.2f)
+                        nx = 1.2f;
+                    else if (nx < -1.2f)
+                        nx = -1.2f;
+                    if (nz > 1.2f)
+                        nz = 1.2f;
+                    else if (nz < -1.2f)
+                        nz = -1.2f;
+
+                    float u = water->velU[idx], v = water->velV[idx];
+                    float speedSq = u * u + v * v;
+                    float slopeSq = nx * nx + nz * nz;
+                    float foam = (slopeSq - 0.03f) * 2.5f + (speedSq - 0.25f) * 0.35f;
+                    if (foam < 0.0f)
+                        foam = 0.0f;
+                    else if (foam > 1.0f)
+                        foam = 1.0f;
+
+                    float nxMetric = (float)i * invNMinus1 - 1.0f;
+                    float bndMetric = radialShape ? (nxMetric * nxMetric + nzMetricSq) : fmaxf(fabsf(nxMetric), fabsf(nzMetric));
+                    if (bndMetric >= 0.91f)
+                    {
+                        nx = 0.0f;
+                        nz = 0.0f;
+                        foam = 0.0f;
+                    }
+
+                    int p4 = idx * 4;
+                    float disp = (h0 > 0.005f) ? (h0 - baseDepth) : 0.0f;
+                    water->wavePixels[p4 + 0] = Water_EncodeUnorm8(0.5f + nx * 0.45f);
+                    water->wavePixels[p4 + 1] = Water_EncodeUnorm8(0.5f + nz * 0.45f);
+                    water->wavePixels[p4 + 2] = Water_EncodeUnorm8(0.5f + disp * 4.0f);
+                    water->wavePixels[p4 + 3] = Water_EncodeUnorm8(foam);
+                }
             }
+            water->waveUploadedTextureId = 0;
         }
-        water->waveUploadedTextureId = 0;
 
         if (!interactorActive && maxEnergy < 1e-5f)
         {

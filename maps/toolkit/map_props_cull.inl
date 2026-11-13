@@ -43,9 +43,10 @@ static bool MapProp_BuildViewFrustum(MapPropViewFrustum *out)
     // No camera transform (called outside BeginMode3D, or a camera at the origin
     // looking down -Z): the frustum would be meaningless, so draw everything.
     if (T.m0 == 1.0f && T.m5 == 1.0f && T.m10 == 1.0f && T.m15 == 1.0f &&
+        T.m12 == 0.0f && T.m13 == 0.0f && T.m14 == 0.0f &&
         T.m1 == 0.0f && T.m2 == 0.0f && T.m3 == 0.0f && T.m4 == 0.0f &&
         T.m6 == 0.0f && T.m7 == 0.0f && T.m8 == 0.0f && T.m9 == 0.0f &&
-        T.m11 == 0.0f && T.m12 == 0.0f && T.m13 == 0.0f && T.m14 == 0.0f)
+        T.m11 == 0.0f)
     {
         s_cachedFrustumResult = false;
         return false;
@@ -60,9 +61,10 @@ static bool MapProp_BuildViewFrustum(MapPropViewFrustum *out)
     for (int r = 0; r < 4; r++)
     {
         const float rx = p[r], ry = p[r + 4], rz = p[r + 8], rw = p[r + 12];
-        for (int k = 0; k < 4; k++)
-            clipPlane[r][k] = rx * Tx[k] + ry * Ty[k] + rz * Tz[k];
-        clipPlane[r][3] += rw;
+        clipPlane[r][0] = rx * Tx[0] + ry * Ty[0] + rz * Tz[0];
+        clipPlane[r][1] = rx * Tx[1] + ry * Ty[1] + rz * Tz[1];
+        clipPlane[r][2] = rx * Tx[2] + ry * Ty[2] + rz * Tz[2];
+        clipPlane[r][3] = rx * Tx[3] + ry * Ty[3] + rz * Tz[3] + rw;
     }
 
     for (int i = 0; i < 6; i++)
@@ -92,14 +94,22 @@ static bool MapProp_BuildViewFrustum(MapPropViewFrustum *out)
 }
 
 // Conservative sphere test: cull only when the whole sphere is outside a plane.
+// Checks Left, Right, Near first as they reject the vast majority of off-screen isometric props.
 static inline bool MapProp_FrustumCullsSphere(const MapPropViewFrustum *f, Vector3 c, float radius)
 {
-    for (int i = 0; i < 6; i++)
-    {
-        float dist = f->p[i][0] * c.x + f->p[i][1] * c.y + f->p[i][2] * c.z + f->p[i][3];
-        if (dist < -radius)
-            return true;
-    }
+    const float negR = -radius;
+    if (f->p[0][0] * c.x + f->p[0][1] * c.y + f->p[0][2] * c.z + f->p[0][3] < negR)
+        return true;
+    if (f->p[1][0] * c.x + f->p[1][1] * c.y + f->p[1][2] * c.z + f->p[1][3] < negR)
+        return true;
+    if (f->p[4][0] * c.x + f->p[4][1] * c.y + f->p[4][2] * c.z + f->p[4][3] < negR)
+        return true;
+    if (f->p[2][0] * c.x + f->p[2][1] * c.y + f->p[2][2] * c.z + f->p[2][3] < negR)
+        return true;
+    if (f->p[3][0] * c.x + f->p[3][1] * c.y + f->p[3][2] * c.z + f->p[3][3] < negR)
+        return true;
+    if (f->p[5][0] * c.x + f->p[5][1] * c.y + f->p[5][2] * c.z + f->p[5][3] < negR)
+        return true;
     return false;
 }
 
@@ -115,86 +125,116 @@ static void MapProp_MeshBounds(const Mesh *mesh, Vector3 *outCenter, float *outR
         *outRadius = 0.0f;
         return;
     }
-    Vector3 mn = {mesh->vertices[0], mesh->vertices[1], mesh->vertices[2]};
-    Vector3 mx = mn;
-    for (int i = 1; i < mesh->vertexCount; i++)
+    const float *restrict v = mesh->vertices;
+    const int count = mesh->vertexCount;
+    float minX = v[0], maxX = v[0];
+    float minY = v[1], maxY = v[1];
+    float minZ = v[2], maxZ = v[2];
+    v += 3;
+    for (int i = 1; i < count; i++, v += 3)
     {
-        float x = mesh->vertices[i * 3 + 0];
-        float y = mesh->vertices[i * 3 + 1];
-        float z = mesh->vertices[i * 3 + 2];
-        if (x < mn.x)
-            mn.x = x;
-        else if (x > mx.x)
-            mx.x = x;
-        if (y < mn.y)
-            mn.y = y;
-        else if (y > mx.y)
-            mx.y = y;
-        if (z < mn.z)
-            mn.z = z;
-        else if (z > mx.z)
-            mx.z = z;
+        float x = v[0];
+        float y = v[1];
+        float z = v[2];
+        if (x < minX)
+            minX = x;
+        else if (x > maxX)
+            maxX = x;
+        if (y < minY)
+            minY = y;
+        else if (y > maxY)
+            maxY = y;
+        if (z < minZ)
+            minZ = z;
+        else if (z > maxZ)
+            maxZ = z;
     }
-    Vector3 center = {(mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f, (mn.z + mx.z) * 0.5f};
+    float cx = (minX + maxX) * 0.5f;
+    float cy = (minY + maxY) * 0.5f;
+    float cz = (minZ + maxZ) * 0.5f;
     float rSq = 0.0f;
-    for (int i = 0; i < mesh->vertexCount; i++)
+    v = mesh->vertices;
+    for (int i = 0; i < count; i++, v += 3)
     {
-        float dx = mesh->vertices[i * 3 + 0] - center.x;
-        float dy = mesh->vertices[i * 3 + 1] - center.y;
-        float dz = mesh->vertices[i * 3 + 2] - center.z;
+        float dx = v[0] - cx;
+        float dy = v[1] - cy;
+        float dz = v[2] - cz;
         float d = dx * dx + dy * dy + dz * dz;
         if (d > rSq)
             rSq = d;
     }
-    *outCenter = center;
+    *outCenter = (Vector3){cx, cy, cz};
     *outRadius = sqrtf(rSq);
 }
 
-// Bounding sphere of a whole Model (all meshes), in model space.
+// Tight conservative bounding sphere of a whole Model (all meshes) in model space.
+// Computes the exact vertex AABB center and farthest vertex distance across all meshes,
+// avoiding the ~1.73x AABB-diagonal over-inflation that causes off-screen mobile draws.
 static void MapProp_ModelBounds(const Model *model, Vector3 *outCenter, float *outRadius)
 {
     if (!outCenter || !outRadius)
         return;
-    Vector3 mn = {0}, mx = {0};
-    bool have = false;
     *outRadius = 0.0f;
     *outCenter = (Vector3){0};
-    if (!model)
+    if (!model || model->meshCount < 1)
         return;
+
+    float minX = 1e30f, maxX = -1e30f;
+    float minY = 1e30f, maxY = -1e30f;
+    float minZ = 1e30f, maxZ = -1e30f;
+    bool have = false;
+
     for (int m = 0; m < model->meshCount; m++)
     {
-        Vector3 c;
-        float r;
-        MapProp_MeshBounds(&model->meshes[m], &c, &r);
-        if (r <= 0.0f)
+        const Mesh *mesh = &model->meshes[m];
+        if (!mesh->vertices || mesh->vertexCount < 1)
             continue;
-        Vector3 lo = {c.x - r, c.y - r, c.z - r};
-        Vector3 hi = {c.x + r, c.y + r, c.z + r};
-        if (!have)
+        have = true;
+        const float *restrict v = mesh->vertices;
+        const int count = mesh->vertexCount;
+        for (int i = 0; i < count; i++, v += 3)
         {
-            mn = lo;
-            mx = hi;
-            have = true;
-        }
-        else
-        {
-            if (lo.x < mn.x)
-                mn.x = lo.x;
-            if (hi.x > mx.x)
-                mx.x = hi.x;
-            if (lo.y < mn.y)
-                mn.y = lo.y;
-            if (hi.y > mx.y)
-                mx.y = hi.y;
-            if (lo.z < mn.z)
-                mn.z = lo.z;
-            if (hi.z > mx.z)
-                mx.z = hi.z;
+            float x = v[0], y = v[1], z = v[2];
+            if (x < minX)
+                minX = x;
+            if (x > maxX)
+                maxX = x;
+            if (y < minY)
+                minY = y;
+            if (y > maxY)
+                maxY = y;
+            if (z < minZ)
+                minZ = z;
+            if (z > maxZ)
+                maxZ = z;
         }
     }
     if (!have)
         return;
-    *outCenter = (Vector3){(mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f, (mn.z + mx.z) * 0.5f};
-    float dx = mx.x - mn.x, dy = mx.y - mn.y, dz = mx.z - mn.z;
-    *outRadius = 0.5f * sqrtf(dx * dx + dy * dy + dz * dz);
+
+    float cx = (minX + maxX) * 0.5f;
+    float cy = (minY + maxY) * 0.5f;
+    float cz = (minZ + maxZ) * 0.5f;
+    float rSq = 0.0f;
+
+    for (int m = 0; m < model->meshCount; m++)
+    {
+        const Mesh *mesh = &model->meshes[m];
+        if (!mesh->vertices || mesh->vertexCount < 1)
+            continue;
+        const float *restrict v = mesh->vertices;
+        const int count = mesh->vertexCount;
+        for (int i = 0; i < count; i++, v += 3)
+        {
+            float dx = v[0] - cx;
+            float dy = v[1] - cy;
+            float dz = v[2] - cz;
+            float d = dx * dx + dy * dy + dz * dz;
+            if (d > rSq)
+                rSq = d;
+        }
+    }
+
+    *outCenter = (Vector3){cx, cy, cz};
+    *outRadius = sqrtf(rSq);
 }

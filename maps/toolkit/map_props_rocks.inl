@@ -26,7 +26,8 @@ static inline float Rock_Mix(float a, float b, float t)
 }
 
 // --- Geodesic Icosahedron Mesh Generator (Zero Polar Singularities) ---
-typedef struct {
+typedef struct
+{
     unsigned int key;
     int mid;
 } RockEdgeMidpoint;
@@ -73,10 +74,7 @@ static Mesh Nature_GenMeshIcoSphere(float radius, int subdivisions)
     Mesh mesh = {0};
     float t = (1.0f + sqrtf(5.0f)) * 0.5f;
     Vector3 baseV[12] = {
-        {-1.0f, t, 0.0f}, {1.0f, t, 0.0f}, {-1.0f, -t, 0.0f}, {1.0f, -t, 0.0f},
-        {0.0f, -1.0f, t}, {0.0f, 1.0f, t}, {0.0f, -1.0f, -t}, {0.0f, 1.0f, -t},
-        {t, 0.0f, -1.0f}, {t, 0.0f, 1.0f}, {-t, 0.0f, -1.0f}, {-t, 0.0f, 1.0f}
-    };
+        {-1.0f, t, 0.0f}, {1.0f, t, 0.0f}, {-1.0f, -t, 0.0f}, {1.0f, -t, 0.0f}, {0.0f, -1.0f, t}, {0.0f, 1.0f, t}, {0.0f, -1.0f, -t}, {0.0f, 1.0f, -t}, {t, 0.0f, -1.0f}, {t, 0.0f, 1.0f}, {-t, 0.0f, -1.0f}, {-t, 0.0f, 1.0f}};
 
     int maxV = 12;
     int maxT = 20;
@@ -87,8 +85,10 @@ static Mesh Nature_GenMeshIcoSphere(float radius, int subdivisions)
     }
 
     Vector3 *verts = (Vector3 *)RL_MALLOC((size_t)maxV * sizeof(Vector3));
-    if (!verts) return mesh;
-    for (int i = 0; i < 12; i++) verts[i] = Rock_VNorm(baseV[i]);
+    if (!verts)
+        return mesh;
+    for (int i = 0; i < 12; i++)
+        verts[i] = Rock_VNorm(baseV[i]);
     int vCount = 12;
 
     int (*tris)[3] = (int (*)[3])RL_MALLOC((size_t)maxT * sizeof(int[3]));
@@ -96,22 +96,21 @@ static Mesh Nature_GenMeshIcoSphere(float radius, int subdivisions)
     if (!tris || !newTris)
     {
         RL_FREE(verts);
-        if (tris) RL_FREE(tris);
-        if (newTris) RL_FREE(newTris);
+        if (tris)
+            RL_FREE(tris);
+        if (newTris)
+            RL_FREE(newTris);
         return mesh;
     }
 
     static const int baseTri[20][3] = {
-        {0, 11, 5}, {0, 5, 1}, {0, 1, 7}, {0, 7, 10}, {0, 10, 11},
-        {1, 5, 9}, {5, 11, 4}, {11, 10, 2}, {10, 7, 6}, {7, 1, 8},
-        {3, 9, 4}, {3, 4, 2}, {3, 2, 6}, {3, 6, 8}, {3, 8, 9},
-        {4, 9, 5}, {2, 4, 11}, {6, 2, 10}, {8, 6, 7}, {9, 8, 1}
-    };
+        {0, 11, 5}, {0, 5, 1}, {0, 1, 7}, {0, 7, 10}, {0, 10, 11}, {1, 5, 9}, {5, 11, 4}, {11, 10, 2}, {10, 7, 6}, {7, 1, 8}, {3, 9, 4}, {3, 4, 2}, {3, 2, 6}, {3, 6, 8}, {3, 8, 9}, {4, 9, 5}, {2, 4, 11}, {6, 2, 10}, {8, 6, 7}, {9, 8, 1}};
     memcpy(tris, baseTri, 20 * sizeof(int[3]));
     int tCount = 20;
 
     int hashSize = 4096;
-    while (hashSize < maxT * 4) hashSize *= 2;
+    while (hashSize < maxT * 4)
+        hashSize *= 2;
     RockEdgeMidpoint *edgeHash = (RockEdgeMidpoint *)RL_CALLOC((size_t)hashSize, sizeof(RockEdgeMidpoint));
     if (!edgeHash)
     {
@@ -134,10 +133,22 @@ static Mesh Nature_GenMeshIcoSphere(float radius, int subdivisions)
             int m23 = Rock_GetMidpoint(i2, i3, verts, &vCount, edgeHash, hashSize - 1);
             int m31 = Rock_GetMidpoint(i3, i1, verts, &vCount, edgeHash, hashSize - 1);
 
-            newTris[newTCount][0] = i1;  newTris[newTCount][1] = m12; newTris[newTCount][2] = m31; newTCount++;
-            newTris[newTCount][0] = i2;  newTris[newTCount][1] = m23; newTris[newTCount][2] = m12; newTCount++;
-            newTris[newTCount][0] = i3;  newTris[newTCount][1] = m31; newTris[newTCount][2] = m23; newTCount++;
-            newTris[newTCount][0] = m12; newTris[newTCount][1] = m23; newTris[newTCount][2] = m31; newTCount++;
+            newTris[newTCount][0] = i1;
+            newTris[newTCount][1] = m12;
+            newTris[newTCount][2] = m31;
+            newTCount++;
+            newTris[newTCount][0] = i2;
+            newTris[newTCount][1] = m23;
+            newTris[newTCount][2] = m12;
+            newTCount++;
+            newTris[newTCount][0] = i3;
+            newTris[newTCount][1] = m31;
+            newTris[newTCount][2] = m23;
+            newTCount++;
+            newTris[newTCount][0] = m12;
+            newTris[newTCount][1] = m23;
+            newTris[newTCount][2] = m31;
+            newTCount++;
         }
         memcpy(tris, newTris, (size_t)newTCount * sizeof(int[3]));
         tCount = newTCount;

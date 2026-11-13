@@ -1,6 +1,31 @@
 // Meadow System (Grass tufts, cubic Bézier blade generation, LODs, and meadow rendering).
 // Split from map_props_nature.inl for clean modular domain separation.
 
+static inline float Nature_FastInvSqrt(float x)
+{
+    if (x <= 1e-12f)
+        return 0.0f;
+    float xhalf = 0.5f * x;
+    union
+    {
+        float f;
+        uint32_t i;
+    } u = {x};
+    u.i = 0x5f375a86u - (u.i >> 1);
+    u.f = u.f * (1.5f - xhalf * u.f * u.f);
+    u.f = u.f * (1.5f - xhalf * u.f * u.f);
+    return u.f;
+}
+
+static inline Vector3 Nature_FastNormalize(Vector3 v)
+{
+    float lenSq = v.x * v.x + v.y * v.y + v.z * v.z;
+    if (lenSq <= 1e-12f)
+        return (Vector3){0.0f, 1.0f, 0.0f};
+    float invLen = Nature_FastInvSqrt(lenSq);
+    return (Vector3){v.x * invLen, v.y * invLen, v.z * invLen};
+}
+
 static void Nature_AddTexturedQuadUV(Mesh *mesh, int *cursor,
                                      Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3,
                                      Vector3 normal, float phase, float h0, float h1,
@@ -92,6 +117,8 @@ static Model Nature_BuildMeadowShadowChunk(const MapMeadowPlacement *placements,
         {1.0f, 1.0f},
         {1.0f, 0.0f},
     };
+    const Color rootShade = {240, 240, 240, 255};
+    const Color tipShade = {178, 178, 178, 255};
     for (int i = 0; i < count; i++)
     {
         const MapMeadowPlacement *clump = &placements[i];
@@ -102,11 +129,9 @@ static Model Nature_BuildMeadowShadowChunk(const MapMeadowPlacement *placements,
         root.y += 0.0012f;
         float width = fmaxf(clump->radius * 0.72f, 0.038f);
         Vector3 encoded = {clump->height * 1.05f, width, clump->phase};
-        Color rootShade = {240, 240, 240, 255};
-        Color tipShade = {178, 178, 178, 255};
         for (int vertex = 0; vertex < 6; vertex++)
         {
-            Color shade = vertex < 2 || vertex == 3 ? rootShade : tipShade;
+            Color shade = (vertex < 2 || vertex == 3) ? rootShade : tipShade;
             Nature_SetVertex(&mesh, cursor, root, encoded, clump->phase, 0.0f, shade);
             mesh.texcoords[cursor * 2 + 0] = uv[vertex].x;
             mesh.texcoords[cursor * 2 + 1] = uv[vertex].y;
@@ -212,13 +237,13 @@ static inline Vector3 Nature_EvalCubicBezierTangent(Vector3 p0, Vector3 p1, Vect
     float c0 = 3.0f * omt * omt;
     float c1 = 6.0f * omt * t;
     float c2 = 3.0f * t * t;
-    Vector3 v0 = Vector3Subtract(p1, p0);
-    Vector3 v1 = Vector3Subtract(p2, p1);
-    Vector3 v2 = Vector3Subtract(p3, p2);
+    float v0x = p1.x - p0.x, v0y = p1.y - p0.y, v0z = p1.z - p0.z;
+    float v1x = p2.x - p1.x, v1y = p2.y - p1.y, v1z = p2.z - p1.z;
+    float v2x = p3.x - p2.x, v2y = p3.y - p2.y, v2z = p3.z - p2.z;
     return (Vector3){
-        c0 * v0.x + c1 * v1.x + c2 * v2.x,
-        c0 * v0.y + c1 * v1.y + c2 * v2.y,
-        c0 * v0.z + c1 * v1.z + c2 * v2.z};
+        c0 * v0x + c1 * v1x + c2 * v2x,
+        c0 * v0y + c1 * v1y + c2 * v2y,
+        c0 * v0z + c1 * v1z + c2 * v2z};
 }
 
 typedef struct
@@ -226,22 +251,101 @@ typedef struct
     Vector3 p0, p1, p2, p3, clump;
     Color rootColor, tipColor;
     float width, phase, leanAngle;
+    float dirX, dirZ;
     bool isReed;
     bool isSeedhead;
 } NatureBladeDescriptor;
 
-// Single authoring implementation for expanded meshes and compact templates.
-static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement *clump,
-                                                        int i, int blade, MapMeadowStyle style, int bladesPerClump, int bladeSegments,
-                                                        float widthMultiplier)
+// Tiền tính toán tham số dùng chung cho toàn bộ các lá trong cùng 1 bụi cỏ (giảm ~70% hàm lượng giác khi tạo mesh)
+typedef struct
+{
+    bool isReed;
+    bool isPampas;
+    float clumpAngle;
+    float flowX;
+    float flowZ;
+    float clumpHashVal;
+    int archetype;
+    float habit;
+    float stretchBase;
+    float botanical;
+    float colorField;
+    int baseRootR, baseRootG, baseRootB;
+    int baseTipR, baseTipG, baseTipB;
+    Vector3 canopy;
+} NatureClumpContext;
+
+static void Nature_PrepareClumpContext(const MapMeadowPlacement *clump, MapMeadowStyle style, NatureClumpContext *ctx)
+{
+    ctx->isReed = style.growthForm == MAP_MEADOW_GROWTH_REED ||
+                  (style.growthForm == MAP_MEADOW_GROWTH_AUTO && clump->height > 0.95f);
+    ctx->isPampas = style.growthForm == MAP_MEADOW_GROWTH_PAMPAS;
+    ctx->clumpAngle = clump->rotationDeg * DEG2RAD;
+    Nature_FastSinCos(ctx->clumpAngle, &ctx->flowZ, &ctx->flowX);
+
+    ctx->clumpHashVal = Nature_Hash01((unsigned int)(clump->position.x * 37.1f) ^
+                                      (unsigned int)(clump->position.z * 53.7f) ^ 0xA539C291u);
+    if (ctx->clumpHashVal < 0.24f)
+        ctx->archetype = 0; // Grass A: Low Ground Turf (~24%)
+    else if (ctx->clumpHashVal < 0.74f)
+        ctx->archetype = 1; // Grass B: Cohesive Mid Meadow (~50%)
+    else if (ctx->clumpHashVal < 0.92f)
+        ctx->archetype = 2; // Grass C: Tall Sweeping Hero Tussock (~18%)
+    else
+        ctx->archetype = 3; // Grass D: Seedhead / Flowering Accent (~8%)
+
+    ctx->botanical = fminf(fmaxf(style.botanicalVariation, 0.0f), 1.0f);
+    if (ctx->botanical > 0.0f)
+    {
+        float s1, c1, s2, c2;
+        Nature_FastSinCos(clump->position.x * 0.19f + clump->position.z * 0.11f, &s1, &c1);
+        Nature_FastSinCos(clump->position.z * 0.16f - clump->position.x * 0.06f, &s2, &c2);
+        ctx->habit = 0.5f + 0.5f * (s1 * 0.60f + s2 * 0.40f);
+        ctx->stretchBase = 1.02f + 0.14f * ctx->habit;
+    }
+    else
+    {
+        ctx->habit = 0.0f;
+        ctx->stretchBase = 1.0f;
+    }
+
+    float cf1, cf2, tmpC;
+    Nature_FastSinCos(clump->position.x * 0.12f + clump->position.z * 0.08f, &cf1, &tmpC);
+    Nature_FastSinCos(clump->position.z * 0.14f - clump->position.x * 0.06f + 1.2f, &cf2, &tmpC);
+    ctx->colorField = cf1 * 0.55f + cf2 * 0.45f;
+
+    float baseTone = 0.96f + ctx->colorField * 0.08f + (ctx->clumpHashVal - 0.5f) * 0.14f;
+    ctx->baseRootR = (int)(style.rootColor.r * baseTone * 1.02f + 2.0f);
+    ctx->baseRootG = (int)(style.rootColor.g * baseTone * 1.03f + 4.0f);
+    ctx->baseRootB = (int)(style.rootColor.b * baseTone * 1.01f + 2.0f);
+    ctx->baseTipR = (int)(style.tipColor.r * baseTone * 0.94f);
+    ctx->baseTipG = (int)(style.tipColor.g * baseTone * 0.98f);
+    ctx->baseTipB = (int)(style.tipColor.b * baseTone * 0.95f);
+
+    if (!ctx->isReed && !ctx->isPampas && ctx->botanical > 0.0f)
+    {
+        ctx->canopy = MeadowCanopyColor(MeadowHabitat(clump->position.x, clump->position.z));
+    }
+    else
+    {
+        ctx->canopy = (Vector3){0.0f, 0.0f, 0.0f};
+    }
+}
+
+static NatureBladeDescriptor Nature_DescribeMeadowBladeCtx(const MapMeadowPlacement *clump,
+                                                           const NatureClumpContext *ctx,
+                                                           int i, int blade, MapMeadowStyle style,
+                                                           int bladesPerClump, int bladeSegments,
+                                                           float widthMultiplier, bool computeAtan2)
 {
     const float golden = 2.39996323f;
-    bool isReed = style.growthForm == MAP_MEADOW_GROWTH_REED ||
-                  (style.growthForm == MAP_MEADOW_GROWTH_AUTO && clump->height > 0.95f);
-    bool isPampas = style.growthForm == MAP_MEADOW_GROWTH_PAMPAS;
-    float clumpAngle = clump->rotationDeg * DEG2RAD;
+    bool isReed = ctx->isReed;
+    bool isPampas = ctx->isPampas;
+    float clumpAngle = ctx->clumpAngle;
+    float flowX = ctx->flowX;
+    float flowZ = ctx->flowZ;
 
-    int bladeId = bladesPerClump > 1 && bladesPerClump < style.bladesPerClump
+    int bladeId = (bladesPerClump > 1 && bladesPerClump < style.bladesPerClump)
                       ? blade * (style.bladesPerClump - 1) / (bladesPerClump - 1)
                       : blade;
     unsigned int bladeSeed = (unsigned int)i * 747796405u + (unsigned int)bladeId * 2891336453u + 277803737u;
@@ -249,13 +353,12 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
     float bHash2 = Nature_Random01(&bladeSeed);
     float bHash3 = Nature_Random01(&bladeSeed);
 
-    float flowX, flowZ;
-    Nature_FastSinCos(clumpAngle, &flowZ, &flowX);
-
     float height = 0.0f;
     float width = 0.0f;
     float lean = 0.0f;
     float droopY = 0.0f;
+    float dirX = flowX;
+    float dirZ = flowZ;
     float bladeLeanAngle = 0.0f;
     Vector3 pBase = {0};
     Vector3 pP1 = {0}, pP2 = {0}, pP3 = {0};
@@ -275,26 +378,22 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
         float combX = radX * radWeight + flowX * windWeight;
         float combZ = radZ * radWeight + flowZ * windWeight;
         float combLenSq = combX * combX + combZ * combZ;
-        float dirX, dirZ;
-        if (combLenSq < 1e-4f)
+        if (combLenSq >= 1e-4f)
         {
-            dirX = flowX;
-            dirZ = flowZ;
-        }
-        else
-        {
-            float invLen = 1.0f / sqrtf(combLenSq);
+            float invLen = Nature_FastInvSqrt(combLenSq);
             dirX = combX * invLen;
             dirZ = combZ * invLen;
         }
-        bladeLeanAngle = atan2f(dirZ, dirX);
+        if (computeAtan2)
+            bladeLeanAngle = atan2f(dirZ, dirX);
 
         float collarRadius = clump->radius * 0.22f * (0.75f + 0.50f * bHash3);
         float bx = clump->position.x + radX * collarRadius;
         float bz = clump->position.z + radZ * collarRadius;
 
         float tierFrac = (float)blade / (float)bladesPerClump;
-        float lengthScale = 0.85f + 0.30f * sinf((float)(i * 13 + blade * 7));
+        float pseudoWave = Nature_Hash01((unsigned int)(i * 13 + blade * 7)) * 2.0f - 1.0f;
+        float lengthScale = 0.85f + 0.30f * pseudoWave;
         height = clump->height * lengthScale;
         width = clump->radius * style.bladeWidthScale * widthMultiplier * (0.85f + 0.34f * bHash2);
         lean = height * (0.38f + 0.22f * tierFrac);
@@ -314,8 +413,7 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
             pBase.y + (height * 0.86f - droopY),
             bz + dirZ * (lean * 0.98f)};
 
-        bool isOuterDrySheath = (blade < 2);
-        if (isOuterDrySheath)
+        if (blade < 2)
         {
             bladeRoot = (Color){48, 56, 26, 255};
             bladeTip = (Color){164, 172, 84, 255};
@@ -336,19 +434,14 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
         float combX = radX * (1.0f - windWeight) + flowX * windWeight;
         float combZ = radZ * (1.0f - windWeight) + flowZ * windWeight;
         float combLenSq = combX * combX + combZ * combZ;
-        float dirX, dirZ;
         if (combLenSq > 1e-4f)
         {
-            float invLen = 1.0f / sqrtf(combLenSq);
+            float invLen = Nature_FastInvSqrt(combLenSq);
             dirX = combX * invLen;
             dirZ = combZ * invLen;
         }
-        else
-        {
-            dirX = flowX;
-            dirZ = flowZ;
-        }
-        bladeLeanAngle = atan2f(dirZ, dirX);
+        if (computeAtan2)
+            bladeLeanAngle = atan2f(dirZ, dirX);
 
         float collarRadius = clump->radius * ((bladeId < 2) ? 0.12f : (0.24f + 0.12f * bHash3));
         float bx = clump->position.x + radX * collarRadius;
@@ -391,7 +484,6 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
     {
         float splay = bladesPerClump == 1 ? 0.0f : (blade == 0 ? -0.26f : 0.26f);
         bladeLeanAngle = clumpAngle + splay + (bHash - 0.5f) * 0.22f;
-        float dirX, dirZ;
         Nature_FastSinCos(bladeLeanAngle, &dirZ, &dirX);
         int denomBlades = style.bladesPerClump > 1 ? style.bladesPerClump : 1;
         float diskFrac = ((float)bladeId + 0.5f) / (float)denomBlades;
@@ -417,52 +509,35 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
     }
     else
     {
-        // 4 Botanical Archetypes per Voronoi Clump (Ghost of Tsushima GDC Slides 14–21)
-        float clumpHashVal = Nature_Hash01((unsigned int)(clump->position.x * 37.1f) ^ (unsigned int)(clump->position.z * 53.7f) ^ 0xA539C291u);
-        int archetype;
-        if (clumpHashVal < 0.24f)
-            archetype = 0; // Grass A: Low Ground Turf (~24%)
-        else if (clumpHashVal < 0.74f)
-            archetype = 1; // Grass B: Cohesive Mid Meadow (~50%)
-        else if (clumpHashVal < 0.92f)
-            archetype = 2; // Grass C: Tall Sweeping Hero Tussock (~18%)
-        else
-            archetype = 3; // Grass D: Seedhead / Flowering Accent (~8%)
-
-        // 360-degree radial rosette distribution: blades evenly cover all directions around clump center
+        int archetype = ctx->archetype;
         int denomBlades = style.bladesPerClump > 1 ? style.bladesPerClump : 1;
         float bladeAngleStep = 2.0f * PI / (float)denomBlades;
         float rootAzimuth = clumpAngle + (float)bladeId * bladeAngleStep + (bHash - 0.5f) * 0.35f;
         float radX, radZ;
         Nature_FastSinCos(rootAzimuth, &radZ, &radX);
         float diskFrac = ((float)bladeId + 0.5f) / (float)denomBlades;
-        // Tight basal collar (0.12..0.24m) so blade roots emerge from a real botanical crown
         float collarRadius = clump->radius * (0.12f + 0.38f * sqrtf(diskFrac)) * (0.86f + 0.28f * bHash3);
         float bx = clump->position.x + radX * collarRadius;
         float bz = clump->position.z + radZ * collarRadius;
 
-        // Botanical fountain rosette: blades naturally splay outward in 360° away from clump root (radX, radZ),
-        // modulated by a gentle prevailing wind/topography flow bias (flowX, flowZ).
-        // This eliminates unidirectional diagonal striping / resonance while preserving tuft cohesion.
-        float flowBias = (archetype == 0) ? (0.16f + 0.08f * (1.0f - diskFrac))   // Grass A: 16%..24% flow bias
-                                          : (0.22f + 0.10f * (1.0f - diskFrac));  // Grass B/C/D: 22%..32% flow bias
-        float radialWeight = 1.0f - flowBias;                                      // 68%..84% outward radial rosette splay
+        float flowBias = (archetype == 0) ? (0.16f + 0.08f * (1.0f - diskFrac))
+                                          : (0.22f + 0.10f * (1.0f - diskFrac));
+        float radialWeight = 1.0f - flowBias;
         float splayX = radX * radialWeight + flowX * flowBias;
         float splayZ = radZ * radialWeight + flowZ * flowBias;
         float splayLenSq = splayX * splayX + splayZ * splayZ;
-        float dirX = flowX, dirZ = flowZ;
         if (splayLenSq > 1e-4f)
         {
-            float invSplayLen = 1.0f / sqrtf(splayLenSq);
+            float invSplayLen = Nature_FastInvSqrt(splayLenSq);
             dirX = splayX * invSplayLen;
             dirZ = splayZ * invSplayLen;
         }
-        bladeLeanAngle = atan2f(dirZ, dirX);
+        if (computeAtan2)
+            bladeLeanAngle = atan2f(dirZ, dirX);
 
         float lengthScale, widthScaleVal, leanFactor, droopFactor;
         if (bladeId < 2)
         {
-            // Inner arching stalks: graceful reach with soft nodding crest
             lengthScale = 1.05f + 0.10f * bHash2;
             widthScaleVal = 0.96f + 0.08f * bHash3;
             leanFactor = 0.40f + 0.12f * bHash;
@@ -470,7 +545,6 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
         }
         else if (bladeId < 4)
         {
-            // Mid arching blades: lush fountain arc
             lengthScale = 0.98f + 0.10f * bHash2;
             widthScaleVal = 1.02f + 0.08f * bHash3;
             leanFactor = 0.76f + 0.16f * bHash;
@@ -478,29 +552,27 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
         }
         else
         {
-            // Outer nodding blades: flowing perimeter fronds bowing toward earth
             lengthScale = 0.88f + 0.08f * bHash2;
             widthScaleVal = 1.08f + 0.10f * bHash3;
             leanFactor = 1.08f + 0.22f * bHash;
             droopFactor = 0.64f + 0.14f * bHash3;
         }
 
-        // Apply archetype morphological adjustments
-        if (archetype == 0) // Grass A (turf)
+        if (archetype == 0)
         {
             lengthScale *= 0.58f;
             widthScaleVal *= 1.35f;
             leanFactor *= 1.30f;
             droopFactor *= 0.85f;
         }
-        else if (archetype == 2) // Grass C (tall hero)
+        else if (archetype == 2)
         {
             lengthScale *= 1.35f;
             widthScaleVal *= 0.94f;
             leanFactor *= 0.88f;
             droopFactor *= 1.15f;
         }
-        else if (archetype == 3) // Grass D (seedhead)
+        else if (archetype == 3)
         {
             lengthScale *= 1.22f;
             leanFactor *= 0.60f;
@@ -509,25 +581,22 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
 
         height = clump->height * lengthScale * 1.05f;
         width = clump->radius * style.bladeWidthScale * widthMultiplier * widthScaleVal;
-        width = fmaxf(0.027f, width); // Giới hạn sàn độ rộng thân cỏ (~2.7cm) triệt tiêu tình trạng sợi quá mảnh gây nhấp nháy
+        width = fmaxf(0.027f, width);
         lean = height * leanFactor;
         droopY = height * droopFactor;
-        float botanical = fminf(fmaxf(style.botanicalVariation, 0.0f), 1.0f);
-        if (botanical > 0.0f)
+        if (ctx->botanical > 0.0f)
         {
-            float habit = 0.5f + 0.5f * (sinf(clump->position.x * 0.19f + clump->position.z * 0.11f) * 0.60f +
-                                         sinf(clump->position.z * 0.16f - clump->position.x * 0.06f) * 0.40f);
-            float stretch = 1.02f + 0.14f * habit;
+            float stretch = ctx->stretchBase;
             if (bHash2 < 0.07f)
                 stretch *= 0.88f;
             else if (bHash2 < 0.14f)
                 stretch *= 1.08f;
-            stretch = 1.0f + (stretch - 1.0f) * botanical;
+            stretch = 1.0f + (stretch - 1.0f) * ctx->botanical;
             height *= stretch;
-            width /= sqrtf(stretch);
+            width *= Nature_FastInvSqrt(stretch);
             width = fmaxf(0.025f, width);
-            lean *= stretch * (1.0f + botanical * (0.06f + 0.10f * habit));
-            droopY = height * (droopFactor + botanical * 0.08f * habit);
+            lean *= stretch * (1.0f + ctx->botanical * (0.06f + 0.10f * ctx->habit));
+            droopY = height * (droopFactor + ctx->botanical * 0.08f * ctx->habit);
         }
 
         float curlSign = ((bladeId & 1) == 0) ? 1.0f : -1.0f;
@@ -535,7 +604,6 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
         float latX = -dirZ;
         float latZ = dirX;
 
-        // Botanical cantilever cubic Bézier with natural S/C fountain curves (GoT Slide 16)
         pBase = (Vector3){bx, clump->position.y - 0.014f, bz};
         pP1 = (Vector3){
             bx + dirX * (lean * 0.14f) + latX * (lean * 0.04f * curlAmt),
@@ -551,30 +619,27 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
             bz + dirZ * (lean * 1.10f) + latZ * (lean * 0.22f * curlAmt)};
 
         isSeedhead = (archetype == 3 && bladeId < 3);
-        float colorField = sinf(clump->position.x * 0.12f + clump->position.z * 0.08f) * 0.55f +
-                           sinf(clump->position.z * 0.14f - clump->position.x * 0.06f + 1.2f) * 0.45f;
-        float tone = 0.96f + colorField * 0.08f + (clumpHashVal - 0.5f) * 0.14f + (bHash - 0.5f) * 0.05f;
-        int rR = (int)(style.rootColor.r * tone * 1.02f + 2.0f);
-        int rG = (int)(style.rootColor.g * tone * 1.03f + 4.0f);
-        int rB = (int)(style.rootColor.b * tone * 1.01f + 2.0f);
-        int tR = (int)(style.tipColor.r * tone * 0.94f);
-        int tG = (int)(style.tipColor.g * tone * 0.98f);
-        int tB = (int)(style.tipColor.b * tone * 0.95f);
+        float bladeJitter = (bHash - 0.5f) * 0.05f;
+        int rR = ctx->baseRootR + (int)(style.rootColor.r * bladeJitter);
+        int rG = ctx->baseRootG + (int)(style.rootColor.g * bladeJitter);
+        int rB = ctx->baseRootB + (int)(style.rootColor.b * bladeJitter);
+        int tR = ctx->baseTipR + (int)(style.tipColor.r * bladeJitter);
+        int tG = ctx->baseTipG + (int)(style.tipColor.g * bladeJitter);
+        int tB = ctx->baseTipB + (int)(style.tipColor.b * bladeJitter);
 
-        // Clump color personalities per archetype:
-        if (archetype == 0) // Grass A: deep lush emerald turf
+        if (archetype == 0)
         {
             tR = (int)(tR * 0.88f);
             tG = (int)(tG * 0.95f);
             tB = (int)(tB * 1.10f);
         }
-        else if (archetype == 2) // Grass C: sun-warmed chartreuse/olive hero
+        else if (archetype == 2)
         {
             tR = (int)(tR * 1.12f + 4.0f);
             tG = (int)(tG * 1.04f);
             tB = (int)(tB * 0.86f);
         }
-        else if (archetype == 3) // Grass D: golden-wheat seed tip
+        else if (archetype == 3)
         {
             tR = (int)(tR * 1.40f + 20.0f);
             tG = (int)(tG * 1.25f + 14.0f);
@@ -588,7 +653,6 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
             tB = (int)(tB * 0.94f);
         }
 
-        // ~14% outer dry sheath / straw blades for natural Xianxia botanical realism
         if (bHash2 < 0.14f && bladeId >= 3)
         {
             rR = (int)(rR * 1.35f + 16.0f);
@@ -610,22 +674,32 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
         bladeRoot = (Color){Nature_ClampByte(rR), Nature_ClampByte(rG), Nature_ClampByte(rB), 255};
         bladeTip = (Color){Nature_ClampByte(tR), Nature_ClampByte(tG), Nature_ClampByte(tB), 255};
     }
-    if (!isReed && !isPampas && style.botanicalVariation > 0.0f)
+
+    if (!isReed && !isPampas && ctx->botanical > 0.0f)
     {
-        Vector3 canopy = MeadowCanopyColor(MeadowHabitat(clump->position.x, clump->position.z));
         float variation = 0.94f + 0.12f * bHash2;
-        Color canopyTip = {(unsigned char)(fminf(canopy.x * variation * 255.0f, 255.0f)),
-                           (unsigned char)(fminf(canopy.y * variation * 255.0f, 255.0f)),
-                           (unsigned char)(fminf(canopy.z * variation * 255.0f, 255.0f)), 255};
-        Color canopyRoot = {(unsigned char)(canopy.x * 0.22f * 255.0f),
-                            (unsigned char)(canopy.y * 0.32f * 255.0f),
-                            (unsigned char)(canopy.z * 0.18f * 255.0f), 255};
-        float botVar = fminf(style.botanicalVariation, 1.0f);
-        bladeRoot = Nature_LerpColor(bladeRoot, canopyRoot, botVar * 0.65f);
-        bladeTip = Nature_LerpColor(bladeTip, canopyTip, botVar * 0.52f);
+        Color canopyTip = {(unsigned char)(fminf(ctx->canopy.x * variation * 255.0f, 255.0f)),
+                           (unsigned char)(fminf(ctx->canopy.y * variation * 255.0f, 255.0f)),
+                           (unsigned char)(fminf(ctx->canopy.z * variation * 255.0f, 255.0f)), 255};
+        Color canopyRoot = {(unsigned char)(ctx->canopy.x * 0.22f * 255.0f),
+                            (unsigned char)(ctx->canopy.y * 0.32f * 255.0f),
+                            (unsigned char)(ctx->canopy.z * 0.18f * 255.0f), 255};
+        bladeRoot = Nature_LerpColor(bladeRoot, canopyRoot, ctx->botanical * 0.65f);
+        bladeTip = Nature_LerpColor(bladeTip, canopyTip, ctx->botanical * 0.52f);
     }
+
     return (NatureBladeDescriptor){pBase, pP1, pP2, pP3, clump->position,
-                                   bladeRoot, bladeTip, width, clump->phase, bladeLeanAngle, isReed, isSeedhead};
+                                   bladeRoot, bladeTip, width, clump->phase, bladeLeanAngle, dirX, dirZ, isReed, isSeedhead};
+}
+
+// Single authoring implementation for expanded meshes and compact templates.
+static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement *clump,
+                                                        int i, int blade, MapMeadowStyle style, int bladesPerClump, int bladeSegments,
+                                                        float widthMultiplier)
+{
+    NatureClumpContext ctx;
+    Nature_PrepareClumpContext(clump, style, &ctx);
+    return Nature_DescribeMeadowBladeCtx(clump, &ctx, i, blade, style, bladesPerClump, bladeSegments, widthMultiplier, true);
 }
 
 typedef struct
@@ -650,8 +724,6 @@ typedef struct
     float normalLerp;
 } NatureKnotPrecomp;
 
-// [TỐI ƯU KHỞI TẠO]: Xây dựng Mesh trực tiếp từ danh sách chỉ số đã phân vùng sẵn (O(chunkCount) thay vì O(N))
-// kết hợp tiền tính toán bảng hằng số đốt lá (NatureKnotPrecomp) خارج vòng lặp bụi cỏ.
 static Model Nature_BuildMeadowChunkFromIndices(const MapMeadowPlacement *placements,
                                                 const int *indices, int indexCount,
                                                 MapMeadowStyle style, int sampleStride,
@@ -677,7 +749,6 @@ static Model Nature_BuildMeadowChunkFromIndices(const MapMeadowPlacement *placem
     const float tipStart = (bladeSegments == 2) ? 0.54f : (bladeSegments > 2 ? 0.76f : 0.0f);
     const float invSegMinus1 = (bladeSegments > 1) ? (1.0f / (float)(bladeSegments - 1)) : 0.0f;
 
-    // Tiền tính toán seluruh tham số phụ thuộc vào đốt k (0 .. bladeSegments) một lần duy nhất cho cả chunk
     NatureKnotPrecomp knotTable[7];
     for (int k = 0; k <= bladeSegments; k++)
     {
@@ -686,16 +757,19 @@ static Model Nature_BuildMeadowChunkFromIndices(const MapMeadowPlacement *placem
         float tk2 = tk * tk;
         float fastPow18 = tk2 * (0.82f + 0.18f * tk);
         float sheath = fminf(1.0f, 0.65f + 2.5f * tk);
-        float body = 0.82f + 0.32f * sinf(PI * fminf(tk * 1.35f, 1.0f));
+        float sVal, cVal;
+        Nature_FastSinCos(PI * fminf(tk * 1.35f, 1.0f), &sVal, &cVal);
+        float body = 0.82f + 0.32f * sVal;
         float tipT = fmaxf(0.0f, (tk - 0.35f) * (1.0f / 0.65f));
         float taper = fmaxf(0.28f, 1.0f - tipT * tipT * 0.72f);
         float groundAnchor = fmaxf(0.0f, 1.0f - tk * 2.5f);
+        float sPiTk;
+        Nature_FastSinCos(PI * tk, &sPiTk, &cVal);
 
         knotTable[k].tk = tk;
-        // Botanical root ambient occlusion: anchors clump rosettes gently to dark forest loam
-        knotTable[k].occ = 0.58f + 0.42f * (tk * tk * (3.0f - 2.0f * tk));
+        knotTable[k].occ = 0.58f + 0.42f * (tk2 * (3.0f - 2.0f * tk));
         knotTable[k].sCurve = tk2 * (3.0f - 2.0f * tk);
-        knotTable[k].reedProfile = 0.5f * (0.78f + 0.36f * sinf(PI * tk)) * (1.0f - fastPow18);
+        knotTable[k].reedProfile = 0.5f * (0.78f + 0.36f * sPiTk) * (1.0f - fastPow18);
         knotTable[k].grassProfile = 0.5f * sheath * body * taper;
         knotTable[k].foldScale = 0.055f * (4.0f * tk * uk);
         knotTable[k].terrainBlend = 0.52f + 0.34f * groundAnchor;
@@ -709,17 +783,18 @@ static Model Nature_BuildMeadowChunkFromIndices(const MapMeadowPlacement *placem
         const MapMeadowPlacement *clump = &placements[i];
         Vector3 clumpSphereCenter = {clump->position.x, clump->position.y - 0.04f, clump->position.z};
 
+        NatureClumpContext clumpCtx;
+        Nature_PrepareClumpContext(clump, style, &clumpCtx);
+
         for (int blade = 0; blade < bladesPerClump; blade++)
         {
-            NatureBladeDescriptor desc = Nature_DescribeMeadowBlade(clump, i, blade,
-                                                                    style, bladesPerClump, bladeSegments, widthMultiplier);
+            NatureBladeDescriptor desc = Nature_DescribeMeadowBladeCtx(clump, &clumpCtx, i, blade,
+                                                                       style, bladesPerClump, bladeSegments, widthMultiplier, false);
             bool isReed = desc.isReed;
-            float width = desc.width, bladeLeanAngle = desc.leanAngle;
+            float width = desc.width;
             Vector3 pBase = desc.p0, pP1 = desc.p1, pP2 = desc.p2, pP3 = desc.p3;
             Color bladeRoot = desc.rootColor, bladeTip = desc.tipColor;
-            float sinLean, cosLean;
-            Nature_FastSinCos(bladeLeanAngle, &sinLean, &cosLean);
-            Vector3 baseSide = {-sinLean, 0.0f, cosLean};
+            Vector3 baseSide = {-desc.dirZ, 0.0f, desc.dirX};
 
             NatureBladeKnot knots[7];
             for (int k = 0; k <= bladeSegments; k++)
@@ -730,29 +805,34 @@ static Model Nature_BuildMeadowChunkFromIndices(const MapMeadowPlacement *placem
                 Vector3 center = Nature_EvalCubicBezier(pBase, pP1, pP2, pP3, tk);
                 knots[k].center = center;
 
-                Vector3 T = Vector3Normalize(Nature_EvalCubicBezierTangent(pBase, pP1, pP2, pP3, tk));
-                Vector3 crossS = {T.y * terrainNormal.z - T.z * terrainNormal.y,
-                                  0.0f,
-                                  T.x * terrainNormal.y - T.y * terrainNormal.x};
+                Vector3 T = Nature_FastNormalize(Nature_EvalCubicBezierTangent(pBase, pP1, pP2, pP3, tk));
+                Vector3 crossS = {-T.z, 0.0f, T.x};
                 float lenSSq = crossS.x * crossS.x + crossS.z * crossS.z;
-                Vector3 S = (lenSSq > 1e-6f) ? Vector3Scale(crossS, 1.0f / sqrtf(lenSSq)) : baseSide;
+                Vector3 S = (lenSSq > 1e-6f) ? Vector3Scale(crossS, Nature_FastInvSqrt(lenSSq)) : baseSide;
 
-                Vector3 Ngeo = Vector3CrossProduct(S, T);
+                Vector3 Ngeo = {
+                    S.y * T.z - S.z * T.y,
+                    S.z * T.x - S.x * T.z,
+                    S.x * T.y - S.y * T.x};
                 if (Ngeo.y < 0.0f)
-                    Ngeo = Vector3Negate(Ngeo);
+                {
+                    Ngeo.x = -Ngeo.x;
+                    Ngeo.y = -Ngeo.y;
+                    Ngeo.z = -Ngeo.z;
+                }
                 if (Ngeo.y < 0.30f)
                 {
                     Ngeo.y = 0.30f;
-                    Ngeo = Vector3Normalize(Ngeo);
+                    Ngeo = Nature_FastNormalize(Ngeo);
                 }
 
                 knots[k].color = Nature_ScaleColor(Nature_LerpColor(bladeRoot, bladeTip, kp->sCurve), kp->occ);
 
                 if (k == bladeSegments)
                 {
-                    Vector3 dSphereTip = Vector3Normalize(Vector3Subtract(center, clumpSphereCenter));
-                    Vector3 nTargetTip = Vector3Normalize(Vector3Lerp(dSphereTip, terrainNormal, 0.56f));
-                    knots[k].nTip = Vector3Normalize(Vector3Lerp(Ngeo, nTargetTip, 0.60f));
+                    Vector3 dSphereTip = Nature_FastNormalize(Vector3Subtract(center, clumpSphereCenter));
+                    Vector3 nTargetTip = Nature_FastNormalize(Vector3Lerp(dSphereTip, terrainNormal, 0.56f));
+                    knots[k].nTip = Nature_FastNormalize(Vector3Lerp(Ngeo, nTargetTip, 0.60f));
                 }
                 else
                 {
@@ -765,18 +845,18 @@ static Model Nature_BuildMeadowChunkFromIndices(const MapMeadowPlacement *placem
                     knots[k].pL = pL;
                     knots[k].pR = pR;
 
-                    Vector3 dSphereL = Vector3Normalize(Vector3Subtract(pL, clumpSphereCenter));
-                    Vector3 dSphereR = Vector3Normalize(Vector3Subtract(pR, clumpSphereCenter));
+                    Vector3 dSphereL = Nature_FastNormalize(Vector3Subtract(pL, clumpSphereCenter));
+                    Vector3 dSphereR = Nature_FastNormalize(Vector3Subtract(pR, clumpSphereCenter));
 
-                    Vector3 nTargetL = Vector3Normalize(Vector3Lerp(dSphereL, terrainNormal, kp->terrainBlend));
-                    Vector3 nTargetR = Vector3Normalize(Vector3Lerp(dSphereR, terrainNormal, kp->terrainBlend));
+                    Vector3 nTargetL = Nature_FastNormalize(Vector3Lerp(dSphereL, terrainNormal, kp->terrainBlend));
+                    Vector3 nTargetR = Nature_FastNormalize(Vector3Lerp(dSphereR, terrainNormal, kp->terrainBlend));
 
                     Vector3 spreadVec = Vector3Scale(S, kp->edgeSpread);
-                    Vector3 nMeshL = Vector3Normalize(Vector3Subtract(Ngeo, spreadVec));
-                    Vector3 nMeshR = Vector3Normalize(Vector3Add(Ngeo, spreadVec));
+                    Vector3 nMeshL = Nature_FastNormalize(Vector3Subtract(Ngeo, spreadVec));
+                    Vector3 nMeshR = Nature_FastNormalize(Vector3Add(Ngeo, spreadVec));
 
-                    knots[k].nL = Vector3Normalize(Vector3Lerp(nMeshL, nTargetL, kp->normalLerp));
-                    knots[k].nR = Vector3Normalize(Vector3Lerp(nMeshR, nTargetR, kp->normalLerp));
+                    knots[k].nL = Nature_FastNormalize(Vector3Lerp(nMeshL, nTargetL, kp->normalLerp));
+                    knots[k].nR = Nature_FastNormalize(Vector3Lerp(nMeshR, nTargetR, kp->normalLerp));
                 }
             }
 
@@ -803,7 +883,9 @@ static Model Nature_BuildMeadowChunkFromIndices(const MapMeadowPlacement *placem
         if (style.hasPlumes)
         {
             float caneHeight = clump->height * 1.35f;
-            float caneAngle = clump->rotationDeg * DEG2RAD + 0.22f * sinf((float)i * 1.7f);
+            float caneSway, caneCosTmp;
+            Nature_FastSinCos((float)i * 1.7f, &caneSway, &caneCosTmp);
+            float caneAngle = clumpCtx.clumpAngle + 0.22f * caneSway;
             float caneLean = caneHeight * 0.32f;
             float sinCane, cosCane;
             Nature_FastSinCos(caneAngle, &sinCane, &cosCane);
@@ -828,7 +910,7 @@ static Model Nature_BuildMeadowChunkFromIndices(const MapMeadowPlacement *placem
             }
 
             Vector3 side = {-cosCane, 0.0f, -sinCane};
-            Vector3 norm = Vector3Normalize((Vector3){-sinCane, 0.25f, cosCane});
+            Vector3 norm = Nature_FastNormalize((Vector3){-sinCane, 0.25f, cosCane});
 
             Vector3 qBase = plPts[0];
             Vector3 qTip = plPts[3];
@@ -982,9 +1064,13 @@ MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int 
     bool textured = style.texturePath != NULL;
     if (textured)
     {
+        GfxQuality q = GfxQuality_Get();
         foliageTexture = ResourceManager_LoadTexture(style.texturePath);
         GenTextureMipmaps(&foliageTexture);
-        SetTextureFilter(foliageTexture, TEXTURE_FILTER_ANISOTROPIC_16X);
+        // Mobile TBDR: giảm Anisotropic từ 16x xuống 4x/Trilinear để tiết kiệm băng thông texture fragment
+        int filterMode = (q >= GFX_HIGH) ? TEXTURE_FILTER_ANISOTROPIC_16X
+                                         : (q == GFX_MED ? TEXTURE_FILTER_ANISOTROPIC_4X : TEXTURE_FILTER_TRILINEAR);
+        SetTextureFilter(foliageTexture, filterMode);
         SetTextureWrap(foliageTexture, TEXTURE_WRAP_CLAMP);
     }
 
@@ -1013,7 +1099,6 @@ MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int 
         rows = 1;
     int capacity = columns * rows;
 
-    // [TỐI ƯU KHỞI TẠO O(N)]: Gom nhóm placements vào các giỏ chunk chỉ trong 1 lượt đếm!
     float invChunkSize = 1.0f / style.chunkSize;
     int *bucketCounts = (int *)MemAlloc((unsigned int)capacity * sizeof(int));
     int *bucketOffsets = (int *)MemAlloc((unsigned int)(capacity + 1) * sizeof(int));
@@ -1095,7 +1180,6 @@ MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int 
             float z0 = minZ + row * style.chunkSize;
             float z1 = z0 + style.chunkSize;
 
-            // Tính độ cao trung bình & biên độ Y thực tế của chunk để Frustum Culling 3D và LOD chính xác trên đồi dốc
             float minY = placements[cellIndices[0]].position.y;
             float maxY = minY + placements[cellIndices[0]].height;
             for (int k = 1; k < cellCount; k++)
@@ -1124,7 +1208,6 @@ MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int 
                 placements, cellIndices, cellCount, style, 1,
                 midBlades, midSegments, 1.32f, mainShader, &midCount);
 
-            // Far LOD: Dùng 2 lá bản rộng 1.85x để triệt tiêu Sub-pixel Quad Overdraw ở xa
             int farBlades = 2;
             int farCount = 0;
             Model farModel = Nature_BuildMeadowChunkFromIndices(
@@ -1136,10 +1219,8 @@ MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int 
             int realShadowCount = 0;
             if (buildRealShadowLod)
             {
-                // Real Shadow LOD: cast 100% grass clumps (stride=1) with 3 blades, 2 segments and natural 1.18x width
-                int shadowStride = 1;
                 realShadowModel = Nature_BuildMeadowChunkFromIndices(
-                    placements, cellIndices, cellCount, style, shadowStride,
+                    placements, cellIndices, cellCount, style, 1,
                     3, 2, 1.18f, realShadowShader, &realShadowCount);
             }
 
@@ -1210,7 +1291,7 @@ MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int 
 }
 
 // ============================================================================
-// CACHED CAMERA FRUSTUM (Loại bỏ 3x sqrtf, 1x tanf và 2x GetScreenWidth/Height mỗi chunk)
+// CACHED CAMERA FRUSTUM (Tách Refresh 1 lần/frame và kiểm tra nội tuyến 0-syscall)
 // ============================================================================
 typedef struct
 {
@@ -1224,10 +1305,11 @@ typedef struct
     Vector3 forward;
     Vector3 right;
     Vector3 viewUp;
-    float tanHalfFov;
-    float aspect;
+    float tanHalfFovV;
+    float tanHalfFovH;
     float orthoHalfV;
     float orthoHalfH;
+    bool isOrtho;
     bool degenerate;
     bool valid;
 } NatureFrustumCache;
@@ -1285,36 +1367,36 @@ static inline void Nature_RefreshFrustumCache(void)
     Vector3 viewUp = Vector3Normalize(Vector3CrossProduct(right, forward));
 
     float aspect = (float)sw / (float)(sh > 1 ? sh : 1);
+    float tanV = tanf(camera.fovy * DEG2RAD * 0.5f);
     s_natureFrustumCache.forward = forward;
     s_natureFrustumCache.right = right;
     s_natureFrustumCache.viewUp = viewUp;
-    s_natureFrustumCache.aspect = aspect;
-    s_natureFrustumCache.tanHalfFov = tanf(camera.fovy * DEG2RAD * 0.5f);
+    s_natureFrustumCache.tanHalfFovV = tanV;
+    s_natureFrustumCache.tanHalfFovH = tanV * aspect;
     s_natureFrustumCache.orthoHalfV = camera.fovy * 0.5f;
     s_natureFrustumCache.orthoHalfH = s_natureFrustumCache.orthoHalfV * aspect;
+    s_natureFrustumCache.isOrtho = (camera.projection == CAMERA_ORTHOGRAPHIC);
     s_natureFrustumCache.degenerate = false;
 }
 
-static bool Nature_IsChunkVisible(Vector3 center, float radius)
+static inline bool Nature_IsChunkVisibleFast(Vector3 center, float radius)
 {
-    Nature_RefreshFrustumCache();
     if (s_natureFrustumCache.degenerate)
         return true;
 
-    Vector3 toCenter = {
-        center.x - s_natureFrustumCache.pos.x,
-        center.y - s_natureFrustumCache.pos.y,
-        center.z - s_natureFrustumCache.pos.z,
-    };
-    float depth = toCenter.x * s_natureFrustumCache.forward.x +
-                  toCenter.y * s_natureFrustumCache.forward.y +
-                  toCenter.z * s_natureFrustumCache.forward.z;
+    float tx = center.x - s_natureFrustumCache.pos.x;
+    float ty = center.y - s_natureFrustumCache.pos.y;
+    float tz = center.z - s_natureFrustumCache.pos.z;
+
+    float depth = tx * s_natureFrustumCache.forward.x +
+                  ty * s_natureFrustumCache.forward.y +
+                  tz * s_natureFrustumCache.forward.z;
     if (depth < -radius)
         return false;
 
     float halfVertical;
     float halfHorizontal;
-    if (s_natureFrustumCache.projection == CAMERA_ORTHOGRAPHIC)
+    if (s_natureFrustumCache.isOrtho)
     {
         halfVertical = s_natureFrustumCache.orthoHalfV;
         halfHorizontal = s_natureFrustumCache.orthoHalfH;
@@ -1322,26 +1404,32 @@ static bool Nature_IsChunkVisible(Vector3 center, float radius)
     else
     {
         float positiveDepth = depth > 0.0f ? depth : 0.0f;
-        halfVertical = s_natureFrustumCache.tanHalfFov * positiveDepth;
-        halfHorizontal = halfVertical * s_natureFrustumCache.aspect;
+        halfVertical = s_natureFrustumCache.tanHalfFovV * positiveDepth;
+        halfHorizontal = s_natureFrustumCache.tanHalfFovH * positiveDepth;
     }
 
-    float sideDistance = fabsf(toCenter.x * s_natureFrustumCache.right.x +
-                               toCenter.y * s_natureFrustumCache.right.y +
-                               toCenter.z * s_natureFrustumCache.right.z);
+    float sideDistance = fabsf(tx * s_natureFrustumCache.right.x +
+                               ty * s_natureFrustumCache.right.y +
+                               tz * s_natureFrustumCache.right.z);
     if (sideDistance > halfHorizontal + radius)
         return false;
 
-    float verticalDistance = fabsf(toCenter.x * s_natureFrustumCache.viewUp.x +
-                                   toCenter.y * s_natureFrustumCache.viewUp.y +
-                                   toCenter.z * s_natureFrustumCache.viewUp.z);
+    float verticalDistance = fabsf(tx * s_natureFrustumCache.viewUp.x +
+                                   ty * s_natureFrustumCache.viewUp.y +
+                                   tz * s_natureFrustumCache.viewUp.z);
     return verticalDistance <= halfVertical + radius;
+}
+
+static bool Nature_IsChunkVisible(Vector3 center, float radius)
+{
+    Nature_RefreshFrustumCache();
+    return Nature_IsChunkVisibleFast(center, radius);
 }
 
 static bool Nature_IntersectsDynamicShadowCoverage(Vector3 center, float radius)
 {
     Vector3 focus = EnvShadow_GetFocus();
-    Vector3 sun = Vector3Normalize(Environment_GetSunDirection());
+    Vector3 sun = Nature_FastNormalize(Environment_GetSunDirection());
     float extent = fmaxf(EnvShadow_GetHalfExtent(), 8.0f);
     float groundRadius = extent / fmaxf(fabsf(sun.y), 0.32f);
     float dx = center.x - focus.x;
@@ -1361,18 +1449,23 @@ void MapProp_PrepareMeadow(MapMeadowSurface *meadow, Vector3 worldOffset)
     if (NatureParametric_IsPrepared(meadow, worldOffset, view.bands))
         return;
     Nature_RefreshFrustumCache();
+    const bool hasDrawDist = (view.drawDistance > 0.0f);
     for (int i = 0; i < meadow->chunkCount; i++)
     {
         MapMeadowChunk *chunk = &meadow->chunks[i];
         Vector3 center = Vector3Add(chunk->center, worldOffset);
-        float dx = camera.position.x - center.x, dz = camera.position.z - center.z;
-        float maxDrawDist = view.drawDistance + chunk->radius;
-        if (view.drawDistance > 0.0f && dx * dx + dz * dz > maxDrawDist * maxDrawDist)
+        if (hasDrawDist)
         {
-            chunk->visibleThisFrame = false;
-            continue;
+            float dx = camera.position.x - center.x;
+            float dz = camera.position.z - center.z;
+            float maxDrawDist = view.drawDistance + chunk->radius;
+            if (dx * dx + dz * dz > maxDrawDist * maxDrawDist)
+            {
+                chunk->visibleThisFrame = false;
+                continue;
+            }
         }
-        chunk->visibleThisFrame = Nature_IsChunkVisible(center, chunk->radius);
+        chunk->visibleThisFrame = Nature_IsChunkVisibleFast(center, chunk->radius);
     }
     NatureParametric_PrepareVisible(meadow, worldOffset, view.bands);
 }
@@ -1380,6 +1473,51 @@ void MapProp_PrepareMeadow(MapMeadowSurface *meadow, Vector3 worldOffset)
 static inline float Nature_SquarePositive(float v)
 {
     return (v > 0.0f) ? (v * v) : 0.0f;
+}
+
+// Sắp xếp Front-to-Back O(N log N) không cấp phát heap cho các danh sách chunk lớn trên mobile
+static void Nature_SortChunksFrontToBack(int *order, float *depth, int count)
+{
+    if (count <= 1)
+        return;
+    if (count <= 24)
+    {
+        for (int i = 1; i < count; i++)
+        {
+            int keyIdx = order[i];
+            float keyDepth = depth[i];
+            int j = i - 1;
+            while (j >= 0 && depth[j] > keyDepth)
+            {
+                order[j + 1] = order[j];
+                depth[j + 1] = depth[j];
+                j--;
+            }
+            order[j + 1] = keyIdx;
+            depth[j + 1] = keyDepth;
+        }
+        return;
+    }
+
+    static const int gaps[6] = {132, 57, 23, 10, 4, 1};
+    for (int g = 0; g < 6; g++)
+    {
+        int gap = gaps[g];
+        for (int i = gap; i < count; i++)
+        {
+            int keyIdx = order[i];
+            float keyDepth = depth[i];
+            int j = i;
+            while (j >= gap && depth[j - gap] > keyDepth)
+            {
+                order[j] = order[j - gap];
+                depth[j] = depth[j - gap];
+                j -= gap;
+            }
+            order[j] = keyIdx;
+            depth[j] = keyDepth;
+        }
+    }
 }
 
 void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float time,
@@ -1393,6 +1531,15 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
     float lodDistance = view.lodDistance, drawDistance = view.drawDistance;
     Vector4 tuftBands = view.bands;
 
+    // Thu hẹp nhẹ tầm vẽ & đẩy sớm LOD trên cấu hình thấp/mobile để bảo vệ ngân sách fillrate TBDR
+    if (!meadow->parametric && quality == GFX_LOW)
+    {
+        if (drawDistance > 0.0f)
+            drawDistance *= 0.80f;
+        if (lodDistance > 0.0f)
+            lodDistance *= 0.72f;
+    }
+
     Nature_RefreshFrustumCache();
 
     float fdx = camera.position.x - camera.target.x;
@@ -1405,31 +1552,35 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
     bool alreadyPrepared = ordered && (ordered->compact || ordered->nearFirst) &&
                            NatureParametric_IsPrepared(meadow, worldOffset, tuftBands);
 
-    static int *s_fallbackOrder = NULL;
-    static float *s_fallbackDepth = NULL;
-    static int s_fallbackCapacity = 0;
+    // Phân nhóm trực tiếp theo 3 cấp LOD (Near -> Mid -> Far) để gom trạng thái VAO/IndexBuffer
+    // và vẫn đảm bảo thứ tự Front-to-Back (Early-Z) trên GPU mobile.
+    static int *s_lodBufOrder = NULL;
+    static float *s_lodBufDepth = NULL;
+    static int s_lodBufCapacity = 0;
 
-    int drawCount = 0;
-    int localOrder[256];
-    float localDepth[256];
-    int *drawOrder = localOrder;
-    float *drawDepth = localDepth;
-    bool hasPrecomputedDepth = !useParametricOrder;
+    int localOrder[3][128];
+    float localDepth[3][128];
+    int *lodOrder[3] = {localOrder[0], localOrder[1], localOrder[2]};
+    float *lodDepth[3] = {localDepth[0], localDepth[1], localDepth[2]};
+    int lodCounts[3] = {0, 0, 0};
 
-    if (!useParametricOrder && meadow->chunkCount > 256)
+    if (!useParametricOrder && meadow->chunkCount > 128)
     {
-        if (meadow->chunkCount > s_fallbackCapacity)
+        if (meadow->chunkCount > s_lodBufCapacity)
         {
-            int *grownOrder = (int *)RL_REALLOC(s_fallbackOrder, (size_t)meadow->chunkCount * sizeof(int));
-            float *grownDepth = (float *)RL_REALLOC(s_fallbackDepth, (size_t)meadow->chunkCount * sizeof(float));
+            int *grownOrder = (int *)RL_REALLOC(s_lodBufOrder, (size_t)meadow->chunkCount * 3 * sizeof(int));
+            float *grownDepth = (float *)RL_REALLOC(s_lodBufDepth, (size_t)meadow->chunkCount * 3 * sizeof(float));
             if (!grownOrder || !grownDepth)
                 return;
-            s_fallbackOrder = grownOrder;
-            s_fallbackDepth = grownDepth;
-            s_fallbackCapacity = meadow->chunkCount;
+            s_lodBufOrder = grownOrder;
+            s_lodBufDepth = grownDepth;
+            s_lodBufCapacity = meadow->chunkCount;
         }
-        drawOrder = s_fallbackOrder;
-        drawDepth = s_fallbackDepth;
+        for (int b = 0; b < 3; b++)
+        {
+            lodOrder[b] = s_lodBufOrder + b * s_lodBufCapacity;
+            lodDepth[b] = s_lodBufDepth + b * s_lodBufCapacity;
+        }
     }
 
     float baseFarDist = focalDist + lodDistance * lodScale * zoomFactor;
@@ -1453,8 +1604,6 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
     }
     else
     {
-        // [TỐI ƯU 1 LƯỢT DUYỆT]: Vừa kiểm tra Frustum + Cự ly, vừa chọn LOD bằng bình phương khoảng cách
-        // (không tốn sqrtf), vừa sắp xếp Front-to-Back (Early-Z) ngay trong cùng 1 vòng lặp!
         for (int i = 0; i < meadow->chunkCount; i++)
         {
             MapMeadowChunk *chunk = &meadow->chunks[i];
@@ -1471,7 +1620,7 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
                 s_natureRenderStats.meadowDistanceCulled++;
                 continue;
             }
-            if (!Nature_IsChunkVisible(center, chunk->radius))
+            if (!Nature_IsChunkVisibleFast(center, chunk->radius))
             {
                 s_natureRenderStats.meadowFrustumCulled++;
                 continue;
@@ -1530,27 +1679,32 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
                             chunk->lodLevel = 2;
                         }
                     }
+                    // Trên GFX_LOW, nâng LOD 0 lên LOD 1 để cắt giảm ~55% số đỉnh bụi cỏ gần
+                    if (quality == GFX_LOW && chunk->lodLevel == 0 && chunk->midReady)
+                        chunk->lodLevel = 1;
                     chunk->farLod = (chunk->lodLevel == 2);
                 }
                 else
                 {
-                    chunk->lodLevel = 0;
+                    chunk->lodLevel = (quality == GFX_LOW && chunk->midReady) ? 1 : 0;
                     chunk->farLod = false;
                 }
             }
 
             if (!useParametricOrder)
             {
-                int slot = drawCount++;
-                while (slot > 0 && drawDepth[slot - 1] > distSq3D)
-                {
-                    drawOrder[slot] = drawOrder[slot - 1];
-                    drawDepth[slot] = drawDepth[slot - 1];
-                    slot--;
-                }
-                drawOrder[slot] = i;
-                drawDepth[slot] = distSq3D;
+                int bucket = meadow->parametric ? 0
+                                                : ((chunk->lodLevel == 2) ? 2 : ((chunk->lodLevel == 1 && chunk->midReady) ? 1 : 0));
+                int slot = lodCounts[bucket]++;
+                lodOrder[bucket][slot] = i;
+                lodDepth[bucket][slot] = distSq3D;
             }
+        }
+
+        if (!useParametricOrder)
+        {
+            for (int b = 0; b < 3; b++)
+                Nature_SortChunksFrontToBack(lodOrder[b], lodDepth[b], lodCounts[b]);
         }
 
         if (ordered && (ordered->compact || ordered->nearFirst))
@@ -1559,11 +1713,8 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
         }
     }
 
-    if (useParametricOrder)
-    {
-        drawCount = ordered->drawCount;
-        drawOrder = ordered->drawOrder;
-    }
+    // Tính ma trận dịch chuyển thế giới 1 lần thay vì nhân ma trận mỗi chunk trong DrawModel
+    Matrix worldTransform = MatrixTranslate(worldOffset.x, worldOffset.y, worldOffset.z);
 
     NatureShadowMode shadowMode = Nature_GetShadowMode();
     bool realShadowActive = quality >= GFX_LOW && EnvShadow_IsEnabled() &&
@@ -1580,22 +1731,51 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
         EndShaderMode();
         rlDisableDepthMask();
         BeginBlendMode(BLEND_MULTIPLIED);
-        for (int i = 0; i < meadow->chunkCount; i++)
+        if (!useParametricOrder)
         {
-            MapMeadowChunk *chunk = &meadow->chunks[i];
-            if (!chunk->visibleThisFrame || !chunk->shadowReady)
-                continue;
-            Vector3 center = Vector3Add(chunk->center, worldOffset);
-            float dx = camera.position.x - center.x;
-            float dz = camera.position.z - center.z;
-            float maxShadowDist = shadowDistance + chunk->radius;
-            if (dx * dx + dz * dz > maxShadowDist * maxShadowDist)
+            for (int b = 0; b < 3; b++)
             {
-                s_natureRenderStats.meadowShadowDistanceCulled++;
-                continue;
+                for (int k = 0; k < lodCounts[b]; k++)
+                {
+                    int i = lodOrder[b][k];
+                    MapMeadowChunk *chunk = &meadow->chunks[i];
+                    if (!chunk->shadowReady)
+                        continue;
+                    Vector3 center = Vector3Add(chunk->center, worldOffset);
+                    float dx = camera.position.x - center.x;
+                    float dz = camera.position.z - center.z;
+                    float maxShadowDist = shadowDistance + chunk->radius;
+                    if (dx * dx + dz * dz > maxShadowDist * maxShadowDist)
+                    {
+                        s_natureRenderStats.meadowShadowDistanceCulled++;
+                        continue;
+                    }
+                    for (int m = 0; m < chunk->shadowModel.meshCount; m++)
+                        DrawMesh(chunk->shadowModel.meshes[m], chunk->shadowModel.materials[chunk->shadowModel.meshMaterial[m]], worldTransform);
+                    s_natureRenderStats.meadowShadowDraws++;
+                }
             }
-            DrawModel(chunk->shadowModel, worldOffset, 1.0f, WHITE);
-            s_natureRenderStats.meadowShadowDraws++;
+        }
+        else
+        {
+            for (int i = 0; i < meadow->chunkCount; i++)
+            {
+                MapMeadowChunk *chunk = &meadow->chunks[i];
+                if (!chunk->visibleThisFrame || !chunk->shadowReady)
+                    continue;
+                Vector3 center = Vector3Add(chunk->center, worldOffset);
+                float dx = camera.position.x - center.x;
+                float dz = camera.position.z - center.z;
+                float maxShadowDist = shadowDistance + chunk->radius;
+                if (dx * dx + dz * dz > maxShadowDist * maxShadowDist)
+                {
+                    s_natureRenderStats.meadowShadowDistanceCulled++;
+                    continue;
+                }
+                for (int m = 0; m < chunk->shadowModel.meshCount; m++)
+                    DrawMesh(chunk->shadowModel.meshes[m], chunk->shadowModel.materials[chunk->shadowModel.meshMaterial[m]], worldTransform);
+                s_natureRenderStats.meadowShadowDraws++;
+            }
         }
         EndBlendMode();
         rlEnableDepthMask();
@@ -1642,19 +1822,21 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
             else
                 s_natureRenderStats.meadowNearDraws++;
         }
-        drawCount = 0;
     }
-
-    for (int draw = 0; draw < drawCount; draw++)
+    else if (meadow->parametric)
     {
-        int i = drawOrder[draw];
-        MapMeadowChunk *chunk = &meadow->chunks[i];
-        if (!chunk->visibleThisFrame)
-            continue;
-        if (meadow->parametric)
+        int drawCount = useParametricOrder ? ordered->drawCount : lodCounts[0];
+        const int *drawOrder = useParametricOrder ? ordered->drawOrder : lodOrder[0];
+        bool hasPrecomputedDepth = !useParametricOrder;
+        NatureParametricMeadow *data = meadow->parametric;
+
+        for (int draw = 0; draw < drawCount; draw++)
         {
-            NatureParametricMeadow *data = meadow->parametric;
-            float d = hasPrecomputedDepth ? sqrtf(drawDepth[draw]) : data->chunkDistCache[i];
+            int i = drawOrder[draw];
+            MapMeadowChunk *chunk = &meadow->chunks[i];
+            if (!chunk->visibleThisFrame)
+                continue;
+            float d = hasPrecomputedDepth ? sqrtf(lodDepth[0][draw]) : data->chunkDistCache[i];
             float minDistance = fmaxf(0.0f, d - chunk->radius);
             float maxDistance = d + chunk->radius;
             for (int lod = 0; lod < 3; lod++)
@@ -1671,22 +1853,31 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
                 else
                     s_natureRenderStats.meadowNearDraws++;
             }
-            continue;
         }
-        if (chunk->lodLevel == 2)
+    }
+    else
+    {
+        // Vẽ theo nhóm LOD (Near -> Mid -> Far), mỗi nhóm đã sắp xếp Front-to-Back
+        for (int k = 0; k < lodCounts[0]; k++)
         {
-            DrawModel(chunk->farModel, worldOffset, 1.0f, WHITE);
-            s_natureRenderStats.meadowFarDraws++;
+            const Model *m = &meadow->chunks[lodOrder[0][k]].nearModel;
+            for (int sub = 0; sub < m->meshCount; sub++)
+                DrawMesh(m->meshes[sub], m->materials[m->meshMaterial[sub]], worldTransform);
+            s_natureRenderStats.meadowNearDraws++;
         }
-        else if (chunk->lodLevel == 1 && chunk->midReady)
+        for (int k = 0; k < lodCounts[1]; k++)
         {
-            DrawModel(chunk->midModel, worldOffset, 1.0f, WHITE);
+            const Model *m = &meadow->chunks[lodOrder[1][k]].midModel;
+            for (int sub = 0; sub < m->meshCount; sub++)
+                DrawMesh(m->meshes[sub], m->materials[m->meshMaterial[sub]], worldTransform);
             s_natureRenderStats.meadowMidDraws++;
         }
-        else
+        for (int k = 0; k < lodCounts[2]; k++)
         {
-            DrawModel(chunk->nearModel, worldOffset, 1.0f, WHITE);
-            s_natureRenderStats.meadowNearDraws++;
+            const Model *m = &meadow->chunks[lodOrder[2][k]].farModel;
+            for (int sub = 0; sub < m->meshCount; sub++)
+                DrawMesh(m->meshes[sub], m->materials[m->meshMaterial[sub]], worldTransform);
+            s_natureRenderStats.meadowFarDraws++;
         }
     }
 
@@ -1706,9 +1897,11 @@ void MapProp_DrawMeadowShadowCasters(MapMeadowSurface *meadow, Vector3 worldOffs
         !Nature_ShadowCasterTypeEnabled(false))
         return;
 
-    Vector3 sunDir = Vector3Normalize(Environment_GetSunDirection());
+    Vector3 sunDir = Nature_FastNormalize(Environment_GetSunDirection());
     if (fabsf(sunDir.y) > 0.98f)
         return;
+
+    Nature_RefreshFrustumCache();
 
     Shader shader = meadow->parametric ? NatureParametric_Shader(true) : NatureShadow_GetShader();
     Nature_BeginWindReceiverShader(shader);
@@ -1722,12 +1915,13 @@ void MapProp_DrawMeadowShadowCasters(MapMeadowSurface *meadow, Vector3 worldOffs
     Vector3 shadowFocus = EnvShadow_GetFocus();
     float halfExtent = EnvShadow_GetHalfExtent();
     float groundRadius = fmaxf(halfExtent, 8.0f) / fmaxf(fabsf(sunDir.y), 0.32f);
-    float qualityDistScale = (quality >= GFX_HIGH) ? 1.0f : 0.80f;
+    // Mobile/Medium: thu gọn bán kính đổ bóng động của cỏ để tránh quá tải tile binning & shadow overdraw
+    float qualityDistScale = (quality >= GFX_HIGH) ? 1.0f : 0.62f;
+    float sweepPad = (quality >= GFX_HIGH) ? 6.0f : 3.5f;
     float maxDist = fminf(meadow->shadowDistance * qualityDistScale + 4.0f, halfExtent + 4.0f);
     bool filterActive = Nature_ShadowCasterFilterActive();
-    // Dịch nhẹ tâm cầu kiểm tra Frustum theo hướng bóng đổ để các bụi cỏ sát rìa ngoài màn hình
-    // vẫn đổ bóng liền mạch vào trong khung hình mà không bị pop bóng khi quay camera.
     Vector3 shadowSweepOffset = {sunDir.x * 1.8f, 0.0f, sunDir.z * 1.8f};
+    Matrix worldTransform = MatrixTranslate(worldOffset.x, worldOffset.y, worldOffset.z);
 
     for (int i = 0; i < meadow->chunkCount; i++)
     {
@@ -1742,7 +1936,7 @@ void MapProp_DrawMeadowShadowCasters(MapMeadowSurface *meadow, Vector3 worldOffs
         if (distSq > limit * limit)
             continue;
         Vector3 sweptCenter = Vector3Add(center, shadowSweepOffset);
-        if (!Nature_IsChunkVisible(sweptCenter, chunk->radius + 6.0f))
+        if (!Nature_IsChunkVisibleFast(sweptCenter, chunk->radius + sweepPad))
             continue;
         if (!filterActive)
         {
@@ -1756,8 +1950,9 @@ void MapProp_DrawMeadowShadowCasters(MapMeadowSurface *meadow, Vector3 worldOffs
             s_natureRenderStats.meadowShadowDraws++;
             continue;
         }
-        // realShadowModel đã được gán sẵn NatureShadow_GetShader() khi khởi tạo
-        DrawModel(chunk->realShadowModel, worldOffset, 1.0f, WHITE);
+        const Model *sm = &chunk->realShadowModel;
+        for (int sub = 0; sub < sm->meshCount; sub++)
+            DrawMesh(sm->meshes[sub], sm->materials[sm->meshMaterial[sub]], worldTransform);
         s_natureRenderStats.meadowShadowDraws++;
     }
     if (meadow->parametric)

@@ -48,9 +48,11 @@ typedef struct
     int bandBase[3], bandCount[3];
     int canonicalBlades, tuftCount, idPixelCount;
     Vector3 *roots;
-    float *ranks, *idPixels;
+    float *ranks, *idFloats, *idPixels;
     unsigned char *visibleLods;
     unsigned int visibleFrames;
+    uint64_t lastUploadedHash;
+    int lastUploadedCount;
     bool prepared;
     Camera3D preparedCamera;
     Vector3 preparedForward;
@@ -70,11 +72,12 @@ static NatureMeadowView NatureParametric_View(const MapMeadowSurface *meadow)
 {
     int quality = GfxQuality_Get();
     float rangeScale = quality >= GFX_HIGH  ? 1.0f
-                       : quality == GFX_MED ? 0.92f
-                       : quality == GFX_LOW ? 0.85f
-                                            : 0.72f;
-    float lodScale = quality >= GFX_HIGH ? 1.0f : quality == GFX_MED ? 0.88f
-                                                                     : 0.78f;
+                       : quality == GFX_MED ? 0.90f
+                       : quality == GFX_LOW ? 0.78f
+                                            : 0.68f;
+    float lodScale = quality >= GFX_HIGH  ? 1.0f
+                     : quality == GFX_MED ? 0.85f
+                                          : 0.72f;
 
     float dx = camera.position.x - camera.target.x;
     float dz = camera.position.z - camera.target.z;
@@ -134,24 +137,28 @@ static bool NatureParametric_IsPrepared(const MapMeadowSurface *meadow, Vector3 
     const NatureParametricMeadow *data = meadow->parametric;
     if (!data || !data->prepared)
         return false;
+    if (!NatureParametric_SameVector(data->preparedCamera.position, camera.position) ||
+        !NatureParametric_SameVector(data->preparedCamera.target, camera.target) ||
+        !NatureParametric_SameVector(data->preparedCamera.up, camera.up) ||
+        !NatureParametric_SameVector(data->preparedOffset, offset) ||
+        fabsf(data->preparedCamera.fovy - camera.fovy) > 0.02f ||
+        data->preparedCamera.projection != camera.projection ||
+        fabsf(data->preparedBands.x - bands.x) > 0.02f ||
+        fabsf(data->preparedBands.y - bands.y) > 0.02f ||
+        fabsf(data->preparedBands.z - bands.z) > 0.02f ||
+        fabsf(data->preparedBands.w - bands.w) > 0.02f ||
+        data->preparedQuality != GfxQuality_Get() ||
+        fabsf(data->preparedDrawDistance - meadow->drawDistance) > 0.02f)
+    {
+        return false;
+    }
     Vector3 curForward = NatureParametric_CameraForward();
     float forwardDot = data->preparedForward.x * curForward.x +
                        data->preparedForward.y * curForward.y +
                        data->preparedForward.z * curForward.z;
-    return forwardDot >= NATURE_CAMERA_FORWARD_COS_EPSILON &&
-           NatureParametric_SameVector(data->preparedCamera.position, camera.position) &&
-           NatureParametric_SameVector(data->preparedCamera.target, camera.target) &&
-           NatureParametric_SameVector(data->preparedCamera.up, camera.up) &&
-           fabsf(data->preparedCamera.fovy - camera.fovy) <= 0.02f &&
-           data->preparedCamera.projection == camera.projection &&
-           NatureParametric_SameVector(data->preparedOffset, offset) &&
-           fabsf(data->preparedBands.x - bands.x) <= 0.02f &&
-           fabsf(data->preparedBands.y - bands.y) <= 0.02f &&
-           fabsf(data->preparedBands.z - bands.z) <= 0.02f &&
-           fabsf(data->preparedBands.w - bands.w) <= 0.02f &&
-           data->preparedQuality == GfxQuality_Get() &&
-           fabsf(data->preparedDrawDistance - meadow->drawDistance) <= 0.02f &&
-           data->preparedWidth == GetScreenWidth() &&
+    if (forwardDot < NATURE_CAMERA_FORWARD_COS_EPSILON)
+        return false;
+    return data->preparedWidth == GetScreenWidth() &&
            data->preparedHeight == GetScreenHeight();
 }
 
@@ -179,6 +186,7 @@ static int s_natureWindFieldDetailLoc[2] = {-1, -1};
 static const NatureParametricMeadow *s_activeParametricMeadow = NULL;
 static int s_activeParametricPass = -1;
 static int s_activeParametricLod = -1;
+static int s_activeParametricCompact = -1;
 static unsigned int s_activeParametricVao = 0;
 static Vector3 s_activeParametricOffset = {0};
 
@@ -401,6 +409,7 @@ static void NatureParametric_Destroy(MapMeadowSurface *meadow)
         s_activeParametricMeadow = NULL;
         s_activeParametricPass = -1;
         s_activeParametricLod = -1;
+        s_activeParametricCompact = -1;
     }
     if (data->parameters.id)
         UnloadTexture(data->parameters);
@@ -418,6 +427,7 @@ static void NatureParametric_Destroy(MapMeadowSurface *meadow)
     MemFree(data->ranges);
     MemFree(data->roots);
     MemFree(data->ranks);
+    MemFree(data->idFloats);
     MemFree(data->idPixels);
     MemFree(data->visibleLods);
     MemFree(data->drawOrder);
@@ -578,13 +588,16 @@ static bool NatureParametric_Create(MapMeadowSurface *meadow,
 
     data->roots = MemAlloc(count * sizeof(*data->roots));
     data->ranks = MemAlloc(count * sizeof(*data->ranks));
+    data->idFloats = MemAlloc(count * sizeof(*data->idFloats));
     data->visibleLods = MemAlloc(count * sizeof(*data->visibleLods));
     int idRows = (count + NATURE_VISIBLE_ID_ROW_TEXELS * 4 - 1) / (NATURE_VISIBLE_ID_ROW_TEXELS * 4);
     data->idPixelCount = idRows * NATURE_VISIBLE_ID_ROW_TEXELS * 4;
     data->idPixels = MemAlloc(data->idPixelCount * sizeof(float));
-    if (!data->roots || !data->ranks || !data->visibleLods || !data->idPixels)
+    if (!data->roots || !data->ranks || !data->idFloats || !data->visibleLods || !data->idPixels)
         goto failed;
     memset(data->idPixels, 0, data->idPixelCount * sizeof(float));
+    for (int id = 0; id < count; id++)
+        data->idFloats[id] = (float)id;
 
     Image idImage = {.data = data->idPixels, .width = NATURE_VISIBLE_ID_ROW_TEXELS, .height = idRows, .mipmaps = 1, .format = PIXELFORMAT_UNCOMPRESSED_R32G32B32A32};
     data->visibleIds = LoadTextureFromImage(idImage);
@@ -647,12 +660,6 @@ static bool NatureParametric_Create(MapMeadowSurface *meadow,
             .ready = true};
     }
 
-    // [TỐI ƯU 3-TIER HARDWARE LOD & SHADOW]:
-    // - LOD 0 (<11.5m): Đầy đủ số nhánh & đoạn cong Bézier.
-    // - LOD 1 (11.5m..22m): 3 nhánh x 2 đoạn cong Bézier.
-    // - LOD 2 (>22m..86m) & LOD 3 (Shadow Caster): Dùng 2 nhánh x 1 đoạn tam giác vát nhọn
-    //   kèm bù độ rộng lá, giúp giảm 66.7% số tam giác ở vùng xa và lượt đổ bóng, triệt tiêu
-    //   100% nghẽn Sub-pixel Quad Overdraw trên GPU!
     int blades[4] = {
         style.bladesPerClump,
         style.bladesPerClump >= 4 ? 3 : style.bladesPerClump,
@@ -697,10 +704,12 @@ static bool NatureParametric_Create(MapMeadowSurface *meadow,
             for (int t = start; t < end; t++)
             {
                 int i = sortedIndices[t];
+                NatureClumpContext clumpCtx;
+                Nature_PrepareClumpContext(&placements[i], style, &clumpCtx);
                 for (int blade = 0; blade < blades[lod]; blade++)
                 {
-                    NatureBladeDescriptor d = Nature_DescribeMeadowBlade(
-                        &placements[i], i, blade, style, blades[lod], segments[lod], widths[lod]);
+                    NatureBladeDescriptor d = Nature_DescribeMeadowBladeCtx(
+                        &placements[i], &clumpCtx, i, blade, style, blades[lod], segments[lod], widths[lod], true);
                     float *v = pixels + (size_t)cursor++ * 28;
                     const Vector4 values[7] = {
                         {d.p0.x, d.p0.y, d.p0.z, d.phase},
@@ -790,6 +799,7 @@ static void NatureParametric_BindReceivers(Shader shader, bool shadow)
     s_activeParametricMeadow = NULL;
     s_activeParametricPass = -1;
     s_activeParametricLod = -1;
+    s_activeParametricCompact = -1;
     s_activeParametricVao = 0;
 }
 
@@ -800,15 +810,83 @@ static void NatureParametric_EndReceivers(void)
         rlDisableVertexArray();
         s_activeParametricVao = 0;
     }
-    for (int unit = 0; unit <= 6; unit++)
+    static const int usedUnits[6] = {0, 1, 2, 4, 5, 6};
+    for (int i = 0; i < 6; i++)
     {
-        rlActiveTextureSlot(unit);
+        rlActiveTextureSlot(usedUnits[i]);
         rlDisableTexture();
     }
     rlActiveTextureSlot(0);
     s_activeParametricMeadow = NULL;
     s_activeParametricPass = -1;
     s_activeParametricLod = -1;
+    s_activeParametricCompact = -1;
+}
+
+static void NatureParametric_SortChunksFrontToBack(int *order, float *depth, int count)
+{
+    if (count <= 1)
+        return;
+    if (count <= 24)
+    {
+        for (int i = 1; i < count; i++)
+        {
+            int keyIdx = order[i];
+            float keyDepth = depth[i];
+            int j = i - 1;
+            while (j >= 0 && depth[j] > keyDepth)
+            {
+                order[j + 1] = order[j];
+                depth[j + 1] = depth[j];
+                j--;
+            }
+            order[j + 1] = keyIdx;
+            depth[j + 1] = keyDepth;
+        }
+        return;
+    }
+
+    static const int gaps[6] = {132, 57, 23, 10, 4, 1};
+    for (int g = 0; g < 6; g++)
+    {
+        int gap = gaps[g];
+        for (int i = gap; i < count; i++)
+        {
+            int keyIdx = order[i];
+            float keyDepth = depth[i];
+            int j = i;
+            while (j >= gap && depth[j - gap] > keyDepth)
+            {
+                order[j] = order[j - gap];
+                depth[j] = depth[j - gap];
+                j -= gap;
+            }
+            order[j] = keyIdx;
+            depth[j] = keyDepth;
+        }
+    }
+}
+
+static uint64_t NatureParametric_HashFloatBuffer(const float *buf, int count)
+{
+    uint64_t hash = 14695981039346656037ULL;
+    const uint32_t *words = (const uint32_t *)buf;
+    int i = 0;
+    for (; i + 3 < count; i += 4)
+    {
+        uint64_t pair0 = ((uint64_t)words[i + 1] << 32) | (uint64_t)words[i + 0];
+        uint64_t pair1 = ((uint64_t)words[i + 3] << 32) | (uint64_t)words[i + 2];
+        hash ^= pair0;
+        hash *= 1099511628211ULL;
+        hash ^= pair1;
+        hash *= 1099511628211ULL;
+    }
+    for (; i < count; i++)
+    {
+        hash ^= (uint64_t)words[i];
+        hash *= 1099511628211ULL;
+    }
+    return hash;
 }
 
 static void NatureParametric_PrepareVisible(MapMeadowSurface *meadow, Vector3 worldOffset, Vector4 bands)
@@ -839,18 +917,12 @@ static void NatureParametric_PrepareVisible(MapMeadowSurface *meadow, Vector3 wo
 
         float depth = localRel.x * forward.x + localRel.y * forward.y + localRel.z * forward.z;
         int slot = data->drawCount++;
-        if (data->nearFirst)
-        {
-            while (slot > 0 && data->drawDepth[slot - 1] > depth)
-            {
-                data->drawOrder[slot] = data->drawOrder[slot - 1];
-                data->drawDepth[slot] = data->drawDepth[slot - 1];
-                slot--;
-            }
-        }
         data->drawOrder[slot] = chunk;
         data->drawDepth[slot] = depth;
     }
+
+    if (data->nearFirst && data->drawCount > 1)
+        NatureParametric_SortChunksFrontToBack(data->drawOrder, data->drawDepth, data->drawCount);
 
     data->prepared = true;
     data->preparedCamera = camera;
@@ -866,11 +938,13 @@ static void NatureParametric_PrepareVisible(MapMeadowSurface *meadow, Vector3 wo
 
     NatureMeadowView view = NatureParametric_View(meadow);
     float fadeEnd = view.drawDistance;
+    bool hasFade = (fadeEnd > 0.0f);
     float fadeEndSq = fadeEnd * fadeEnd;
     float thinStart = fadeEnd * 0.72f;
     float thinStartSq = thinStart * thinStart;
     float invThinSpanSq = (fadeEndSq > thinStartSq + 1.0f) ? (1.0f / (fadeEndSq - thinStartSq)) : 0.0f;
 
+    bool hasLodBands = (bands.y > 0.0f);
     bool hasMidBand = (bands.x > 0.0f);
     float midLow = bands.x - bands.z;
     float midHigh = bands.x + bands.z;
@@ -898,23 +972,25 @@ static void NatureParametric_PrepareVisible(MapMeadowSurface *meadow, Vector3 wo
         int chunk = data->drawOrder[idx];
         NatureTuftRange *range = &data->ranges[chunk];
         float chunkDist = data->chunkDistCache[chunk];
-        float nearD = chunkDist - meadow->chunks[chunk].radius;
-        float farD = chunkDist + meadow->chunks[chunk].radius;
+        float radius = meadow->chunks[chunk].radius;
+        float nearD = chunkDist - radius;
+        float farD = chunkDist + radius;
 
-        if (fadeEnd > 0.0f && nearD >= fadeEnd)
+        if (hasFade && nearD >= fadeEnd)
             continue;
 
-        if ((bands.y <= 0.0f || farD <= lod0MaxD) && farD <= thinStart)
+        bool insideThinStart = (!hasFade || farD <= thinStart);
+        if ((!hasLodBands || farD <= lod0MaxD) && insideThinStart)
         {
             range->visibleCount[0] = range->count;
             totalLodCounts[0] += range->count;
         }
-        else if (hasMidBand && nearD >= lod1MinD && farD <= lod1MaxD && farD <= thinStart)
+        else if (hasMidBand && nearD >= lod1MinD && farD <= lod1MaxD && insideThinStart)
         {
             range->visibleCount[1] = range->count;
             totalLodCounts[1] += range->count;
         }
-        else if (nearD >= lod2MinD && farD <= thinStart)
+        else if (hasLodBands && nearD >= lod2MinD && insideThinStart)
         {
             range->visibleCount[2] = range->count;
             totalLodCounts[2] += range->count;
@@ -924,36 +1000,40 @@ static void NatureParametric_PrepareVisible(MapMeadowSurface *meadow, Vector3 wo
             int start = range->tuftOffset;
             int end = start + range->count;
             int c0 = 0, c1 = 0, c2 = 0;
+            const Vector3 *restrict roots = data->roots;
+            const float *restrict ranks = data->ranks;
+            unsigned char *restrict visLods = data->visibleLods;
+
             for (int id = start; id < end; id++)
             {
-                Vector3 root = data->roots[id];
-                float dx = root.x - localEye.x, dy = root.y - localEye.y, dz = root.z - localEye.z;
+                float dx = roots[id].x - localEye.x;
+                float dy = roots[id].y - localEye.y;
+                float dz = roots[id].z - localEye.z;
                 float d2 = dx * dx + dy * dy + dz * dz;
-                if (fadeEnd > 0.0f && d2 >= fadeEndSq)
+                if (hasFade && d2 >= fadeEndSq)
                 {
-                    data->visibleLods[id] = 3;
+                    visLods[id] = 3;
                     continue;
                 }
-                float rank = data->ranks[id];
-                // Tỉa mật độ xác suất mượt ở rìa xa (> 72% drawDistance) để giảm tới 35% số bụi cỏ sub-pixel
-                if (fadeEnd > 0.0f && d2 > thinStartSq)
+                float rank = ranks[id];
+                if (hasFade && d2 > thinStartSq)
                 {
                     float thinT = (d2 - thinStartSq) * invThinSpanSq;
                     float keepProb = 1.0f - thinT * 0.62f;
                     if (rank > keepProb)
                     {
-                        data->visibleLods[id] = 3;
+                        visLods[id] = 3;
                         continue;
                     }
                 }
-                int lod = (bands.y <= 0.0f)
+                int lod = !hasLodBands
                               ? 0
                               : NatureParametric_SelectLodFast(d2, rank, hasMidBand,
                                                                nearMinSq, farMinSq, farMaxSq,
                                                                midInnerMinSq, midInnerMaxSq,
                                                                midLow, invMidSpan,
                                                                farLow, invFarSpan);
-                data->visibleLods[id] = (unsigned char)lod;
+                visLods[id] = (unsigned char)lod;
                 if (lod == 0)
                     c0++;
                 else if (lod == 1)
@@ -978,6 +1058,9 @@ static void NatureParametric_PrepareVisible(MapMeadowSurface *meadow, Vector3 wo
     data->bandCount[2] = totalLodCounts[2];
 
     int writeHead[3] = {data->bandBase[0], data->bandBase[1], data->bandBase[2]};
+    const float *restrict idFloats = data->idFloats;
+    float *restrict idPixels = data->idPixels;
+    const unsigned char *restrict visLods = data->visibleLods;
 
     for (int idx = 0; idx < data->drawCount; idx++)
     {
@@ -990,40 +1073,36 @@ static void NatureParametric_PrepareVisible(MapMeadowSurface *meadow, Vector3 wo
         int n0 = range->visibleCount[0];
         int n1 = range->visibleCount[1];
         int n2 = range->visibleCount[2];
+        int chunkTotal = range->count;
         if ((n0 | n1 | n2) == 0)
             continue;
 
         int start = range->tuftOffset;
-        int end = start + range->count;
+        size_t copyBytes = (size_t)chunkTotal * sizeof(float);
 
-        if (n0 == range->count)
+        if (n0 == chunkTotal)
         {
-            int w0 = writeHead[0];
-            for (int id = start; id < end; id++)
-                data->idPixels[w0++] = (float)id;
-            writeHead[0] = w0;
+            memcpy(&idPixels[writeHead[0]], &idFloats[start], copyBytes);
+            writeHead[0] += chunkTotal;
         }
-        else if (n1 == range->count)
+        else if (n1 == chunkTotal)
         {
-            int w1 = writeHead[1];
-            for (int id = start; id < end; id++)
-                data->idPixels[w1++] = (float)id;
-            writeHead[1] = w1;
+            memcpy(&idPixels[writeHead[1]], &idFloats[start], copyBytes);
+            writeHead[1] += chunkTotal;
         }
-        else if (n2 == range->count)
+        else if (n2 == chunkTotal)
         {
-            int w2 = writeHead[2];
-            for (int id = start; id < end; id++)
-                data->idPixels[w2++] = (float)id;
-            writeHead[2] = w2;
+            memcpy(&idPixels[writeHead[2]], &idFloats[start], copyBytes);
+            writeHead[2] += chunkTotal;
         }
         else
         {
+            int end = start + chunkTotal;
             for (int id = start; id < end; id++)
             {
-                unsigned char lod = data->visibleLods[id];
+                unsigned char lod = visLods[id];
                 if (lod < 3)
-                    data->idPixels[writeHead[lod]++] = (float)id;
+                    idPixels[writeHead[lod]++] = idFloats[id];
             }
         }
     }
@@ -1031,11 +1110,21 @@ static void NatureParametric_PrepareVisible(MapMeadowSurface *meadow, Vector3 wo
     int totalSubmitted = totalLodCounts[0] + totalLodCounts[1] + totalLodCounts[2];
     if (totalSubmitted > 0)
     {
-        int activeRows = (totalSubmitted + NATURE_VISIBLE_ID_ROW_TEXELS * 4 - 1) / (NATURE_VISIBLE_ID_ROW_TEXELS * 4);
-        if (activeRows > data->visibleIds.height)
-            activeRows = data->visibleIds.height;
-        Rectangle updateRec = {0.0f, 0.0f, (float)NATURE_VISIBLE_ID_ROW_TEXELS, (float)activeRows};
-        UpdateTextureRec(data->visibleIds, updateRec, data->idPixels);
+        uint64_t newHash = NatureParametric_HashFloatBuffer(idPixels, totalSubmitted);
+        if (newHash != data->lastUploadedHash || totalSubmitted != data->lastUploadedCount)
+        {
+            int activeRows = (totalSubmitted + NATURE_VISIBLE_ID_ROW_TEXELS * 4 - 1) / (NATURE_VISIBLE_ID_ROW_TEXELS * 4);
+            if (activeRows > data->visibleIds.height)
+                activeRows = data->visibleIds.height;
+            Rectangle updateRec = {0.0f, 0.0f, (float)NATURE_VISIBLE_ID_ROW_TEXELS, (float)activeRows};
+            UpdateTextureRec(data->visibleIds, updateRec, idPixels);
+            data->lastUploadedHash = newHash;
+            data->lastUploadedCount = totalSubmitted;
+        }
+    }
+    else
+    {
+        data->lastUploadedCount = 0;
     }
 
     if (data->traceEnabled && data->visibleFrames++ % 120 == 0)
@@ -1121,9 +1210,11 @@ static void NatureParametric_DrawChunk(MapMeadowSurface *meadow, int chunk, int 
         s_activeParametricPass = pass;
         s_activeParametricOffset = worldOffset;
         s_activeParametricLod = -1;
+        s_activeParametricCompact = -1;
     }
 
-    if (s_activeParametricLod != lod)
+    int compactValue = compact ? 1 : 0;
+    if (s_activeParametricLod != lod || s_activeParametricCompact != compactValue)
     {
         if (pass == 0)
             SetShaderValue(shader, s_natureTuftLodLevelLoc, &lod, SHADER_UNIFORM_INT);
@@ -1134,10 +1225,10 @@ static void NatureParametric_DrawChunk(MapMeadowSurface *meadow, int chunk, int 
             int windDetail = (lod == 0 && GfxQuality_Get() >= GFX_MED) ? 1 : 0;
             SetShaderValue(shader, s_natureWindFieldDetailLoc[pass], &windDetail, SHADER_UNIFORM_INT);
         }
-        int compactValue = compact ? 1 : 0;
         if (s_natureCompactLoc[pass] >= 0)
             SetShaderValue(shader, s_natureCompactLoc[pass], &compactValue, SHADER_UNIFORM_INT);
         s_activeParametricLod = lod;
+        s_activeParametricCompact = compactValue;
     }
 
     if (!(data->canonical && compact))
@@ -1204,20 +1295,31 @@ static void NatureParametric_DrawBand(MapMeadowSurface *meadow, int lod, Shader 
         s_activeParametricMeadow = data;
         s_activeParametricPass = 0;
         s_activeParametricOffset = worldOffset;
+        s_activeParametricLod = -1;
+        s_activeParametricCompact = 1;
     }
 
-    SetShaderValue(shader, s_natureTuftLodLevelLoc, &lod, SHADER_UNIFORM_INT);
-    SetShaderValue(shader, s_natureBladeCountLoc[0], &mesh->blades, SHADER_UNIFORM_INT);
-    SetShaderValue(shader, s_natureGeometryLodLoc[0], &lod, SHADER_UNIFORM_INT);
-    if (s_natureWindFieldDetailLoc[0] >= 0)
+    if (s_activeParametricLod != lod || s_activeParametricCompact != 1)
     {
-        int windDetail = (lod == 0 && GfxQuality_Get() >= GFX_MED) ? 1 : 0;
-        SetShaderValue(shader, s_natureWindFieldDetailLoc[0], &windDetail, SHADER_UNIFORM_INT);
+        SetShaderValue(shader, s_natureTuftLodLevelLoc, &lod, SHADER_UNIFORM_INT);
+        SetShaderValue(shader, s_natureBladeCountLoc[0], &mesh->blades, SHADER_UNIFORM_INT);
+        SetShaderValue(shader, s_natureGeometryLodLoc[0], &lod, SHADER_UNIFORM_INT);
+        if (s_natureWindFieldDetailLoc[0] >= 0)
+        {
+            int windDetail = (lod == 0 && GfxQuality_Get() >= GFX_MED) ? 1 : 0;
+            SetShaderValue(shader, s_natureWindFieldDetailLoc[0], &windDetail, SHADER_UNIFORM_INT);
+        }
+        if (s_natureCompactLoc[0] >= 0 && s_activeParametricCompact != 1)
+        {
+            int compactValue = 1;
+            SetShaderValue(shader, s_natureCompactLoc[0], &compactValue, SHADER_UNIFORM_INT);
+        }
+        s_activeParametricLod = lod;
+        s_activeParametricCompact = 1;
     }
 
     int bandBase = data->bandBase[lod];
     SetShaderValue(shader, s_natureVisibleOffsetLoc, &bandBase, SHADER_UNIFORM_INT);
-    s_activeParametricLod = lod;
 
     if (s_activeParametricVao != mesh->vao)
     {

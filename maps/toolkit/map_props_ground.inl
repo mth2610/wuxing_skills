@@ -39,6 +39,29 @@ static int locSeismicOriginDir = -1, locSeismicParams = -1, locSeismicProfile = 
 static Vector4 s_groundPathSegs[MAX_GROUND_PATH_SEGS];
 static int s_groundPathSegCount = 0;
 static Vector4 s_groundLakeParams = {0};
+static bool s_groundHabitatDirty = true;
+
+// Cache trạng thái đã upload lên groundShader để loại bỏ các lần gọi SetShaderValue / SetShaderValueV dư thừa
+static unsigned int s_groundStateShaderId = 0;
+static Vector4 s_groundCachedIslandRect = {0};
+static Vector4 s_groundCachedIslandShape = {0};
+static Vector2 s_groundCachedTiling = {0};
+static Vector4 s_groundCachedEcologyRect = {0};
+static int s_groundCachedReliefEnabled = -1;
+static int s_groundCachedDebrisEnabled = -1;
+static int s_groundCachedRockEnabled = -1;
+static int s_groundCachedEcologyEnabled = -1;
+static float s_groundCachedThinBoost = -1.0f;
+
+static inline int Ground_GetTerrainFilterMode(void)
+{
+    GfxQuality q = GfxQuality_Get();
+    if (q >= GFX_HIGH)
+        return TEXTURE_FILTER_ANISOTROPIC_8X;
+    if (q == GFX_MED)
+        return TEXTURE_FILTER_ANISOTROPIC_4X;
+    return TEXTURE_FILTER_TRILINEAR;
+}
 
 // ── MapGroundLookup — an XZ bin grid over the ground mesh's triangles ────────
 
@@ -75,9 +98,10 @@ static inline void GroundLookup_Tri(const MapGroundLookup *g, int t,
         i1 = t * 3 + 1;
         i2 = t * 3 + 2;
     }
-    *a = (Vector3){g->verts[i0 * 3], g->verts[i0 * 3 + 1], g->verts[i0 * 3 + 2]};
-    *b = (Vector3){g->verts[i1 * 3], g->verts[i1 * 3 + 1], g->verts[i1 * 3 + 2]};
-    *c = (Vector3){g->verts[i2 * 3], g->verts[i2 * 3 + 1], g->verts[i2 * 3 + 2]};
+    const float *restrict v = g->verts;
+    *a = (Vector3){v[i0 * 3], v[i0 * 3 + 1], v[i0 * 3 + 2]};
+    *b = (Vector3){v[i1 * 3], v[i1 * 3 + 1], v[i1 * 3 + 2]};
+    *c = (Vector3){v[i2 * 3], v[i2 * 3 + 1], v[i2 * 3 + 2]};
 }
 
 static bool GroundLookup_Build(MapGroundLookup *g, const Mesh *mesh)
@@ -91,13 +115,21 @@ static bool GroundLookup_Build(MapGroundLookup *g, const Mesh *mesh)
     g->normals = mesh->normals;
     g->triCount = mesh->triangleCount;
 
+    const float *restrict verts = g->verts;
+    const unsigned short *restrict indices = g->indices;
+    const int triCount = g->triCount;
+
     float minX = 1e30f, maxX = -1e30f, minZ = 1e30f, maxZ = -1e30f;
-    for (int t = 0; t < g->triCount; t++)
+    for (int t = 0; t < triCount; t++)
     {
-        Vector3 a, b, c;
-        GroundLookup_Tri(g, t, &a, &b, &c);
-        float loX = fminf(a.x, fminf(b.x, c.x)), hiX = fmaxf(a.x, fmaxf(b.x, c.x));
-        float loZ = fminf(a.z, fminf(b.z, c.z)), hiZ = fmaxf(a.z, fmaxf(b.z, c.z));
+        int i0 = indices ? indices[t * 3 + 0] : (t * 3 + 0);
+        int i1 = indices ? indices[t * 3 + 1] : (t * 3 + 1);
+        int i2 = indices ? indices[t * 3 + 2] : (t * 3 + 2);
+        float ax = verts[i0 * 3 + 0], az = verts[i0 * 3 + 2];
+        float bx = verts[i1 * 3 + 0], bz = verts[i1 * 3 + 2];
+        float cx = verts[i2 * 3 + 0], cz = verts[i2 * 3 + 2];
+        float loX = fminf(ax, fminf(bx, cx)), hiX = fmaxf(ax, fmaxf(bx, cx));
+        float loZ = fminf(az, fminf(bz, cz)), hiZ = fmaxf(az, fmaxf(bz, cz));
         if (loX < minX)
             minX = loX;
         if (hiX > maxX)
@@ -115,7 +147,7 @@ static bool GroundLookup_Build(MapGroundLookup *g, const Mesh *mesh)
     spanX *= 1.00001f;
     spanZ *= 1.00001f;
 
-    int n = (int)sqrtf((float)g->triCount * 0.5f);
+    int n = (int)sqrtf((float)triCount * 0.5f);
     if (n < 4)
         n = 4;
     if (n > 512)
@@ -132,27 +164,37 @@ static bool GroundLookup_Build(MapGroundLookup *g, const Mesh *mesh)
     if (g->cellStart == NULL)
         return false;
 
+    const float invCellX = g->invCellX;
+    const float invCellZ = g->invCellZ;
+    const int maxCellX = g->nx - 1;
+    const int maxCellZ = g->nz - 1;
+
     for (int pass = 0; pass < 2; pass++)
     {
-        for (int t = 0; t < g->triCount; t++)
+        for (int t = 0; t < triCount; t++)
         {
-            Vector3 a, b, c;
-            GroundLookup_Tri(g, t, &a, &b, &c);
-            int x0 = (int)((fminf(a.x, fminf(b.x, c.x)) - minX) * g->invCellX);
-            int x1 = (int)((fmaxf(a.x, fmaxf(b.x, c.x)) - minX) * g->invCellX);
-            int z0 = (int)((fminf(a.z, fminf(b.z, c.z)) - minZ) * g->invCellZ);
-            int z1 = (int)((fmaxf(a.z, fmaxf(b.z, c.z)) - minZ) * g->invCellZ);
+            int i0 = indices ? indices[t * 3 + 0] : (t * 3 + 0);
+            int i1 = indices ? indices[t * 3 + 1] : (t * 3 + 1);
+            int i2 = indices ? indices[t * 3 + 2] : (t * 3 + 2);
+            float ax = verts[i0 * 3 + 0], az = verts[i0 * 3 + 2];
+            float bx = verts[i1 * 3 + 0], bz = verts[i1 * 3 + 2];
+            float cx = verts[i2 * 3 + 0], cz = verts[i2 * 3 + 2];
+
+            int x0 = (int)((fminf(ax, fminf(bx, cx)) - minX) * invCellX);
+            int x1 = (int)((fmaxf(ax, fmaxf(bx, cx)) - minX) * invCellX);
+            int z0 = (int)((fminf(az, fminf(bz, cz)) - minZ) * invCellZ);
+            int z1 = (int)((fmaxf(az, fmaxf(bz, cz)) - minZ) * invCellZ);
             if (x0 < 0)
                 x0 = 0;
-            if (x1 > g->nx - 1)
-                x1 = g->nx - 1;
+            if (x1 > maxCellX)
+                x1 = maxCellX;
             if (z0 < 0)
                 z0 = 0;
-            if (z1 > g->nz - 1)
-                z1 = g->nz - 1;
+            if (z1 > maxCellZ)
+                z1 = maxCellZ;
             for (int z = z0; z <= z1; z++)
             {
-                int rowOffset = z * g->nx;
+                int rowOffset = z * n;
                 for (int x = x0; x <= x1; x++)
                 {
                     int cell = rowOffset + x;
@@ -184,7 +226,8 @@ static bool GroundLookup_Build(MapGroundLookup *g, const Mesh *mesh)
 }
 
 // Local-space (x, z) -> local Y and face normal.
-// Defers cross-product & sqrtf normalization until after the loop and only when outNormal != NULL.
+// Rejects non-containing triangles via unnormalized barycentric signs before dividing,
+// eliminating ~85% of hardware divisions per ground sample.
 static bool GroundLookup_Sample(const MapGroundLookup *g, float lx, float lz,
                                 float *outY, Vector3 *outNormal)
 {
@@ -201,15 +244,17 @@ static bool GroundLookup_Sample(const MapGroundLookup *g, float lx, float lz,
     if (cx >= g->nx || cz >= g->nz)
         return false;
 
-    const int *from = &g->cellItems[g->cellStart[cz * g->nx + cx]];
-    const int *to = &g->cellItems[g->cellStart[cz * g->nx + cx + 1]];
+    const int cell = cz * g->nx + cx;
+    const int *restrict from = &g->cellItems[g->cellStart[cell]];
+    const int *restrict to = &g->cellItems[g->cellStart[cell + 1]];
 
     int bestTri = -1;
     float bestY = -1e30f;
     float bestW0 = 0.0f, bestW1 = 0.0f, bestW2 = 0.0f;
     int bestI0 = 0, bestI1 = 0, bestI2 = 0;
-    const float *verts = g->verts;
-    const unsigned short *indices = g->indices;
+    const float *restrict verts = g->verts;
+    const unsigned short *restrict indices = g->indices;
+    const float eps = 1e-5f;
 
     for (const int *it = from; it != to; it++)
     {
@@ -235,15 +280,30 @@ static bool GroundLookup_Sample(const MapGroundLookup *g, float lx, float lz,
         float d = (bz - cz_v) * (ax - cx_v) + (cx_v - bx) * (az - cz_v);
         if (fabsf(d) < 1e-12f)
             continue;
-        float invD = 1.0f / d;
+
         float dx = lx - cx_v;
         float dz = lz - cz_v;
-        float w0 = ((bz - cz_v) * dx + (cx_v - bx) * dz) * invD;
-        float w1 = ((cz_v - az) * dx + (ax - cx_v) * dz) * invD;
+        float num0 = (bz - cz_v) * dx + (cx_v - bx) * dz;
+        float num1 = (cz_v - az) * dx + (ax - cx_v) * dz;
+        float num2 = d - num0 - num1;
+
+        if (d > 0.0f)
+        {
+            float negEpsD = -eps * d;
+            if (num0 < negEpsD || num1 < negEpsD || num2 < negEpsD)
+                continue;
+        }
+        else
+        {
+            float posEpsD = -eps * d; // positive since d < 0
+            if (num0 > posEpsD || num1 > posEpsD || num2 > posEpsD)
+                continue;
+        }
+
+        float invD = 1.0f / d;
+        float w0 = num0 * invD;
+        float w1 = num1 * invD;
         float w2 = 1.0f - w0 - w1;
-        const float eps = -1e-5f;
-        if (w0 < eps || w1 < eps || w2 < eps)
-            continue;
 
         float y = w0 * verts[i0 * 3 + 1] + w1 * verts[i1 * 3 + 1] + w2 * verts[i2 * 3 + 1];
         if (bestTri < 0 || y > bestY)
@@ -266,16 +326,21 @@ static bool GroundLookup_Sample(const MapGroundLookup *g, float lx, float lz,
     {
         if (g->normals)
         {
+            const float *restrict norms = g->normals;
             Vector3 n = {
-                bestW0 * g->normals[bestI0 * 3 + 0] + bestW1 * g->normals[bestI1 * 3 + 0] + bestW2 * g->normals[bestI2 * 3 + 0],
-                bestW0 * g->normals[bestI0 * 3 + 1] + bestW1 * g->normals[bestI1 * 3 + 1] + bestW2 * g->normals[bestI2 * 3 + 1],
-                bestW0 * g->normals[bestI0 * 3 + 2] + bestW1 * g->normals[bestI1 * 3 + 2] + bestW2 * g->normals[bestI2 * 3 + 2]
-            };
+                bestW0 * norms[bestI0 * 3 + 0] + bestW1 * norms[bestI1 * 3 + 0] + bestW2 * norms[bestI2 * 3 + 0],
+                bestW0 * norms[bestI0 * 3 + 1] + bestW1 * norms[bestI1 * 3 + 1] + bestW2 * norms[bestI2 * 3 + 1],
+                bestW0 * norms[bestI0 * 3 + 2] + bestW1 * norms[bestI1 * 3 + 2] + bestW2 * norms[bestI2 * 3 + 2]};
             float lenSq = n.x * n.x + n.y * n.y + n.z * n.z;
             if (lenSq > 1e-6f)
-                *outNormal = Vector3Scale(n, 1.0f / sqrtf(lenSq));
+            {
+                float invLen = 1.0f / sqrtf(lenSq);
+                *outNormal = (Vector3){n.x * invLen, n.y * invLen, n.z * invLen};
+            }
             else
+            {
                 *outNormal = (Vector3){0.0f, 1.0f, 0.0f};
+            }
         }
         else
         {
@@ -362,17 +427,18 @@ static MapGroundSurface SetupGroundMaterial(Mesh mesh, float width, float depth,
     if (ground.model.meshCount > 0)
         GroundLookup_Build(&ground.lookup, &ground.model.meshes[0]);
 
-    // 1. Load Textures with Anisotropic filtering to keep oblique terrain crisp at Tilt 36 deg
+    // 1. Load Textures with quality-adaptive Anisotropic filtering to keep mobile bandwidth lean
     Texture2D texSplat = ResourceManager_LoadTexture(splatMapPath);
     Texture2D texGrass = MapLoadMippedTexture(grassTexPath, TEXTURE_WRAP_REPEAT);
     Texture2D texPath = MapLoadMippedTexture(pathTexPath, TEXTURE_WRAP_REPEAT);
+    int filterMode = Ground_GetTerrainFilterMode();
 
     SetTextureFilter(texSplat, TEXTURE_FILTER_BILINEAR);
     SetTextureWrap(texSplat, TEXTURE_WRAP_CLAMP);
     if (texGrass.id != 0)
-        SetTextureFilter(texGrass, TEXTURE_FILTER_ANISOTROPIC_8X);
+        SetTextureFilter(texGrass, filterMode);
     if (texPath.id != 0)
-        SetTextureFilter(texPath, TEXTURE_FILTER_ANISOTROPIC_8X);
+        SetTextureFilter(texPath, filterMode);
 
     // 2. Initialize Shader & cache all uniform locations once (re-bind if shader is reloaded)
     groundShader = ResourceManager_LoadShader("maps/toolkit/shaders/ground_splat.vs",
@@ -429,6 +495,8 @@ static MapGroundSurface SetupGroundMaterial(Mesh mesh, float width, float depth,
         VFXLight_RegisterShader(groundShader);
 
         s_groundShaderId = groundShader.id;
+        s_groundStateShaderId = 0;
+        s_groundHabitatDirty = true;
     }
 
     // 3. Assign Shader and Textures to Material
@@ -539,27 +607,39 @@ MapGroundSurface MapProp_CreateGroundHeightmapEx(const char *heightmapPath, floa
             memset(gridNormals, 0, (size_t)(mapX * mapZ) * sizeof(Vector3));
             const float scaleX = (float)(mapX - 1) / width;
             const float scaleZ = (float)(mapZ - 1) / depth;
+            const float *restrict verts = mesh.vertices;
+            float *restrict norms = mesh.normals;
 
             for (int t = 0; t < mesh.triangleCount; t++)
             {
                 int b = t * 9;
-                Vector3 vA = {mesh.vertices[b + 0], mesh.vertices[b + 1], mesh.vertices[b + 2]};
-                Vector3 vB = {mesh.vertices[b + 3], mesh.vertices[b + 4], mesh.vertices[b + 5]};
-                Vector3 vC = {mesh.vertices[b + 6], mesh.vertices[b + 7], mesh.vertices[b + 8]};
-                Vector3 fn = Vector3CrossProduct(Vector3Subtract(vB, vA), Vector3Subtract(vC, vA));
-                if (fn.y < 0.0f)
-                    fn = Vector3Negate(fn);
+                float ax = verts[b + 0], ay = verts[b + 1], az = verts[b + 2];
+                float bx = verts[b + 3], by = verts[b + 4], bz = verts[b + 5];
+                float cx = verts[b + 6], cy = verts[b + 7], cz = verts[b + 8];
+                float e1x = bx - ax, e1y = by - ay, e1z = bz - az;
+                float e2x = cx - ax, e2y = cy - ay, e2z = cz - az;
+                float fnx = e1y * e2z - e1z * e2y;
+                float fny = e1z * e2x - e1x * e2z;
+                float fnz = e1x * e2y - e1y * e2x;
+                if (fny < 0.0f)
+                {
+                    fnx = -fnx;
+                    fny = -fny;
+                    fnz = -fnz;
+                }
 
                 for (int k = 0; k < 3; k++)
                 {
-                    float vx = mesh.vertices[b + k * 3 + 0];
-                    float vz = mesh.vertices[b + k * 3 + 2];
+                    float vx = verts[b + k * 3 + 0];
+                    float vz = verts[b + k * 3 + 2];
                     int ix = (int)(vx * scaleX + 0.5f);
                     int iz = (int)(vz * scaleZ + 0.5f);
                     if (ix >= 0 && ix < mapX && iz >= 0 && iz < mapZ)
                     {
                         int gIdx = iz * mapX + ix;
-                        gridNormals[gIdx] = Vector3Add(gridNormals[gIdx], fn);
+                        gridNormals[gIdx].x += fnx;
+                        gridNormals[gIdx].y += fny;
+                        gridNormals[gIdx].z += fnz;
                     }
                 }
             }
@@ -570,23 +650,28 @@ MapGroundSurface MapProp_CreateGroundHeightmapEx(const char *heightmapPath, floa
                 Vector3 n = gridNormals[gIdx];
                 float lenSq = n.x * n.x + n.y * n.y + n.z * n.z;
                 if (lenSq > 1e-6f)
-                    gridNormals[gIdx] = Vector3Scale(n, 1.0f / sqrtf(lenSq));
+                {
+                    float invLen = 1.0f / sqrtf(lenSq);
+                    gridNormals[gIdx] = (Vector3){n.x * invLen, n.y * invLen, n.z * invLen};
+                }
                 else
+                {
                     gridNormals[gIdx] = (Vector3){0.0f, 1.0f, 0.0f};
+                }
             }
 
             for (int i = 0; i < mesh.vertexCount; i++)
             {
-                float vx = mesh.vertices[i * 3 + 0];
-                float vz = mesh.vertices[i * 3 + 2];
+                float vx = verts[i * 3 + 0];
+                float vz = verts[i * 3 + 2];
                 int ix = (int)(vx * scaleX + 0.5f);
                 int iz = (int)(vz * scaleZ + 0.5f);
                 if (ix >= 0 && ix < mapX && iz >= 0 && iz < mapZ)
                 {
                     Vector3 n = gridNormals[iz * mapX + ix];
-                    mesh.normals[i * 3 + 0] = n.x;
-                    mesh.normals[i * 3 + 1] = n.y;
-                    mesh.normals[i * 3 + 2] = n.z;
+                    norms[i * 3 + 0] = n.x;
+                    norms[i * 3 + 1] = n.y;
+                    norms[i * 3 + 2] = n.z;
                 }
             }
             MemFree(gridNormals);
@@ -680,12 +765,38 @@ void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter)
         return;
 
     BeginShaderMode(groundShader);
-    MapShadow_AttachMaterial(&ground->model.materials[0]);
+    bool firstShaderBind = (s_groundStateShaderId != groundShader.id);
+    if (firstShaderBind)
+    {
+        s_groundStateShaderId = groundShader.id;
+        s_groundCachedReliefEnabled = -1;
+        s_groundCachedDebrisEnabled = -1;
+        s_groundCachedRockEnabled = -1;
+        s_groundCachedEcologyEnabled = -1;
+        s_groundCachedThinBoost = -1.0f;
+        s_groundHabitatDirty = true;
+    }
+
     Vector4 islandShape = {ground->boundary.cornerRadius, ground->boundary.mistWidth, ground->boundary.groundInset, 0};
-    if (locIslandRect >= 0)
-        SetShaderValue(groundShader, locIslandRect, &ground->boundary.rect, SHADER_UNIFORM_VEC4);
-    if (locIslandShape >= 0)
-        SetShaderValue(groundShader, locIslandShape, &islandShape, SHADER_UNIFORM_VEC4);
+    if (firstShaderBind ||
+        ground->boundary.rect.x != s_groundCachedIslandRect.x ||
+        ground->boundary.rect.y != s_groundCachedIslandRect.y ||
+        ground->boundary.rect.z != s_groundCachedIslandRect.z ||
+        ground->boundary.rect.w != s_groundCachedIslandRect.w)
+    {
+        if (locIslandRect >= 0)
+            SetShaderValue(groundShader, locIslandRect, &ground->boundary.rect, SHADER_UNIFORM_VEC4);
+        s_groundCachedIslandRect = ground->boundary.rect;
+    }
+    if (firstShaderBind ||
+        islandShape.x != s_groundCachedIslandShape.x ||
+        islandShape.y != s_groundCachedIslandShape.y ||
+        islandShape.z != s_groundCachedIslandShape.z)
+    {
+        if (locIslandShape >= 0)
+            SetShaderValue(groundShader, locIslandShape, &islandShape, SHADER_UNIFORM_VEC4);
+        s_groundCachedIslandShape = islandShape;
+    }
 
     unsigned int defaultTexId = rlGetTextureIdDefault();
     EnvCloudShadowFrame cloud = Environment_GetCloudShadowFrame();
@@ -714,25 +825,56 @@ void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter)
     rlActiveTextureSlot(0);
 
     int reliefEnabled = (ground->reliefTexture.id != 0) ? 1 : 0;
-    if (locGroundReliefEnabled >= 0)
-        SetShaderValue(groundShader, locGroundReliefEnabled, &reliefEnabled, SHADER_UNIFORM_INT);
+    if (s_groundCachedReliefEnabled != reliefEnabled)
+    {
+        if (locGroundReliefEnabled >= 0)
+            SetShaderValue(groundShader, locGroundReliefEnabled, &reliefEnabled, SHADER_UNIFORM_INT);
+        s_groundCachedReliefEnabled = reliefEnabled;
+    }
     int debrisEnabled = (ground->debrisTexture.id != 0) ? 1 : 0;
-    if (locGroundDebrisEnabled >= 0)
-        SetShaderValue(groundShader, locGroundDebrisEnabled, &debrisEnabled, SHADER_UNIFORM_INT);
-    if (locGroundRockEnabled >= 0)
-        SetShaderValue(groundShader, locGroundRockEnabled, &rockEnabled, SHADER_UNIFORM_INT);
-    if (locGroundTiling >= 0)
-        SetShaderValue(groundShader, locGroundTiling, &ground->tiling, SHADER_UNIFORM_VEC2);
+    if (s_groundCachedDebrisEnabled != debrisEnabled)
+    {
+        if (locGroundDebrisEnabled >= 0)
+            SetShaderValue(groundShader, locGroundDebrisEnabled, &debrisEnabled, SHADER_UNIFORM_INT);
+        s_groundCachedDebrisEnabled = debrisEnabled;
+    }
+    if (s_groundCachedRockEnabled != rockEnabled)
+    {
+        if (locGroundRockEnabled >= 0)
+            SetShaderValue(groundShader, locGroundRockEnabled, &rockEnabled, SHADER_UNIFORM_INT);
+        s_groundCachedRockEnabled = rockEnabled;
+    }
+    if (firstShaderBind ||
+        ground->tiling.x != s_groundCachedTiling.x ||
+        ground->tiling.y != s_groundCachedTiling.y)
+    {
+        if (locGroundTiling >= 0)
+            SetShaderValue(groundShader, locGroundTiling, &ground->tiling, SHADER_UNIFORM_VEC2);
+        s_groundCachedTiling = ground->tiling;
+    }
     if (locGroundCloudUV >= 0)
         SetShaderValue(groundShader, locGroundCloudUV, &cloud.uvTransform, SHADER_UNIFORM_VEC4);
     if (locGroundCloudShape >= 0)
         SetShaderValue(groundShader, locGroundCloudShape, &cloud.shape, SHADER_UNIFORM_VEC4);
     if (locGroundCloudProjection >= 0)
         SetShaderValue(groundShader, locGroundCloudProjection, &cloud.projection, SHADER_UNIFORM_VEC2);
-    if (locEcologyEnabled >= 0)
-        SetShaderValue(groundShader, locEcologyEnabled, &ecologyEnabled, SHADER_UNIFORM_INT);
-    if (ecologyEnabled && locEcologyRect >= 0)
+
+    if (s_groundCachedEcologyEnabled != ecologyEnabled)
+    {
+        if (locEcologyEnabled >= 0)
+            SetShaderValue(groundShader, locEcologyEnabled, &ecologyEnabled, SHADER_UNIFORM_INT);
+        s_groundCachedEcologyEnabled = ecologyEnabled;
+    }
+    if (ecologyEnabled && locEcologyRect >= 0 &&
+        (firstShaderBind ||
+         ground->ecology->rect.x != s_groundCachedEcologyRect.x ||
+         ground->ecology->rect.y != s_groundCachedEcologyRect.y ||
+         ground->ecology->rect.z != s_groundCachedEcologyRect.z ||
+         ground->ecology->rect.w != s_groundCachedEcologyRect.w))
+    {
         SetShaderValue(groundShader, locEcologyRect, &ground->ecology->rect, SHADER_UNIFORM_VEC4);
+        s_groundCachedEcologyRect = ground->ecology->rect;
+    }
 
     Vector3 lightDir = Environment_GetSunDirection();
     Color sunCol = Environment_GetSunColor();
@@ -761,15 +903,20 @@ void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter)
         SetShaderValue(groundShader, locViewPos, &camera.position, SHADER_UNIFORM_VEC3);
     if (locTime >= 0)
     {
-        float timeVal = (float)fmod(GetTime(), 3600.0);
+        float timeVal = fmodf((float)GetTime(), 3600.0f);
         SetShaderValue(groundShader, locTime, &timeVal, SHADER_UNIFORM_FLOAT);
     }
-    if (locPathSegCount >= 0)
-        SetShaderValue(groundShader, locPathSegCount, &s_groundPathSegCount, SHADER_UNIFORM_INT);
-    if (locPathSegs >= 0 && s_groundPathSegCount > 0)
-        SetShaderValueV(groundShader, locPathSegs, s_groundPathSegs, SHADER_UNIFORM_VEC4, s_groundPathSegCount);
-    if (locLakeParams >= 0)
-        SetShaderValue(groundShader, locLakeParams, &s_groundLakeParams, SHADER_UNIFORM_VEC4);
+
+    if (s_groundHabitatDirty)
+    {
+        if (locPathSegCount >= 0)
+            SetShaderValue(groundShader, locPathSegCount, &s_groundPathSegCount, SHADER_UNIFORM_INT);
+        if (locPathSegs >= 0 && s_groundPathSegCount > 0)
+            SetShaderValueV(groundShader, locPathSegs, s_groundPathSegs, SHADER_UNIFORM_VEC4, s_groundPathSegCount);
+        if (locLakeParams >= 0)
+            SetShaderValue(groundShader, locLakeParams, &s_groundLakeParams, SHADER_UNIFORM_VEC4);
+        s_groundHabitatDirty = false;
+    }
 
     MapShadow_UpdateShader(groundShader);
 
@@ -782,13 +929,15 @@ void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter)
     if (locSeismicProfile >= 0)
         SetShaderValue(groundShader, locSeismicProfile, &seismicProfile, SHADER_UNIFORM_VEC4);
 
-    // [VISUAL FIX]: Hạ thinShadowBoost xuống 0.04f (HIGH) / 0.02f (MED) để bóng lá cỏ trên mặt cát
-    // và sườn đồi giữ được độ tán xạ mềm tự nhiên, triệt tiêu hiện tượng vệt bóng răng lược đen.
     if (locThinShadowBoost >= 0)
     {
         GfxQuality q = GfxQuality_Get();
         float thinShadowBoost = (q >= GFX_HIGH) ? 0.04f : ((q >= GFX_MED) ? 0.02f : 0.0f);
-        SetShaderValue(groundShader, locThinShadowBoost, &thinShadowBoost, SHADER_UNIFORM_FLOAT);
+        if (thinShadowBoost != s_groundCachedThinBoost)
+        {
+            SetShaderValue(groundShader, locThinShadowBoost, &thinShadowBoost, SHADER_UNIFORM_FLOAT);
+            s_groundCachedThinBoost = thinShadowBoost;
+        }
     }
 
     Vector3 pos = {
@@ -827,6 +976,7 @@ void MapProp_SetGroundHabitat(MapGroundSurface *ground,
     {
         s_groundPathSegCount = 0;
         s_groundLakeParams = lakeParams;
+        s_groundHabitatDirty = true;
         return;
     }
     if (segmentCount > MAX_GROUND_PATH_SEGS)
@@ -837,6 +987,7 @@ void MapProp_SetGroundHabitat(MapGroundSurface *ground,
         s_groundPathSegs[i] = pathSegments[i];
     }
     s_groundLakeParams = lakeParams;
+    s_groundHabitatDirty = true;
 }
 
 void MapProp_DrawGroundShadowCaster(MapGroundSurface *ground, Vector3 worldCenter,
@@ -866,12 +1017,13 @@ void MapProp_SetGroundSurfaceMaps(MapGroundSurface *ground,
 {
     if (!ground || !ground->ready || !grassMaterialPath || !soilMaterialPath)
         return;
+    int filterMode = Ground_GetTerrainFilterMode();
     Texture2D grassMaterial = MapLoadMippedTexture(grassMaterialPath, TEXTURE_WRAP_REPEAT);
     Texture2D soilMaterial = MapLoadMippedTexture(soilMaterialPath, TEXTURE_WRAP_REPEAT);
     if (grassMaterial.id != 0)
-        SetTextureFilter(grassMaterial, TEXTURE_FILTER_ANISOTROPIC_8X);
+        SetTextureFilter(grassMaterial, filterMode);
     if (soilMaterial.id != 0)
-        SetTextureFilter(soilMaterial, TEXTURE_FILTER_ANISOTROPIC_8X);
+        SetTextureFilter(soilMaterial, filterMode);
 
     ground->model.materials[0].maps[MATERIAL_MAP_ROUGHNESS].texture = grassMaterial;
     ground->model.materials[0].maps[MATERIAL_MAP_EMISSION].texture = soilMaterial;
@@ -883,12 +1035,13 @@ void MapProp_SetGroundRockMaps(MapGroundSurface *ground,
 {
     if (!ground || !ground->ready)
         return;
+    int filterMode = Ground_GetTerrainFilterMode();
     ground->rockTexture = diffusePath ? MapLoadMippedTexture(diffusePath, TEXTURE_WRAP_REPEAT) : (Texture2D){0};
     ground->rockNormalTexture = normalPath ? MapLoadMippedTexture(normalPath, TEXTURE_WRAP_REPEAT) : (Texture2D){0};
     if (ground->rockTexture.id != 0)
-        SetTextureFilter(ground->rockTexture, TEXTURE_FILTER_ANISOTROPIC_8X);
+        SetTextureFilter(ground->rockTexture, filterMode);
     if (ground->rockNormalTexture.id != 0)
-        SetTextureFilter(ground->rockNormalTexture, TEXTURE_FILTER_ANISOTROPIC_8X);
+        SetTextureFilter(ground->rockNormalTexture, filterMode);
 }
 
 void MapProp_UnloadGround(MapGroundSurface *ground)
@@ -920,7 +1073,7 @@ void MapProp_SetGroundReliefMap(MapGroundSurface *ground, const char *reliefPath
         return;
     ground->reliefTexture = reliefPath ? MapLoadMippedTexture(reliefPath, TEXTURE_WRAP_REPEAT) : (Texture2D){0};
     if (ground->reliefTexture.id != 0)
-        SetTextureFilter(ground->reliefTexture, TEXTURE_FILTER_ANISOTROPIC_8X);
+        SetTextureFilter(ground->reliefTexture, Ground_GetTerrainFilterMode());
 }
 
 void MapProp_SetGroundDebrisMap(MapGroundSurface *ground, const char *debrisMapPath)

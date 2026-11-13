@@ -34,12 +34,12 @@ static inline void TilePlaneUVs(Mesh *mesh, float worldWidth, float worldLength,
     const float invTile = 1.0f / tileSize;
     const float repeatU = worldWidth * invTile;
     const float repeatV = worldLength * invTile;
-    float *uv = mesh->texcoords;
+    float *restrict uv = mesh->texcoords;
     const int count = mesh->vertexCount;
-    for (int i = 0; i < count; i++)
+    for (int i = 0; i < count; i++, uv += 2)
     {
-        uv[i * 2 + 0] *= repeatU;
-        uv[i * 2 + 1] *= repeatV;
+        uv[0] *= repeatU;
+        uv[1] *= repeatV;
     }
 }
 
@@ -72,16 +72,17 @@ static inline float Nature_Hash01(unsigned int x)
     return (float)(Nature_HashU32(x) & 0x00ffffffu) * (1.0f / 16777216.0f);
 }
 
-// Tính đồng thời sin và cos với phép rút gọn miền [-pi/2, pi/2] và đa thức minimax bậc cao
-// giúp tăng tốc khởi tạo/cập nhật hàng trăm nghìn bụi cỏ mà vẫn giữ độ chính xác float32.
-static inline void Nature_FastSinCos(float angleRad, float *outSin, float *outCos)
+// Tính đồng thời sin và cos với phép rút gọn miền [-pi/2, pi/2] không gọi libm floorf()
+// và đa thức minimax bậc cao giúp tăng tốc khởi tạo/cập nhật hàng trăm nghìn prop.
+static inline void Nature_FastSinCos(float angleRad, float *restrict outSin, float *restrict outCos)
 {
     const float kInvPi = 0.31830988618379067f;
     const float kPiHi = 3.14159250259399414f;
     const float kPiLo = 1.5099579909783764e-7f;
 
-    float qf = floorf(angleRad * kInvPi + 0.5f);
-    int q = (int)qf;
+    float y = angleRad * kInvPi;
+    int q = (int)(y >= 0.0f ? (y + 0.5f) : (y - 0.5f));
+    float qf = (float)q;
     float x = (angleRad - qf * kPiHi) - qf * kPiLo;
     float x2 = x * x;
 
