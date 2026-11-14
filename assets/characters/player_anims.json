@@ -11,7 +11,7 @@
     "kick": ["kicking", "earth_heavy_kick"],
     "palm": ["palming", "earth_stomp_slam"],
     "sword_idle": ["idle", "loco_idle_sword"],
-    "sword_slash": ["sword_slash_horizontal", "sword_slash_backhand"],
+    "sword_slash": ["sword_slash_horizontal", "sword_slash_backhand", "metal_dash_slash"],
     "sword_parry": ["sword_parry"],
     "sword_block": ["sword_block"],
     "cast": ["casting", "earth_stomp_slam"],

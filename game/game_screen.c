@@ -534,7 +534,12 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
             if (castIdx >= 0)
             {
                 float castSecs = Skill_GetCastAnimSeconds(castIdx);
-                CharacterModel_TriggerAttackTimed(&player->anim, CHAR_ANIM_CAST, castSecs);
+                char animClip[64];
+                float animSecs = 0.0f;
+                if (Skill_ConsumeAnimTrigger(player->agentId, animClip, sizeof(animClip), &animSecs))
+                    CharacterModel_TriggerByName(&player->anim, animClip, animSecs);
+                else
+                    CharacterModel_TriggerAttackTimed(&player->anim, CHAR_ANIM_CAST, castSecs);
                 s_swingSlowTimer = castSecs * 0.6f; // free up before the anim tail
                 // Đợt A5: connected clients replay this cast as pure VFX.
                 Net_HostNotifyCast(player->agentId, castIdx, intent.aimPoint);

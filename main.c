@@ -1438,6 +1438,14 @@ int main(int argc, char **argv) {
             CastEnvironmentGuide(player.position, s_vfxPlayerYaw);
         }
 
+        {
+            char animClip[64];
+            float animSecs = 0.0f;
+            if (Skill_ConsumeAnimTrigger(player.agentId, animClip, sizeof(animClip), &animSecs)) {
+                CharacterModel_TriggerByName(&player.anim, animClip, animSecs);
+            }
+        }
+
         CharacterModel_Update(&player.anim, dt, moved);
 
         if (!renderVFXMode) {
@@ -1671,8 +1679,14 @@ int main(int argc, char **argv) {
         // skill's own registered duration, not a fixed number.
         if (CastSkill(uiState.activeSkillIndex, player.agentId, player.position,
                       mouseTarget3D, uiState.currentParams)) {
-          CharacterModel_TriggerAttackTimed(&player.anim, CHAR_ANIM_CAST,
-                                            Skill_GetCastAnimSeconds(uiState.activeSkillIndex));
+          char animClip[64];
+          float animSecs = 0.0f;
+          if (Skill_ConsumeAnimTrigger(player.agentId, animClip, sizeof(animClip), &animSecs)) {
+            CharacterModel_TriggerByName(&player.anim, animClip, animSecs);
+          } else {
+            CharacterModel_TriggerAttackTimed(&player.anim, CHAR_ANIM_CAST,
+                                              Skill_GetCastAnimSeconds(uiState.activeSkillIndex));
+          }
           Sandbox_FacePlayerToward(&player, mouseTarget3D); // quay về hướng đánh
         }
       }
@@ -1796,6 +1810,7 @@ int main(int argc, char **argv) {
             BeginShaderMode(EnvShadow_GetDepthShader());
             VC_GuidedEarth_DrawShadowPass();
             VC_EarthSpike_DrawShadowPass();
+            VC_MetalBlades_DrawShadowPass();
             LiquidFlow_DrawShadowPass();
             EndShaderMode();
         }

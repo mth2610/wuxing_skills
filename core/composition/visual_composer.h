@@ -2117,6 +2117,36 @@ int  VFX_Foliage_DetachInRadius(Vector3 center, float radius, Vector3 impulse);
 void VC_WoodFoliage_Update(float dt);
 void VC_WoodFoliage_Draw3D(Camera3D cam);
 
+// ── Metal Element: Flying Blade Array ────────────────────────────────────────
+typedef struct {
+    int     bladeCount;       // 1..12 blades in halo
+    float   bladeScale;       // uniform mesh scale (1.0 = ~0.95m blade)
+    float   haloRadius;       // radius of semi-circle behind caster (m)
+    float   haloHeight;       // center height above origin (m)
+    float   arcDeg;           // angular span of halo (deg)
+    float   emergeDuration;   // materialization time (s)
+    float   bladeSpeed;       // launch flight speed (m/s)
+    float   maxRange;         // max travel distance (m)
+    float   trailWidth;       // blade ribbon trail width (m)
+    float   autoLaunchDelay;  // >0 = auto-launch sequentially (for standalone fixtures)
+    float   autoLaunchGap;    // interval between auto-launches (s)
+    Vector3 autoTargetOffset; // target offset from origin when auto-launching
+    Color   bladeColor;       // dark forged-steel body color (for bright-bg darken%)
+    Color   emissionColor;    // cold-silver / ice-blue edge emission
+    float   emissionGain;     // HDR emission multiplier
+} VFX_MetalBladesConfig;
+
+VFX_MetalBladesConfig VFX_MetalBlades_DefaultConfig(void);
+int  VFX_ComposeMetalBlades(Vector3 origin, Vector3 forward, const VFX_MetalBladesConfig *cfg);
+void VFX_MetalBlades_SetOrigin(int handle, Vector3 origin, Vector3 forward);
+int  VFX_MetalBlades_LaunchNext(int handle, Vector3 targetPos);
+bool VFX_MetalBlades_GetBladeState(int handle, int bladeIdx, Vector3 *outPos, bool *outLaunched, bool *outActive);
+void VFX_MetalBlades_ImpactBlade(int handle, int bladeIdx, Vector3 impactPos);
+void VFX_MetalBlades_Kill(int handle);
+void VC_MetalBlades_Update(float dt);
+void VC_MetalBlades_Draw3D(Camera3D cam);
+void VC_MetalBlades_DrawShadowPass(void);
+
 // @gen:vc_declarations begin
 void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float time);
 void VFX_ComposeContactSpark(Vector3 pos, VC_MaterialId matId, float scale, float severity01);

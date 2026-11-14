@@ -6,6 +6,7 @@
 
 #include "skills/wood/leaf_whirlwind_skill/leaf_whirlwind_skill.h"
 #include "skills/water/glacial_cannon_skill/glacial_cannon_skill.h"
+#include "skills/metal/metal_blade_storm_skill/metal_blade_storm_skill.h"
 #include "skills/metal/volume_smoke_skill/volume_smoke_skill.h"
 #include "skills/taiji/core_test/core_test_skill.h"
 #include "skills/taiji/taiji_phong/taiji_phong_skill.h"
@@ -18,6 +19,7 @@
 static inline void RegisterGeneratedSkills(void) {
     RegisterSkill("LEAF_WHIRLWIND", ELEMENT_COLOR_WOOD, InitLeafWhirlwindSkill, CastLeafWhirlwindSkill, UpdateLeafWhirlwindSkill, DrawLeafWhirlwindSkill, UnloadLeafWhirlwindSkill);
     RegisterSkill("GLACIAL_CANNON", ELEMENT_COLOR_WATER, InitGlacialCannonSkill, CastGlacialCannonSkill, UpdateGlacialCannonSkill, DrawGlacialCannonSkill, UnloadGlacialCannonSkill);
+    RegisterSkill("METAL_BLADE_STORM", ELEMENT_COLOR_METAL, InitMetalBladeStormSkill, CastMetalBladeStormSkill, UpdateMetalBladeStormSkill, DrawMetalBladeStormSkill, UnloadMetalBladeStormSkill);
     RegisterSkill("VOLUME_SMOKE", ELEMENT_COLOR_METAL, InitVolumeSmokeSkill, CastVolumeSmokeSkill, UpdateVolumeSmokeSkill, DrawVolumeSmokeSkill, UnloadVolumeSmokeSkill);
     RegisterSkill("CORE_TEST", ELEMENT_COLOR_TAIJI, InitCoreTestSkill, CastCoreTestSkill, UpdateCoreTestSkill, DrawCoreTestSkill, UnloadCoreTestSkill);
     RegisterSkill("TAIJI_PHONG", ELEMENT_COLOR_TAIJI, InitTaijiPhongSkill, CastTaijiPhongSkill, UpdateTaijiPhongSkill, DrawTaijiPhongSkill, UnloadTaijiPhongSkill);

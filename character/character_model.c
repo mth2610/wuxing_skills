@@ -459,6 +459,7 @@ bool CharacterModel_TriggerByName(CharacterAnimState *state, const char *clipNam
     if (!state || !s_loaded || !clipName) return false;
     int animIdx = CharacterModel_FindAnimIndex(clipName);
     if (animIdx < 0) return false;
+    TraceLog(LOG_INFO, "CHARACTER_MODEL: TriggerByName \"%s\" -> idx=%d (%.2fs)", clipName, animIdx, seconds);
     return CharacterModel_TriggerByIndex(state, animIdx, seconds);
 }
 

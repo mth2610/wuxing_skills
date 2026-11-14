@@ -1501,7 +1501,7 @@ static const char* s_newFxNames[] = {
     "MOTION RIBBON TRAIL", "VACUUM CONVERGE", "VACUUM RING", "[TRAIL/FLOW] VOLUME TRAIL", "FISSURE STREAK", "STONE PILLAR",
     "GUIDED FIRE", "FIREBALL BURST", "BLACK HOLE", "ICE CRYSTAL", "WATER STREAM",
     "WOOD FLOWER", "WOOD LEAVES", "WOOD PETALS", "WOOD VINE", "GUIDED EARTH", "SEISMIC WAVE",
-    "GUIDED LIQUID", "WATER DRAGON", "TSUNAMI SWE",
+    "GUIDED LIQUID", "WATER DRAGON", "TSUNAMI SWE", "METAL BLADES",
 };
 // @gen:newfx_names end
 
@@ -1526,7 +1526,7 @@ static const int s_newFxCategories[] = {
     6, 1, 6, 6, 6, 6, 6, 6, 6, 6,
     6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
     4, 4, 0, 0, 5, 1, 1, 2, 2, 2,
-    2, 4, 4, 1, 1, 1,
+    2, 4, 4, 1, 1, 1, 3,
 };
 // @gen:newfx_categories end
 
@@ -3518,6 +3518,20 @@ void VFXTest_Draw3D(void)
                       }
                   } else {
                       s_tsunamiAutoTimer = 0.0f;
+                  }
+                  break;
+              }
+              case 56: {
+                  static float s_metalBladesAutoTimer = 0.0f;
+                  static int s_metalBladesHandle = -1;
+                  s_metalBladesAutoTimer += GetFrameTime();
+                  if (s_metalBladesHandle < 0 || s_metalBladesAutoTimer >= 2.2f) {
+                      s_metalBladesAutoTimer = 0.0f;
+                      VFX_MetalBladesConfig mcfg = VFX_MetalBlades_DefaultConfig();
+                      mcfg.autoLaunchDelay = 0.45f;
+                      mcfg.autoLaunchGap = 0.12f;
+                      mcfg.autoTargetOffset = (Vector3){ 5.5f, 0.85f, 1.5f };
+                      s_metalBladesHandle = VFX_ComposeMetalBlades(s_prefabStartPos, (Vector3){ 1.0f, 0.0f, 0.25f }, &mcfg);
                   }
                   break;
               }

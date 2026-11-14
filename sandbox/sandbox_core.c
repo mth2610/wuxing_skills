@@ -527,8 +527,14 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
                 // Animation cast chỉ phát khi CastSkill thật sự đi qua (không
                 // bị chặn bởi mana gate) — CastSkill trả bool cho đúng việc này.
                 if (CastSkill(skillIdx, player->agentId, player->position, enemy->position, uiState->currentParams)) {
-                    CharacterModel_TriggerAttackTimed(&player->anim, CHAR_ANIM_CAST,
-                                                      Skill_GetCastAnimSeconds(skillIdx));
+                    char animClip[64];
+                    float animSecs = 0.0f;
+                    if (Skill_ConsumeAnimTrigger(player->agentId, animClip, sizeof(animClip), &animSecs)) {
+                        CharacterModel_TriggerByName(&player->anim, animClip, animSecs);
+                    } else {
+                        CharacterModel_TriggerAttackTimed(&player->anim, CHAR_ANIM_CAST,
+                                                          Skill_GetCastAnimSeconds(skillIdx));
+                    }
                     Sandbox_FacePlayerToward(player, enemy->position); // quay về hướng đánh
                 }
             }
