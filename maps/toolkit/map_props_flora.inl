@@ -927,7 +927,7 @@ void MapProp_DrawFloraShadowCasters(MapFloraSystem *flora)
             MapProp_DrawCoLauFieldShadowCaster(
                 &flora->coLauField, offset, flora->time, flora->windDirection, 0.032f);
         }
-        if (flora->flowerFields && flora->flowerClusterCount > 0)
+        if (GfxQuality_Get() >= GFX_ULTRA && flora->flowerFields && flora->flowerClusterCount > 0)
         {
             MapProp_DrawFlowerFieldShadowCasterBatch(
                 flora->flowerFields, flora->flowerClusterCount, offset,

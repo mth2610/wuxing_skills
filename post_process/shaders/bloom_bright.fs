@@ -24,33 +24,36 @@ void main() {
     float bestRawBrightness = 0.0;
     float brightCount = 0.0;
 
-    // 9-tap (3x3) bilinear-assisted prefilter across the 4x4 source cell:
-    // preserves 1-pixel hot HDR emitters while blending bright neighbors to prevent
-    // sub-pixel hue/intensity snapping during camera movement.
-    for (int y = -1; y <= 1; ++y) {
-        float offsetY = float(y) * 1.15 * u_sourceTexelSize.y;
-        for (int x = -1; x <= 1; ++x) {
-            vec2 cellOffset = vec2(float(x) * 1.15 * u_sourceTexelSize.x, offsetY);
-            vec3 sampleColor = clamp(texture(texture0, fragTexCoord + cellOffset).rgb,
-                                     vec3(0.0), vec3(65000.0));
+    // 5-tap Karis cross (center + 4 diagonal bilinear taps across the 4x4 cell):
+    // preserves 1-pixel hot HDR emitters while cutting prefilter texture fetches by 44%.
+    const vec2 kOffsets[5] = vec2[5](
+        vec2( 0.00,  0.00),
+        vec2(-0.85, -0.85),
+        vec2( 0.85, -0.85),
+        vec2(-0.85,  0.85),
+        vec2( 0.85,  0.85)
+    );
+    for (int i = 0; i < 5; ++i) {
+        vec2 cellOffset = kOffsets[i] * u_sourceTexelSize;
+        vec3 sampleColor = clamp(texture(texture0, fragTexCoord + cellOffset).rgb,
+                                 vec3(0.0), vec3(65000.0));
 
-            float maxComp = max(sampleColor.r, max(sampleColor.g, sampleColor.b));
-            float luma = dot(sampleColor, vec3(0.2126, 0.7152, 0.0722));
-            float rawBrightness = mix(maxComp, luma, 0.2);
+        float maxComp = max(sampleColor.r, max(sampleColor.g, sampleColor.b));
+        float luma = dot(sampleColor, vec3(0.2126, 0.7152, 0.0722));
+        float rawBrightness = mix(maxComp, luma, 0.2);
 
-            if (rawBrightness > bestRawBrightness) {
-                bestRawBrightness = rawBrightness;
-                peakCol = sampleColor;
-            }
-
-            float tapExcess = max(0.0, rawBrightness - rawKneeFloor);
-            // Karis-style damping on accumulation so a single firefly doesn't skew hue
-            float tapWeight = tapExcess / (1.0 + rawBrightness * 0.25);
-            weightedCol += sampleColor * tapWeight;
-            weightSum += tapWeight;
-
-            brightCount += step(rawThreshold, rawBrightness);
+        if (rawBrightness > bestRawBrightness) {
+            bestRawBrightness = rawBrightness;
+            peakCol = sampleColor;
         }
+
+        float tapExcess = max(0.0, rawBrightness - rawKneeFloor);
+        // Karis-style damping on accumulation so a single firefly doesn't skew hue
+        float tapWeight = tapExcess / (1.0 + rawBrightness * 0.25);
+        weightedCol += sampleColor * tapWeight;
+        weightSum += tapWeight;
+
+        brightCount += step(rawThreshold, rawBrightness);
     }
 
     float brightness = bestRawBrightness * expVal;
@@ -64,7 +67,7 @@ void main() {
     vec3 avgBrightCol = (weightSum > 1e-5) ? (weightedCol / weightSum) : peakCol;
     vec3 col = mix(avgBrightCol, peakCol, 0.65);
 
-    float coverage = sqrt(max(brightCount * 0.111111, 0.0625));
+    float coverage = sqrt(max(brightCount * 0.20, 0.0625));
 
     soft = clamp(soft, 0.0, 2.0 * knee);
     soft = (soft * soft) / (4.0 * knee + 0.00001);

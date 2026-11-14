@@ -90,7 +90,7 @@ static NatureMeadowView NatureParametric_View(const MapMeadowSurface *meadow)
     float lodZoom = (zoom > 1.0f) ? sqrtf(zoom) : zoom;
     float scale = lodScale * lodZoom;
 
-    float focalOffset = fminf(focalDistanceXZ * 0.80f, 12.5f);
+    float focalOffset = fminf(focalDistanceXZ * 0.80f, 6.5f);
 
     NatureMeadowView view;
     view.lodScale = lodScale;

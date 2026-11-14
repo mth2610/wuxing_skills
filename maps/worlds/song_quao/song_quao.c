@@ -526,7 +526,7 @@ void InitSongQuaoMap(void)
         },
         // 16:30 Golden Hour (Primary Artistic Target - Raking Warm Sun & Jade Shadows)
         {
-            .ambientColor = {86, 112, 145, 255},
+            .ambientColor = {96, 122, 156, 255},
             .sunColor = {255, 202, 138, 255},
             .sunDirection = {0.58f, -0.285f, -0.76f},
             .shadowColor = {40, 58, 78, 140},
@@ -555,7 +555,7 @@ void InitSongQuaoMap(void)
     Environment_SetTimeOfDayPresets(kSongQuaoToD, kSongQuaoTimes, 4);
     Environment_SetTimeOfDay(0.6875f); // 16:30 default
     Environment_SetTimeOfDaySpeed(0.0f);
-    Environment_SetAmbientColor((Color){74, 98, 134, 255});
+    Environment_SetAmbientColor((Color){92, 118, 152, 255});
     Environment_SetSunColor((Color){255, 204, 142, 255});
     Environment_SetSunIntensity(2.10f);
     Environment_SetSunDirection(Vector3Normalize((Vector3){0.58f, -0.285f, -0.76f}));
@@ -564,12 +564,12 @@ void InitSongQuaoMap(void)
     PostFXMapProfile postProfile = {
         .enabled = true,
         .exposure = 1.02f,
-        .contrast = 1.12f,
-        .saturation = 1.02f,
-        .bloomIntensity = 0.20f,
-        .shadowTint = {0.90f, 0.94f, 1.04f},    // Cool jade-slate shadows
-        .highlightTint = {1.06f, 1.02f, 0.92f}, // Warm golden amber sun highlights
-        .bloomThreshold = 1.08f,                // Catches water glints, cloud crests & grass SSS
+        .contrast = 1.08f,
+        .saturation = 1.08f,
+        .bloomIntensity = 0.16f,
+        .shadowTint = {0.92f, 0.96f, 1.05f},    // Cool jade-slate shadows
+        .highlightTint = {1.06f, 1.01f, 0.91f}, // Warm golden amber sun highlights
+        .bloomThreshold = 1.12f,                // Catches water glints, cloud crests & grass SSS
         .bloomKnee = 0.42f,
         .hueRestore = 0.65f,                    // Filmic hue restore: prevents neon lime skew under ACES
     };
@@ -814,13 +814,13 @@ void InitSongQuaoMap(void)
         (MapFloraStyle){
             .grassRootColor = {32, 48, 22, 255},  // Sắc rêu mùn xanh ngọc trầm ấm ăn khớp nền đất
             .grassTipColor = {116, 154, 58, 255}, // Sắc ngọc bích xuân tươi sáng, ấm áp tự nhiên
-            .bladesPerClump = 6,
-            .bladeSegments = 4,
-            .bladeWidthScale = 0.102f,
-            .lodDistance = 24.0f,
-            .midLodDistance = 14.0f,
-            .drawDistance = 50.0f,
-            .shadowDistance = 22.0f,
+            .bladesPerClump = 5,
+            .bladeSegments = 3,
+            .bladeWidthScale = 0.112f,
+            .lodDistance = 17.5f,
+            .midLodDistance = 9.5f,
+            .drawDistance = 38.0f,
+            .shadowDistance = 12.0f,
             .grassState = MAP_GRASS_STATE_LUSH,
             .reedRootColor = {20, 32, 16, 255},
             .reedTipColor = {96, 134, 54, 255},

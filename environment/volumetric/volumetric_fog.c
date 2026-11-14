@@ -313,7 +313,7 @@ void VolumetricFog_Render(Camera3D camera) {
                                    Environment_GetSunIntensity());
     Vector3 fogColor = ColorToV3(atmos.color);
 
-    int stepCount = (tier >= GFX_HIGH) ? 20 : 14;
+    int stepCount = (tier >= GFX_ULTRA) ? 18 : ((tier >= GFX_HIGH) ? 10 : 8);
     float maxDist = (atmos.end > 0.0f) ? atmos.end : 120.0f;
     float fogStart = VolumetricFog_EffectiveStart(
         atmos.start, Vector3Distance(camera.position, camera.target));

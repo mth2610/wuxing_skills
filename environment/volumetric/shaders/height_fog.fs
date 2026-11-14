@@ -114,10 +114,16 @@ void main() {
         }
     }
 
-    // Distant aerial perspective boost for distant terrain and sky horizon
-    if (isSky || rayDist > 35.0) {
-        float distantBlend = smoothstep(30.0, u_maxDist, rayDist);
-        opticalDepth += distantBlend * u_fogDensity * 0.40;
+    // Distant aerial perspective boost for distant terrain and sky horizon (14m..maxDist)
+    if (isSky || rayDist > 14.0) {
+        float distantBlend = smoothstep(14.0, u_maxDist, rayDist);
+        opticalDepth += distantBlend * u_fogDensity * 0.65;
+    }
+
+    // Subtle low-altitude river-valley mist veil along low water banks
+    if (endPos.y < 1.8 && rayDist > 8.0) {
+        float valleyFactor = smoothstep(1.8, -0.4, endPos.y) * smoothstep(8.0, 32.0, rayDist);
+        opticalDepth += valleyFactor * u_fogDensity * 0.45;
     }
 
     // Distant profiles share the volumetric renderer's receiver footprint.
@@ -137,11 +143,12 @@ void main() {
         return;
     }
 
-    // 4. In-scattered sunlight & Mie forward-scattering
+    // 4. In-scattered sunlight & Mie forward-scattering + golden-hour aerial sun glow
     vec3 sunToLight = normalize(-u_sunDir);
     float cosTheta = clamp(dot(rayDir, sunToLight), -1.0, 1.0);
     float miePhase = HenyeyGreenstein(cosTheta, clamp(u_mieAnisotropy, 0.4, 0.85));
-    vec3 directSun = u_sunColor * (miePhase * u_godRayIntensity * 1.6);
+    float forwardGlow = pow(max(cosTheta, 0.0), 6.0) * smoothstep(18.0, 90.0, rayDist);
+    vec3 directSun = u_sunColor * (miePhase * u_godRayIntensity * 1.6 + forwardGlow * 0.14);
 
     // Directional aerial perspective: cool slate-blue Rayleigh backscatter vs warm apricot solar forward scatter
     vec3 antiSunColor = mix(u_fogColor, vec3(0.68, 0.78, 0.90) * dot(u_fogColor, vec3(0.33333)), 0.42);

@@ -530,6 +530,10 @@ void main()
     vec3 skyHorizon = mix(u_ambientColor * 1.32 + vec3(0.10, 0.12, 0.14),
                           effectiveLight * 0.68, 0.24 + 0.34 * sunAzimuth * sunAzimuth);
     vec3 reflectedSky = mix(skyHorizon, skyZenith, skyAngle);
+    // Analytical hillside & riparian bank reflection near low grazing reflection angles
+    float bankSilhouette = (1.0 - smoothstep(0.01, 0.20, max(reflectDir.y, 0.0))) * smoothstep(-0.15, 0.05, reflectDir.y);
+    vec3 bankColor = mix(vec3(0.11, 0.17, 0.09), vec3(0.24, 0.26, 0.13), sunAzimuth) * (0.75 + u_ambientColor * 0.35);
+    reflectedSky = mix(reflectedSky, bankColor, bankSilhouette * 0.46);
     if (u_rain > 0.01) {
         reflectedSky = mix(reflectedSky, vec3(0.24, 0.32, 0.38), min(u_rain, 1.0) * 0.32);
     }
@@ -563,10 +567,10 @@ void main()
     float glintSharp = nh128 * nh128; // nh256 sharp specular crest
     float waveSlopeEnergy = clamp(sqrt(slopeLenSq) * 14.0, 0.14, 1.0);
     float glintMid = (nh96 * 0.24 + nh64 * 0.10) * waveSlopeEnergy;
-    float glintUltra = (nh64 * 0.35 + glintSharp * 3.2);
+    float glintUltra = (nh64 * 0.35 + glintSharp * (1.2 + 2.0 * detailDistFade));
 
     // Soft-knee highlight compression so golden-hour water glints sparkle without clipping white
-    vec3 rawGlint = effectiveLight * (glintUltra * 1.65 + glintMid * 0.52) * (0.20 + fresnel * 0.80) * detailDistFade;
+    vec3 rawGlint = effectiveLight * (glintUltra * 1.45 + glintMid * 0.52) * (0.20 + fresnel * 0.80) * (0.35 + 0.65 * detailDistFade);
     vec3 sunGlint = rawGlint / (vec3(1.0) + rawGlint * 0.45);
     float disturbance = clamp(length(interactSlope) * 2.2, 0.0, 1.0);
     vec3 waveReflection = reflectedSky * (nh12 * disturbance * 0.34);
@@ -631,8 +635,8 @@ void main()
     if (alpha < 0.002) discard;
 
     // ── 9. ENERGY-CONSERVING COMPOSITION ─────────────────────────────────────
-    vec3 shallowTint = mix(u_shallowColor, vec3(0.26, 0.70, 0.64), 0.45);
-    vec3 deepTint    = mix(u_deepColor,    vec3(0.06, 0.32, 0.40), 0.50);
+    vec3 shallowTint = mix(u_shallowColor, vec3(0.22, 0.46, 0.40), 0.40);
+    vec3 deepTint    = mix(u_deepColor,    vec3(0.05, 0.19, 0.22), 0.45);
 
     vec3 depthBlend = clamp(mix(vec3(1.0 - smoothstep(0.06, 0.95, waterDepth)), transmittance, 0.68), 0.0, 1.0);
     vec3 waterVolumeColor = mix(deepTint, shallowTint, depthBlend);

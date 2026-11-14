@@ -170,7 +170,9 @@ void main()
     vec3 sssLight = sssTint * u_lightColor * (sssFactor * mix(0.45, 1.0, shadowVis));
     vec3 rimLight = mix(albedo, vec3(1.0, 0.97, 0.90), 0.5) * u_lightColor * (fresnel * 0.32 * rimStrength * petalShadow);
     vec3 specLight = u_lightColor * (spec * petalShadow);
-    vec3 ambientLight = (albedo * skyTint + groundBounce) * v_ao * mix(0.68, 1.0, shadowVis);
+    float baseContactAO = mix(0.62, 1.0, smoothstep(0.0, 0.45, t));
+    vec3 ambientLight = (albedo * skyTint + groundBounce) * (v_ao * baseContactAO) * mix(0.68, 1.0, shadowVis);
+    directLight *= mix(0.75, 1.0, smoothstep(0.0, 0.35, t));
 
     vec3 lit = ambientLight + directLight + sssLight + rimLight + specLight;
     if (distSq < 1225.0) {

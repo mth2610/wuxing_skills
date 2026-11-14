@@ -152,7 +152,7 @@ static void ShadowQualitySizes(int quality, int *dynamicSize, int *staticSize)
        still resolve finer than the 1280x720 screen does. WUXING_SHADOW_RES still
        overrides for A/B. See environment/docs/LANDMINES.md ("the depth
        attachment was never the cost"). */
-    *dynamicSize = quality < 3 ? 1024 : 2048;
+    *dynamicSize = (quality >= 3) ? 2048 : ((quality >= 2) ? 768 : 512);
     *staticSize = quality < 2 ? 512 : 1024;
     if (s_env.dynamicRes > 0)
         *dynamicSize = s_env.dynamicRes;

@@ -35,7 +35,13 @@ void main()
         shadowVis *= cloudVis;
     }
 
-    vec3 lit = v_color * mix(0.55, 1.0, shadowVis);
+    // Mie backlit golden-hour silk rim on Cỏ Lau plumes
+    vec3 viewDir = normalize(v_worldPos - u_viewPos);
+    float mieDot = max(dot(viewDir, -L), 0.0);
+    float mie2 = mieDot * mieDot;
+    vec3 backlitSilk = u_lightColor * (mie2 * mie2 * 0.42 * v_strandUV.y);
+
+    vec3 lit = v_color * mix(0.58, 1.0, shadowVis) + backlitSilk * mix(0.35, 1.0, shadowVis);
     if (distSq < 900.0) {
         lit += VFXLights_Accumulate(v_worldPos, N, lit * 0.4);
     }

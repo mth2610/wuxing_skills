@@ -900,9 +900,9 @@ int main(int argc, char **argv) {
     {
         s_lastScaledQuality = resolvedQuality;
         float targetScale = (resolvedQuality >= GFX_ULTRA) ? 1.00f :
-                            (resolvedQuality >= GFX_HIGH)  ? 0.92f :
-                            (resolvedQuality >= GFX_MED)   ? 0.85f :
-                            (resolvedQuality >= GFX_LOW)   ? 0.78f : 0.85f;
+                            (resolvedQuality >= GFX_HIGH)  ? 0.85f :
+                            (resolvedQuality >= GFX_MED)   ? 0.80f :
+                            (resolvedQuality >= GFX_LOW)   ? 0.75f : 0.85f;
         RenderScale_SetScale(targetScale);
     }
     TimeFX_SetRawDelta(rawDt);
@@ -2039,19 +2039,7 @@ int main(int argc, char **argv) {
     if (benchmarkVisible) profileTime[8] = GetTime();
     PASS_MARK("exposure");
 
-    PostFXConfig scenePostFX = postFXConfig;
-    const char *activeMapName = MapManager_GetName(MapManager_GetActiveIndex());
-    if (activeMapName && strcmp(activeMapName, "SONG_QUAO") == 0) {
-        scenePostFX.saturation = 1.12f;
-        scenePostFX.contrast = 1.04f;
-        scenePostFX.bloomThreshold = 1.15f;
-        scenePostFX.bloomIntensity = 0.16f;
-        scenePostFX.vignetteRadius = 1.12f;
-        scenePostFX.vignetteSoftness = 0.42f;
-        scenePostFX.exposure = 1.02f;
-        scenePostFX.lutEnabled = true;
-    }
-    PostFX_Draw(&scenePostFX);
+    PostFX_Draw(&postFXConfig);
     if (benchmarkVisible) profileTime[9] = GetTime();
     PASS_MARK("post");
     /* Chứng: CÙNG dải màu đó, tính bằng CPU qua đường cong ACES per-channel, vẽ

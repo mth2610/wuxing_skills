@@ -7,8 +7,8 @@
 // Kajiya-Kay fiber specular, Frustum + Early-Z sorting, and lightweight shadow pass.
 // ============================================================================
 
-#define CO_LAU_HIGH_STRANDS 100
-#define CO_LAU_LOW_STRANDS 44
+#define CO_LAU_HIGH_STRANDS 56
+#define CO_LAU_LOW_STRANDS 24
 #define CO_LAU_SEGMENTS 2
 #define CO_LAU_HIGH_CYL_FACETS 4
 #define CO_LAU_HIGH_CYL_RINGS 3

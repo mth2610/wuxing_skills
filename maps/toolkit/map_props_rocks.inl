@@ -1252,10 +1252,19 @@ void MapProp_DrawRockSystemShadowCasters(MapRockSystem *sys, Shader depthShader)
         }
     }
 
+    Vector3 focus = EnvShadow_GetFocus();
+    float maxShadowDistSq = 28.0f * 28.0f;
     Vector3 rotAxis = {0.0f, 1.0f, 0.0f};
     for (int i = 0; i < sys->count; i++)
     {
         const MapRockItem *p = &sys->items[i];
+        if (p->archetype == MAP_ROCK_SCREE && p->radiusScale < 0.35f)
+            continue;
+        float dx = p->position.x - focus.x;
+        float dz = p->position.z - focus.z;
+        float pad = p->radiusScale * 2.0f;
+        if (dx * dx + dz * dz > (28.0f + pad) * (28.0f + pad))
+            continue;
         const MapRockSet *set = Rock_ResolveArchetypeSet(sys, p->archetype);
         if (!set->ready || set->model.materialCount < 1)
             continue;
@@ -1346,31 +1355,9 @@ void MapProp_PopulateRockItems(MapRockSystem *sys, const MapGroundSurface *groun
         float heightScale = item->heightScale;
         float radiusScale = item->radiusScale;
 
-        float waterSurfaceY = 0.0f, waterDepth = 0.0f;
-        if (item->archetype == MAP_ROCK_RIVER_STONE &&
-            MapManager_GetWaterInfoAt(item->position.x, item->position.z, &waterSurfaceY, &waterDepth) &&
-            waterDepth > 0.04f)
-        {
-            float emergeOffset = 0.10f + fminf(0.06f, item->radiusScale * 0.08f);
-            float targetTopY = waterSurfaceY + emergeOffset;
-            float bedY = pos.y;
-            float neededSpan = targetTopY - bedY + 0.12f;
-            float minHeightScale = neededSpan * (1.0f / 1.03f);
-            if (heightScale < minHeightScale)
-            {
-                heightScale = minHeightScale;
-            }
-            if (heightScale > item->heightScale * 1.15f)
-            {
-                // Preserve natural rock aspect ratio without blowing up horizontal radius
-                radiusScale = item->radiusScale * (1.0f + (heightScale / item->heightScale - 1.0f) * 0.25f);
-            }
-            pos.y = targetTopY - heightScale * 0.62f;
-        }
-        else
-        {
-            pos.y -= sinkOffset;
-        }
+        // Let river stones sit naturally on the riverbed rather than stretching vertically
+        // into unnatural dome halos above deep water.
+        pos.y -= sinkOffset;
 
         MapProp_AddRockItem(sys, pos, radiusScale, heightScale, item->rotationDeg, item->archetype);
     }

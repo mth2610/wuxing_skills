@@ -109,8 +109,8 @@ void main()
 
     vec3 viewVec = viewPos - fragWorldPos;
     float camDistSqXZ = dot(viewVec.xz, viewVec.xz);
-    bool nearDualScale = (camDistSqXZ < 289.0);
-    float dualScaleFade = 1.0 - smoothstep(196.0, 289.0, camDistSqXZ);
+    bool nearDualScale = (camDistSqXZ < 225.0);
+    float dualScaleFade = 1.0 - smoothstep(144.0, 225.0, camDistSqXZ);
 
     // ---- 3. Distance to Path & Continuous 16-bit Shoreline ----
     vec4 ecology = vec4(1.0, 0.6, 0.0, 0.5);
@@ -281,7 +281,7 @@ void main()
     vec2 litterClasses = vec2(0.5);
     float reliefShadow = 1.0;
 
-    if (soilPossible && u_groundReliefEnabled != 0 && detailResolve > 0.10 && camDistSqXZ < 900.0) {
+    if (soilPossible && u_groundReliefEnabled != 0 && detailResolve > 0.10 && camDistSqXZ < 400.0) {
         float combinedSoil = weights.y + weights.w;
         float dominantWeight = max(max(weights.x, combinedSoil), weights.z);
         bool boundary = dominantWeight < 0.96;
@@ -327,8 +327,8 @@ void main()
                                           vec2(uvDy.y, -uvDy.x) * 0.38).rgb;
             blendedGrass = mix(colorGrass.rgb, broadGrass, 0.28 * dualScaleFade);
         }
-        if (camDistSqXZ < 1225.0) {
-            float grassMatFade = 1.0 - smoothstep(900.0, 1225.0, camDistSqXZ);
+        if (camDistSqXZ < 400.0) {
+            float grassMatFade = 1.0 - smoothstep(225.0, 400.0, camDistSqXZ);
             vec4 sampledGrassMat = textureGrad(texGrassMaterial, tiledUV, uvDx, uvDy);
             grassMaterial = mix(grassMaterial, sampledGrassMat, grassMatFade);
         }
@@ -609,10 +609,10 @@ void main()
             float gravelAO = 1.0 - pebbleCrevice * 0.22 * shingleBar;
             vec3 riverbedBed = mix(sandBase, pebbleMineral, gravelHighlight * 0.72 * shingleBar) * gravelAO;
 
-            if (camDistSqXZ < 900.0) {
+            if (camDistSqXZ < 400.0) {
                 float cosP1 = cos(sandPhase1);
                 float cosP2 = cos(sandPhase2);
-                vec2 rippleNorm = clamp(vec2(cosP1 + cosP2 * 0.6, cosP1 - cosP2 * 0.5) * 0.048, vec2(-0.22), vec2(-0.22));
+                vec2 rippleNorm = clamp(vec2(cosP1 + cosP2 * 0.6, cosP1 - cosP2 * 0.5) * 0.048, vec2(-0.22), vec2(0.22));
 
                 vec4 gravelMat = textureGrad(texSoilMaterial, gravelUV, grDx, grDy);
                 vec2 gNorm = (gravelMat.rg * 2.0 - 1.0);
@@ -712,8 +712,8 @@ void main()
 
     // ---- 10. Tangent Frame & Specular AA ----
     vec4 soilMaterial = vec4(0.5, 0.5, 1.0, 0.8);
-    if (hasSoil && camDistSqXZ < 1225.0) {
-        float soilMatFade = 1.0 - smoothstep(900.0, 1225.0, camDistSqXZ);
+    if (hasSoil && camDistSqXZ < 400.0) {
+        float soilMatFade = 1.0 - smoothstep(225.0, 400.0, camDistSqXZ);
         vec4 sampledSoilMat = textureGrad(texSoilMaterial, tiledUV * 0.85, uvDx * 0.85, uvDy * 0.85);
         soilMaterial = mix(soilMaterial, sampledSoilMat, soilMatFade);
     }
@@ -747,9 +747,13 @@ void main()
     float roughness = mix(grassMaterial.a, soilMaterial.a, soilWeight);
     roughness = mix(roughness, 0.78, (wDrySoil + wPath) * 0.80);
     roughness = mix(roughness, clamp(0.72 + cliffRoughnessMod, 0.45, 0.92), wCliff * 0.85);
-    float riparianRoughness = mix(0.78, 0.24, smoothstep(0.10, 0.85, max(shoreFactor, wWetSoil)));
+    float riparianRoughness = mix(0.78, 0.20, smoothstep(0.10, 0.85, max(shoreFactor, wWetSoil)));
     roughness = mix(roughness, riparianRoughness, max(isRiparian, wWetSoil) * 0.85);
-    roughness = clamp(roughness, 0.22, 0.98);
+    // Wet shoreline meniscus: darkens & polishes the 0..25cm waterline band
+    float wetMeniscus = (1.0 - smoothstep(-0.04, 0.25, smoothSignedShore)) * waterElevationMask * (1.0 - wCliff);
+    blendedAlbedo *= mix(1.0, 0.66, wetMeniscus * 0.75);
+    roughness = mix(roughness, 0.16, wetMeniscus * 0.85);
+    roughness = clamp(roughness, 0.16, 0.98);
 
     float nearCanopyMask = 1.0 - smoothstep(324.0, 1800.0, camDistSqXZ);
     float canopyContactAO = mix(1.0, 0.78 + 0.18 * fineGrassLuma, wGrass * nearCanopyMask);

@@ -160,47 +160,30 @@ float MapShadowFilteredVisibilityTier(highp sampler2D mapTexture, vec2 uv,
     float downRight = MapShadowGatherBox4(mapTexture, uv + offB, compareDepth);
     float upLeft    = MapShadowGatherBox4(mapTexture, uv - offB, compareDepth);
 #else
-    vec2 nearest = floor(centerPos + 0.5);
-    vec2 d = centerPos - nearest; // fractional offset in [-0.5, 0.5)
-    vec2 uvCenter = (nearest + 0.5) * texelSize;
+    // 5-tap IGN-rotated Vogel disk PCF (replaces 9-tap B-spline grid: 44% fewer shadow fetches, softer penumbra)
+    float ign = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+    float angle = ign * 6.2831853;
+    float sA = sin(angle);
+    float cA = cos(angle);
+    mat2 rot = mat2(cA, -sA, sA, cA);
+    float diskR = max(radiusScale, 0.65) * 1.15 * texelSize;
 
-    float s10 = MapShadowCompare(mapTexture, uvCenter + vec2(       0.0, -texelSize), compareDepth);
-    float s01 = MapShadowCompare(mapTexture, uvCenter + vec2(-texelSize,        0.0), compareDepth);
-    float s11 = MapShadowCompare(mapTexture, uvCenter,                                compareDepth);
-    float s21 = MapShadowCompare(mapTexture, uvCenter + vec2( texelSize,        0.0), compareDepth);
-    float s12 = MapShadowCompare(mapTexture, uvCenter + vec2(       0.0,  texelSize), compareDepth);
+    float center = MapShadowCompare(mapTexture, uv, compareDepth);
+    vec2 o0 = rot * vec2( 0.7071,  0.0000) * diskR;
+    vec2 o1 = rot * vec2(-0.7071,  0.0000) * diskR;
+    float s0 = MapShadowCompare(mapTexture, uv + o0, compareDepth);
+    float s1 = MapShadowCompare(mapTexture, uv + o1, compareDepth);
 
-    float crossSum = s10 + s01 + s11 + s21 + s12;
-    if (crossSum <= 0.001)
-        return 0.0;
-    if (crossSum >= 4.999)
-        return 1.0;
+    float early = center + s0 + s1;
+    if (early <= 0.001) return 0.0;
+    if (early >= 2.999 && thinFeatureBoost <= 0.01) return 1.0;
 
-    float s00 = MapShadowCompare(mapTexture, uvCenter + vec2(-texelSize, -texelSize), compareDepth);
-    float s20 = MapShadowCompare(mapTexture, uvCenter + vec2( texelSize, -texelSize), compareDepth);
-    float s02 = MapShadowCompare(mapTexture, uvCenter + vec2(-texelSize,  texelSize), compareDepth);
-    float s22 = MapShadowCompare(mapTexture, uvCenter + vec2( texelSize,  texelSize), compareDepth);
-
-    vec2 t = d + 0.5;
-    vec2 omt = 1.0 - t;
-    vec2 w0 = 0.5 * omt * omt;
-    vec2 w1 = 0.75 - d * d;
-    vec2 w2 = 0.5 * t * t;
-    float row0 = s00 * w0.x + s10 * w1.x + s20 * w2.x;
-    float row1 = s01 * w0.x + s11 * w1.x + s21 * w2.x;
-    float row2 = s02 * w0.x + s12 * w1.x + s22 * w2.x;
-    float center = row0 * w0.y + row1 * w1.y + row2 * w2.y;
-
-    float effDiag = min(diagonal, 0.5);
-    vec2 fDL = clamp(d + vec2(1.0 - effDiag), 0.0, 1.0);
-    vec2 fDR = clamp(vec2(d.x + effDiag, d.y + 1.0 - effDiag), 0.0, 1.0);
-    vec2 fUL = clamp(vec2(d.x + 1.0 - effDiag, d.y + effDiag), 0.0, 1.0);
-    vec2 fUR = clamp(d + vec2(effDiag), 0.0, 1.0);
-
-    float downLeft  = mix(mix(s00, s10, fDL.x), mix(s01, s11, fDL.x), fDL.y);
-    float downRight = mix(mix(s10, s20, fDR.x), mix(s11, s21, fDR.x), fDR.y);
-    float upLeft    = mix(mix(s01, s11, fUL.x), mix(s02, s12, fUL.x), fUL.y);
-    float upRight   = mix(mix(s11, s21, fUR.x), mix(s12, s22, fUR.x), fUR.y);
+    vec2 o2 = rot * vec2( 0.0000,  0.8660) * diskR;
+    vec2 o3 = rot * vec2( 0.0000, -0.8660) * diskR;
+    float downLeft  = s0;
+    float upRight   = s1;
+    float downRight = MapShadowCompare(mapTexture, uv + o2, compareDepth);
+    float upLeft    = MapShadowCompare(mapTexture, uv + o3, compareDepth);
 #endif
 
     float smoothVisibility = center * 0.34
