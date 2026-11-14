@@ -12,6 +12,67 @@
 
 #define ANIM_FPS 60.0f
 #define CHAR_MAX_TOTAL_ANIMATIONS 64
+#define CHAR_MAX_SKIN_BONES 128
+#define CHAR_SKIN_CACHE_SLOTS 32
+
+typedef struct {
+    const Mesh *meshesPtr;
+    int animIndex;
+    int frame;
+    unsigned int deflateMask;
+    unsigned int lastUseSeq;
+} SkinCacheEntry;
+
+static SkinCacheEntry s_skinCache[CHAR_SKIN_CACHE_SLOTS];
+static unsigned int s_skinCacheSeq = 0;
+
+static void SkinCache_InvalidateAll(void) {
+    memset(s_skinCache, 0, sizeof(s_skinCache));
+    s_skinCacheSeq = 0;
+}
+
+static bool SkinCache_IsHit(const Mesh *meshesPtr, int animIndex, int frame, unsigned int deflateMask) {
+    if (!meshesPtr) return false;
+    for (int i = 0; i < CHAR_SKIN_CACHE_SLOTS; i++) {
+        if (s_skinCache[i].meshesPtr == meshesPtr) {
+            if (s_skinCache[i].animIndex == animIndex &&
+                s_skinCache[i].frame == frame &&
+                s_skinCache[i].deflateMask == deflateMask) {
+                s_skinCache[i].lastUseSeq = ++s_skinCacheSeq;
+                return true;
+            }
+            return false;
+        }
+    }
+    return false;
+}
+
+static void SkinCache_Store(const Mesh *meshesPtr, int animIndex, int frame, unsigned int deflateMask) {
+    if (!meshesPtr) return;
+    int target = -1;
+    unsigned int oldestSeq = 0xFFFFFFFFu;
+    for (int i = 0; i < CHAR_SKIN_CACHE_SLOTS; i++) {
+        if (s_skinCache[i].meshesPtr == meshesPtr) {
+            target = i;
+            break;
+        }
+        if (s_skinCache[i].meshesPtr == NULL) {
+            target = i;
+            break;
+        }
+        if (s_skinCache[i].lastUseSeq < oldestSeq) {
+            oldestSeq = s_skinCache[i].lastUseSeq;
+            target = i;
+        }
+    }
+    if (target >= 0) {
+        s_skinCache[target].meshesPtr = meshesPtr;
+        s_skinCache[target].animIndex = animIndex;
+        s_skinCache[target].frame = frame;
+        s_skinCache[target].deflateMask = deflateMask;
+        s_skinCache[target].lastUseSeq = ++s_skinCacheSeq;
+    }
+}
 
 static Model s_model;
 static ModelAnimation s_animPool[CHAR_MAX_TOTAL_ANIMATIONS];
@@ -263,6 +324,7 @@ bool CharacterModel_LoadEx(const char *meshPath, const char *animBankPath) {
 
     CharacterModel_PrintInfo();
 
+    SkinCache_InvalidateAll();
     s_loaded = true;
     return true;
 }
@@ -488,6 +550,11 @@ void CharacterModel_PrintInfo(void) {
     TraceLog(LOG_INFO, "====================================================================");
 }
 
+#define DEFLATE_FLAG_TORSO (1u << 0)
+#define DEFLATE_FLAG_LEG   (1u << 1)
+#define DEFLATE_FLAG_HIPS  (1u << 2)
+#define DEFLATE_FLAG_ARM   (1u << 3)
+
 static void CharacterModel_UpdateSkinnedMeshWithCloth(Model model, ModelAnimation anim, float frame, bool deflateTorso, bool deflateLegs) {
     if (model.boneMatrices == NULL || model.skeleton.bones == NULL || anim.keyframePoses == NULL) return;
 
@@ -501,19 +568,26 @@ static void CharacterModel_UpdateSkinnedMeshWithCloth(Model model, ModelAnimatio
         nextFrame %= anim.keyframeCount;
     }
 
-    Matrix bindPoseMatrix = MatrixIdentity();
-    Matrix currentPoseMatrix = MatrixIdentity();
+    const int boneCount = model.skeleton.boneCount;
+    const bool needDeflate = deflateTorso || deflateLegs;
+    Matrix boneNormMatrices[CHAR_MAX_SKIN_BONES];
+    unsigned char boneDeflateFlags[CHAR_MAX_SKIN_BONES];
 
-    for (int b = 0; b < model.skeleton.boneCount; b++) {
+    for (int b = 0; b < boneCount; b++) {
         const char *boneName = model.skeleton.bones[b].name;
         int animBoneIdx = -1;
 
-        // 1. Try to find matching bone in animation/master skeleton by name
+        // 1. O(1) fast path if bone index matches master skeleton, else linear lookup by name
         if (s_model.skeleton.bones != NULL) {
-            for (int a = 0; a < s_model.skeleton.boneCount && a < anim.boneCount; a++) {
-                if (strcmp(boneName, s_model.skeleton.bones[a].name) == 0) {
-                    animBoneIdx = a;
-                    break;
+            if (b < s_model.skeleton.boneCount && b < anim.boneCount &&
+                strcmp(boneName, s_model.skeleton.bones[b].name) == 0) {
+                animBoneIdx = b;
+            } else {
+                for (int a = 0; a < s_model.skeleton.boneCount && a < anim.boneCount; a++) {
+                    if (strcmp(boneName, s_model.skeleton.bones[a].name) == 0) {
+                        animBoneIdx = a;
+                        break;
+                    }
                 }
             }
         }
@@ -535,13 +609,13 @@ static void CharacterModel_UpdateSkinnedMeshWithCloth(Model model, ModelAnimatio
                 anim.keyframePoses[nextFrame][animBoneIdx].scale, blend);
 
             Transform *bindPoseTransform = &model.skeleton.bindPose[b];
-            bindPoseMatrix = MatrixMultiply(
+            Matrix bindPoseMatrix = MatrixMultiply(
                 MatrixMultiply(MatrixScale(bindPoseTransform->scale.x, bindPoseTransform->scale.y, bindPoseTransform->scale.z),
                     QuaternionToMatrix(bindPoseTransform->rotation)),
                 MatrixTranslate(bindPoseTransform->translation.x, bindPoseTransform->translation.y, bindPoseTransform->translation.z));
 
             Transform *currentPoseTransform = &model.currentPose[b];
-            currentPoseMatrix = MatrixMultiply(
+            Matrix currentPoseMatrix = MatrixMultiply(
                 MatrixMultiply(MatrixScale(currentPoseTransform->scale.x, currentPoseTransform->scale.y, currentPoseTransform->scale.z),
                     QuaternionToMatrix(currentPoseTransform->rotation)),
                 MatrixTranslate(currentPoseTransform->translation.x, currentPoseTransform->translation.y, currentPoseTransform->translation.z));
@@ -551,11 +625,28 @@ static void CharacterModel_UpdateSkinnedMeshWithCloth(Model model, ModelAnimatio
             // Secondary cloth bone (not in base animation clip)
             // Follow parent bone's delta transformation!
             int parentIdx = model.skeleton.bones[b].parent;
-            if (parentIdx >= 0 && parentIdx < model.skeleton.boneCount) {
+            if (parentIdx >= 0 && parentIdx < boneCount) {
                 model.boneMatrices[b] = model.boneMatrices[parentIdx];
             } else {
                 model.boneMatrices[b] = MatrixIdentity();
             }
+        }
+
+        if (b < CHAR_MAX_SKIN_BONES) {
+            boneNormMatrices[b] = MatrixTranspose(MatrixInvert(model.boneMatrices[b]));
+            unsigned char flags = 0;
+            if (needDeflate && boneName != NULL) {
+                if (strstr(boneName, "Spine") || strstr(boneName, "Shoulder")) {
+                    flags |= DEFLATE_FLAG_TORSO;
+                } else if (strstr(boneName, "UpLeg") || strstr(boneName, "Leg")) {
+                    flags |= DEFLATE_FLAG_LEG;
+                } else if (strstr(boneName, "Hips")) {
+                    flags |= DEFLATE_FLAG_HIPS;
+                } else if (strstr(boneName, "Arm") && !strstr(boneName, "ForeArm")) {
+                    flags |= DEFLATE_FLAG_ARM;
+                }
+            }
+            boneDeflateFlags[b] = flags;
         }
     }
 
@@ -566,23 +657,17 @@ static void CharacterModel_UpdateSkinnedMeshWithCloth(Model model, ModelAnimatio
             mesh.animVertices == NULL) continue;
 
         const int vertexValuesCount = mesh.vertexCount * 3;
+        const bool hasNormals = (mesh.normals != NULL && mesh.animNormals != NULL);
         int boneCounter = 0;
         bool bufferUpdateRequired = false;
 
         for (int vCounter = 0; vCounter < vertexValuesCount; vCounter += 3) {
-            mesh.animVertices[vCounter] = 0;
-            mesh.animVertices[vCounter + 1] = 0;
-            mesh.animVertices[vCounter + 2] = 0;
-            if (mesh.animNormals != NULL) {
-                mesh.animNormals[vCounter] = 0;
-                mesh.animNormals[vCounter + 1] = 0;
-                mesh.animNormals[vCounter + 2] = 0;
-            }
-
-            Vector3 v = (Vector3){ mesh.vertices[vCounter], mesh.vertices[vCounter + 1], mesh.vertices[vCounter + 2] };
+            float vx = mesh.vertices[vCounter];
+            float vy = mesh.vertices[vCounter + 1];
+            float vz = mesh.vertices[vCounter + 2];
 
             // Automatic body deflation to eliminate clipping through equipped outerwear
-            if (deflateTorso || deflateLegs) {
+            if (needDeflate) {
                 float torsoWeight = 0.0f;
                 float legWeight = 0.0f;
                 float armWeight = 0.0f;
@@ -590,13 +675,13 @@ static void CharacterModel_UpdateSkinnedMeshWithCloth(Model model, ModelAnimatio
                 for (int j = 0; j < 4; j++, tempCounter++) {
                     float bw = mesh.boneWeights[tempCounter];
                     int bi = mesh.boneIndices[tempCounter];
-                    if (bw > 0.001f && bi >= 0 && bi < model.skeleton.boneCount) {
-                        const char *bname = model.skeleton.bones[bi].name;
-                        if (strstr(bname, "Spine") || strstr(bname, "Shoulder")) {
+                    if (bw > 0.001f && bi >= 0 && bi < boneCount && bi < CHAR_MAX_SKIN_BONES) {
+                        unsigned char flags = boneDeflateFlags[bi];
+                        if (flags & DEFLATE_FLAG_TORSO) {
                             torsoWeight += bw;
-                        } else if (strstr(bname, "UpLeg") || strstr(bname, "Leg") || (strstr(bname, "Hips") && v.y <= 1.05f)) {
+                        } else if ((flags & DEFLATE_FLAG_LEG) || ((flags & DEFLATE_FLAG_HIPS) && vy <= 1.05f)) {
                             legWeight += bw;
-                        } else if (strstr(bname, "Arm") && !strstr(bname, "ForeArm")) {
+                        } else if (flags & DEFLATE_FLAG_ARM) {
                             armWeight += bw;
                         }
                     }
@@ -605,46 +690,65 @@ static void CharacterModel_UpdateSkinnedMeshWithCloth(Model model, ModelAnimatio
                 if (deflateTorso && (torsoWeight > 0.12f || armWeight > 0.25f)) {
                     float shrink = 1.0f - (0.16f * torsoWeight) - (0.14f * armWeight);
                     if (shrink < 0.78f) shrink = 0.78f;
-                    v.x *= shrink;
-                    v.z *= shrink;
+                    vx *= shrink;
+                    vz *= shrink;
                 }
 
                 if (deflateLegs && legWeight > 0.12f) {
                     float shrink = 1.0f - (0.22f * legWeight);
                     if (shrink < 0.75f) shrink = 0.75f;
-                    float legCenterX = (v.x > 0.0f) ? 0.10f : -0.10f;
-                    if (fabsf(v.x) < 0.035f) legCenterX = 0.0f; // Pelvis center
-                    v.x = legCenterX + (v.x - legCenterX) * shrink;
-                    v.z = v.z * shrink;
+                    float legCenterX = (vx > 0.0f) ? 0.10f : -0.10f;
+                    if (fabsf(vx) < 0.035f) legCenterX = 0.0f; // Pelvis center
+                    vx = legCenterX + (vx - legCenterX) * shrink;
+                    vz *= shrink;
                 }
+            }
+
+            float outVx = 0.0f, outVy = 0.0f, outVz = 0.0f;
+            float outNx = 0.0f, outNy = 0.0f, outNz = 0.0f;
+            float nx = 0.0f, ny = 0.0f, nz = 0.0f;
+            if (hasNormals) {
+                nx = mesh.normals[vCounter];
+                ny = mesh.normals[vCounter + 1];
+                nz = mesh.normals[vCounter + 2];
             }
 
             for (int j = 0; j < 4; j++, boneCounter++) {
                 float boneWeight = mesh.boneWeights[boneCounter];
                 int boneIdx = mesh.boneIndices[boneCounter];
 
-                if (boneWeight <= 0.0001f || boneIdx < 0 || boneIdx >= model.skeleton.boneCount) continue;
+                if (boneWeight <= 0.0001f || boneIdx < 0 || boneIdx >= boneCount) continue;
 
-                Vector3 animV = Vector3Transform(v, model.boneMatrices[boneIdx]);
-                mesh.animVertices[vCounter] += animV.x * boneWeight;
-                mesh.animVertices[vCounter + 1] += animV.y * boneWeight;
-                mesh.animVertices[vCounter + 2] += animV.z * boneWeight;
+                const Matrix *bm = &model.boneMatrices[boneIdx];
+                outVx += (bm->m0 * vx + bm->m4 * vy + bm->m8  * vz + bm->m12) * boneWeight;
+                outVy += (bm->m1 * vx + bm->m5 * vy + bm->m9  * vz + bm->m13) * boneWeight;
+                outVz += (bm->m2 * vx + bm->m6 * vy + bm->m10 * vz + bm->m14) * boneWeight;
                 bufferUpdateRequired = true;
 
-                if (mesh.normals != NULL && mesh.animNormals != NULL) {
-                    Vector3 n = (Vector3){ mesh.normals[vCounter], mesh.normals[vCounter + 1], mesh.normals[vCounter + 2] };
-                    Matrix normMat = MatrixTranspose(MatrixInvert(model.boneMatrices[boneIdx]));
-                    Vector3 animN = Vector3Transform(n, normMat);
-                    mesh.animNormals[vCounter] += animN.x * boneWeight;
-                    mesh.animNormals[vCounter + 1] += animN.y * boneWeight;
-                    mesh.animNormals[vCounter + 2] += animN.z * boneWeight;
+                if (hasNormals) {
+                    Matrix nmStorage;
+                    const Matrix *nm = (boneIdx < CHAR_MAX_SKIN_BONES)
+                        ? &boneNormMatrices[boneIdx]
+                        : (nmStorage = MatrixTranspose(MatrixInvert(*bm)), &nmStorage);
+                    outNx += (nm->m0 * nx + nm->m4 * ny + nm->m8  * nz) * boneWeight;
+                    outNy += (nm->m1 * nx + nm->m5 * ny + nm->m9  * nz) * boneWeight;
+                    outNz += (nm->m2 * nx + nm->m6 * ny + nm->m10 * nz) * boneWeight;
                 }
+            }
+
+            mesh.animVertices[vCounter]     = outVx;
+            mesh.animVertices[vCounter + 1] = outVy;
+            mesh.animVertices[vCounter + 2] = outVz;
+            if (hasNormals) {
+                mesh.animNormals[vCounter]     = outNx;
+                mesh.animNormals[vCounter + 1] = outNy;
+                mesh.animNormals[vCounter + 2] = outNz;
             }
         }
 
         if (bufferUpdateRequired) {
             UpdateMeshBuffer(mesh, SHADER_LOC_VERTEX_POSITION, mesh.animVertices, mesh.vertexCount * 3 * sizeof(float), 0);
-            if (mesh.normals != NULL && mesh.animNormals != NULL) {
+            if (hasNormals) {
                 UpdateMeshBuffer(mesh, SHADER_LOC_VERTEX_NORMAL, mesh.animNormals, mesh.vertexCount * 3 * sizeof(float), 0);
             }
         }
@@ -655,12 +759,16 @@ void CharacterModel_DrawCustomEx(Model customModel, const CharacterAnimState *st
     if (!state || !s_loaded || customModel.meshCount == 0) return;
 
     int animIndex = state->activeAnimIndex;
-    if (animIndex >= 0 && animIndex < s_animCount) {
-        if (!deflateTorso && !deflateLegs && customModel.skeleton.boneCount == s_animations[animIndex].boneCount) {
-            UpdateModelAnimation(customModel, s_animations[animIndex], state->frame);
-        } else if (customModel.skeleton.boneCount > 0) {
-            // Model has extra bones or requires selective body deflation
-            CharacterModel_UpdateSkinnedMeshWithCloth(customModel, s_animations[animIndex], state->frame, deflateTorso, deflateLegs);
+    if (animIndex >= 0 && animIndex < s_animCount && customModel.skeleton.boneCount > 0) {
+        unsigned int deflateMask = (deflateTorso ? 1u : 0u) | (deflateLegs ? 2u : 0u);
+        if (!SkinCache_IsHit(customModel.meshes, animIndex, state->frame, deflateMask)) {
+            if (deflateMask == 0u && customModel.skeleton.boneCount == s_animations[animIndex].boneCount) {
+                UpdateModelAnimation(customModel, s_animations[animIndex], state->frame);
+            } else {
+                // Model has extra bones or requires selective body deflation
+                CharacterModel_UpdateSkinnedMeshWithCloth(customModel, s_animations[animIndex], (float)state->frame, deflateTorso, deflateLegs);
+            }
+            SkinCache_Store(customModel.meshes, animIndex, state->frame, deflateMask);
         }
     }
 
