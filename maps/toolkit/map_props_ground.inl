@@ -441,8 +441,13 @@ static MapGroundSurface SetupGroundMaterial(Mesh mesh, float width, float depth,
         SetTextureFilter(texPath, filterMode);
 
     // 2. Initialize Shader & cache all uniform locations once (re-bind if shader is reloaded)
+#ifdef __ANDROID__
+    groundShader = ResourceManager_LoadShader("maps/toolkit/shaders/ground_splat.vs",
+                                              "maps/toolkit/shaders/ground_splat_mobile.fs");
+#else
     groundShader = ResourceManager_LoadShader("maps/toolkit/shaders/ground_splat.vs",
                                               "maps/toolkit/shaders/ground_splat.fs");
+#endif
     if (groundShader.id != 0 && s_groundShaderId != groundShader.id)
     {
         groundShader.locs[SHADER_LOC_MATRIX_MODEL] =
@@ -1082,6 +1087,8 @@ void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter)
     };
     if (locGroundOffset >= 0)
         SetShaderValue(groundShader, locGroundOffset, &pos, SHADER_UNIFORM_VEC3);
+    if (ground->model.materialCount > 0)
+        MapShadow_AttachMaterial(&ground->model.materials[0]);
     if (ground->chunkCount > 0)
     {
         MapPropViewFrustum frustum;

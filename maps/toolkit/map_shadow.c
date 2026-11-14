@@ -93,6 +93,16 @@ void MapShadow_AttachMaterial(Material *material)
     if (material == NULL || material->maps == NULL)
         return;
 
+    Texture2D shadowMap = EnvShadow_GetShadowMap();
+    Texture2D staticShadowMap = EnvShadow_GetStaticShadowMap();
+    if (shadowMap.id != 0 &&
+        material->maps[MATERIAL_MAP_OCCLUSION].texture.id == shadowMap.id &&
+        staticShadowMap.id != 0 &&
+        material->maps[MATERIAL_MAP_HEIGHT].texture.id == staticShadowMap.id)
+    {
+        return;
+    }
+
     Texture2D fallbackTex = {
         .id = rlGetTextureIdDefault(),
         .width = 1,
@@ -100,13 +110,11 @@ void MapShadow_AttachMaterial(Material *material)
         .mipmaps = 1,
         .format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8};
 
-    Texture2D shadowMap = EnvShadow_GetShadowMap();
     if (shadowMap.id != 0)
         material->maps[MATERIAL_MAP_OCCLUSION].texture = shadowMap;
     else if (material->maps[MATERIAL_MAP_OCCLUSION].texture.id == 0)
         material->maps[MATERIAL_MAP_OCCLUSION].texture = fallbackTex;
 
-    Texture2D staticShadowMap = EnvShadow_GetStaticShadowMap();
     if (staticShadowMap.id != 0)
         material->maps[MATERIAL_MAP_HEIGHT].texture = staticShadowMap;
     else if (material->maps[MATERIAL_MAP_HEIGHT].texture.id == 0)

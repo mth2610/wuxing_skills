@@ -111,6 +111,8 @@ static void MapProp_UpdateStripLighting(const MapStripSurface *strip)
         SetShaderValue(shader, locPathSurfaceMaps, &hasSurfaceMaps, SHADER_UNIFORM_INT);
     MapShadow_UpdateShader(shader);
     EndShaderMode();
+    if (strip->model.materialCount > 0)
+        MapShadow_AttachMaterial(&strip->model.materials[0]);
 }
 
 void MapProp_DrawStrip(const MapStripSurface *strip, Vector3 worldCenter, float yOffset)

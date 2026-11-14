@@ -56,7 +56,7 @@ float FoliageShadowVisibility(vec4 lightSpace, vec4 staticLightSpace,
             float edgeFade = MapShadowCoverageFadeWidth(projected.xy, 0.22);
             if (edgeFade > 0.0) {
                 float bias = clamp(0.0028 + slope * 0.0035, 0.0025, 0.0065);
-                float sampleDyn = (distToCam < 24.0)
+                float sampleDyn = (u_shadowFilterQuality >= 1.5 && distToCam < 24.0)
                     ? MapShadowCompareBilinear(shadowMap, projected.xy, projected.z - bias, u_shadowTexel)
                     : MapShadowCompare(shadowMap, projected.xy, projected.z - bias);
                 rawDyn = mix(1.0, sampleDyn, edgeFade);
@@ -72,7 +72,7 @@ float FoliageShadowVisibility(vec4 lightSpace, vec4 staticLightSpace,
             float edgeFade = MapShadowCoverageFadeWidth(projected.xy, 0.12);
             if (edgeFade > 0.0) {
                 float bias = clamp(0.0025 + slope * 0.0030, 0.0020, 0.0055);
-                float sampleStatic = (distToCam < 16.0)
+                float sampleStatic = (u_shadowFilterQuality >= 1.5 && distToCam < 16.0)
                     ? MapShadowCompareBilinear(staticShadowMap, projected.xy, projected.z - bias, u_staticShadowTexel)
                     : MapShadowCompare(staticShadowMap, projected.xy, projected.z - bias);
                 float rawStatic = mix(1.0, sampleStatic, edgeFade);

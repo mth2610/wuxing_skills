@@ -1025,8 +1025,13 @@ MapWaterSurface MapProp_CreateWaterStrip(Vector3 start, Vector3 end, float width
 MapWaterSurface MapProp_CreateTerrainWater(const char *meshPath, MapWaterConfig config)
 {
     MapWaterSurface water = {0};
+#ifndef __ANDROID__
     if (!meshPath || !FileExists(meshPath))
         return water;
+#else
+    if (!meshPath)
+        return water;
+#endif
     Water_ApplyConfigDefaults(&config);
     config.shape = WATER_SHAPE_TERRAIN;
     water.waterModel = LoadModel(meshPath);

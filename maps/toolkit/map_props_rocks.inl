@@ -1233,6 +1233,8 @@ void MapProp_DrawRockSystem(const MapRockSystem *sys, bool drawShadows)
             rockTint = (Color){196, 192, 184, 255};
         }
 
+        if (set->model.materialCount > 0)
+            MapShadow_AttachMaterial(&set->model.materials[0]);
         DrawModelEx(set->model, pos, rotAxis, p->rotationDeg, scale, rockTint);
     }
 }

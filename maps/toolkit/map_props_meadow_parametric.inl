@@ -70,6 +70,16 @@ typedef struct
 static NatureMeadowView NatureParametric_View(const MapMeadowSurface *meadow)
 {
     int quality = GfxQuality_Get();
+#ifdef __ANDROID__
+    float rangeScale = quality >= GFX_ULTRA ? 1.0f
+                       : quality >= GFX_HIGH ? 0.85f
+                       : quality == GFX_MED  ? 0.62f
+                       : quality == GFX_LOW  ? 0.52f
+                                             : 0.45f;
+    float lodScale = quality >= GFX_HIGH ? 0.90f
+                     : quality == GFX_MED ? 0.70f
+                                          : 0.60f;
+#else
     float rangeScale = quality >= GFX_HIGH  ? 1.0f
                        : quality == GFX_MED ? 0.90f
                        : quality == GFX_LOW ? 0.78f
@@ -77,6 +87,7 @@ static NatureMeadowView NatureParametric_View(const MapMeadowSurface *meadow)
     float lodScale = quality >= GFX_HIGH  ? 1.0f
                      : quality == GFX_MED ? 0.85f
                                           : 0.72f;
+#endif
 
     float dx = camera.position.x - camera.target.x;
     float dz = camera.position.z - camera.target.z;

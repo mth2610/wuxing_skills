@@ -1893,7 +1893,12 @@ void MapProp_DrawMeadowShadowCasters(MapMeadowSurface *meadow, Vector3 worldOffs
                                      float time, Vector2 windDirection, float windStrength)
 {
     GfxQuality quality = GfxQuality_Get();
-    if (!meadow || !meadow->ready || quality < GFX_MED ||
+#ifdef __ANDROID__
+    const GfxQuality minShadowTier = GFX_HIGH;
+#else
+    const GfxQuality minShadowTier = GFX_MED;
+#endif
+    if (!meadow || !meadow->ready || quality < minShadowTier ||
         meadow->shadowDistance <= 0.0f ||
         Nature_GetShadowMode() == NATURE_SHADOW_PROJECTED_ONLY ||
         !Nature_ShadowCasterTypeEnabled(false))

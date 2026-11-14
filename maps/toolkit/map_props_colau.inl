@@ -638,8 +638,13 @@ void MapProp_DrawCoLauFieldShadowCasterBatch(MapCoLauField *fields, int fieldCou
                                              float time, Vector2 windDirection, float windStrength)
 {
     GfxQuality quality = GfxQuality_Get();
+#ifdef __ANDROID__
+    const GfxQuality minShadowTier = GFX_HIGH;
+#else
+    const GfxQuality minShadowTier = GFX_MED;
+#endif
     if (!fields || fieldCount <= 0 || !s_coLauTemplateReady ||
-        quality < GFX_MED ||
+        quality < minShadowTier ||
         Nature_GetShadowMode() == NATURE_SHADOW_PROJECTED_ONLY ||
         !Nature_ShadowCasterTypeEnabled(false))
         return;

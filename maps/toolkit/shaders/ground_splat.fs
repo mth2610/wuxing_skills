@@ -78,6 +78,9 @@ void main()
     float pixelMetersSq = max(dot(wpDx, wpDx), dot(wpDy, wpDy));
     // Mở rộng phạm vi giữ chi tiết vi mô lên tới ~45m để địa hình trung/hậu cảnh không bị bệt phẳng
     float detailResolve = 1.0 - smoothstep(0.0004, 0.0160, pixelMetersSq);
+    bool highDetailGround = (u_shadowFilterQuality >= 1.5);
+    float mipTiled = max(0.0, 0.5 * log2(max(max(dot(uvDx, uvDx), dot(uvDy, uvDy)) * 262144.0, 1.0)));
+    float mipWorld = max(0.0, 0.5 * log2(max(max(dot(wpDx, wpDx), dot(wpDy, wpDy)) * 65536.0, 1.0)));
 
     // ---- 1. Splat Fetch ----
     vec4 splatSample = textureLod(texture0, fragTexCoord, 0.0);
@@ -109,7 +112,7 @@ void main()
 
     vec3 viewVec = viewPos - fragWorldPos;
     float camDistSqXZ = dot(viewVec.xz, viewVec.xz);
-    bool nearDualScale = (camDistSqXZ < 225.0);
+    bool nearDualScale = highDetailGround && (camDistSqXZ < 225.0);
     float dualScaleFade = 1.0 - smoothstep(144.0, 225.0, camDistSqXZ);
 
     // ---- 3. Distance to Path & Continuous 16-bit Shoreline ----
@@ -195,12 +198,10 @@ void main()
     vec4 colorDirt = vec4(0.5, 0.5, 0.5, 1.0);
     vec3 dirtDetail = vec3(0.5);
     if (soilPossible) {
-        colorDirt = textureGrad(texPath, tiledUV * 0.85, uvDx * 0.85, uvDy * 0.85);
+        colorDirt = textureLod(texPath, tiledUV * 0.85, mipTiled);
         if (nearDualScale) {
             vec2 broadDirtUV = vec2(-tiledUV.y * 0.31 + 8.5, tiledUV.x * 0.31 + 14.2);
-            vec3 broadDirt = textureGrad(texPath, broadDirtUV,
-                                         vec2(-uvDx.y, uvDx.x) * 0.31,
-                                         vec2(-uvDy.y, uvDy.x) * 0.31).rgb;
+            vec3 broadDirt = textureLod(texPath, broadDirtUV, mipTiled).rgb;
             vec3 broadMod = clamp(broadDirt / max(dot(broadDirt, vec3(0.3333)), 0.18), vec3(0.80), vec3(1.22));
             dirtDetail = clamp(colorDirt.rgb * mix(vec3(1.0), broadMod, 0.45 * dualScaleFade), vec3(0.0), vec3(1.0));
         } else {
@@ -281,12 +282,12 @@ void main()
     vec2 litterClasses = vec2(0.5);
     float reliefShadow = 1.0;
 
-    if (soilPossible && u_groundReliefEnabled != 0 && detailResolve > 0.10 && camDistSqXZ < 400.0) {
+    if (highDetailGround && soilPossible && u_groundReliefEnabled != 0 && detailResolve > 0.10 && camDistSqXZ < 400.0) {
         float combinedSoil = weights.y + weights.w;
         float dominantWeight = max(max(weights.x, combinedSoil), weights.z);
         bool boundary = dominantWeight < 0.96;
         if (boundary) {
-            vec4 substrateRelief = textureGrad(u_groundRelief, tiledUV, uvDx, uvDy);
+            vec4 substrateRelief = textureLod(u_groundRelief, tiledUV, mipTiled);
             litterClasses = substrateRelief.ba;
             float soilHeight = substrateRelief.g;
             vec3 groupWeights = vec3(weights.x, combinedSoil, weights.z);
@@ -318,24 +319,22 @@ void main()
     vec2 distantTuftNormal = vec2(0.0);
 
     if (hasGrass) {
-        vec4 colorGrass = textureGrad(texGrass, tiledUV, uvDx, uvDy);
+        vec4 colorGrass = textureLod(texGrass, tiledUV, mipTiled);
         vec3 blendedGrass = colorGrass.rgb;
         if (nearDualScale) {
             vec2 broadGrassUV = vec2(tiledUV.y * 0.38 + 17.0, -tiledUV.x * 0.38 + 9.0);
-            vec3 broadGrass = textureGrad(texGrass, broadGrassUV,
-                                          vec2(uvDx.y, -uvDx.x) * 0.38,
-                                          vec2(uvDy.y, -uvDy.x) * 0.38).rgb;
+            vec3 broadGrass = textureLod(texGrass, broadGrassUV, mipTiled).rgb;
             blendedGrass = mix(colorGrass.rgb, broadGrass, 0.28 * dualScaleFade);
         }
-        if (camDistSqXZ < 400.0) {
+        if (highDetailGround && camDistSqXZ < 400.0) {
             float grassMatFade = 1.0 - smoothstep(225.0, 400.0, camDistSqXZ);
-            vec4 sampledGrassMat = textureGrad(texGrassMaterial, tiledUV, uvDx, uvDy);
+            vec4 sampledGrassMat = textureLod(texGrassMaterial, tiledUV, mipTiled);
             grassMaterial = mix(grassMaterial, sampledGrassMat, grassMatFade);
         }
         fineGrassLuma = dot(colorGrass.rgb, vec3(0.2126, 0.7152, 0.0722));
 
         // High-frequency botanical moss/fiber micro-grain at close zoom (< 12m)
-        if (camDistSqXZ < 144.0) {
+        if (highDetailGround && camDistSqXZ < 144.0) {
             float closeWeight = (1.0 - camDistSqXZ * (1.0 / 144.0)) * detailResolve;
             float fiberA = sin(fragWorldPos.x * 26.0 + fragWorldPos.z * 19.0)
                          * cos(fragWorldPos.x * -17.0 + fragWorldPos.z * 29.0);
@@ -459,57 +458,55 @@ void main()
             vec3 rockNormY = vec3(0.0, 0.0, 1.0);
             vec3 rockNormZ = vec3(0.0, 0.0, 1.0);
 
+            float triThresh = highDetailGround ? 0.02 : 0.14;
             if (u_groundRockEnabled != 0) {
-                rockTexX = (triWeights.x > 0.02) ? textureGrad(u_groundRock, triUVx, triDxX, triDyX).rgb : vec3(0.0);
-                rockTexY = (triWeights.y > 0.02) ? textureGrad(u_groundRock, triUVy, triDxY, triDyY).rgb : vec3(0.0);
-                rockTexZ = (triWeights.z > 0.02) ? textureGrad(u_groundRock, triUVz, triDxZ, triDyZ).rgb : vec3(0.0);
+                rockTexX = (triWeights.x > triThresh) ? textureLod(u_groundRock, triUVx, mipWorld).rgb : vec3(0.0);
+                rockTexY = (triWeights.y > triThresh) ? textureLod(u_groundRock, triUVy, mipWorld).rgb : vec3(0.0);
+                rockTexZ = (triWeights.z > triThresh) ? textureLod(u_groundRock, triUVz, mipWorld).rgb : vec3(0.0);
 
-                rockNormX = (triWeights.x > 0.02) ? (textureGrad(u_groundRockNormal, triUVx, triDxX, triDyX).rgb * 2.0 - 1.0) : vec3(0.0, 0.0, 1.0);
-                rockNormY = (triWeights.y > 0.02) ? (textureGrad(u_groundRockNormal, triUVy, triDxY, triDyY).rgb * 2.0 - 1.0) : vec3(0.0, 0.0, 1.0);
-                rockNormZ = (triWeights.z > 0.02) ? (textureGrad(u_groundRockNormal, triUVz, triDxZ, triDyZ).rgb * 2.0 - 1.0) : vec3(0.0, 0.0, 1.0);
+                rockNormX = (triWeights.x > triThresh) ? (textureLod(u_groundRockNormal, triUVx, mipWorld).rgb * 2.0 - 1.0) : vec3(0.0, 0.0, 1.0);
+                rockNormY = (triWeights.y > triThresh) ? (textureLod(u_groundRockNormal, triUVy, mipWorld).rgb * 2.0 - 1.0) : vec3(0.0, 0.0, 1.0);
+                rockNormZ = (triWeights.z > triThresh) ? (textureLod(u_groundRockNormal, triUVz, mipWorld).rgb * 2.0 - 1.0) : vec3(0.0, 0.0, 1.0);
 
                 if (nearDualScale) {
                     vec2 dUVx = triUVx * 3.2;
                     vec2 dUVy = triUVy * 3.2;
                     vec2 dUVz = triUVz * 3.2;
-                    vec2 dDxX = triDxX * 3.2, dDyX = triDyX * 3.2;
-                    vec2 dDxY = triDxY * 3.2, dDyY = triDyY * 3.2;
-                    vec2 dDxZ = triDxZ * 3.2, dDyZ = triDyZ * 3.2;
 
                     if (triWeights.x > 0.02) {
-                        vec3 detailX = textureGrad(u_groundRock, dUVx, dDxX, dDyX).rgb;
+                        vec3 detailX = textureLod(u_groundRock, dUVx, mipWorld).rgb;
                         rockTexX = mix(rockTexX, detailX * 1.08, 0.35 * dualScaleFade);
-                        vec3 detailNormX = textureGrad(u_groundRockNormal, dUVx, dDxX, dDyX).rgb * 2.0 - 1.0;
+                        vec3 detailNormX = textureLod(u_groundRockNormal, dUVx, mipWorld).rgb * 2.0 - 1.0;
                         rockNormX = mix(rockNormX, detailNormX, 0.42 * dualScaleFade);
                     }
                     if (triWeights.y > 0.02) {
-                        vec3 detailY = textureGrad(u_groundRock, dUVy, dDxY, dDyY).rgb;
+                        vec3 detailY = textureLod(u_groundRock, dUVy, mipWorld).rgb;
                         rockTexY = mix(rockTexY, detailY * 1.08, 0.35 * dualScaleFade);
-                        vec3 detailNormY = textureGrad(u_groundRockNormal, dUVy, dDxY, dDyY).rgb * 2.0 - 1.0;
+                        vec3 detailNormY = textureLod(u_groundRockNormal, dUVy, mipWorld).rgb * 2.0 - 1.0;
                         rockNormY = mix(rockNormY, detailNormY, 0.42 * dualScaleFade);
                     }
                     if (triWeights.z > 0.02) {
-                        vec3 detailZ = textureGrad(u_groundRock, dUVz, dDxZ, dDyZ).rgb;
+                        vec3 detailZ = textureLod(u_groundRock, dUVz, mipWorld).rgb;
                         rockTexZ = mix(rockTexZ, detailZ * 1.08, 0.35 * dualScaleFade);
-                        vec3 detailNormZ = textureGrad(u_groundRockNormal, dUVz, dDxZ, dDyZ).rgb * 2.0 - 1.0;
+                        vec3 detailNormZ = textureLod(u_groundRockNormal, dUVz, mipWorld).rgb * 2.0 - 1.0;
                         rockNormZ = mix(rockNormZ, detailNormZ, 0.42 * dualScaleFade);
                     }
                 }
             } else {
-                rockTexX = (triWeights.x > 0.02) ? textureGrad(texPath, triUVx, triDxX, triDyX).rgb : vec3(0.0);
-                rockTexY = (triWeights.y > 0.02) ? textureGrad(texPath, triUVy, triDxY, triDyY).rgb : vec3(0.0);
-                rockTexZ = (triWeights.z > 0.02) ? textureGrad(texPath, triUVz, triDxZ, triDyZ).rgb : vec3(0.0);
+                rockTexX = (triWeights.x > triThresh) ? textureLod(texPath, triUVx, mipWorld).rgb : vec3(0.0);
+                rockTexY = (triWeights.y > triThresh) ? textureLod(texPath, triUVy, mipWorld).rgb : vec3(0.0);
+                rockTexZ = (triWeights.z > triThresh) ? textureLod(texPath, triUVz, mipWorld).rgb : vec3(0.0);
                 if (nearDualScale) {
                     if (triWeights.x > 0.02) {
-                        vec3 detailX = textureGrad(texPath, triUVx * 2.8, triDxX * 2.8, triDyX * 2.8).rgb;
+                        vec3 detailX = textureLod(texPath, triUVx * 2.8, mipWorld).rgb;
                         rockTexX = mix(rockTexX, detailX, 0.32 * dualScaleFade);
                     }
                     if (triWeights.y > 0.02) {
-                        vec3 detailY = textureGrad(texPath, triUVy * 2.8, triDxY * 2.8, triDyY * 2.8).rgb;
+                        vec3 detailY = textureLod(texPath, triUVy * 2.8, mipWorld).rgb;
                         rockTexY = mix(rockTexY, detailY, 0.32 * dualScaleFade);
                     }
                     if (triWeights.z > 0.02) {
-                        vec3 detailZ = textureGrad(texPath, triUVz * 2.8, triDxZ * 2.8, triDyZ * 2.8).rgb;
+                        vec3 detailZ = textureLod(texPath, triUVz * 2.8, mipWorld).rgb;
                         rockTexZ = mix(rockTexZ, detailZ, 0.32 * dualScaleFade);
                     }
                 }
@@ -581,11 +578,11 @@ void main()
             sandBase = mix(sandBase, submergedSand, clamp(lakeDepthFactor * 1.35, 0.0, 1.0));
 
             // GPU Gems 3 §1.5: Triplanar slope compensation on cutting riverbanks to eliminate 2D stretching
-            vec3 microSediment = textureGrad(texPath, fragWorldPos.xz * 1.85, wpDx * 1.85, wpDy * 1.85).rgb;
+            vec3 microSediment = textureLod(texPath, fragWorldPos.xz * 1.85, mipWorld).rgb;
             float bankCutSlope = clamp((1.0 - geomNormal.y) * 2.8, 0.0, 1.0);
-            if (bankCutSlope > 0.05) {
+            if (highDetailGround && bankCutSlope > 0.05) {
                 vec2 sideUV = (abs(geomNormal.x) > abs(geomNormal.z)) ? fragWorldPos.zy * 1.85 : fragWorldPos.xy * 1.85;
-                vec3 sideSediment = textureGrad(texPath, sideUV, wpDx * 1.85, wpDy * 1.85).rgb;
+                vec3 sideSediment = textureLod(texPath, sideUV, mipWorld).rgb;
                 microSediment = mix(microSediment, sideSediment, bankCutSlope * 0.65);
             }
             sandBase *= (0.84 + 0.36 * microSediment.r) * (0.88 + 0.28 * colorDirt.rgb);
@@ -594,8 +591,7 @@ void main()
             drySoilColor = mix(drySoilColor, drySand * (0.88 + 0.28 * colorDirt.rgb), beachDryMix);
 
             vec2 gravelUV = tiledUV * 3.4;
-            vec2 grDx = uvDx * 3.4, grDy = uvDy * 3.4;
-            vec3 fineGravelTex = textureGrad(texPath, gravelUV, grDx, grDy).rgb;
+            vec3 fineGravelTex = textureLod(texPath, gravelUV, mipTiled).rgb;
 
             float barNoise = sin(fragWorldPos.x * 0.65 + fragWorldPos.z * 0.50)
                            * cos(fragWorldPos.z * 0.85 - fragWorldPos.x * 0.40);
@@ -611,12 +607,12 @@ void main()
             float gravelAO = 1.0 - pebbleCrevice * 0.22 * shingleBar;
             vec3 riverbedBed = mix(sandBase, pebbleMineral, gravelHighlight * 0.72 * shingleBar) * gravelAO;
 
-            if (camDistSqXZ < 400.0) {
+            if (highDetailGround && camDistSqXZ < 400.0) {
                 float cosP1 = cos(sandPhase1);
                 float cosP2 = cos(sandPhase2);
                 vec2 rippleNorm = clamp(vec2(cosP1 + cosP2 * 0.6, cosP1 - cosP2 * 0.5) * 0.048, vec2(-0.22), vec2(0.22));
 
-                vec4 gravelMat = textureGrad(texSoilMaterial, gravelUV, grDx, grDy);
+                vec4 gravelMat = textureLod(texSoilMaterial, gravelUV, mipTiled);
                 vec2 gNorm = (gravelMat.rg * 2.0 - 1.0);
                 proceduralPebbleNormal = (gNorm * (0.44 * shingleBar + 0.20) + rippleNorm * (1.0 - shingleBar * 0.45)) * detailResolve;
             }
@@ -667,7 +663,7 @@ void main()
     }
 
     float rockContactAO = 1.0;
-    if (u_groundDebrisEnabled != 0 && camDistSqXZ < 1024.0) {
+    if (highDetailGround && u_groundDebrisEnabled != 0 && camDistSqXZ < 1024.0) {
         float debrisDistFade = 1.0 - smoothstep(576.0, 1024.0, camDistSqXZ);
         vec4 debris = textureLod(u_groundDebris, fragTexCoord, 0.0);
         float fineGrain = (soilPossible) ? dirtDetail.r : fineGrassLuma;
@@ -714,9 +710,9 @@ void main()
 
     // ---- 10. Tangent Frame & Specular AA ----
     vec4 soilMaterial = vec4(0.5, 0.5, 1.0, 0.8);
-    if (hasSoil && camDistSqXZ < 400.0) {
+    if (highDetailGround && hasSoil && camDistSqXZ < 400.0) {
         float soilMatFade = 1.0 - smoothstep(225.0, 400.0, camDistSqXZ);
-        vec4 sampledSoilMat = textureGrad(texSoilMaterial, tiledUV * 0.85, uvDx * 0.85, uvDy * 0.85);
+        vec4 sampledSoilMat = textureLod(texSoilMaterial, tiledUV * 0.85, mipTiled);
         soilMaterial = mix(soilMaterial, sampledSoilMat, soilMatFade);
     }
 
