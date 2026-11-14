@@ -283,7 +283,7 @@ void CastEarthDiscVolleySkill(int agentId, Vector3 startPos, Vector3 target, Ski
     inst->damagePerDisc   = (totalDmg > 0.0f ? totalDmg : 45.0f) / (float)inst->totalSlices;
     inst->knockback       = Skill_CalculateKnockback(SKILL_CAT_PROJECTILE, params) * 0.45f;
 
-    Skill_RequestAnim(agentId, "earth_stomp_slam", EDV_STOMP_RISE_TIME);
+    Skill_RequestAnim(agentId, "kick_axe_stomp", EDV_STOMP_RISE_TIME);
 
     // Raise shadowed stone pillar using core EarthSpike VFX
     inst->spikeHandle = SpawnStonePillarStep(inst->pillarPos, inst->pillarMaxHeight,
@@ -312,7 +312,7 @@ void UpdateEarthDiscVolleySkill(float dt, Vector3 enemyPos, float enemyRadius) {
             if (inst->slicesFired < inst->totalSlices && inst->sliceTimer >= EDV_SLICE_INTERVAL) {
                 inst->sliceTimer -= EDV_SLICE_INTERVAL;
 
-                Skill_RequestAnim(inst->ownerAgentId, "earth_pillar_punch", EDV_SLICE_INTERVAL);
+                Skill_RequestAnim(inst->ownerAgentId, "fist_straight_punch", EDV_SLICE_INTERVAL);
 
                 float sliceStep = inst->pillarMaxHeight / (float)inst->totalSlices;
                 float topY = inst->pillarPos.y + inst->currentHeight - sliceStep * 0.45f;
