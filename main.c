@@ -4,6 +4,7 @@
 #include "core/liquid/liquid_impact.h"
 #include "core/liquid/liquid_surface.h"
 #include "core/liquid/liquid_metaball3d.h"
+#include "core/liquid/liquid_flow.h"
 #include "core/gas/gas_system.h"
 #include "core/metaball_fx.h"
 #include "core/particles/particle_manager.h"
@@ -1793,8 +1794,8 @@ int main(int argc, char **argv) {
             EndShaderMode();
         } else {
             BeginShaderMode(EnvShadow_GetDepthShader());
-            VFX_WaterOrb_DrawShadowPass();
             VC_GuidedEarth_DrawShadowPass();
+            LiquidFlow_DrawShadowPass();
             EndShaderMode();
         }
         if (CharacterModel_IsLoaded()) {
@@ -1932,6 +1933,9 @@ int main(int argc, char **argv) {
         GameScreen_Draw3D(&player);
         Boss_Draw();
         Formation_Draw();
+    }
+    if (!EnvShadow_IsEnabled()) {
+        LiquidFlow_DrawSmartShadows();
     }
     MapManager_DrawTransparent();
     Afterimage_Draw();
@@ -2282,6 +2286,7 @@ int main(int argc, char **argv) {
   SceneTargets_Unload();
   LiquidSurface_Unload();
   LiquidMetaball3D_Unload();
+  LiquidFlow_Unload();
   Atmosphere_Unload();
   VolumetricFog_Unload();
   Wind_Unload();

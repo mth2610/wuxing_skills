@@ -50,6 +50,10 @@ static int s_waterLocWaveFieldTex = -1;
 static int s_waterLocWaveFieldEnabled = -1;
 static int s_waterLocLakeRadii = -1;
 static int s_waterLocLakeSeed = -1;
+static int s_waterLocFlowFieldTex = -1;
+static int s_waterLocFlowFieldEnabled = -1;
+static int s_waterLocRain = -1;
+static int s_waterLocRainRise = -1;
 
 static Shader s_waterBedShader = {0};
 static bool s_waterBedShaderReady = false;
@@ -1869,6 +1873,10 @@ static Shader Water_GetShader(void)
         s_waterLocWaveFieldEnabled = GetShaderLocation(s_waterShader, "u_waveFieldEnabled");
         s_waterLocLakeRadii = GetShaderLocation(s_waterShader, "u_lakeRadii");
         s_waterLocLakeSeed = GetShaderLocation(s_waterShader, "u_lakeSeed");
+        s_waterLocFlowFieldTex = GetShaderLocation(s_waterShader, "u_flowFieldTex");
+        s_waterLocFlowFieldEnabled = GetShaderLocation(s_waterShader, "u_flowFieldEnabled");
+        s_waterLocRain = GetShaderLocation(s_waterShader, "u_rain");
+        s_waterLocRainRise = GetShaderLocation(s_waterShader, "u_rainRise");
 
         BeginShaderMode(s_waterShader);
         int causticSlot = 1;
@@ -1884,6 +1892,9 @@ static Shader Water_GetShader(void)
         int waveSlot = 3;
         if (s_waterLocWaveFieldTex >= 0)
             SetShaderValue(s_waterShader, s_waterLocWaveFieldTex, &waveSlot, SHADER_UNIFORM_INT);
+        int flowSlot = 4;
+        if (s_waterLocFlowFieldTex >= 0)
+            SetShaderValue(s_waterShader, s_waterLocFlowFieldTex, &flowSlot, SHADER_UNIFORM_INT);
         EndShaderMode();
 
         VFXLight_RegisterShader(s_waterShader);

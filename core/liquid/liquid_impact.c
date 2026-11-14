@@ -5,6 +5,7 @@
 #include "core/force_field.h"
 #include "core/liquid/liquid_surface.h"
 #include "core/liquid/liquid_pbd_gpu.h"
+#include "core/liquid/liquid_flow.h"
 #include "core/liquid/liquid_body_recipe.h"
 #include "core/gfx_quality.h"
 #include "core/map_manager.h"
@@ -417,6 +418,7 @@ void LiquidImpact_Update(float dt)
 {
     LiquidImpact_InitGravity();
     if (LiquidPBDGPU_IsActive()) LiquidPBDGPU_Update(dt, 0.0f);
+    LiquidFlow_Update(dt);
 
     for (int i = 0; i < LIQUID_IMPACT_MAX_BODIES; ++i) {
         LiquidForceBody *body = &s_forceBodies[i];
@@ -480,6 +482,7 @@ void LiquidImpact_Update(float dt)
 
 void LiquidImpact_Draw(void)
 {
+    LiquidFlow_DrawSSF();
     bool anyBodyActive = LiquidPBDGPU_IsActive();
     for (int i = 0; i < LIQUID_IMPACT_MAX_BODIES; ++i) {
         LiquidForceBody *body = &s_forceBodies[i];

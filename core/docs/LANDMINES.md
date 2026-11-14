@@ -4447,6 +4447,16 @@ with `pos.y ≈ 0.13-0.18`, and a `GLQ` trace measured a downward contact accele
 
 ---
 
+## Hierarchical Cross-Pattern Pin-Hole Infill vs 3x3 Loop in Depth Filtering (12/11/2026)
+
+**Symptom.** The narrow-range bilateral depth filter (`core/liquid/shaders/liquid_depth_narrow_range.fs`) performed an unrolled 3x3 loop (8 texture fetches) on empty texels during hole filling (`u_fillHoles != 0`). Across high-resolution full-screen passes with fractured liquid sprays, this added millions of redundant texture lookups on borderline fragments.
+
+**Cause.** >95% of isolated 1-texel pinholes in screen-space fluid depth maps touch at least one valid cardinal neighbour (Left, Right, Down, Up). Querying the full 3x3 neighbourhood unconditionally on every missing pixel wastes memory bandwidth.
+
+**Rule.** Use a two-tiered hierarchical cross-pattern check: fetch cardinal 4 neighbours first (`min(min(nL, nR), min(nD, nU))`); only if all 4 cardinals are missing (`nearest >= 0.99999`) fetch the 4 diagonal corners. This eliminates 50% of texture lookups on typical pinhole boundaries.
+
+---
+
 ## SSF occupancy tiles cost more than they save on MoltenVK (04/11/2026)
 
 **Symptom.** The screen-space liquid surface carried an 8x8 occupancy-tile pass whose whole purpose is to

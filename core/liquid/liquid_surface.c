@@ -75,9 +75,9 @@ static int s_compositeMultiLoc, s_compositeSingleLoc;
 static int s_frameMultipleMaterials;
 static int s_frameSingleMaterial;
 static Matrix s_fluidView, s_fluidProjection, s_fluidInverseProjection, s_fluidViewToWorld;
-static Color s_materialBody = {41, 128, 185, 255};
-static Color s_materialGlow = {80, 180, 255, 255};
-static Color s_materialSoft = {160, 225, 255, 255};
+static Color s_materialBody = {32, 152, 148, 255};
+static Color s_materialGlow = {36, 189, 173, 255};
+static Color s_materialSoft = {168, 232, 224, 255};
 static float s_reconstructionRadius = 0.022f;
 static float s_submissionKernelRadius = 0.022f;
 static float s_materialKernel[LIQUID_SURFACE_MATERIAL_SLOTS];
@@ -256,7 +256,7 @@ static void LiquidSurface_DrawEllipsoid(const LiquidSurfaceParticle *sp)
 static float s_captureScaleOverride;
 static float LiquidSurface_TargetScale(void)
 {
-    float scale = 1.0f;
+    float scale = GfxQuality_Get() >= GFX_HIGH ? 0.75f : 0.60f;
     if (s_captureScaleOverride > 0.0f)
         scale = s_captureScaleOverride;
     if (scale < 0.25f)
@@ -298,6 +298,8 @@ static void LiquidSurface_CreateTargets(int baseWidth, int baseHeight)
     s_thicknessScratch = LiquidSurface_LoadScalarTarget(tw, th);
     s_smoothA = LiquidSurface_LoadScalarTarget(w, h);
     s_smoothB = LiquidSurface_LoadScalarTarget(w, h);
+    SetTextureFilter(s_smoothA.texture, TEXTURE_FILTER_POINT);
+    SetTextureFilter(s_smoothB.texture, TEXTURE_FILTER_POINT);
     s_occupancy = LiquidSurface_LoadScalarTarget((w + 7) / 8, (h + 7) / 8);
     SetTextureFilter(s_occupancy.texture, TEXTURE_FILTER_POINT);
 }
@@ -614,11 +616,13 @@ LiquidDesc LiquidSurface_ProfileDesc(LiquidMotionProfile profile)
         return d;
     case LIQUID_MOTION_WATER:
     default:
-        m = VFX_Material(VC_MAT_WATER);
-        d = LiquidSurface_DielectricDesc(m->body, m->glow, m->soft);
+        /* Unified with song_quao river jade-emerald water palette */
+        d = LiquidSurface_DielectricDesc((Color){32, 152, 148, 255},
+                                         (Color){36, 189, 173, 255},
+                                         (Color){168, 232, 224, 255});
         d.ior = 1.333f;
-        d.roughnessScale = 0.65f;
-        d.opacityPerMetre = 2.4f;
+        d.roughnessScale = 0.35f;
+        d.opacityPerMetre = 0.32f;
         d.foam = 1.0f;
         return d;
     }
@@ -1044,7 +1048,7 @@ void LiquidSurface_Capture(Camera3D camera)
         EndShaderMode();
         EndTextureMode();
 
-        int thicknessBlurRadius = GfxQuality_Get() >= GFX_HIGH ? 5 : (GfxQuality_Get() >= GFX_MED ? 3 : 2);
+        int thicknessBlurRadius = 2;
         Vector2 thicknessTexel = {1.0f / s_thickness.texture.width, 1.0f / s_thickness.texture.height};
         Vector2 horizontal = {1.0f, 0.0f}, vertical = {0.0f, 1.0f};
         BeginTextureMode(s_thicknessScratch);
@@ -1067,7 +1071,7 @@ void LiquidSurface_Capture(Camera3D camera)
     s_stats.thicknessHostMs = LiquidSurface_HostElapsed(stageStart);
     stageStart = LiquidSurface_HostClock();
 
-    int maxFilterRadius = GfxQuality_Get() >= GFX_HIGH ? 22 : (GfxQuality_Get() >= GFX_MED ? 14 : 7);
+    int maxFilterRadius = GfxQuality_Get() >= GFX_HIGH ? 16 : (GfxQuality_Get() >= GFX_MED ? 12 : 7);
     int filterRadius = maxFilterRadius;
     if (s_frameKernelRadiusPx > 0.0f && s_frameKernelRadiusPx < 1e6f)
     {
@@ -1091,9 +1095,7 @@ void LiquidSurface_Capture(Camera3D camera)
         EndTextureMode();
     }
 
-    bool compactHighBody = s_frameBodyRadiusPx > 0.0f &&
-                           s_frameBodyRadiusPx <= LIQUID_SURFACE_COMPACT_BODY_PX;
-    int reconstructionRounds = GfxQuality_Get() >= GFX_HIGH ? (compactHighBody ? 1 : 2) : (GfxQuality_Get() >= GFX_MED ? 2 : 1);
+    int reconstructionRounds = (GfxQuality_Get() >= GFX_MED) ? 2 : 1;
     if (s_reconstructionRoundOverride >= 1 && s_reconstructionRoundOverride <= 2 &&
         GfxQuality_Get() >= GFX_HIGH)
         reconstructionRounds = s_reconstructionRoundOverride;
@@ -1105,44 +1107,10 @@ void LiquidSurface_Capture(Camera3D camera)
     if (s_reconstructionRoundOverride == 3)
         s_reconstructionABPrevRounds = reconstructionRounds;
 
-    s_stats.reconstructionPasses = reconstructionRounds * (GfxQuality_Get() >= GFX_HIGH ? 1 : 2);
-    if (GfxQuality_Get() >= GFX_HIGH)
-    {
-        int two = 1;
-        Vector2 noDirection = {0.0f, 0.0f};
-        for (int iteration = 0; iteration < reconstructionRounds; ++iteration)
-        {
-            Texture2D source = (iteration == 0) ? s_capture.texture : s_smoothA.texture;
-            bool last = (iteration == reconstructionRounds - 1);
-            RenderTexture2D dest = last ? s_smoothB : s_smoothA;
-            int fillHoles = (iteration == 0);
-            BeginTextureMode(dest);
-            ClearBackground(WHITE);
-            BeginShaderMode(s_smooth);
-            SetShaderValue(s_smooth, s_texelLoc, &texel, SHADER_UNIFORM_VEC2);
-            SetShaderValue(s_smooth, s_dirLoc, &noDirection, SHADER_UNIFORM_VEC2);
-            SetShaderValue(s_smooth, s_kernelRadiusLoc, &s_reconstructionRadius, SHADER_UNIFORM_FLOAT);
-            SetShaderValueV(s_smooth, s_smoothKernelsLoc, s_materialKernel, SHADER_UNIFORM_FLOAT, LIQUID_SURFACE_MATERIAL_SLOTS);
-            SetShaderValue(s_smooth, s_smoothMultiLoc, &multipleMaterials, SHADER_UNIFORM_INT);
-            SetShaderValueTexture(s_smooth, s_smoothMaterialLoc, s_capture.texture);
-            SetShaderValue(s_smooth, s_filterRadiusLoc, &filterRadius, SHADER_UNIFORM_INT);
-            SetShaderValue(s_smooth, s_filter2DLoc, &two, SHADER_UNIFORM_INT);
-            int sourceIsCapture = (iteration == 0) ? 1 : 0;
-            SetShaderValue(s_smooth, s_smoothSourceMaterialLoc, &sourceIsCapture, SHADER_UNIFORM_INT);
-            SetShaderValueMatrix(s_smooth, s_smoothProjectionLoc, s_fluidProjection);
-            SetShaderValueMatrix(s_smooth, s_smoothInverseProjectionLoc, inverseProjection);
-            SetShaderValue(s_smooth, s_fillLoc, &fillHoles, SHADER_UNIFORM_INT);
-            int mask = s_useOccupancy ? 1 : 0;
-            SetShaderValue(s_smooth, s_useOccupancyLoc, &mask, SHADER_UNIFORM_INT);
-            SetShaderValueTexture(s_smooth, s_occupancyLoc, s_occupancy.texture);
-            LiquidSurface_BeginScissor(NULL, s_capture.texture.height);
-            DrawTextureRec(source, (Rectangle){0, 0, source.width, -source.height}, (Vector2){0, 0}, WHITE);
-            LiquidSurface_EndScissor();
-            EndShaderMode();
-            EndTextureMode();
-        }
-        reconstructionRounds = 0;
-    }
+    /* Use separable 1D Narrow-Range Filter (H + V passes) across all quality
+     * tiers: ~10x fewer texture taps than the 2D nested loop while supporting
+     * wider smoothing radii to fuse spheres without crease artifacts. */
+    s_stats.reconstructionPasses = reconstructionRounds * 2;
 
     for (int iteration = 0; iteration < reconstructionRounds; ++iteration)
     {

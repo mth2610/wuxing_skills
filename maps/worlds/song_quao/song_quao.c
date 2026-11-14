@@ -233,6 +233,20 @@ static float SongQuaoEdgeTaper(float cx, float cz, void *userData)
     return shoreTaper * cliffTaper * slopeTaper * rockTaper;
 }
 
+// Terrain-water SWE sources: real DEM bed and the baked steady water-surface elevation.
+static float SongQuaoWaterBed(float x, float z, void *ctx)
+{
+    (void)ctx;
+    return MapProp_SampleGroundHeight(&s_ground, kMapCenter, x, z);
+}
+
+static float SongQuaoWaterSurface(float x, float z, void *ctx)
+{
+    (void)ctx;
+    float surfaceY = MapDem_SampleWaterHeight(&s_dem, x, z);
+    return (surfaceY <= -s_dem.cliffDepth + 0.05f) ? -1e9f : surfaceY;
+}
+
 static float SongQuaoSampleGroundHeight(float x, float z, void *ctx)
 {
     (void)ctx;
@@ -734,6 +748,8 @@ void InitSongQuaoMap(void)
                                              .foamColor = {248, 252, 255, 240},
                                          });
 
+    MapProp_SetWaterTerrainSource(&s_river, SongQuaoWaterBed, SongQuaoWaterSurface, NULL);
+
     BuildRocks();
     UpdateSongQuaoWaterObstacles(kMapCenter);
 
@@ -844,6 +860,17 @@ void UpdateSongQuaoMap(float dt)
 
     MapProp_UpdateFloraSystem(&s_flora, camera.target, dt);
     UpdateSongQuaoWaterObstacles(camera.target);
+    // Rain mode (] cycles dry -> drizzle -> heavy -> storm): drives SWE rain/runoff + streaks
+    if (IsKeyPressed(KEY_RIGHT_BRACKET))
+    {
+        static const float kRainSteps[] = {0.0f, 0.5f, 1.0f, 2.0f};
+        int cur = 0;
+        for (int i = 0; i < 4; i++)
+            if (fabsf(MapProp_GetRainTarget() - kRainSteps[i]) < 0.01f)
+                cur = i;
+        MapProp_SetRain(kRainSteps[(cur + 1) % 4]);
+    }
+    MapProp_UpdateRain(dt);
     MapProp_UpdateWaterSurface(&s_river, dt);
     if (!(s_skipMask & MAP_SKIP_FLUFF))
         MapProp_UpdateFluffSystem(&s_fluff, camera.target, &s_ground, kMapCenter, PLAYABLE_BASIN_MIN_Y, dt);
@@ -920,6 +947,7 @@ void DrawTransparentSongQuaoMap(void)
         MapProp_DrawWaterOverlay(&s_river, (float)fmod(GetTime(), 3600.0));
     if (!(s_skipMask & MAP_SKIP_FLUFF))
         MapProp_DrawFluffSystem(&s_fluff, camera);
+    MapProp_DrawRain(camera.target, (float)fmod(GetTime(), 3600.0));
 }
 
 void UnloadSongQuaoMap(void)
@@ -997,6 +1025,11 @@ void SetWaterInteractorSongQuaoMap(Vector3 position, Vector3 velocity, float rad
     s_playerRadius = radius;
     s_hasPlayerInteractor = (radius > 0.05f);
     MapDem_SetWaterInteractor(&s_dem, &s_ground, &s_river, position, velocity, radius);
+}
+
+void SetRainSongQuaoMap(float intensity)
+{
+    MapProp_SetRain(intensity);
 }
 
 void AddWaterRippleSongQuaoMap(Vector3 position, float radius, float intensity)

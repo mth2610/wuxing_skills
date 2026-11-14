@@ -5,6 +5,9 @@
 #include "core/liquid/liquid_impact.h"
 #include "core/particles/particle_manager.h"
 #include "core/liquid/liquid_surface.h"
+#include "core/liquid/liquid_metaball3d.h"
+#include "core/motion/analytic_flow.h"
+#include "environment/env_shadow.h"
 #include "core/vfx_light.h"
 #include "core/trails/trail_system.h"
 #include "core/camera_fx.h"
@@ -131,7 +134,6 @@ void VFX_Compose_Update(float dt)
     VFX_Sequence_Update(dt);
     VC_RefParticles_Update(dt);   /* calibration target — vc_ref_particle.inl */
     VC_GuidedMotion_Update(dt);
-    WaterOrb_Update(dt);
     VC_GuidedEarth_Update(dt);
     VC_SeismicWave_Update(dt);
     VC_EarthSpike_Update(dt);
@@ -195,7 +197,6 @@ void VFX_Compose_Draw3D(Camera3D cam)
  * inside the .inl it drives are out of reach of main.c, so this is the bridge. */
 void VFX_Compose_SubmitScreenSpaceVFX(void)
 {
-    WaterOrb_SubmitSurface();
     VC_GuidedLiquid_SubmitSurface();
     if (LiquidBench_EnvEnabled()) LiquidBench_SubmitSurface();
 }

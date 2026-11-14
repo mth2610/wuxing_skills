@@ -83,11 +83,27 @@ void main() {
 
     if (centerDevice >= 0.99999 && u_fillHoles != 0) {
         float nearest = 1.0;
-        for (int y = -1; y <= 1; y++) {
-            for (int x = -1; x <= 1; x++) {
-                if (x == 0 && y == 0) continue;
-                nearest = min(nearest, texture(texture0, fragTexCoord + vec2(x, y) * u_texel).r);
-            }
+        /* Fast cross-pattern check first: cardinal 4 neighbours resolve >95% of 1-texel pinholes */
+        float nL = texture(texture0, fragTexCoord - vec2(u_texel.x, 0.0)).r;
+        float nR = texture(texture0, fragTexCoord + vec2(u_texel.x, 0.0)).r;
+        float nD = texture(texture0, fragTexCoord - vec2(0.0, u_texel.y)).r;
+        float nU = texture(texture0, fragTexCoord + vec2(0.0, u_texel.y)).r;
+        nearest = min(min(nL, nR), min(nD, nU));
+
+        /* Check diagonal corners + 2-texel cardinals if immediate cardinals missed */
+        if (nearest >= 0.99999) {
+            float nDL = texture(texture0, fragTexCoord + vec2(-u_texel.x, -u_texel.y)).r;
+            float nDR = texture(texture0, fragTexCoord + vec2( u_texel.x, -u_texel.y)).r;
+            float nUL = texture(texture0, fragTexCoord + vec2(-u_texel.x,  u_texel.y)).r;
+            float nUR = texture(texture0, fragTexCoord + vec2( u_texel.x,  u_texel.y)).r;
+            nearest = min(min(nDL, nDR), min(nUL, nUR));
+        }
+        if (nearest >= 0.99999) {
+            float nL2 = texture(texture0, fragTexCoord - vec2(2.0 * u_texel.x, 0.0)).r;
+            float nR2 = texture(texture0, fragTexCoord + vec2(2.0 * u_texel.x, 0.0)).r;
+            float nD2 = texture(texture0, fragTexCoord - vec2(0.0, 2.0 * u_texel.y)).r;
+            float nU2 = texture(texture0, fragTexCoord + vec2(0.0, 2.0 * u_texel.y)).r;
+            nearest = min(min(nL2, nR2), min(nD2, nU2));
         }
         centerDevice = nearest;
     }
@@ -186,59 +202,38 @@ void main() {
         return;
     }
 
-    float upperPos = centerDistance + threshold, lowerPos = centerDistance - threshold;
-    float upperNeg = upperPos, lowerNeg = lowerPos;
+    /* Symmetric integer-texel bilateral 1D filter (4 pairs = 8 taps max):
+     * uses exact integer texel steps so POINT-filtered depth targets never
+     * produce checkerboard or grid-block artifacts. */
     vec2 stepUV = u_direction * u_texel;
+    float rangeInv = -0.5 / max((kernelRadius * 5.0) * (kernelRadius * 5.0), 1e-4);
+    int stridedSteps = clamp(adaptiveRadius, 2, 4);
+    float stridedSigmaSq = max(float(stridedSteps) * 0.55, 0.8);
+    float invSpatialSq = -0.5 / (stridedSigmaSq * stridedSigmaSq);
 
-    for (int i = 1; i <= 32; i++) {
-        if (i > adaptiveRadius) break;
+    for (int i = 1; i <= 4; i++) {
+        if (i > stridedSteps) break;
         float fi = float(i);
-        float w = exp(fi * fi * invTwoSigmaSq);
+        float wSpatial = exp(fi * fi * invSpatialSq);
         vec2 off = stepUV * fi;
 
         float rawPos = DepthForMaterial(fragTexCoord + off, material);
-        float rawNeg = DepthForMaterial(fragTexCoord - off, material);
-        bool validPos = (rawPos < 0.99999);
-        bool validNeg = (rawNeg < 0.99999);
-        if (!validPos && !validNeg) continue;
-
-        float dPos = validPos ? ViewDistance(rawPos) : 1e6;
-        float dNeg = validNeg ? ViewDistance(rawNeg) : 1e6;
-        float wPos = validPos ? w : 0.0;
-        float wNeg = validNeg ? w : 0.0;
-
-        if (validPos) {
-            if (dPos > upperPos) {
-                wPos = 0.0;
-            } else if (dPos < lowerPos) {
-                dPos = lowerClamp;
-            } else {
-                upperPos = max(upperPos, dPos + threshold);
-                lowerPos = min(lowerPos, dPos - threshold);
-            }
-        }
-
-        if (validNeg) {
-            if (dNeg > upperNeg) {
-                wNeg = 0.0;
-            } else if (dNeg < lowerNeg) {
-                dNeg = lowerClamp;
-            } else {
-                upperNeg = max(upperNeg, dNeg + threshold);
-                lowerNeg = min(lowerNeg, dNeg - threshold);
-            }
-        }
-
-        if (wPos > 0.0 && wNeg == 0.0) {
+        if (rawPos < 0.99999) {
+            float dPos = ViewDistance(rawPos);
             float diff = dPos - centerDistance;
-            wPos *= 0.45 * exp(diff * diff * invTwoRangeSq);
-        } else if (wNeg > 0.0 && wPos == 0.0) {
-            float diff = dNeg - centerDistance;
-            wNeg *= 0.45 * exp(diff * diff * invTwoRangeSq);
+            float w = wSpatial * exp(diff * diff * rangeInv);
+            weightedDepth += dPos * w;
+            weightSum += w;
         }
 
-        weightedDepth += dPos * wPos + dNeg * wNeg;
-        weightSum += wPos + wNeg;
+        float rawNeg = DepthForMaterial(fragTexCoord - off, material);
+        if (rawNeg < 0.99999) {
+            float dNeg = ViewDistance(rawNeg);
+            float diff = dNeg - centerDistance;
+            float w = wSpatial * exp(diff * diff * rangeInv);
+            weightedDepth += dNeg * w;
+            weightSum += w;
+        }
     }
 
     float filteredDistance = weightedDepth / max(weightSum, 0.0001);

@@ -206,24 +206,24 @@ void main() {
             float rest=(p.position_radius.w+source[n].position_radius.w)*0.88;
             if(l>0.0001 && l<rest) {
                 correction+=normalize(d)*(rest-l)*0.42;
-            } else if(solveCohesion && l>=rest && l<rest*2.05) {
+            } else if(solveCohesion && l>=rest && l<rest*2.30) {
                 /* Cheap surface cohesion inside the existing grid/Jacobi pass.
                  * It has finite support, so detached hero droplets stay
                  * detached, while neighbouring crown samples retain a sheet
                  * long enough for SSF to reconstruct one shared surface. */
-                float q=(l-rest)/(rest*1.05);
+                float q=(l-rest)/(rest*1.30);
                 float falloff=(1.0-q)*(1.0-q);
                 float pairPhase=max(p.phase_seed_impact_pad.x,
                                     source[n].phase_seed_impact_pad.x);
-                float cohesion=pairPhase<0.5?0.16:
-                               (pairPhase<1.5?0.11:0.035);
-                float ageFade=1.0-smoothstep(0.48, 0.96, particleAge(p));
+                float cohesion=pairPhase<0.5?0.22:
+                               (pairPhase<1.5?0.15:0.045);
+                float ageFade=1.0-smoothstep(0.62, 1.25, particleAge(p));
                 correction-=normalize(d)*(l-rest)*cohesion*falloff*ageFade;
             }
-            if(solveCohesion && l>0.0001 && l<rest*2.05) {
+            if(solveCohesion && l>0.0001 && l<rest*2.30) {
                 /* XSPH-style velocity blending supplies viscosity/coherent
                  * motion without another GPU dispatch or a CPU readback. */
-                float w=1.0-l/(rest*2.05);
+                float w=1.0-l/(rest*2.30);
                 w=w*w*w;
                 velocityDelta+=(source[n].velocity_life.xyz
                               - p.velocity_life.xyz)*w;
@@ -234,8 +234,8 @@ void main() {
     p.position_radius.xyz+=correction;
     if(velocityWeight>0.00001) {
         float phase=p.phase_seed_impact_pad.x;
-        float xsph=phase<0.5?0.16:(phase<1.5?0.13:0.055);
-        float ageFade=1.0-smoothstep(0.55, 1.02, particleAge(p));
+        float xsph=phase<0.5?0.21:(phase<1.5?0.16:0.065);
+        float ageFade=1.0-smoothstep(0.65, 1.25, particleAge(p));
         p.velocity_life.xyz+=velocityDelta/velocityWeight*xsph*ageFade;
     }
     collideReceiver(p, id);

@@ -2096,7 +2096,6 @@ int VFX_ComposeSmokeTrail(const Matrix *followTransform, VC_MaterialId mat, floa
 void VFX_ComposeStonePillar(Vector3 basePos, float progress);
 void VFX_ComposeSurfaceImpact(Vector3 pos, VFX_ImpactSurface surface);
 void VFX_ComposeSurfaceParticleRing(Vector3 pos, VC_MaterialId matId, float scale, float severity01, VFX_SurfaceParticleRingVariant variant);
-void VFX_ComposeWaterOrb(Vector3 start, Vector3 target);
 void VFX_ComposeWaterRing(Vector3 center, float radius, float t01);
 void VFX_ComposeWaterStream(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float radius, float progress, float time);
 void VFX_ComposeWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time);
@@ -2123,6 +2122,5 @@ void VFX_WaterRing_Stop(void);
 
 // Screen-space producers that submit SSF streams before LiquidSurface_HasPending().
 void VFX_Compose_SubmitScreenSpaceVFX(void);
-void VFX_WaterOrb_DrawShadowPass(void);
 
 #endif // VISUAL_COMPOSER_H

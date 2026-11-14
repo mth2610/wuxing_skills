@@ -874,6 +874,22 @@ typedef struct
     float *velV;
     Vector3 interactorPrevPos;
     bool hasInteractorPrev;
+    // Terrain hydrology: SWE bound to the real DEM bed (set via MapProp_SetWaterTerrainSource).
+    // eqDepth = steady-state depth of the baked river (open-boundary / upstream feed);
+    // rain, runoff, infiltration and Manning friction act on top of it.
+    float (*sampleBed)(float x, float z, void *ctx);
+    float (*sampleSurface)(float x, float z, void *ctx); // absolute WSE, < -1e5f = no water
+    void *terrainCtx;
+    float *eqDepth;
+    unsigned char *flowPixels; // RGBA8: R/G = local velocity (0.5 + v * 0.25), A = wet
+    Texture2D flowFieldTex;
+    bool flowDirty;
+    bool hydrologyReady;
+    bool hydroNeedsFullRefresh;
+    bool windowHasWater;
+    float manning;       // Manning roughness n (s/m^(1/3)), default 0.045
+    float rainDropAccum; // fractional raindrop splashes carried between substeps
+    unsigned int rngState;
 } MapWaterSurface;
 
 MapWaterConfig MapProp_DefaultWaterConfig(MapWaterEcosystem eco);
@@ -890,7 +906,23 @@ void MapProp_SetWaterInteractor(MapWaterSurface *water, Vector3 position, Vector
                                 float radius, float submerged);
 void MapProp_AddWaterRipple(MapWaterSurface *water, Vector3 position, float radius, float intensity);
 void MapProp_AddWaterObstacle(MapWaterSurface *water, Vector3 position, float radius, float strength);
+// Bind a terrain-water SWE grid to the real DEM: bed height + steady water-surface elevation.
+// Without this the grid stays a flat-bed ripple field (legacy behaviour).
+void MapProp_SetWaterTerrainSource(MapWaterSurface *water,
+                                   float (*sampleBed)(float x, float z, void *ctx),
+                                   float (*sampleSurface)(float x, float z, void *ctx),
+                                   void *ctx);
 void MapProp_UpdateWaterSurface(MapWaterSurface *water, float dt);
+
+// --- Rain mode (global weather state, drives water SWE + rain streaks) ---
+// intensity: 0 = dry, 1 = ~65 mm/h (heavy), 2 = storm. Smoothed internally.
+void MapProp_SetRain(float intensity);
+float MapProp_GetRainTarget(void);
+float MapProp_GetRain(void);     // smoothed visible rain intensity
+float MapProp_GetRunoff(void);   // smoothed catchment runoff (stream swell driver)
+float MapProp_GetWetness(void);  // smoothed ground saturation 0..1
+void MapProp_UpdateRain(float dt); // call once per frame (idempotent per dt)
+void MapProp_DrawRain(Vector3 focus, float time); // transparent pass; rain streaks around focus
 void MapProp_DrawWaterBed(const MapWaterSurface *water, float time);
 void MapProp_DrawWaterOverlay(const MapWaterSurface *water, float time);
 void MapProp_DrawWaterSurface(const MapWaterSurface *water, float time);

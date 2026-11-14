@@ -5,7 +5,7 @@
 #include "core/liquid/liquid_motion.h"
 #include "core/particles/particle_manager.h"
 
-#define LIQUID_SURFACE_MAX_PARTICLES 768
+#define LIQUID_SURFACE_MAX_PARTICLES 4096
 /* Distinct liquids that may share one screen. The capture rasterizes a slot
  * index per pixel, so this is the width of the composite's material table, not
  * a count of bodies: any number of bodies may share a slot. */

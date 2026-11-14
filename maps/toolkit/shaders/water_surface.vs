@@ -17,6 +17,7 @@ uniform vec3 u_waterVelocity;
 uniform float u_waterRadius;
 uniform sampler2D u_waveFieldTex;
 uniform int u_waveFieldEnabled;
+uniform float u_rainRise;    // storm swell (m) applied to deep terrain-water vertices
 
 out vec3 fragPosition;
 out vec2 fragLakeCoord;
@@ -65,16 +66,22 @@ void main()
         vec2 d1 = normalize(normFlowDir * 0.90 - perpFlow * 0.28);
         vec2 d2 = normalize(normFlowDir * 0.95 + perpFlow * 0.14);
 
-        // Rushing downstream wave advection
-        vec2 pFlow = world.xz - normFlowDir * mod(u_time * (flowSpeed * 1.8 + 0.35), 4096.0);
-        vec2 warp = vec2(sin(pFlow.y * 0.45 + t * 0.55), cos(pFlow.x * 0.45 - t * 0.45)) * 0.35;
-        vec2 pw = pFlow + warp;
+        // Rushing downstream wave advection (synced with water_surface.fs)
+        vec2 warp = vec2(sin(world.z * 0.45 + t * 0.55), cos(world.x * 0.45 - t * 0.45)) * 0.35;
+        vec2 pw = world.xz + warp;
         float w0 = sin(dot(pw, d0) * (u_waveScale * 1.6) - t * 3.6);
         float w1 = sin(dot(pw, d1) * (u_waveScale * 2.2) - t * 4.4);
         float w2 = sin(dot(pw, d2) * (u_waveScale * 3.4) - t * 6.2);
         float dispY = (w0 * 0.45 + w1 * 0.35 + w2 * 0.20) * u_waveHeight * shoreFade;
         local.y += dispY;
         world.y += dispY;
+    }
+
+    if (u_waterShape == 3 && u_rainRise > 0.0001) {
+        // Swell only where the channel is already deep so shorelines never detach from the bank
+        float lift = u_rainRise * smoothstep(0.08, 0.50, vertexTexCoord.x);
+        local.y += lift;
+        world.y += lift;
     }
 
     fragPosition   = world;

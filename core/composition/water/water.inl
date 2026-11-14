@@ -131,9 +131,8 @@ static void WaterFx_InitShared(void)
 #include "vc_guided_liquid.inl"
 #include "vc_water_dragon.inl"
 // @gen:water_includes begin
-// 5 include(s) — auto-managed by sync_vfx_test.py
+// 4 include(s) — auto-managed by sync_vfx_test.py
 #include "water_stream.inl"
-#include "water_orb.inl"
 #include "liquid_bench.inl"
 #include "liquid_impact_test.inl"
 #include "water_ring.inl"

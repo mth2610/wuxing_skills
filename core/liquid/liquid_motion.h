@@ -39,7 +39,7 @@ static inline LiquidMotionDesc LiquidMotion_Get(LiquidMotionProfile profile)
         return (LiquidMotionDesc){11.5f, 0.74f, 0.82f, 0.20f, 5.2f, 9.8f, 11.2f, 0.18f, 0.78f, 0.14f, 1.80f};
     case LIQUID_MOTION_WATER:
     default:
-        return (LiquidMotionDesc){18.5f, 1.02f, 1.00f, 1.45f, 3.1f, 7.5f, 5.8f, 0.11f, 0.70f, 0.14f, 1.45f};
+        return (LiquidMotionDesc){17.5f, 1.04f, 1.02f, 1.15f, 2.6f, 6.8f, 6.8f, 0.11f, 0.78f, 0.15f, 1.55f};
     }
 }
 

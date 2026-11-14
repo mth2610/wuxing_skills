@@ -15,5 +15,6 @@ bool SampleGroundSurfaceSongQuaoMap(float x, float z, Vector3 *outPosition, Vect
 bool GetWaterInfoSongQuaoMap(float x, float z, float *outSurfaceY, float *outWaterDepth);
 void SetWaterInteractorSongQuaoMap(Vector3 position, Vector3 velocity, float radius);
 void AddWaterRippleSongQuaoMap(Vector3 position, float radius, float intensity);
+void SetRainSongQuaoMap(float intensity); // 0 dry .. 1 heavy .. 2 storm (] cycles in-game)
 
 #endif // SONG_QUAO_MAP_H

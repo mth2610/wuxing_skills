@@ -49,6 +49,9 @@ typedef struct {
     MapWaterConfig config;
     float *waveHeightField,*waveNextField,*waveVelocityField;
     float *bedHeight,*waterDepth,*smoothEta,*fluxL,*fluxR,*fluxT,*fluxB,*velU,*velV;
+    float *eqDepth;
+    unsigned char *flowPixels;
+    Texture2D flowFieldTex;
     unsigned char *wavePixels;
     Texture2D waveFieldTex;
     float waveStepRemainder;

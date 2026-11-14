@@ -194,6 +194,7 @@ add_executable(wuxing
     core/uv/surface_flow.c
     core/force_field.c
     core/motion/motion_fields.c
+    core/motion/analytic_flow.c
     core/particles/particle_system.c
     core/particles/particle_manager.c
     core/particles/gpu/particle_gpu_backend.c
@@ -203,6 +204,7 @@ add_executable(wuxing
     core/liquid/liquid_capture_cpu.c
     core/liquid/liquid_surface.c
     core/liquid/liquid_metaball3d.c
+    core/liquid/liquid_flow.c
     core/gas/gas_sim.c
     core/gas/gas_system.c
     core/path_spline.c

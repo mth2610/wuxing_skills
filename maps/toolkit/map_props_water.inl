@@ -374,6 +374,137 @@ static void Water_UploadWaveField(MapWaterSurface *water)
     }
 }
 
+// ---------------------------------------------------------------------------
+// Terrain hydrology (SWE on the real DEM bed + rain/runoff)
+// Units: metres / seconds, but rain is time-compressed so a shower is visible in game time:
+//   intensity 1.0 (~65 mm/h real) -> 5.4 mm/s of depth on every cell.
+// ---------------------------------------------------------------------------
+#define WATER_RAIN_GAIN_MPS 0.0054f // depth added per second at rain intensity 1.0
+#define WATER_INFIL_MPS 0.0036f     // dry-soil infiltration; falls to 25% as the ground saturates
+#define WATER_STORM_LIFT_M 0.16f    // max stream swell at runoff 1.5 (mesh + equilibrium depth)
+#define WATER_FLOW_ENC 0.25f        // flow texture: 0.5 + v * 0.25  => +-2 m/s range
+
+static inline float Water_StormLift(void)
+{
+    return WATER_STORM_LIFT_M * fminf(MapProp_GetRunoff(), 1.5f);
+}
+
+static void Water_TerrainRefreshCells(MapWaterSurface *w, int i0, int i1, int j0, int j1, bool resetDepth)
+{
+    const int n = WATER_FIELD_SIZE;
+    const float dx = 2.0f * w->waveGridRadius / (float)(n - 1);
+    const float x0 = w->waveGridCenter.x - w->waveGridRadius;
+    const float z0 = w->waveGridCenter.z - w->waveGridRadius;
+    if (i0 < 0) i0 = 0;
+    if (j0 < 0) j0 = 0;
+    if (i1 > n) i1 = n;
+    if (j1 > n) j1 = n;
+    for (int j = j0; j < j1; j++)
+    {
+        const float wz = z0 + (float)j * dx;
+        for (int i = i0; i < i1; i++)
+        {
+            const float wx = x0 + (float)i * dx;
+            const int idx = j * n + i;
+            const float bed = w->sampleBed(wx, wz, w->terrainCtx);
+            const float surf = w->sampleSurface ? w->sampleSurface(wx, wz, w->terrainCtx) : -1e9f;
+            const float eq = (surf > -1e5f && surf > bed + 0.005f) ? (surf - bed) : 0.0f;
+            w->bedHeight[idx] = bed;
+            w->eqDepth[idx] = eq;
+            if (resetDepth)
+            {
+                w->waterDepth[idx] = eq;
+                w->fluxL[idx] = w->fluxR[idx] = w->fluxT[idx] = w->fluxB[idx] = 0.0f;
+                w->velU[idx] = w->velV[idx] = 0.0f;
+            }
+        }
+    }
+}
+
+static void Water_TerrainRecountWater(MapWaterSurface *w)
+{
+    const int cells = WATER_FIELD_SIZE * WATER_FIELD_SIZE;
+    bool any = false;
+    for (int i = 0; i < cells && !any; i++)
+        any = (w->eqDepth[i] > 0.02f);
+    w->windowHasWater = any;
+}
+
+// Pipe driving head between two cells. Inside the baked river both cells are measured against
+// their steady depth, so the river at rest exerts no force (its natural slope is carried by the
+// analytic base current instead). Any pair involving land uses the true surface bed + depth, so
+// rain runoff still flows downhill and spills into / out of the channel.
+static inline float Water_DeltaEta(const MapWaterSurface *w, int a, int b, bool hydro)
+{
+    const float ha = w->waterDepth[a], hb = w->waterDepth[b];
+    if (hydro)
+    {
+        const float ea = w->eqDepth[a], eb = w->eqDepth[b];
+        if (ea > 0.0f && eb > 0.0f)
+            return (ha - ea) - (hb - eb);
+        // Channel -> bank: the coarse water mask leaves some bank cells lower than the river surface.
+        // Clamp the bank's effective bed to the river's steady surface so resting water never pours
+        // onto dry land as a waterfall, while genuine swells (ha > ea) still spill naturally.
+        if (ea > 0.0f && eb <= 0.0f)
+        {
+            const float bankBed = fmaxf(w->bedHeight[b], w->bedHeight[a] + ea);
+            return (w->bedHeight[a] + ha) - (bankBed + hb);
+        }
+    }
+    return (w->bedHeight[a] + ha) - (w->bedHeight[b] + hb);
+}
+
+// Baked steady water surface at a cell (falls back to the centre cell's when the neighbour is land)
+static inline float Water_BakedSurf(const MapWaterSurface *w, int k, float fallback)
+{
+    return (w->eqDepth[k] > 0.0f) ? (w->bedHeight[k] + w->eqDepth[k]) : fallback;
+}
+
+void MapProp_SetWaterTerrainSource(MapWaterSurface *water,
+                                   float (*sampleBed)(float x, float z, void *ctx),
+                                   float (*sampleSurface)(float x, float z, void *ctx),
+                                   void *ctx)
+{
+    if (!water || !water->ready || water->config.shape != WATER_SHAPE_TERRAIN ||
+        !sampleBed || !water->waterDepth)
+        return;
+    const int cells = WATER_FIELD_SIZE * WATER_FIELD_SIZE;
+    if (!water->eqDepth)
+        water->eqDepth = calloc((size_t)cells, sizeof(float));
+    if (!water->flowPixels)
+    {
+        water->flowPixels = malloc((size_t)cells * 4u);
+        if (water->flowPixels)
+        {
+            memset(water->flowPixels, 128, (size_t)cells * 4u);
+            for (int p = 0; p < cells; p++)
+                water->flowPixels[p * 4 + 3] = 0;
+            Image img = {.data = water->flowPixels,
+                         .width = WATER_FIELD_SIZE,
+                         .height = WATER_FIELD_SIZE,
+                         .mipmaps = 1,
+                         .format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8};
+            water->flowFieldTex = LoadTextureFromImage(img);
+            if (water->flowFieldTex.id > 0)
+            {
+                SetTextureFilter(water->flowFieldTex, TEXTURE_FILTER_BILINEAR);
+                SetTextureWrap(water->flowFieldTex, TEXTURE_WRAP_CLAMP);
+            }
+        }
+    }
+    if (!water->eqDepth || !water->flowPixels)
+        return;
+    water->sampleBed = sampleBed;
+    water->sampleSurface = sampleSurface;
+    water->terrainCtx = ctx;
+    if (water->manning <= 0.0f)
+        water->manning = 0.045f;
+    if (water->rngState == 0u)
+        water->rngState = 0x9E3779B9u;
+    water->hydrologyReady = true;
+    water->hydroNeedsFullRefresh = true;
+}
+
 MapWaterSurface MapProp_CreateWaterSurface(MapWaterConfig config)
 {
     MapWaterSurface water = {0};
@@ -1287,7 +1418,26 @@ void MapProp_DrawWaterOverlay(const MapWaterSurface *water, float time)
     SetShaderValue(shader, s_waterLocWaveSpeed, &water->config.waveSpeed, SHADER_UNIFORM_FLOAT);
     SetShaderValue(shader, s_waterLocDetailScale, &water->config.detailScale, SHADER_UNIFORM_FLOAT);
     SetShaderValue(shader, s_waterLocDetailStrength, &water->config.detailStrength, SHADER_UNIFORM_FLOAT);
-    SetShaderValue(shader, s_waterLocFlowVelocity, &water->config.flowVelocity, SHADER_UNIFORM_VEC2);
+    // Storm swell speeds the current up; rain drives splash rings + stream rise in the shader.
+    const float rainVisible = MapProp_GetRain();
+    const float runoffNow = MapProp_GetRunoff();
+    Vector2 drawFlow = Vector2Scale(water->config.flowVelocity, 1.0f + 0.5f * fminf(runoffNow, 1.5f));
+    SetShaderValue(shader, s_waterLocFlowVelocity, &drawFlow, SHADER_UNIFORM_VEC2);
+    if (s_waterLocRain >= 0)
+        SetShaderValue(shader, s_waterLocRain, &rainVisible, SHADER_UNIFORM_FLOAT);
+    if (s_waterLocRainRise >= 0)
+    {
+        float rise = (water->config.shape == WATER_SHAPE_TERRAIN) ? Water_StormLift() : 0.0f;
+        SetShaderValue(shader, s_waterLocRainRise, &rise, SHADER_UNIFORM_FLOAT);
+    }
+    int flowEnabled = (water->hydrologyReady && water->flowFieldTex.id > 0) ? 1 : 0;
+    if (flowEnabled && water->flowDirty)
+    {
+        UpdateTexture(water->flowFieldTex, water->flowPixels);
+        ((MapWaterSurface *)water)->flowDirty = false;
+    }
+    if (s_waterLocFlowFieldEnabled >= 0)
+        SetShaderValue(shader, s_waterLocFlowFieldEnabled, &flowEnabled, SHADER_UNIFORM_INT);
     int shapeInt = (int)water->config.shape;
     SetShaderValue(shader, s_waterLocWaterShape, &shapeInt, SHADER_UNIFORM_INT);
 
@@ -1390,6 +1540,8 @@ void MapProp_DrawWaterOverlay(const MapWaterSurface *water, float time)
     rlEnableTexture(causticId);
     rlActiveTextureSlot(3);
     rlEnableTexture(waveFieldEnabled ? water->waveFieldTex.id : defaultTexId);
+    rlActiveTextureSlot(4);
+    rlEnableTexture(flowEnabled ? water->flowFieldTex.id : defaultTexId);
 
     Vector2 screenRes = {(float)GetScreenWidth(), (float)GetScreenHeight()};
     if (s_waterLocResolution >= 0)
@@ -1423,6 +1575,8 @@ void MapProp_DrawWaterOverlay(const MapWaterSurface *water, float time)
     rlEnableBackfaceCulling();
 
     rlActiveTextureSlot(2);
+    rlDisableTexture();
+    rlActiveTextureSlot(4);
     rlDisableTexture();
     rlActiveTextureSlot(3);
     rlDisableTexture();
@@ -1586,6 +1740,8 @@ void MapProp_UpdateWaterSurface(MapWaterSurface *water, float dt)
         return;
 
     // 1. Seamlessly shift wave grid to track player on large terrain water maps
+    bool hydroStrip = false;
+    int hydroShiftX = 0, hydroShiftZ = 0;
     if (water->config.shape == WATER_SHAPE_TERRAIN && water->waterDepth)
     {
         const int n = WATER_FIELD_SIZE;
@@ -1596,6 +1752,7 @@ void MapProp_UpdateWaterSurface(MapWaterSurface *water, float dt)
         {
             water->waveGridCenter = water->interactorPos;
             water->config.center = water->waveGridCenter;
+            water->hydroNeedsFullRefresh = true;
             if (water->waveNextField)
                 water->waveNextField[0] = -1.0f;
         }
@@ -1634,11 +1791,17 @@ void MapProp_UpdateWaterSurface(MapWaterSurface *water, float dt)
                         water->waveUploadedTextureId = 0;
                     }
                     water->waveStepRemainder = -1.0f;
+                    water->hydroNeedsFullRefresh = true;
                 }
                 else
                 {
+                    hydroStrip = true;
+                    hydroShiftX = shiftX;
+                    hydroShiftZ = shiftZ;
                     Water_ShiftField(water->waterDepth, water->waveNextField, n, shiftX, shiftZ, baseDepth);
                     Water_ShiftField(water->bedHeight, water->waveNextField, n, shiftX, shiftZ, -baseDepth);
+                    if (water->eqDepth)
+                        Water_ShiftField(water->eqDepth, water->waveNextField, n, shiftX, shiftZ, 0.0f);
                     Water_ShiftField(water->smoothEta, water->waveNextField, n, shiftX, shiftZ, 0.0f);
                     Water_ShiftField(water->fluxL, water->waveNextField, n, shiftX, shiftZ, 0.0f);
                     Water_ShiftField(water->fluxR, water->waveNextField, n, shiftX, shiftZ, 0.0f);
@@ -1657,6 +1820,34 @@ void MapProp_UpdateWaterSurface(MapWaterSurface *water, float dt)
                 if (water->waveNextField)
                     water->waveNextField[0] = -1.0f;
             }
+        }
+    }
+
+    // 1b. Re-sample the DEM bed + steady river depth for cells that scrolled into the window
+    if (water->hydrologyReady && water->config.shape == WATER_SHAPE_TERRAIN &&
+        (water->waveGridCenter.x != 0.0f || water->waveGridCenter.z != 0.0f))
+    {
+        const int hn = WATER_FIELD_SIZE;
+        if (water->hydroNeedsFullRefresh)
+        {
+            Water_TerrainRefreshCells(water, 0, hn, 0, hn, true);
+            Water_TerrainRecountWater(water);
+            water->hydroNeedsFullRefresh = false;
+            water->waveStepRemainder = 0.0f;
+        }
+        else if (hydroStrip)
+        {
+            if (hydroShiftX > 0)
+                Water_TerrainRefreshCells(water, hn - hydroShiftX, hn, 0, hn, true);
+            else if (hydroShiftX < 0)
+                Water_TerrainRefreshCells(water, 0, -hydroShiftX, 0, hn, true);
+            if (hydroShiftZ > 0)
+                Water_TerrainRefreshCells(water, 0, hn, hn - hydroShiftZ, hn, true);
+            else if (hydroShiftZ < 0)
+                Water_TerrainRefreshCells(water, 0, hn, 0, -hydroShiftZ, true);
+            Water_TerrainRecountWater(water);
+            if (water->waveStepRemainder < 0.0f)
+                water->waveStepRemainder = 0.0f;
         }
     }
 
@@ -1768,12 +1959,23 @@ void MapProp_UpdateWaterSurface(MapWaterSurface *water, float dt)
     const float cellArea = dx * dz;
     const float invCellArea = step / cellArea;
     const float pipeFactor = (step * 9.81f) / dx;
-    const float damping = 0.994f;
+    const float dampBase = 0.994f;
     const float invNMinus1 = 2.0f / (float)(n - 1);
     const bool radialShape = (water->config.shape == WATER_SHAPE_RADIAL);
     const float baseDepth = (water->config.maxDepth > 0.05f) ? water->config.maxDepth : 0.85f;
 
-    if (interactorActive)
+    // Hydrology (DEM-bound SWE): rain source, infiltration, Manning friction, open boundaries
+    const bool hydro = water->hydrologyReady && water->eqDepth && water->flowPixels &&
+                       (water->waveGridCenter.x != 0.0f || water->waveGridCenter.z != 0.0f);
+    const float rainVis = MapProp_GetRain();
+    const float runoff = MapProp_GetRunoff();
+    const float rainAdd = rainVis * WATER_RAIN_GAIN_MPS * step;
+    const float infilStep = WATER_INFIL_MPS * (1.0f - 0.75f * MapProp_GetWetness()) * step;
+    const float stormLift = Water_StormLift();
+    const float stepFric = step * 9.81f * water->manning * water->manning;
+    const bool hydroActive = hydro && (rainVis > 0.01f || runoff > 0.01f);
+
+    if (interactorActive || hydroActive)
     {
         if (water->waveStepRemainder < 0.0f)
             water->waveStepRemainder = 0.0f;
@@ -1828,34 +2030,49 @@ void MapProp_UpdateWaterSurface(MapWaterSurface *water, float dt)
                     water->fluxB[idx] = 0.0f;
                     continue;
                 }
-                float eta0 = water->bedHeight[idx] + h0;
+                
+                // Manning friction (semi-implicit): fast sqrtf instead of cbrtf, skipped when still
+                float damping = dampBase;
+                if (hydro)
+                {
+                    float spSq = water->velU[idx] * water->velU[idx] + water->velV[idx] * water->velV[idx];
+                    if (spSq > 1e-6f)
+                    {
+                        float hh = fmaxf(h0, 0.02f);
+                        damping = 0.998f / (1.0f + stepFric * sqrtf(spSq) / (hh * sqrtf(hh)));
+                    }
+                    else
+                    {
+                        damping = 0.998f;
+                    }
+                }
 
                 float fL = 0.0f, fR = 0.0f, fT = 0.0f, fB = 0.0f;
                 if (i > 0)
                 {
-                    fL = water->fluxL[idx] * damping + pipeFactor * (eta0 - (water->bedHeight[idx - 1] + water->waterDepth[idx - 1]));
+                    fL = water->fluxL[idx] * damping + pipeFactor * Water_DeltaEta(water, idx, idx - 1, hydro);
                     if (fL < 0.0f)
                         fL = 0.0f;
                 }
                 if (i < n - 1)
                 {
-                    fR = water->fluxR[idx] * damping + pipeFactor * (eta0 - (water->bedHeight[idx + 1] + water->waterDepth[idx + 1]));
+                    fR = water->fluxR[idx] * damping + pipeFactor * Water_DeltaEta(water, idx, idx + 1, hydro);
                     if (fR < 0.0f)
                         fR = 0.0f;
                 }
                 if (j > 0)
                 {
-                    fT = water->fluxT[idx] * damping + pipeFactor * (eta0 - (water->bedHeight[idx - n] + water->waterDepth[idx - n]));
+                    fT = water->fluxT[idx] * damping + pipeFactor * Water_DeltaEta(water, idx, idx - n, hydro);
                     if (fT < 0.0f)
                         fT = 0.0f;
                 }
                 if (j < n - 1)
                 {
-                    fB = water->fluxB[idx] * damping + pipeFactor * (eta0 - (water->bedHeight[idx + n] + water->waterDepth[idx + n]));
+                    fB = water->fluxB[idx] * damping + pipeFactor * Water_DeltaEta(water, idx, idx + n, hydro);
                     if (fB < 0.0f)
                         fB = 0.0f;
                 }
-                else if (hasStreamFlow && flowV > 0.0f)
+                else if (!hydro && hasStreamFlow && flowV > 0.0f)
                 {
                     fB = h0 * 0.40f;
                 }
@@ -1880,6 +2097,7 @@ void MapProp_UpdateWaterSurface(MapWaterSurface *water, float dt)
         for (int j = 0; j < n; j++)
         {
             int row = j * n;
+            const float nzm = (float)j * invNMinus1 - 1.0f;
             for (int i = 0; i < n; i++)
             {
                 int idx = row + i;
@@ -1894,6 +2112,32 @@ void MapProp_UpdateWaterSurface(MapWaterSurface *water, float dt)
                 float hNew = hPrev + netRate * invCellArea;
                 if (hNew < 0.0f)
                     hNew = 0.0f;
+                if (hydro)
+                {
+                    // Open boundary + sources: the river relaxes to its baked steady depth
+                    // (upstream feed / downstream drain); everything else loses water to
+                    // infiltration and to a sink band near the window edge.
+                    const float nxm = (float)i * invNMinus1 - 1.0f;
+                    float edge = (fmaxf(fabsf(nxm), fabsf(nzm)) - 0.70f) * (1.0f / 0.24f);
+                    edge = edge < 0.0f ? 0.0f : (edge > 1.0f ? 1.0f : edge);
+                    const float eq = water->eqDepth[idx];
+                    if (eq > 0.0f)
+                    {
+                        float k = step * (0.35f + 5.0f * edge);
+                        if (k > 1.0f)
+                            k = 1.0f;
+                        hNew += (eq + stormLift - hNew) * k;
+                    }
+                    else
+                    {
+                        hNew -= fminf(hNew, infilStep);
+                        if (edge > 0.0f)
+                            hNew *= 1.0f - fminf(1.0f, step * 4.0f * edge);
+                        // Rain on land only: the river's own rain is already inside its steady
+                        // depth, adding it again biased the whole channel above equilibrium.
+                        hNew += rainAdd;
+                    }
+                }
                 water->waterDepth[idx] = hNew;
 
                 if (hNew > 0.008f)
@@ -1940,22 +2184,40 @@ void MapProp_UpdateWaterSurface(MapWaterSurface *water, float dt)
                 {
                     int idx = row + i;
                     float b0 = water->bedHeight[idx], h0 = water->waterDepth[idx];
-                    float eta0 = (h0 > 0.006f) ? (b0 + h0) : (b0 - 0.025f);
-
                     int idxL = row + (i > 0 ? i - 1 : 0);
                     int idxR = row + (i < n - 1 ? i + 1 : n - 1);
                     int idxT = rowT + i;
                     int idxB = rowB + i;
 
-                    float etaL = (water->waterDepth[idxL] > 0.008f) ? (water->bedHeight[idxL] + water->waterDepth[idxL]) : eta0;
-                    float etaR = (water->waterDepth[idxR] > 0.008f) ? (water->bedHeight[idxR] + water->waterDepth[idxR]) : eta0;
-                    float etaT = (water->waterDepth[idxT] > 0.008f) ? (water->bedHeight[idxT] + water->waterDepth[idxT]) : eta0;
-                    float etaB = (water->waterDepth[idxB] > 0.008f) ? (water->bedHeight[idxB] + water->waterDepth[idxB]) : eta0;
+                    // Hydrology: shade from the DISTURBANCE (depth - steady depth), not from the
+                    // absolute surface. The steady river already slopes and flows; treating that
+                    // slope/speed as "turbulence" painted the whole simulated window white.
+                    float eta0, etaL, etaR, etaT, etaB;
+                    if (hydro)
+                    {
+                        const int ids[5] = {idx, idxL, idxR, idxT, idxB};
+                        float dv[5];
+                        for (int q = 0; q < 5; q++)
+                        {
+                            float hq = water->waterDepth[ids[q]];
+                            float eq = water->eqDepth[ids[q]];
+                            dv[q] = (hq > 0.008f) ? (hq - ((eq > 0.0f) ? (eq + stormLift) : 0.0f)) : 0.0f;
+                        }
+                        eta0 = dv[0]; etaL = dv[1]; etaR = dv[2]; etaT = dv[3]; etaB = dv[4];
+                    }
+                    else
+                    {
+                        eta0 = (h0 > 0.006f) ? (b0 + h0) : (b0 - 0.025f);
+                        etaL = (water->waterDepth[idxL] > 0.008f) ? (water->bedHeight[idxL] + water->waterDepth[idxL]) : eta0;
+                        etaR = (water->waterDepth[idxR] > 0.008f) ? (water->bedHeight[idxR] + water->waterDepth[idxR]) : eta0;
+                        etaT = (water->waterDepth[idxT] > 0.008f) ? (water->bedHeight[idxT] + water->waterDepth[idxT]) : eta0;
+                        etaB = (water->waterDepth[idxB] > 0.008f) ? (water->bedHeight[idxB] + water->waterDepth[idxB]) : eta0;
+                    }
 
                     float sEta = eta0 * 0.5f + 0.125f * (etaL + etaR + etaT + etaB);
                     water->smoothEta[idx] = sEta;
                     if (water->waveHeightField)
-                        water->waveHeightField[idx] = sEta - (b0 + h0);
+                        water->waveHeightField[idx] = hydro ? 0.0f : (sEta - (b0 + h0));
 
                     float nx = -(etaR - etaL) * inv2Dx;
                     float nz = -(etaB - etaT) * inv2Dz;
@@ -1972,6 +2234,8 @@ void MapProp_UpdateWaterSurface(MapWaterSurface *water, float dt)
                     float speedSq = u * u + v * v;
                     float slopeSq = nx * nx + nz * nz;
                     float foam = (slopeSq - 0.03f) * 2.5f + (speedSq - 0.25f) * 0.35f;
+                    if (hydro) // only genuinely fast water (>1.5 m/s) whitens; slopes come from disturbance only
+                        foam = (slopeSq - 0.06f) * 3.0f + (speedSq - 2.25f) * 0.25f;
                     if (foam < 0.0f)
                         foam = 0.0f;
                     else if (foam > 1.0f)
@@ -1987,17 +2251,59 @@ void MapProp_UpdateWaterSurface(MapWaterSurface *water, float dt)
                     }
 
                     int p4 = idx * 4;
-                    float disp = (h0 > 0.005f) ? (h0 - baseDepth) : 0.0f;
+                    float dispRef = baseDepth;
+                    if (hydro)
+                    {
+                        float eqBase = water->eqDepth[idx];
+                        dispRef = (eqBase > 0.0f) ? (eqBase + stormLift) : 0.0f;
+                    }
+                    float disp = (h0 > 0.005f) ? (h0 - dispRef) : 0.0f;
+                    if (hydro) // dead-zone: leave the field neutral unless the surface is truly disturbed
+                    {
+                        float ad = fabsf(disp) - 0.012f;
+                        disp = (ad > 0.0f) ? copysignf(ad, disp) : 0.0f;
+                    }
                     water->wavePixels[p4 + 0] = Water_EncodeUnorm8(0.5f + nx * 0.45f);
                     water->wavePixels[p4 + 1] = Water_EncodeUnorm8(0.5f + nz * 0.45f);
                     water->wavePixels[p4 + 2] = Water_EncodeUnorm8(0.5f + disp * 4.0f);
                     water->wavePixels[p4 + 3] = Water_EncodeUnorm8(foam);
+                    if (hydro)
+                    {
+                        const bool wet = (h0 > 0.03f) && (bndMetric < 0.91f);
+                        // Base current: direction/speed from the baked surface slope (5-cell stencil
+                        // for smoothness), added to the simulated disturbance velocity.
+                        float bu = 0.0f, bv = 0.0f;
+                        if (water->eqDepth[idx] > 0.0f)
+                        {
+                            const float sC = water->bedHeight[idx] + water->eqDepth[idx];
+                            const int iL = row + (i > 1 ? i - 2 : 0), iR = row + (i < n - 2 ? i + 2 : n - 1);
+                            const int iT = (j > 1 ? j - 2 : 0) * n + i, iB = (j < n - 2 ? j + 2 : n - 1) * n + i;
+                            float gx = (Water_BakedSurf(water, iR, sC) - Water_BakedSurf(water, iL, sC)) / (4.0f * dx);
+                            float gz = (Water_BakedSurf(water, iB, sC) - Water_BakedSurf(water, iT, sC)) / (4.0f * dz);
+                            float g = sqrtf(gx * gx + gz * gz);
+                            if (g > 1e-5f)
+                            {
+                                float sp = sqrtf(g) * 2.0f;
+                                sp = sp < 0.08f ? 0.08f : (sp > 0.5f ? 0.5f : sp);
+                                bu = -gx / g * sp;
+                                bv = -gz / g * sp;
+                            }
+                        }
+                        float fu = u * 0.5f + bu, fv = v * 0.5f + bv;
+                        water->flowPixels[p4 + 0] = Water_EncodeUnorm8(0.5f + fu * WATER_FLOW_ENC);
+                        water->flowPixels[p4 + 1] = Water_EncodeUnorm8(0.5f + fv * WATER_FLOW_ENC);
+                        water->flowPixels[p4 + 2] = 128;
+                        water->flowPixels[p4 + 3] = wet ? 255 : 0;
+                    }
                 }
             }
             water->waveUploadedTextureId = 0;
+            if (hydro && (hydroStrip || maxEnergy > 5e-4f || !water->flowFieldTex.id))
+                water->flowDirty = true;
         }
 
-        if (!interactorActive && maxEnergy < 1e-5f)
+        if (!interactorActive && !hydroActive && maxEnergy < 1e-5f)
+
         {
             memset(water->wavePixels, 128, (size_t)(n * n) * 4u);
             for (int p = 0; p < n * n; p++)
@@ -2037,6 +2343,10 @@ void MapProp_UnloadWaterSurface(MapWaterSurface *water)
     free(water->velU);
     free(water->velV);
     free(water->wavePixels);
+    if (water->flowFieldTex.id > 0)
+        UnloadTexture(water->flowFieldTex);
+    free(water->eqDepth);
+    free(water->flowPixels);
     if (water->waveUploadedPixels)
         MemFree(water->waveUploadedPixels);
     *water = (MapWaterSurface){0};

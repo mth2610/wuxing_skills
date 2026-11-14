@@ -67,23 +67,29 @@ vec3 FresnelSchlick(float ndv, vec3 f0) {
 }
 
 // Multi-octave procedural wave generator for realistic dynamic liquid shimmer.
+// Optimized with smooth sine-cosine capillary turbulence + micro-swells.
 vec3 WaterMultiOctaveWaves(vec3 worldPosition) {
-    float t = u_time * 1.2;
+    float t = u_time * 1.25;
     vec3 p = worldPosition;
-    float s1 = sin(p.x * 6.0 + t * 0.8 + sin(p.y * 4.0 + t * 0.6));
-    float s2 = sin(p.y * 7.0 - t * 0.7 + sin(p.z * 5.0 + t * 0.9));
-    float s3 = sin(p.z * 5.5 + t * 1.1 + sin(p.x * 6.5 - t * 0.5));
+
+    // Macro-swell
+    float s1 = sin(p.x * 4.5 + t * 0.85 + sin(p.y * 3.0 + t * 0.65));
+    float s2 = sin(p.y * 5.2 - t * 0.75 + sin(p.z * 3.8 + t * 0.95));
+    float s3 = sin(p.z * 4.2 + t * 1.15 + sin(p.x * 4.8 - t * 0.55));
     vec2 swell = vec2(s1 + s2, s2 + s3);
-    float capFade = 0.5 + 0.5 * sin(dot(p, vec3(3.7, 5.1, 4.3)) + t * 0.7);
+
+    // Smooth capillary wavelets (avoids subpixel aliasing on curved SSF silhouettes)
+    float capFade = 0.5 + 0.5 * sin(dot(p, vec3(2.7, 3.5, 3.1)) + t * 0.7);
     vec2 capillary = vec2(
-        sin(p.x * 47.0 + p.y * 29.0 + t * 2.4) + cos(p.z * 41.0 + t * 1.8),
-        sin(p.z * 53.0 + p.y * 33.0 + t * 2.1) + cos(p.x * 37.0 + t * 1.6));
-    vec2 dh = swell * 0.016 + capillary * 0.004 * capFade;
+        sin(p.x * 13.0 + p.y * 9.0 + t * 2.4) + cos(p.z * 11.5 + t * 1.9),
+        sin(p.z * 14.0 + p.y * 10.0 + t * 2.2) + cos(p.x * 11.0 + t * 1.7));
+
+    vec2 dh = swell * 0.014 + capillary * (0.004 * capFade);
     return vec3(-dh.x, 0.0, -dh.y);
 }
 
-#define LIQUID_REFERENCE_DEPTH_M 0.20
-#define LIQUID_TURBIDITY_PER_M 0.30
+#define LIQUID_REFERENCE_DEPTH_M 0.25
+#define LIQUID_TURBIDITY_PER_M 0.10
 
 float DecodeOpticalThickness(float measuredThicknessMetres) {
     return max(measuredThicknessMetres, 0.0);
@@ -147,7 +153,7 @@ vec4 TraceSSR(vec3 rayOrigin, vec3 rayDir, float fluidDistance) {
     float stepSize = 0.035;
     vec3 currentRay = rayOrigin + rayDir * stepSize;
 
-    for (int i = 0; i < 14; i++) {
+    for (int i = 0; i < 8; i++) {
         vec4 clip = u_projection * vec4(currentRay, 1.0);
         if (clip.w <= 0.0) break;
         vec2 sampleUV = clip.xy / clip.w * 0.5 + 0.5;
@@ -258,23 +264,34 @@ void main() {
     bool hasD = depthDown < 0.99999;
     bool hasU = depthUp < 0.99999;
 
-    vec3 posL = hasL ? ReconstructViewPosition(fragTexCoord - vec2(u_texel.x, 0.0), depthLeft) : positionView;
-    vec3 posR = hasR ? ReconstructViewPosition(fragTexCoord + vec2(u_texel.x, 0.0), depthRight) : positionView;
-    vec3 posD = hasD ? ReconstructViewPosition(fragTexCoord - vec2(0.0, u_texel.y), depthDown) : positionView;
-    vec3 posU = hasU ? ReconstructViewPosition(fragTexCoord + vec2(0.0, u_texel.y), depthUp) : positionView;
+    /* Wide central-difference normal reconstruction (inspired by water_vfx.html):
+     * eliminates 1-texel staircase blocks on half-res smoothed depth. */
+    vec2 wideStep = u_texel * 1.45;
+    float wDepthL = texture(texture0, fragTexCoord - vec2(wideStep.x, 0.0)).r;
+    float wDepthR = texture(texture0, fragTexCoord + vec2(wideStep.x, 0.0)).r;
+    float wDepthD = texture(texture0, fragTexCoord - vec2(0.0, wideStep.y)).r;
+    float wDepthU = texture(texture0, fragTexCoord + vec2(0.0, wideStep.y)).r;
 
-    vec3 dx1 = positionView - posL;
-    vec3 dx2 = posR - positionView;
-    vec3 dy1 = positionView - posD;
-    vec3 dy2 = posU - positionView;
+    vec3 posL = (wDepthL < 0.99999) ? ReconstructViewPosition(fragTexCoord - vec2(wideStep.x, 0.0), wDepthL) : positionView;
+    vec3 posR = (wDepthR < 0.99999) ? ReconstructViewPosition(fragTexCoord + vec2(wideStep.x, 0.0), wDepthR) : positionView;
+    vec3 posD = (wDepthD < 0.99999) ? ReconstructViewPosition(fragTexCoord - vec2(0.0, wideStep.y), wDepthD) : positionView;
+    vec3 posU = (wDepthU < 0.99999) ? ReconstructViewPosition(fragTexCoord + vec2(0.0, wideStep.y), wDepthU) : positionView;
 
-    vec3 dx = (hasL && hasR) ? (abs(dx1.z) < abs(dx2.z) ? dx1 : dx2)
-            : (hasL ? dx1 : (hasR ? dx2 : vec3(positionView.x * u_texel.x, 0.0, 0.0)));
-    vec3 dy = (hasD && hasU) ? (abs(dy1.z) < abs(dy2.z) ? dy1 : dy2)
-            : (hasD ? dy1 : (hasU ? dy2 : vec3(0.0, positionView.y * u_texel.y, 0.0)));
+    float maxJump = max(kernelRadius * 4.5, 0.25);
+    if (abs(-posL.z - fluidDistance) > maxJump) posL = positionView;
+    if (abs(-posR.z - fluidDistance) > maxJump) posR = positionView;
+    if (abs(-posD.z - fluidDistance) > maxJump) posD = positionView;
+    if (abs(-posU.z - fluidDistance) > maxJump) posU = positionView;
+
+    vec3 dx = posR - posL;
+    vec3 dy = posU - posD;
+    if (dot(dx, dx) < 1e-8) dx = vec3(positionView.x * wideStep.x * 2.0, 0.0, 0.0);
+    if (dot(dy, dy) < 1e-8) dy = vec3(0.0, positionView.y * wideStep.y * 2.0, 0.0);
 
     vec3 N = normalize(cross(dx, dy));
     if (dot(N, V) < 0.0) N = -N;
+
+    float kernelThickness = DecodeOpticalThickness(thicknessProxy);
 
     float mediumOpacity = 1.0 - exp(-extraOpacityPerM * LIQUID_REFERENCE_DEPTH_M);
 
@@ -284,20 +301,18 @@ void main() {
     vec3 worldNormal = normalize(viewToWorld3 * N);
     vec3 waveSlope = WaterMultiOctaveWaves(worldPosition);
     waveSlope -= worldNormal * dot(waveSlope, worldNormal);
-    float waveGain = 0.045 * mix(1.0, 0.25, mediumOpacity);
+    float waveGain = 0.018 * mix(1.0, 0.25, mediumOpacity);
     worldNormal = normalize(worldNormal + waveSlope * waveGain);
     N = normalize(worldNormal * viewToWorld3);
     if (dot(N, V) < 0.0) N = -N;
     float ndv = clamp(dot(N, V), 0.0, 1.0);
-
-    float kernelThickness = DecodeOpticalThickness(thicknessProxy);
     float insideCount = (hasL ? 1.0 : 0.0) + (hasR ? 1.0 : 0.0)
                       + (hasD ? 1.0 : 0.0) + (hasU ? 1.0 : 0.0);
     float maskCoverage = dilatedFringe ? (0.25 * insideCount)
                                        : (0.5 + 0.125 * insideCount);
 
-    float thicknessCoverage = smoothstep(0.0, 2.0 * kernelRadius, kernelThickness);
-    float geometricCoverage = dilatedFringe ? thicknessCoverage : 1.0;
+    float thicknessCoverage = smoothstep(0.0, 1.35 * kernelRadius, kernelThickness);
+    float geometricCoverage = dilatedFringe ? (thicknessCoverage * 0.85) : clamp(0.65 + 0.35 * thicknessCoverage, 0.0, 1.0);
     float surfaceCoverage = geometricCoverage * intersectionVisibility * maskCoverage;
 
     float sceneGap = 1.0;
@@ -328,7 +343,7 @@ void main() {
             refractUV = mix(refractUV, fragTexCoord, 0.70);
         }
 
-        if (u_qualityTier >= 2) {
+        if (u_qualityTier >= 2 && airborneWeight < 0.5) {
             vec2 dispersion = refractOffset * mix(0.018, 0.045, 1.0 - ndv);
             vec2 refractUVRed = clamp(refractUV + dispersion, u_sceneTexel, vec2(1.0) - u_sceneTexel);
             vec2 refractUVBlue = clamp(refractUV - dispersion, u_sceneTexel, vec2(1.0) - u_sceneTexel);
@@ -340,11 +355,11 @@ void main() {
         }
     }
 
-    // Beer-Lambert Volumetric Absorption
+    // Beer-Lambert Volumetric Absorption (clear crystal water core, rich jade-teal depth)
     float materialPeak = max(max(materialBody.r, materialBody.g), max(materialBody.b, 0.001));
-    vec3 materialTransmission = clamp(materialBody / materialPeak, vec3(0.035), vec3(1.0));
-    vec3 absorption = -log(materialTransmission) / LIQUID_REFERENCE_DEPTH_M
-                    + vec3(LIQUID_TURBIDITY_PER_M + extraOpacityPerM);
+    vec3 materialTransmission = mix(vec3(1.0), clamp(materialBody / materialPeak, vec3(0.18), vec3(1.0)), 0.72);
+    vec3 absorption = -log(materialTransmission) / (LIQUID_REFERENCE_DEPTH_M * 1.45)
+                    + vec3(LIQUID_TURBIDITY_PER_M + extraOpacityPerM * 0.75);
     vec3 transmittance = exp(-absorption * opticalPath);
 
     float hemi = clamp(worldNormal.y * 0.5 + 0.5, 0.0, 1.0);
@@ -352,31 +367,40 @@ void main() {
     vec3 L = normalize(u_sunDirectionView);
     float ndl = max(dot(N, L), 0.0);
 
-    vec3 waterScatterColor = materialBody;
-    vec3 illumination = ambient + u_sunColor * (0.12 + 0.30 * ndl);
+    vec3 waterScatterColor = mix(materialBody, materialGlow, 0.35);
+    vec3 illumination = ambient + u_sunColor * (0.14 + 0.34 * ndl);
     vec3 transmitted = refractedScene * transmittance;
     float illuminationEnergy = dot(illumination, vec3(0.2126, 0.7152, 0.0722));
     float backgroundScatter = 1.0 - dot(transmittance, vec3(0.2126, 0.7152, 0.0722));
-    float scatterAmount = clamp(0.30 + 0.70 * backgroundScatter, 0.0, 1.0);
+    float scatterAmount = clamp(0.22 + 0.68 * backgroundScatter, 0.0, 1.0);
 
-    float grazingWeight = mix(mix(0.32, 1.0, pow(1.0 - ndv, 1.5)), 1.0, mediumOpacity);
-    float suspendedScatter = mix(0.24, 1.0, mediumOpacity);
-    vec3 inScatter = waterScatterColor * scatterAmount * (0.34 + illuminationEnergy * 0.42)
+    float grazingWeight = mix(mix(0.26, 1.0, pow(1.0 - ndv, 1.5)), 1.0, mediumOpacity);
+    float suspendedScatter = mix(0.26, 1.0, mediumOpacity);
+    vec3 inScatter = waterScatterColor * scatterAmount * (0.09 + illuminationEnergy * 0.16)
                    * grazingWeight * suspendedScatter;
-    inScatter += materialBody * illumination * (0.22 + 0.78 * ndl) * mediumOpacity * 0.85;
+    inScatter += materialBody * illumination * (0.20 + 0.80 * ndl) * mediumOpacity * 0.75;
 
     // Backlit Subsurface Scattering (SSS) for wave crests and thin droplet silhouettes
-    float sssFactor = pow(clamp(1.0 - ndv, 0.0, 1.0), 2.2) * exp(-waterColumnDepth * 0.55);
-    vec3 sssColor = materialGlow * (sssFactor * 0.65 + max(0.0, dot(worldNormal, vec3(0.0, 1.0, 0.0))) * 0.15)
+    // (Inspired by water_vfx.html forward scattering + thin rim extinction)
+    float sssFactor = pow(clamp(1.0 - ndv, 0.0, 1.0), 2.0) * exp(-waterColumnDepth * 0.45);
+    vec3 sunDirWorld = normalize((u_viewToWorld * vec4(L, 0.0)).xyz);
+    vec3 viewDirWorld = normalize((u_viewToWorld * vec4(V, 0.0)).xyz);
+    float forwardSSS = pow(clamp(dot(-viewDirWorld, sunDirWorld + worldNormal * 0.45), 0.0, 1.0), 2.0);
+    vec3 sssColor = materialGlow * (sssFactor * 0.48 + forwardSSS * 0.42 + max(0.0, dot(worldNormal, vec3(0.0, 1.0, 0.0))) * 0.14 + 0.10 * exp(-waterColumnDepth * 0.9))
                   * (1.0 - mediumOpacity * 0.65);
-    if (!conductor) inScatter += sssColor;
+    /* Smooth dual-layer internal caustics (inspired by water_vfx.html) without dark blotching */
+    float causticA = sin(worldPosition.x * 11.0 + worldPosition.z * 8.5 + u_time * 2.7 + sin(worldPosition.z * 6.0 - u_time * 1.9));
+    float causticB = cos(worldPosition.z * 12.5 - worldPosition.x * 9.5 - u_time * 2.3 + cos(worldPosition.x * 7.0 + u_time * 1.6));
+    float internalCaustics = pow(clamp(0.5 + 0.25 * (causticA + causticB), 0.0, 1.0), 3.0)
+                           * smoothstep(0.012, 0.08, kernelThickness) * (1.0 - mediumOpacity * 0.75);
+    if (!conductor) inScatter += sssColor + materialGlow * (internalCaustics * 0.16 * (0.35 + illuminationEnergy));
 
     if (liquidClass == LIQUID_CLASS_EMISSIVE) inScatter *= 0.35;
 
     vec3 dielectricF0 = vec3(IorToF0(materialIor));
     vec3 fresnel = FresnelSchlick(ndv, dielectricF0);
     float volumeWeight = smoothstep(0.016, 0.095, kernelThickness);
-    vec3 visibleFresnel = fresnel * mix(0.045, 1.0, volumeWeight);
+    vec3 visibleFresnel = max(fresnel, vec3(pow(1.0 - ndv, 3.2) * 0.52)) * mix(0.08, 1.0, volumeWeight);
 
     float rimStrength = pow(1.0 - ndv, 2.0) * smoothstep(0.012, 0.10, kernelThickness);
     float rimGate = conductor ? 0.0 : 1.0;
@@ -388,7 +412,7 @@ void main() {
     float skyReflection = conductor ? smoothstep(-0.045, 0.045, reflectedWorld.y)
                                     : smoothstep(-0.18, 0.62, reflectedWorld.y);
     float skyLuma = dot(u_skyAmbient, vec3(0.2126, 0.7152, 0.0722));
-    vec3 skyReflectionColor = u_skyAmbient * 1.38 + materialGlow * 0.65 * clamp(1.0 - skyLuma, 0.0, 1.0);
+    vec3 skyReflectionColor = max(u_skyAmbient * 1.45, vec3(0.24, 0.38, 0.48)) + materialGlow * 0.55 * clamp(1.0 - skyLuma, 0.0, 1.0);
     vec3 reflection;
     if (conductor) {
         float up = reflectedWorld.y;
@@ -416,7 +440,7 @@ void main() {
 
     float visibleFresnelLuma = max(max(visibleFresnel.r, visibleFresnel.g), visibleFresnel.b);
     float ssrWeight = conductor ? 1.0 : visibleFresnelLuma;
-    if (u_qualityTier >= 2 && ssrWeight > 0.05) {
+    if (u_qualityTier >= 2 && ssrWeight > 0.10 && airborneWeight < 0.45) {
         vec3 rayDirView = reflect(-V, N);
         vec4 ssrHit = TraceSSR(positionView, rayDirView, fluidDistance);
         if (ssrHit.a > 0.0) {
@@ -431,30 +455,31 @@ void main() {
     }
     vec3 dielectricBase = mix(transmitted + inScatter, reflection, visibleFresnel);
 
-    float surfaceNoise = fbm3(worldPosition * 2.7 + vec3(0.0, u_time * 0.35, 0.0));
-    float authoredRoughness = mix(0.090, 0.150, surfaceNoise) * roughnessScale;
+    float surfaceNoise = (liquidClass == LIQUID_CLASS_EMISSIVE)
+                       ? fbm3(worldPosition * 2.7 + vec3(0.0, u_time * 0.35, 0.0))
+                       : (0.5 + 0.25 * (sin(worldPosition.x * 5.3 + u_time * 1.4) + cos(worldPosition.z * 4.9 - u_time * 1.1)));
+    float authoredRoughness = mix(0.110, 0.170, surfaceNoise) * roughnessScale;
     float roughness = NormalFilteredRoughness(N, authoredRoughness);
     float lobeScale = BlinnExponentScale(authoredRoughness, roughness);
     vec3 sunHalf = normalize(V + L);
     float sunNdh = max(dot(N, sunHalf), 0.0);
 
-    float broadExponent = 48.0 * lobeScale;
-    float glintExponent = 96.0 * lobeScale;
-    float broadSunLobe = pow(sunNdh, broadExponent) * 0.020 * ((broadExponent + 2.0) / 50.0);
-    float sharpGlint = pow(sunNdh, glintExponent) * 0.22 * ((glintExponent + 2.0) / 98.0)
-                     * smoothstep(0.55, 0.86, surfaceNoise);
+    float broadExponent = 24.0 * lobeScale;
+    float glintExponent = 72.0 * lobeScale;
+    float broadSunLobe = pow(sunNdh, broadExponent) * 0.16 * ((broadExponent + 2.0) / 26.0);
+    float sharpGlint = pow(sunNdh, glintExponent) * 0.65 * ((glintExponent + 2.0) / 74.0);
     vec3 specularF0 = dielectricF0;
     float blinnGate = 1.0;
     if (conductor) { specularF0 = materialBody; blinnGate = 0.0; }
     vec3 specular = u_sunColor * (WaterSpecularBRDF(N, V, L, roughness, specularF0)
-                                  + vec3((broadSunLobe + sharpGlint) * blinnGate)) * ndl;
-    specular *= mix(vec3(1.0), materialGlow, 0.08);
+                                  + vec3((broadSunLobe + sharpGlint) * blinnGate)) * (0.35 + 0.65 * ndl);
 
-    // Secondary Qi rim specular highlight
-    vec3 qiLightView = normalize(vec3(-L.x, 0.65, -L.z));
+    // Secondary Qi rim / opposing glint specular highlight (Dual Wet GGX effect)
+    vec3 qiLightView = normalize(vec3(-L.x * 0.85, 0.68, -L.z * 0.85));
     vec3 qiHalf = normalize(V + qiLightView);
     float qiNdh = max(dot(N, qiHalf), 0.0);
-    float qiGlint = pow(qiNdh, 64.0 * lobeScale) * 0.38 * smoothstep(0.016, 0.085, kernelThickness);
+    float qiGlint = (pow(qiNdh, 56.0 * lobeScale) * 0.35 + pow(qiNdh, 120.0 * lobeScale) * 0.25)
+                  * smoothstep(0.016, 0.085, kernelThickness);
     specular += materialGlow * qiGlint * (0.35 + 0.65 * illuminationEnergy) * blinnGate;
 
     for (int i = 0; i < LIQUID_POINT_LIGHTS; i++) {

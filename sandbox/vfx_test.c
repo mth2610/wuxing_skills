@@ -23,6 +23,8 @@
 #include "skills/skill_helper.h"
 #include "core/path_spline.h"
 #include "core/ribbon_strip.h"
+#include "core/liquid/liquid_medium.h"
+#include "core/liquid/liquid_flow.h"
 #include "maps/map_manager.h"
 #include "environment/wind/wind_system.h"
 #include "environment/volumetric/volumetric_fog.h"
@@ -133,8 +135,6 @@ float VFXTest_GetPreferredCameraDistance(void)
 {
     if (VFXTest_IsNewFxNamed("MOTION RIBBON TRAIL"))
         return 4.4f;
-    if (VFXTest_IsNewFxNamed("WATER ORB"))
-        return 5.2f;
     return 0.0f;
 }
 
@@ -142,8 +142,6 @@ float VFXTest_GetPreferredCameraPitch(void)
 {
     if (VFXTest_IsNewFxNamed("MOTION RIBBON TRAIL"))
         return 10.3f;
-    if (VFXTest_IsNewFxNamed("WATER ORB"))
-        return 28.0f;
     return 0.0f;
 }
 
@@ -784,10 +782,6 @@ static void VFXTest_RefreshInspectorParams(bool force)
         }
         s_liveMotionRibbonConfig.preset = (int)s_motionRibbonFixturePreset;
         s_inspectorParamCount = VFX_MotionRibbon_GetParams(&s_liveMotionRibbonConfig, s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
-    }
-    else if (VFXTest_IsNewFxNamed("WATER ORB"))
-    {
-        s_inspectorParamCount = VFX_LiquidOrb_GetParams(VFX_LiquidOrb_GetLiveConfig(), s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
     }
     else if (VFXTest_IsNewFxNamed("GUIDED FIRE"))
     {
@@ -1443,29 +1437,28 @@ static bool VFXTest_FireNewFx(int newfxIndex, Vector3 pos)
     }
     case 43: VFX_ComposeFireballBurst(pos, VC_MAT_FIRE, 1.5f, 1.0f); return true;
     case 45: VFX_ComposeIceCrystal(pos, posSeed); return true;
-    case 46: VFX_ComposeWaterOrb(Vector3Add(pos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(pos, (Vector3){2.5f, 1.8f, 0.8f})); return true;
-    case 52: {
+    case 51: {
         Vector3 target = Vector3Add(pos, (Vector3){5.5f, 0.0f, 2.5f});
         target.y = MapManager_GetGroundHeightAt(target.x, target.z);
         Vector3 castSocket = Vector3Add(pos, (Vector3){0.0f, 0.78f, 0.0f});
         VFX_ComposeGuidedEarthEx(castSocket, target, VFX_GuidedEarth_GetLiveConfig());
         return true;
     }
-    case 53: {
+    case 52: {
         Vector3 target = Vector3Add(pos, (Vector3){6.5f, 0.0f, 2.8f});
         target.y = MapManager_GetGroundHeightAt(target.x, target.z);
         Vector3 castSocket = Vector3Add(pos, (Vector3){0.0f, 0.05f, 0.0f});
         VFX_ComposeSeismicWaveEx(castSocket, target, VFX_SeismicWave_GetLiveConfig());
         return true;
     }
-    case 54: {
+    case 53: {
         Vector3 target = Vector3Add(pos, (Vector3){5.5f, 0.0f, 2.0f});
         target.y = MapManager_GetGroundHeightAt(target.x, target.z);
         Vector3 castSocket = Vector3Add(pos, (Vector3){0.0f, 0.75f, 0.0f});
         VFX_ComposeGuidedLiquidEx(castSocket, target, VFX_GuidedLiquid_GetLiveConfig());
         return true;
     }
-    case 55: {
+    case 54: {
         Vector3 target = Vector3Add(pos, (Vector3){6.5f, 0.0f, 2.5f});
         target.y = MapManager_GetGroundHeightAt(target.x, target.z);
         Vector3 castSocket = Vector3Add(pos, (Vector3){0.0f, 0.85f, 0.0f});
@@ -1487,7 +1480,7 @@ static const char *s_meshNames[] = {
     "VFX OUTPUT"};
 
 // @gen:newfx_names begin
-// 52 entries — auto-managed by sync_vfx_test.py
+// 50 entries — auto-managed by sync_vfx_test.py
 static const char* s_newFxNames[] = {
     "CONTACT SPARK", "DEBRIS SHARDS", "DECAL", "DISSOLVE EXIT", "[PARTICLE] EMBER BURST", "FLAME JET",
     "FLOW SHIELD", "GAS MATERIAL LAB", "[GAS] GAS PLUME", "GAS SHOCKWAVE", "GAS VORTEX", "GROUND WAVE",
@@ -1496,7 +1489,7 @@ static const char* s_newFxNames[] = {
     "REF BANDS", "REF PARTICLES", "RIFT BOLT", "RUNE CIRCLE", "SHIELD SHELL", "SHOCK RING",
     "SMOKE COLUMN", "SMOKE PUFF", "[PARTICLE] SMOKE VOLUME", "SURFACE IMPACT", "SURFACE PARTICLE RING", "SWEEP SLASH",
     "MOTION RIBBON TRAIL", "VACUUM CONVERGE", "VACUUM RING", "[TRAIL/FLOW] VOLUME TRAIL", "FISSURE STREAK", "STONE PILLAR",
-    "GUIDED FIRE", "FIREBALL BURST", "BLACK HOLE", "ICE CRYSTAL", "WATER ORB", "WATER STREAM",
+    "GUIDED FIRE", "FIREBALL BURST", "BLACK HOLE", "ICE CRYSTAL", "WATER STREAM",
     "WOOD FLOWER", "WOOD LEAVES", "WOOD PETALS", "WOOD VINE", "GUIDED EARTH", "SEISMIC WAVE",
     "GUIDED LIQUID", "WATER DRAGON",
 };
@@ -1522,8 +1515,8 @@ static const int s_newFxCategories[] = {
     6, 4, 6, 6, 6, 6, 6, 6, 6, 6,
     6, 1, 6, 6, 6, 6, 6, 6, 6, 6,
     6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
-    4, 4, 0, 0, 5, 1, 1, 1, 2, 2,
-    2, 2, 4, 4, 1, 1,
+    4, 4, 0, 0, 5, 1, 1, 2, 2, 2,
+    2, 4, 4, 1, 1,
 };
 // @gen:newfx_categories end
 
@@ -2618,19 +2611,6 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
             s_prefabStartPos = mouseTarget3D;
             return false;
         }
-        if (VFXTest_IsNewFxNamed("WATER ORB"))
-        {
-            Vector3 castSocket = Vector3Add(playerPos, (Vector3){0.0f, 0.85f, 0.0f});
-            Vector3 toTarget = Vector3Subtract(mouseTarget3D, castSocket);
-            if (Vector3Length(toTarget) > 0.1f) {
-                Vector3 dir = Vector3Normalize(toTarget);
-                castSocket = Vector3Add(castSocket, Vector3Scale(dir, 0.45f));
-            }
-            VFX_ComposeWaterOrb(castSocket, mouseTarget3D);
-            s_prefabStartPos = mouseTarget3D;
-            return false;
-        }
-
         VFXTest_StopFixtures();
         s_prefabStartPos = mouseTarget3D;
 
@@ -3448,12 +3428,12 @@ void VFXTest_Draw3D(void)
               }
               case 42: VFX_ComposeFireEx(s_prefabStartPos, VFX_Fire_GetLiveConfig()); break;
               case 44: VFX_ComposeBlackHole(VC_MAT_FIRE, s_prefabStartPos, 1.5f, s_meshTime); break;
-              case 47: VFX_ComposeWaterStream(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(Vector3Lerp(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), 0.33f), (Vector3){0.0f, 0.9f, 0.7f}), Vector3Add(Vector3Lerp(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), 0.66f), (Vector3){0.0f, 0.5f, -0.7f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), 1.5f, progress, s_meshTime); break;
-              case 48: do { VFX_WoodFlowerConfig _cfg = VFXTest_BuildWoodFlowerConfig(s_prefabStartPos, s_currentPlayerPos, s_meshTime); VFX_ComposeWoodFlower(&_cfg); } while(0); break;
-              case 49: do { VFX_WoodLeavesConfig _cfg = VFXTest_BuildWoodLeavesConfig(s_prefabStartPos, s_currentPlayerPos, s_meshTime); VFX_ComposeWoodLeaves(&_cfg); } while(0); break;
-              case 50: do { VFX_WoodPetalConfig _cfg = VFXTest_BuildWoodPetalConfig(s_prefabStartPos, s_currentPlayerPos, s_meshTime); VFX_ComposeWoodPetals(&_cfg); } while(0); break;
-              case 51: do { VFX_WoodVineConfig _cfg = VFXTest_BuildWoodVineConfig(s_prefabStartPos, s_currentPlayerPos, s_meshTime); VFX_ComposeWoodVine(&_cfg); } while(0); break;
-              case 52: {
+              case 46: VFX_ComposeWaterStream(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(Vector3Lerp(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), 0.33f), (Vector3){0.0f, 0.9f, 0.7f}), Vector3Add(Vector3Lerp(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), 0.66f), (Vector3){0.0f, 0.5f, -0.7f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), 1.5f, progress, s_meshTime); break;
+              case 47: do { VFX_WoodFlowerConfig _cfg = VFXTest_BuildWoodFlowerConfig(s_prefabStartPos, s_currentPlayerPos, s_meshTime); VFX_ComposeWoodFlower(&_cfg); } while(0); break;
+              case 48: do { VFX_WoodLeavesConfig _cfg = VFXTest_BuildWoodLeavesConfig(s_prefabStartPos, s_currentPlayerPos, s_meshTime); VFX_ComposeWoodLeaves(&_cfg); } while(0); break;
+              case 49: do { VFX_WoodPetalConfig _cfg = VFXTest_BuildWoodPetalConfig(s_prefabStartPos, s_currentPlayerPos, s_meshTime); VFX_ComposeWoodPetals(&_cfg); } while(0); break;
+              case 50: do { VFX_WoodVineConfig _cfg = VFXTest_BuildWoodVineConfig(s_prefabStartPos, s_currentPlayerPos, s_meshTime); VFX_ComposeWoodVine(&_cfg); } while(0); break;
+              case 51: {
                   static float s_guidedEarthAutoTimer = 0.0f;
                   s_guidedEarthAutoTimer += GetFrameTime();
                   if (s_guidedEarthAutoTimer >= 2.4f) {
@@ -3464,7 +3444,7 @@ void VFXTest_Draw3D(void)
                   }
                   break;
               }
-              case 53: {
+              case 52: {
                   static float s_seismicWaveAutoTimer = 0.0f;
                   s_seismicWaveAutoTimer += GetFrameTime();
                   if (s_seismicWaveAutoTimer >= 2.4f) {
@@ -3475,11 +3455,11 @@ void VFXTest_Draw3D(void)
                   }
                   break;
               }
-              case 54: {
+              case 53: {
                   static float s_guidedLiquidAutoTimer = 0.0f;
                   if (!VFX_GuidedLiquid_IsAnyActive()) {
                       s_guidedLiquidAutoTimer += GetFrameTime();
-                      if (s_guidedLiquidAutoTimer >= 1.0f) {
+                      if (s_guidedLiquidAutoTimer >= 0.8f) {
                           s_guidedLiquidAutoTimer = 0.0f;
                           Vector3 target = Vector3Add(s_prefabStartPos, (Vector3){5.5f, 0.0f, 2.0f});
                           target.y = MapManager_GetGroundHeightAt(target.x, target.z);
@@ -3491,7 +3471,7 @@ void VFXTest_Draw3D(void)
                   }
                   break;
               }
-              case 55: {
+              case 54: {
                   static float s_waterDragonAutoTimer = 0.0f;
                   if (!VFX_WaterDragon_IsAnyActive()) {
                       s_waterDragonAutoTimer += GetFrameTime();
@@ -3549,8 +3529,8 @@ void VFXTest_DrawShadowPass(void)
         }
     }
     VFX_FoliageSystem_DrawShadowPass();
-    VFX_WaterOrb_DrawShadowPass();
     VC_GuidedLiquid_DrawShadowPass();
+    LiquidFlow_DrawShadowPass();
     VC_GuidedEarth_DrawShadowPass();
     VC_SeismicWave_DrawShadowPass();
     VC_EarthSpike_DrawShadowPass();
