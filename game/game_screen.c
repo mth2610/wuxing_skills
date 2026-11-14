@@ -550,6 +550,13 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
     if (selfAgent)
         player->position = selfAgent->position;
 
+    {
+        char animClip[64];
+        float animSecs = 0.0f;
+        if (Skill_ConsumeAnimTrigger(player->agentId, animClip, sizeof(animClip), &animSecs))
+            CharacterModel_TriggerByName(&player->anim, animClip, animSecs);
+    }
+
     float moveLen = sqrtf(intent.moveDir.x * intent.moveDir.x + intent.moveDir.y * intent.moveDir.y);
     CharacterModel_Update(&player->anim, dt, moveLen > 0.0001f);
 

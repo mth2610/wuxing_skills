@@ -1650,3 +1650,51 @@ float Skill_GetCastAnimSeconds(int skillIndex)
     return DEFAULT_CAST_ANIM_SECONDS;
   return s_skillCastAnimSecs[skillIndex];
 }
+
+#define MAX_SKILL_ANIM_TRIGGERS 16
+typedef struct {
+  bool pending;
+  int agentId;
+  char clipName[64];
+  float seconds;
+} SkillAnimTriggerEntry;
+
+static SkillAnimTriggerEntry s_animTriggers[MAX_SKILL_ANIM_TRIGGERS];
+
+void Skill_RequestAnim(int agentId, const char *clipName, float seconds)
+{
+  if (!clipName || clipName[0] == '\0')
+    return;
+  // Overwrite any older pending trigger for the same agentId first, or pick a free slot
+  int freeSlot = -1;
+  for (int i = 0; i < MAX_SKILL_ANIM_TRIGGERS; i++) {
+    if (s_animTriggers[i].pending && s_animTriggers[i].agentId == agentId) {
+      freeSlot = i;
+      break;
+    }
+    if (!s_animTriggers[i].pending && freeSlot < 0)
+      freeSlot = i;
+  }
+  if (freeSlot < 0)
+    freeSlot = 0;
+  s_animTriggers[freeSlot].pending = true;
+  s_animTriggers[freeSlot].agentId = agentId;
+  snprintf(s_animTriggers[freeSlot].clipName, sizeof(s_animTriggers[freeSlot].clipName), "%s", clipName);
+  s_animTriggers[freeSlot].seconds = seconds;
+}
+
+bool Skill_ConsumeAnimTrigger(int agentId, char *outClipName, int maxLen, float *outSeconds)
+{
+  if (!outClipName || maxLen <= 0)
+    return false;
+  for (int i = 0; i < MAX_SKILL_ANIM_TRIGGERS; i++) {
+    if (s_animTriggers[i].pending && s_animTriggers[i].agentId == agentId) {
+      s_animTriggers[i].pending = false;
+      snprintf(outClipName, (size_t)maxLen, "%s", s_animTriggers[i].clipName);
+      if (outSeconds)
+        *outSeconds = s_animTriggers[i].seconds;
+      return true;
+    }
+  }
+  return false;
+}

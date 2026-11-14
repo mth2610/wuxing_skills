@@ -74,6 +74,30 @@
       }
     },
     {
+      "id": "ao_tien_hiep",
+      "name": "Áo Tiên Hiệp Bạch Vân",
+      "description": "Áo giao lĩnh hai lớp màu bạch vân phối lam xám, thêu họa tiết mây nước thanh thoát, đai lưng ngọc bích.",
+      "source": "Túi đồ sơ nhập giang hồ",
+      "unlock_type": "default",
+      "unlock_hint": "Mặc định có sẵn",
+      "slot": "torso",
+      "item_type": "modular",
+      "element": "water",
+      "rarity": "rare",
+      "is_skinned": true,
+      "model_path": "assets/characters/equipment/torso/ao_tien_hiep.glb",
+      "ui_color": [232, 230, 224, 255],
+      "stats": {
+        "bonus_health": 55.0,
+        "bonus_mana": 45.0,
+        "speed_multiplier": 1.03,
+        "elemental_bonus": 0.10,
+        "elemental_resist": 0.08,
+        "mana_regen_bonus": 0.12,
+        "special_perk": "Bạch Vân Phiêu Diêu: Tăng 12% tốc độ hồi phục chân khí"
+      }
+    },
+    {
       "id": "quan_wuxia",
       "name": "Quần Võ Hiệp Huyền Sắc",
       "description": "Quần thụng xà cạp đen bó gọn ống chân, co giãn nhẹ nhàng, thuận tiện cho khinh công và cước pháp.",

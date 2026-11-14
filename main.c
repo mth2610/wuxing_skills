@@ -1795,6 +1795,7 @@ int main(int argc, char **argv) {
         } else {
             BeginShaderMode(EnvShadow_GetDepthShader());
             VC_GuidedEarth_DrawShadowPass();
+            VC_EarthSpike_DrawShadowPass();
             LiquidFlow_DrawShadowPass();
             EndShaderMode();
         }

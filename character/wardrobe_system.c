@@ -62,6 +62,22 @@ static void RegisterDefaultItems(void) {
             .uiColor = (Color){45, 90, 140, 255}
         },
         {
+            .id = "ao_tien_hiep",
+            .name = "Áo Tiên Hiệp Bạch Vân",
+            .description = "Áo giao lĩnh hai lớp màu bạch vân phối lam xám, thêu họa tiết mây nước thanh thoát, đai lưng ngọc bích.",
+            .source = "Túi đồ sơ nhập giang hồ",
+            .slot = MODULAR_SLOT_TORSO,
+            .itemType = ITEM_TYPE_MODULAR,
+            .element = WARDROBE_ELEM_WATER,
+            .rarity = WARDROBE_RARITY_RARE,
+            .unlockType = UNLOCK_TYPE_DEFAULT,
+            .unlockHint = "Mặc định có sẵn",
+            .stats = { 55.0f, 45.0f, 1.03f, 0.10f, 0.08f, 0.12f, "Bạch Vân Phiêu Diêu: Tăng 12% tốc độ hồi phục chân khí" },
+            .isSkinned = true,
+            .modelPath = "assets/characters/equipment/torso/ao_tien_hiep.glb",
+            .uiColor = (Color){232, 230, 224, 255}
+        },
+        {
             .id = "quan_wuxia",
             .name = "Quần Võ Hiệp Huyền Sắc",
             .description = "Quần thụng xà cạp đen bó gọn ống chân, co giãn nhẹ nhàng, thuận tiện cho khinh công và cước pháp.",
@@ -529,6 +545,7 @@ void PlayerWardrobe_Init(PlayerWardrobe *pw, const char *playerId) {
     // Online progression: ONLY starter clothing is unlocked initially!
     PlayerWardrobe_UnlockItem(pw, "human_body");
     PlayerWardrobe_UnlockItem(pw, "ao_giao_linh");
+    PlayerWardrobe_UnlockItem(pw, "ao_tien_hiep");
     PlayerWardrobe_UnlockItem(pw, "quan_wuxia");
     PlayerWardrobe_UnlockItem(pw, "chien_hai_van_du");
 

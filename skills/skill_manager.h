@@ -295,4 +295,10 @@ float Skill_GetManaCost(int skillIndex);
 void RegisterSkillCastAnimSeconds(int skillIndex, float seconds);
 float Skill_GetCastAnimSeconds(int skillIndex);
 
+// Allows multi-stage skills to request specific character animation clips
+// (e.g. "earth_stomp_slam", "earth_pillar_punch") during Cast/Update without
+// skills/ depending on character/. Consumed by game_screen / sandbox_core.
+void Skill_RequestAnim(int agentId, const char *clipName, float seconds);
+bool Skill_ConsumeAnimTrigger(int agentId, char *outClipName, int maxLen, float *outSeconds);
+
 #endif // SKILL_MANAGER_H

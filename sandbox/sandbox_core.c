@@ -682,6 +682,14 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
         moveDir = Vector3Normalize(moveDir);
     }
 
+    {
+        char animClip[64];
+        float animSecs = 0.0f;
+        if (Skill_ConsumeAnimTrigger(player->agentId, animClip, sizeof(animClip), &animSecs)) {
+            CharacterModel_TriggerByName(&player->anim, animClip, animSecs);
+        }
+    }
+
     CharacterModel_Update(&player->anim, dt, inputX != 0.0f || inputZ != 0.0f);
 
     // Modular Wardrobe Customization Hotkeys
