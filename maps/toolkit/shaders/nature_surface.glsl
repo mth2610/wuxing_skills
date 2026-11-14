@@ -42,7 +42,7 @@ float FoliageShadowVisibility(vec4 lightSpace, vec4 staticLightSpace,
                               float distToCam)
 {
     // Smooth distance fade beyond the active shadow cascade (fades to 0 at 36.0m)
-    float shadowFade = 1.0 - clamp((distToCam - 22.0) * 0.07142857, 0.0, 1.0);
+    float shadowFade = 1.0 - clamp((distToCam - 11.0) * 0.125, 0.0, 1.0);
     if (shadowFade <= 0.0)
         return 1.0;
 
@@ -81,9 +81,8 @@ float FoliageShadowVisibility(vec4 lightSpace, vec4 staticLightSpace,
         }
     }
 
-    // Physical botanical shadow floor: direct sun cuts cleanly in shadow while ambient sky illuminates foliage
-    // [LANDMINES.md §260]: Maintain translucent self-shadow floor ~0.34 so grass self-shadows don't collapse to black
-    float translucentVis = mix(0.34, 1.0, rawCombined);
+    // Physical botanical shadow floor: soft velvety olive shadows without dark row banding
+    float translucentVis = mix(0.48, 1.0, rawCombined);
     return mix(1.0, translucentVis, shadowFade);
 }
 
@@ -267,8 +266,8 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     float fwU = fwidth(u);
     float fwH = fwidth(h);
     float unresolved = max(FastRamp(0.50, 1.65, fwU), FastRamp(0.14, 0.42, fwH));
-    float tipConvergence = FastRamp(0.80, 0.98, h);
-    float antiShimmer = max(max(unresolved, FastRamp(8.0, 24.0, distToCam)), tipConvergence * 0.78);
+    float tipConvergence = FastRamp(0.70, 0.96, h);
+    float antiShimmer = max(max(unresolved, FastRamp(6.0, 18.0, distToCam)), tipConvergence * 0.90);
 
     vec3 rawFaceN = vec3(worldNormal.x * 0.72, max(abs(worldNormal.y), 0.48), worldNormal.z * 0.72);
     vec3 faceNormal = rawFaceN * inversesqrt(max(dot(rawFaceN, rawFaceN), 1e-8));
@@ -293,9 +292,9 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
 
     float warmShift = clamp(macroPatch * 0.5 + 0.5, 0.0, 1.0);
     float tipHeightMask = FastRamp(0.24, 0.88, h);
-    // Rich macro botanical contrast: cool emerald hollows vs warm sun-kissed golden-olive crests
-    vec3 coolEmeraldTip = vec3(0.75, 0.98, 0.76);
-    vec3 warmGoldenTip  = vec3(1.10, 1.02, 0.62);
+    // Rich macro botanical contrast: velvety olive-emerald hollows vs warm sunlit jade-amber crests
+    vec3 coolEmeraldTip = vec3(0.78, 0.94, 0.72);
+    vec3 warmGoldenTip  = vec3(1.10, 0.98, 0.62);
     vec3 midOliveTone   = vec3(0.92, 0.96, 0.80);
     vec3 macroTone = mix(coolEmeraldTip, warmGoldenTip, warmShift);
     macroTone = mix(midOliveTone, macroTone, tipHeightMask);
@@ -371,14 +370,14 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     vec3 distantCanopyTone = mix(vec3(0.22, 0.38, 0.14), vec3(0.36, 0.46, 0.18), warmShift * 0.70);
     baseColor = mix(baseColor, distantCanopyTone, distRootLift * (1.0 - h) * 0.35);
 
-    vec3 skyAmbient = clamp(u_ambientColor * vec3(1.28, 1.28, 1.38), 0.0, 1.0);
+    vec3 skyAmbient = clamp(u_ambientColor * vec3(1.22, 1.26, 1.44), 0.0, 1.0);
     vec3 groundBounce = clamp(u_ambientColor * vec3(0.58, 0.48, 0.42), 0.0, 1.0);
     vec3 greenBounce = baseColor * (u_ambientColor * 1.45 + vec3(0.045, 0.085, 0.028));
     vec3 ambientGround = mix(groundBounce, greenBounce, 0.62);
     vec3 ambient = mix(ambientGround, skyAmbient, n.y * 0.5 + 0.5);
 
-    // Botanical root self-shadowing: lift floor from 0.18 to 0.46 to eliminate crushed dark voids
-    float rootAO = mix(mix(0.46, 0.82, distRootLift), 1.0, smoothstep(0.0, 0.42, h));
+    // Botanical root self-shadowing: velvety olive base eliminates dark grid-row blotches on hills
+    float rootAO = mix(mix(0.64, 0.88, distRootLift), 1.0, smoothstep(0.0, 0.42, h));
     vec3 lit = baseColor * ambient * rootAO;
 
     float nv = max(dot(faceNormal, viewDir), 0.0);
@@ -389,8 +388,8 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     float shadow = FoliageShadowVisibility(lightSpace, staticLightSpace, n, lightDir, worldPosition, distToCam);
     if (shadow > 0.001) {
         float cloudVis = 0.92;
-        if (distSq < 900.0) {
-            float cloudDistFade = FastRamp(576.0, 900.0, distSq);
+        if (distSq < 324.0) {
+            float cloudDistFade = FastRamp(196.0, 324.0, distSq);
             cloudVis = mix(Environment_CloudVisibility(u_cloudNoise, worldPosition), 0.92, cloudDistFade);
         }
         float sunVis = shadow * cloudVis;
@@ -413,12 +412,12 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
             float canopyDepth = 0.30 * (1.0 - h) * (1.0 - distRootLift * 0.65);
             float opticalDepth = canopyDepth * 0.72 / max(lightDir.y, 0.28);
             float expCanopy = 1.0 / (1.0 + opticalDepth + 0.35 * opticalDepth * opticalDepth);
-            float verticalSelfShadow = mix(mix(0.76, 0.94, distRootLift), 1.0, clamp(h * 2.173913, 0.0, 1.0));
-            float canopy = (mix(0.56, 0.82, distRootLift) + mix(0.44, 0.18, distRootLift) * expCanopy) * verticalSelfShadow;
+            float verticalSelfShadow = mix(mix(0.84, 0.96, distRootLift), 1.0, clamp(h * 2.173913, 0.0, 1.0));
+            float canopy = (mix(0.72, 0.88, distRootLift) + mix(0.28, 0.12, distRootLift) * expCanopy) * verticalSelfShadow;
 
             vec3 anisoSpec = vec3(0.0);
             float waxySpec = 0.0;
-            if (archWindow > 0.005 && distToCam < 22.0) {
+            if (archWindow > 0.005 && distToCam < 14.0) {
                 vec3 halfSum = modelLightDir + viewDir;
                 vec3 halfDir = halfSum * inversesqrt(max(dot(halfSum, halfSum), 1e-6));
                 float NdotH = max(dot(faceNormal, halfDir), 0.0);

@@ -1,17 +1,16 @@
 // Shared indexed tuft templates and immutable per-blade authoring data.
 // Included after Nature_DescribeMeadowBlade; only compact IDs upload per frame.
 #define NATURE_PARAMETRIC_LODS 4
-#define NATURE_PARAMETER_COLUMNS 7
+#define NATURE_PARAMETER_COLUMNS 5
 #define NATURE_PARAMETER_ROW_BLADES 256
 #define NATURE_PARAMETER_MAX_ROWS 8192
 #define NATURE_TEMPLATE_MAX_VERTICES 230
 #define NATURE_TEMPLATE_MAX_INDICES 330
-#define NATURE_LOD_NEAR_BLEND_HALF_WIDTH 1.8f
-#define NATURE_LOD_FAR_BLEND_HALF_WIDTH 4.2f
+#define NATURE_LOD_NEAR_BLEND_HALF_WIDTH 3.2f
+#define NATURE_LOD_FAR_BLEND_HALF_WIDTH 6.5f
 #define NATURE_VISIBLE_ID_ROW_TEXELS 256
-// [TỐI ƯU HIỆU NĂNG]: Nới rộng dung sai dịch chuyển camera (15cm) kết hợp kiểm tra góc xoay
-// để đóng băng texture upload khi đứng im hoặc rung nhẹ camera, triệt tiêu bus stall.
-#define NATURE_CAMERA_EPSILON_SQ 0.0225f
+// Smooth 7cm camera movement threshold prevents visible 15cm LOD popping steps while walking
+#define NATURE_CAMERA_EPSILON_SQ 0.0049f
 #define NATURE_CAMERA_FORWARD_COS_EPSILON 0.99985f
 
 typedef struct
@@ -710,15 +709,23 @@ static bool NatureParametric_Create(MapMeadowSurface *meadow,
                 {
                     NatureBladeDescriptor d = Nature_DescribeMeadowBladeCtx(
                         &placements[i], &clumpCtx, i, blade, style, blades[lod], segments[lod], widths[lod], true);
-                    float *v = pixels + (size_t)cursor++ * 28;
-                    const Vector4 values[7] = {
+                    float *v = pixels + (size_t)cursor++ * 20;
+                    float packedRoot = (float)d.rootColor.r + (float)d.rootColor.g * 256.0f +
+                                       (float)d.rootColor.b * 65536.0f;
+                    float packedTip = (float)d.tipColor.r + (float)d.tipColor.g * 256.0f +
+                                      (float)d.tipColor.b * 65536.0f;
+                    float wrappedAngle = fmodf(d.leanAngle, 6.2831853f);
+                    if (wrappedAngle < 0.0f) wrappedAngle += 6.2831853f;
+                    float qAngle = floorf((wrappedAngle / 6.2831853f) * 4096.0f);
+                    if (qAngle > 4095.0f) qAngle = 4095.0f;
+                    float packedMeta = qAngle + (d.isReed ? 4096.0f : 0.0f) +
+                                       (d.isSeedhead ? 8192.0f : 0.0f);
+                    const Vector4 values[5] = {
                         {d.p0.x, d.p0.y, d.p0.z, d.phase},
                         {d.p1.x, d.p1.y, d.p1.z, d.width},
-                        {d.p2.x, d.p2.y, d.p2.z, d.isReed ? 1.0f : 0.0f},
-                        {d.p3.x, d.p3.y, d.p3.z, d.isSeedhead ? 1.0f : 0.0f},
-                        {d.clump.x, d.clump.y, d.clump.z, d.leanAngle},
-                        {d.rootColor.r, d.rootColor.g, d.rootColor.b, 255.0f},
-                        {d.tipColor.r, d.tipColor.g, d.tipColor.b, 255.0f}};
+                        {d.p2.x, d.p2.y, d.p2.z, packedRoot},
+                        {d.p3.x, d.p3.y, d.p3.z, packedTip},
+                        {d.clump.x, d.clump.y, d.clump.z, packedMeta}};
                     memcpy(v, values, sizeof(values));
                 }
             }
@@ -940,7 +947,7 @@ static void NatureParametric_PrepareVisible(MapMeadowSurface *meadow, Vector3 wo
     float fadeEnd = view.drawDistance;
     bool hasFade = (fadeEnd > 0.0f);
     float fadeEndSq = fadeEnd * fadeEnd;
-    float thinStart = fadeEnd * 0.72f;
+    float thinStart = fadeEnd * 0.55f;
     float thinStartSq = thinStart * thinStart;
     float invThinSpanSq = (fadeEndSq > thinStartSq + 1.0f) ? (1.0f / (fadeEndSq - thinStartSq)) : 0.0f;
 
@@ -1019,7 +1026,7 @@ static void NatureParametric_PrepareVisible(MapMeadowSurface *meadow, Vector3 wo
                 if (hasFade && d2 > thinStartSq)
                 {
                     float thinT = (d2 - thinStartSq) * invThinSpanSq;
-                    float keepProb = 1.0f - thinT * 0.62f;
+                    float keepProb = 1.0f - thinT * 0.76f;
                     if (rank > keepProb)
                     {
                         visLods[id] = 3;

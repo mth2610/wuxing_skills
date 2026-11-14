@@ -31,40 +31,40 @@ void GetFlowerSpeciesColors(int sp, float t, float s, float isInner, float seed,
         if (isInner > 0.5) albedo = mix(vec3(0.99, 0.72, 0.12), vec3(1.0, 0.95, 0.68), t);
         sssColor = vec3(0.94, 0.98, 0.88);
     } else if (sp == 1) {
-        vec3 core = vec3(0.78, 0.34, 0.04);
-        vec3 mid  = vec3(0.99, 0.78, 0.10) + vec3(hueShift, hueShift * 0.5, 0.0);
-        vec3 tip  = vec3(1.00, 0.94, 0.36);
+        vec3 core = vec3(0.68, 0.34, 0.08);
+        vec3 mid  = vec3(0.86, 0.69, 0.24) + vec3(hueShift, hueShift * 0.5, 0.0);
+        vec3 tip  = vec3(0.94, 0.85, 0.44);
         albedo = mix(core, mix(mid, tip, sMid), sBase);
-        if (isInner > 0.5) albedo = mix(vec3(0.72, 0.28, 0.03), vec3(0.98, 0.68, 0.10), t);
-        sssColor = vec3(1.00, 0.76, 0.14);
+        if (isInner > 0.5) albedo = mix(vec3(0.64, 0.28, 0.06), vec3(0.88, 0.62, 0.18), t);
+        sssColor = vec3(0.95, 0.74, 0.24);
     } else if (sp == 2) {
         vec3 core = vec3(0.38, 0.02, 0.05);
-        vec3 mid  = vec3(0.94, 0.09, 0.14) + vec3(hueShift * 0.5, 0.0, 0.0);
-        vec3 tip  = vec3(1.00, 0.34, 0.18);
+        vec3 mid  = vec3(0.84, 0.16, 0.20) + vec3(hueShift * 0.5, 0.0, 0.0);
+        vec3 tip  = vec3(0.94, 0.38, 0.24);
         albedo = mix(core, mix(mid, tip, sMid), sBase);
-        if (isInner > 0.5) albedo = mix(vec3(0.95, 0.18, 0.16), vec3(1.00, 0.82, 0.32), smoothstep(0.55, 1.0, t));
-        sssColor = vec3(1.00, 0.20, 0.08);
+        if (isInner > 0.5) albedo = mix(vec3(0.85, 0.22, 0.18), vec3(0.94, 0.76, 0.34), smoothstep(0.55, 1.0, t));
+        sssColor = vec3(0.95, 0.26, 0.14);
     } else if (sp == 3) {
-        vec3 core = vec3(0.24, 0.95, 0.84);
-        vec3 mid  = vec3(0.16, 0.54, 0.96) + vec3(0.0, hueShift, hueShift);
-        vec3 tip  = vec3(0.64, 0.92, 1.00);
+        vec3 core = vec3(0.28, 0.66, 0.68);
+        vec3 mid  = vec3(0.34, 0.52, 0.78) + vec3(0.0, hueShift, hueShift);
+        vec3 tip  = vec3(0.68, 0.82, 0.92);
         albedo = mix(core, mix(mid, tip, sMid), sBase);
-        if (isInner > 0.5) albedo = mix(vec3(0.32, 0.98, 0.88), vec3(0.84, 0.99, 1.00), t);
-        sssColor = vec3(0.24, 0.88, 1.00);
+        if (isInner > 0.5) albedo = mix(vec3(0.36, 0.72, 0.74), vec3(0.80, 0.90, 0.94), t);
+        sssColor = vec3(0.38, 0.72, 0.86);
     } else if (sp == 4) {
-        vec3 core = vec3(0.88, 0.26, 0.42);
-        vec3 mid  = vec3(0.98, 0.64, 0.76) + vec3(hueShift * 0.5, 0.0, hueShift * 0.5);
-        vec3 tip  = vec3(1.00, 0.92, 0.95);
+        vec3 core = vec3(0.82, 0.28, 0.42);
+        vec3 mid  = vec3(0.92, 0.62, 0.72) + vec3(hueShift * 0.5, 0.0, hueShift * 0.5);
+        vec3 tip  = vec3(0.96, 0.88, 0.90);
         albedo = mix(core, mix(mid, tip, sMid), sBase);
-        if (isInner > 0.5) albedo = mix(vec3(0.96, 0.62, 0.16), vec3(1.00, 0.88, 0.46), t);
-        sssColor = vec3(1.00, 0.54, 0.70);
+        if (isInner > 0.5) albedo = mix(vec3(0.88, 0.60, 0.20), vec3(0.96, 0.84, 0.48), t);
+        sssColor = vec3(0.95, 0.56, 0.68);
     } else if (sp == 5 || sp == 6) {
-        vec3 core = vec3(0.26, 0.08, 0.48);
-        vec3 mid  = vec3(0.58, 0.28, 0.92) + vec3(hueShift, 0.0, hueShift);
-        vec3 tip  = vec3(0.88, 0.66, 1.00);
+        vec3 core = vec3(0.28, 0.14, 0.42);
+        vec3 mid  = vec3(0.54, 0.36, 0.74) + vec3(hueShift, 0.0, hueShift);
+        vec3 tip  = vec3(0.80, 0.68, 0.88);
         albedo = mix(core, mix(mid, tip, sMid), sBase);
-        if (isInner > 0.5) albedo = mix(vec3(0.98, 0.80, 0.20), vec3(1.00, 0.96, 0.72), t);
-        sssColor = vec3(0.82, 0.38, 1.00);
+        if (isInner > 0.5) albedo = mix(vec3(0.90, 0.74, 0.26), vec3(0.96, 0.90, 0.68), t);
+        sssColor = vec3(0.76, 0.44, 0.88);
     } else if (sp == 8) {
         vec3 core = vec3(0.52, 0.45, 0.30);
         vec3 mid  = vec3(0.89, 0.90, 0.86) + vec3(hueShift * 0.3);

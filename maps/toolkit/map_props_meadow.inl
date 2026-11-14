@@ -516,12 +516,14 @@ static NatureBladeDescriptor Nature_DescribeMeadowBladeCtx(const MapMeadowPlacem
         float radX, radZ;
         Nature_FastSinCos(rootAzimuth, &radZ, &radX);
         float diskFrac = ((float)bladeId + 0.5f) / (float)denomBlades;
-        float collarRadius = clump->radius * (0.12f + 0.38f * sqrtf(diskFrac)) * (0.86f + 0.28f * bHash3);
+        float collarRadius = clump->radius * (0.12f + 0.36f * sqrtf(diskFrac)) * (0.86f + 0.28f * bHash3);
         float bx = clump->position.x + radX * collarRadius;
         float bz = clump->position.z + radZ * collarRadius;
 
-        float flowBias = (archetype == 0) ? (0.16f + 0.08f * (1.0f - diskFrac))
-                                          : (0.22f + 0.10f * (1.0f - diskFrac));
+        // Balanced organic clump spread (60-72%) + gentle wind-flow bias (28-40%)
+        // so tufts interlock naturally without looking combed in one direction
+        float flowBias = (archetype == 0) ? (0.28f + 0.10f * (1.0f - diskFrac))
+                                          : (0.34f + 0.12f * (1.0f - diskFrac));
         float radialWeight = 1.0f - flowBias;
         float splayX = radX * radialWeight + flowX * flowBias;
         float splayZ = radZ * radialWeight + flowZ * flowBias;

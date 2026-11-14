@@ -28,7 +28,7 @@
 
 // Broad valley meadow coverage across the celestial island plateau and rolling hills
 // Sized above total accepted plateau tufts (~58k) so reservoir sampling never evicts foreground tufts (LANDMINES.md §135)
-#define GRASS_TUFT_CAPACITY 72000
+#define GRASS_TUFT_CAPACITY 90000
 #define FLOWER_COUNT SONG_QUAO_TOTAL_FLOWERS
 #define REED_COUNT 800
 #define PAMPAS_COUNT 420
@@ -44,9 +44,9 @@
 #define GRASS_FULL_NORMAL_Y 0.86f
 
 // Shadow focus quantization & hysteresis to prevent boundary flip-flop shimmering
-#define SHADOW_SNAP_STEP 1.0f
-#define SHADOW_HYSTERESIS_XZ 0.65f
-#define SHADOW_HYSTERESIS_Y 0.35f
+#define SHADOW_SNAP_STEP 2.0f
+#define SHADOW_HYSTERESIS_XZ 1.50f
+#define SHADOW_HYSTERESIS_Y 0.50f
 #define SHADOW_FOCUS_RADIUS 18.0f
 
 static const Vector3 kMapCenter = {MAP_WIDTH * 0.5f, 0.0f, MAP_DEPTH * 0.5f};
@@ -167,11 +167,11 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
     // Dynamic bank setback (GPU Gems 3 Continuous Riverbank Ecology):
     // Reeds & riverbank sedges grow right down into the waterline (-0.04m .. 0.02m);
     // Gravel bars & pebble beaches transition smoothly without harsh empty trenches
-    float bankThreshold = 0.04f - rosetteJut * 0.04f + rosetteGrain * 0.02f;
+    float bankThreshold = -0.02f - rosetteJut * 0.03f + rosetteGrain * 0.015f;
     float varShore = signedShore + bankNoiseMacro + bankNoiseMed + bankNoiseMicro;
     if (varShore < bankThreshold)
         return 0.0f;
-    float shoreFade = MapMath_SmoothStep01(bankThreshold, bankThreshold + 0.36f, varShore);
+    float shoreFade = MapMath_SmoothStep01(bankThreshold, bankThreshold + 0.24f, varShore);
 
     float rockSuppression = MapProp_EvaluateRockSuppression(
         x, z, SONG_QUAO_ROCK_ITEMS, SONG_QUAO_ROCK_ITEM_COUNT);
@@ -281,7 +281,7 @@ static void BuildFloraPlacements(void)
         (MapFloraMeadowConfig){
             .minBounds = {10.0f, 8.0f},
             .maxBounds = {MAP_WIDTH - 10.0f, MAP_DEPTH - 8.0f},
-            .spacing = 0.416f,
+            .spacing = 0.43f,
             .seed = 0x51a7c3u,
             .densityFn = SongQuaoGrassDensity,
             .ecology = &s_habitat,
@@ -738,13 +738,13 @@ void InitSongQuaoMap(void)
                                              .detailStrength = 0.36f,
                                              .maxDepth = 1.45f,
                                              .absorption = {0.38f, 0.09f, 0.032f},
-                                             .scatterColor = {0.14f, 0.74f, 0.68f},
-                                             .scatterCoeff = 0.32f,
-                                             .causticsStrength = 0.82f,
+                                             .scatterColor = {0.09f, 0.34f, 0.32f},
+                                             .scatterCoeff = 0.24f,
+                                             .causticsStrength = 0.52f,
                                              .causticsScale = 3.80f,
-                                             .foamThreshold = 0.095f,
-                                             .deepColor = {10, 68, 88, 225},
-                                             .shallowColor = {72, 168, 156, 110},
+                                             .foamThreshold = 0.085f,
+                                             .deepColor = {10, 34, 48, 225},
+                                             .shallowColor = {30, 74, 80, 128},
                                              .foamColor = {248, 252, 255, 240},
                                          });
 
@@ -812,15 +812,15 @@ void InitSongQuaoMap(void)
         s_reedPlacements, s_reedCount,
         s_flowerPlacements, SONG_QUAO_FLOWER_CLUSTERS, SONG_QUAO_FLOWER_CLUSTER_COUNT,
         (MapFloraStyle){
-            .grassRootColor = {32, 48, 22, 255},  // Sắc rêu mùn xanh ngọc trầm ấm ăn khớp nền đất
-            .grassTipColor = {116, 154, 58, 255}, // Sắc ngọc bích xuân tươi sáng, ấm áp tự nhiên
-            .bladesPerClump = 5,
+            .grassRootColor = {38, 60, 24, 255},  // Velvety olive-moss base (Ghost of Yotei style)
+            .grassTipColor = {104, 146, 52, 255}, // Natural sunlit olive-jade tips
+            .bladesPerClump = 4,
             .bladeSegments = 3,
-            .bladeWidthScale = 0.112f,
-            .lodDistance = 17.5f,
-            .midLodDistance = 9.5f,
-            .drawDistance = 38.0f,
-            .shadowDistance = 12.0f,
+            .bladeWidthScale = 0.095f,
+            .lodDistance = 16.5f,
+            .midLodDistance = 8.5f,
+            .drawDistance = 58.0f,
+            .shadowDistance = 7.5f,
             .grassState = MAP_GRASS_STATE_LUSH,
             .reedRootColor = {20, 32, 16, 255},
             .reedTipColor = {96, 134, 54, 255},

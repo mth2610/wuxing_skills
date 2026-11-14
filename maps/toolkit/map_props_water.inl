@@ -1543,11 +1543,15 @@ void MapProp_DrawWaterOverlay(const MapWaterSurface *water, float time)
     rlActiveTextureSlot(4);
     rlEnableTexture(flowEnabled ? water->flowFieldTex.id : defaultTexId);
 
-    Vector2 screenRes = {(float)GetScreenWidth(), (float)GetScreenHeight()};
+    int targetW = SceneTargets_GetWidth();
+    int targetH = SceneTargets_GetHeight();
+    Vector2 screenRes = {(float)(targetW > 0 ? targetW : GetScreenWidth()),
+                         (float)(targetH > 0 ? targetH : GetScreenHeight())};
     if (s_waterLocResolution >= 0)
         SetShaderValue(shader, s_waterLocResolution, &screenRes, SHADER_UNIFORM_VEC2);
 
     // Mobile TBDR: bỏ qua depth resolve toàn màn hình trên GFX_LOW để tránh tốn băng thông bộ nhớ tile
+    // WATER_SHAPE_TERRAIN already has baked vertex bathymetry (fragWaterDepth), avoiding depth-twin copy cost.
     bool needsSceneDepth = (quality >= GFX_MED) &&
                            (water->config.shape != WATER_SHAPE_RADIAL &&
                             water->config.shape != WATER_SHAPE_TERRAIN);

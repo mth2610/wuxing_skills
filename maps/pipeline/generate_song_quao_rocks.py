@@ -228,6 +228,19 @@ def generate_rocks():
     add_rock(104.60, 91.00, 0.30, 0.16, 110.0, ARCH_RIVER_STONE, max_slope=34.0, min_overlap=0.45)
     add_rock(104.90, 91.70, 0.18, 0.10, 200.0, ARCH_RIVER_STONE, max_slope=34.0, min_overlap=0.45)
 
+    # 3.1 Hero Bank Granite Triads (Sanzon Ishigumi) framing gameplay river bends
+    hero_bank_triads = [
+        (93.5, 118.0, 2.35, 1.45, 35.0),
+        (114.5, 134.0, 2.55, 1.60, 145.0),
+        (92.0, 154.0, 2.20, 1.35, 250.0),
+        (115.0, 168.0, 2.40, 1.50, 85.0),
+    ]
+    for hx, hz, hr, hh, hrot in hero_bank_triads:
+        if add_rock(hx, hz, hr, hh, hrot, ARCH_GRANITE, max_slope=30.0, min_overlap=0.50):
+            add_rock(hx + 1.45, hz + 0.85, hr * 0.56, hh * 0.52, (hrot + 62.0) % 360.0, ARCH_GRANITE, max_slope=32.0, min_overlap=0.45)
+            add_rock(hx - 1.15, hz + 1.20, hr * 0.38, hh * 0.35, (hrot + 148.0) % 360.0, ARCH_GRANITE, max_slope=32.0, min_overlap=0.45)
+            add_rock(hx + 0.45, hz - 1.35, 0.46, 0.24, (hrot + 210.0) % 360.0, ARCH_SCREE, max_slope=34.0, min_overlap=0.40)
+
     # -------------------------------------------------------------
     # 4. STREAM RIPARIAN CLUSTERS & FLUID GEOMORPHOLOGY
     # -------------------------------------------------------------

@@ -68,7 +68,7 @@ bool NatureTuftUsesCurrentLod()
 
     int blade = NatureBladeId(0);
     s_cachedClumpTexel = texelFetch(u_bladeParameters,
-        ivec2((blade & 255) * 7 + 4, blade >> 8), 0);
+        ivec2((blade & 255) * 5 + 4, blade >> 8), 0);
     s_hasCachedClumpTexel = true;
     vec3 root = s_cachedClumpTexel.xyz;
     vec3 worldRoot = root + u_worldOffset;
@@ -100,16 +100,25 @@ bool NatureTuftUsesCurrentLod()
 
 vec4 NatureBladeParameter(int blade, int column)
 {
-    return texelFetch(u_bladeParameters, ivec2((blade & 255) * 7 + column, blade >> 8), 0);
+    return texelFetch(u_bladeParameters, ivec2((blade & 255) * 5 + column, blade >> 8), 0);
+}
+
+vec3 NatureUnpackRGB(float packed)
+{
+    float b = floor(packed * (1.0 / 65536.0));
+    float rem = packed - b * 65536.0;
+    float g = floor(rem * (1.0 / 256.0));
+    float r = rem - g * 256.0;
+    return vec3(r, g, b) * (1.0 / 255.0);
 }
 
 void NatureApplyCanonicalLod(vec4 p0, inout vec4 p1, inout vec4 p2, inout vec4 p3)
 {
     if (u_canonicalBladeData != 0 && u_geometryLod > 0) {
-        // Bù bề rộng mượt cho LOD 1 & LOD 2 để giữ nguyên độ phủ dày của thảm cỏ ở xa
+        // Gentle width compensation so LOD 1/2 match LOD 0 fineness without coarse toothpicks
         float bladeRatio = max(float(max(u_canonicalBlades, 1)) / float(max(u_bladesPerTuft, 1)), 1.0);
-        float widthBoost = (u_geometryLod == 2) ? 1.56 : 1.24;
-        p1.w *= sqrt(bladeRatio) * widthBoost;
+        float widthBoost = (u_geometryLod == 2) ? 1.12 : 1.06;
+        p1.w *= pow(bladeRatio, 0.35) * widthBoost;
     }
 }
 
@@ -119,24 +128,19 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     int localBlade = int(floor(vertexPosition.z));
     int blade = NatureBladeId(localBlade);
 
-    ivec2 baseCoord = ivec2((blade & 255) * 7, blade >> 8);
+    ivec2 baseCoord = ivec2((blade & 255) * 5, blade >> 8);
     vec4 p0 = texelFetch(u_bladeParameters, baseCoord, 0);
     vec4 p1 = texelFetch(u_bladeParameters, ivec2(baseCoord.x + 1, baseCoord.y), 0);
     vec4 p2 = texelFetch(u_bladeParameters, ivec2(baseCoord.x + 2, baseCoord.y), 0);
     vec4 p3 = texelFetch(u_bladeParameters, ivec2(baseCoord.x + 3, baseCoord.y), 0);
-
-#ifdef NATURE_BLADE_POSITION_ONLY
-    s_cachedClumpTexel = vec4(p0.xyz, 0.0);
-    s_hasCachedClumpTexel = true;
-#else
     vec4 clump = (s_hasCachedClumpTexel && localBlade == 0)
         ? s_cachedClumpTexel
         : texelFetch(u_bladeParameters, ivec2(baseCoord.x + 4, baseCoord.y), 0);
     s_cachedClumpTexel = vec4(p0.xyz, clump.w);
     s_hasCachedClumpTexel = true;
-    vec3 rootColor = texelFetch(u_bladeParameters, ivec2(baseCoord.x + 5, baseCoord.y), 0).rgb;
-    vec3 tipColor  = texelFetch(u_bladeParameters, ivec2(baseCoord.x + 6, baseCoord.y), 0).rgb;
-#endif
+    float metaFlags = floor(clump.w * (1.0 / 4096.0));
+    bool isReed = mod(metaFlags, 2.0) > 0.5;
+    bool isSeedhead = metaFlags >= 1.5;
 
     NatureApplyCanonicalLod(p0, p1, p2, p3);
 
@@ -161,11 +165,7 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     if (sideLenSq > 1e-6) {
         side *= inversesqrt(sideLenSq);
     } else {
-#ifdef NATURE_BLADE_POSITION_ONLY
-        float leanAngle = texelFetch(u_bladeParameters, ivec2(baseCoord.x + 4, baseCoord.y), 0).w;
-#else
-        float leanAngle = clump.w;
-#endif
+        float leanAngle = (clump.w - metaFlags * 4096.0) * (6.2831853 / 4096.0);
         side = vec3(-sin(leanAngle), 0.0, cos(leanAngle));
     }
 
@@ -213,9 +213,9 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
 
     float sinPiT = 4.0 * ut;
     float profile;
-    if (p2.w > 0.5) {
+    if (isReed) {
         profile = (0.82 + 0.36 * sinPiT) * (1.0 - t2 * (0.68 + 0.24 * t));
-    } else if (p3.w > 0.5) {
+    } else if (isSeedhead) {
         float stalk = min(1.0, 0.54 + 1.35 * t);
         float tasselTaper = (t > 0.75) ? max(0.22, 1.0 - (t - 0.75) * 3.1) : 1.0;
         profile = stalk * tasselTaper;
@@ -229,10 +229,8 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
 
     float fadeAlpha = 1.0;
 #ifdef NATURE_VISIBLE_TUFT_LOD
-    // Khóa cận dưới độ rộng màn hình (Screen-Space Subpixel Anti-Aliasing Clamp):
-    // Đảm bảo ngọn lá và thân cỏ luôn có độ dày tối thiểu ~1.1 pixel trên màn hình ở mọi khoảng cách camera,
-    // triệt tiêu hoàn toàn hiện tượng nhấp nháy / lấp lánh (sparkling/shimmering) khi cỏ đung đưa trong gió.
-    float minPxHalfWidth = distToCam * 0.00048;
+    // Screen-space subpixel clamp (>= ~1.06px at 0.72x render scale) to eliminate tip shimmering
+    float minPxHalfWidth = distToCam * 0.00085;
     halfWidth = max(halfWidth, minPxHalfWidth);
 #endif
 
@@ -278,8 +276,8 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     float tierShade = (localBlade < 2) ? 1.04 : ((localBlade < 4) ? 0.99 : 0.94);
     float bladeTone = (0.95 + 0.10 * bladeHash) * tierShade;
 
-    vec3 rootNorm = rootColor * (1.0 / 255.0);
-    vec3 tipNorm  = tipColor  * (1.0 / 255.0);
+    vec3 rootNorm = NatureUnpackRGB(p2.w);
+    vec3 tipNorm  = NatureUnpackRGB(p3.w);
     vec3 hueVar = mix(vec3(0.95, 1.02, 0.96), vec3(1.06, 1.02, 0.86), bladeHash);
     tipNorm *= hueVar;
     vec3 viridianMid = mix(rootNorm, tipNorm, 0.54) * vec3(0.96, 1.06, 0.92);
@@ -290,7 +288,7 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
 
     float baseOcclusion = mix(0.92, 1.0, smoothstep(0.0, 0.24, t));
     vec3 smoothCol = clamp(gradCol * (baseOcclusion * bladeTone), 0.0, 1.0);
-    if (p3.w > 0.5 && t > 0.70) {
+    if (isSeedhead && t > 0.70) {
         float plumeT = smoothstep(0.70, 0.88, t);
         vec3 plumeSilk = mix(tipNorm, vec3(0.84, 0.82, 0.65), 0.58);
         smoothCol = mix(smoothCol, plumeSilk * bladeTone, plumeT * 0.68);

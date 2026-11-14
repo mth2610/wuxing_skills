@@ -11,7 +11,7 @@
 #include "maps/toolkit/shaders/meadow_palette.glsl"
 
 // ---- Look knobs ( tinh chỉnh hài hòa màu cỏ & nền đất cho song_quao ) ----
-#define GS_DISTANT_CANOPY_GAIN 0.78
+#define GS_DISTANT_CANOPY_GAIN 1.02
 #define GS_CREST_COOL vec3(0.92, 0.99, 0.94)
 #define GS_CREST_WARM vec3(1.04, 1.03, 0.95)
 #define GS_GRASS_CHROMA 0.96
@@ -400,10 +400,12 @@ void main()
                 float macroB = cos(pRot.x * 1.7 - pRot.y * 1.3) * 0.5 + 0.5;
                 float hillCrestNoise = macroA * 0.60 + macroB * 0.40;
 
-                // Subtle organic tuft grain for distant albedo texture without axis-aligned normal perturbation
+                // Procedural velvet tuft micro-relief for distant grassy hillsides (prevents bald plastic look)
+                float tuftWaveA = sin(fragWorldPos.x * 4.6 + cos(fragWorldPos.z * 3.9));
+                float tuftWaveB = cos(fragWorldPos.z * 5.1 - sin(fragWorldPos.x * 4.2));
                 float tuftGrain = clamp(mix(hillCrestNoise, 0.5 + (turfDetail - 0.22) * 0.65, 0.45), 0.0, 1.0);
-                distantTuftRelief = 0.0;
-                distantTuftNormal = vec2(0.0);
+                distantTuftRelief = (tuftWaveA * tuftWaveB) * 0.16 * distantCanopyBlend;
+                distantTuftNormal = vec2(tuftWaveA, tuftWaveB) * (0.14 * distantCanopyBlend);
 
                 canopyColor *= mix(0.92, 1.08, tuftGrain);
 

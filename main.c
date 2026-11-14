@@ -900,9 +900,9 @@ int main(int argc, char **argv) {
     {
         s_lastScaledQuality = resolvedQuality;
         float targetScale = (resolvedQuality >= GFX_ULTRA) ? 1.00f :
-                            (resolvedQuality >= GFX_HIGH)  ? 0.85f :
-                            (resolvedQuality >= GFX_MED)   ? 0.80f :
-                            (resolvedQuality >= GFX_LOW)   ? 0.75f : 0.85f;
+                            (resolvedQuality >= GFX_HIGH)  ? 0.72f :
+                            (resolvedQuality >= GFX_MED)   ? 0.66f :
+                            (resolvedQuality >= GFX_LOW)   ? 0.62f : 0.72f;
         RenderScale_SetScale(targetScale);
     }
     TimeFX_SetRawDelta(rawDt);

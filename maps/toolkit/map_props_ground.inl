@@ -565,6 +565,140 @@ MapGroundSurface MapProp_CreateGround(float width, float depth, float tileSize,
 
 #include "maps/toolkit/map_props_heightfield.inl"
 
+static void Ground_BuildChunks(MapGroundSurface *ground, float width, float depth)
+{
+    ground->chunkCount = 0;
+    if (!ground->model.meshes || ground->model.meshCount < 1)
+        return;
+    const Mesh *src = &ground->model.meshes[0];
+    if (!src->vertices || !src->normals || !src->texcoords || !src->indices || src->triangleCount <= 2000)
+        return;
+
+    const int G = MAP_GROUND_CHUNK_GRID;
+    int triCounts[MAP_GROUND_MAX_CHUNKS] = {0};
+    float invW = (width > 1e-4f) ? ((float)G / width) : 1.0f;
+    float invD = (depth > 1e-4f) ? ((float)G / depth) : 1.0f;
+
+    for (int t = 0; t < src->triangleCount; t++)
+    {
+        const unsigned short *ids = &src->indices[t * 3];
+        float cx = (src->vertices[ids[0] * 3 + 0] + src->vertices[ids[1] * 3 + 0] + src->vertices[ids[2] * 3 + 0]) * (1.0f / 3.0f);
+        float cz = (src->vertices[ids[0] * 3 + 2] + src->vertices[ids[1] * 3 + 2] + src->vertices[ids[2] * 3 + 2]) * (1.0f / 3.0f);
+        int gx = (int)(cx * invW);
+        int gz = (int)(cz * invD);
+        if (gx < 0) gx = 0;
+        if (gx >= G) gx = G - 1;
+        if (gz < 0) gz = 0;
+        if (gz >= G) gz = G - 1;
+        triCounts[gz * G + gx]++;
+    }
+
+    int *vRemap = (int *)RL_MALLOC((size_t)src->vertexCount * sizeof(int));
+    if (!vRemap)
+        return;
+
+    for (int c = 0; c < MAP_GROUND_MAX_CHUNKS; c++)
+    {
+        if (triCounts[c] <= 0)
+            continue;
+        memset(vRemap, -1, (size_t)src->vertexCount * sizeof(int));
+
+        int usedVerts = 0;
+        for (int t = 0; t < src->triangleCount; t++)
+        {
+            const unsigned short *ids = &src->indices[t * 3];
+            float cx = (src->vertices[ids[0] * 3 + 0] + src->vertices[ids[1] * 3 + 0] + src->vertices[ids[2] * 3 + 0]) * (1.0f / 3.0f);
+            float cz = (src->vertices[ids[0] * 3 + 2] + src->vertices[ids[1] * 3 + 2] + src->vertices[ids[2] * 3 + 2]) * (1.0f / 3.0f);
+            int gx = (int)(cx * invW);
+            int gz = (int)(cz * invD);
+            if (gx < 0) gx = 0;
+            if (gx >= G) gx = G - 1;
+            if (gz < 0) gz = 0;
+            if (gz >= G) gz = G - 1;
+            if (gz * G + gx != c)
+                continue;
+            for (int k = 0; k < 3; k++)
+            {
+                if (vRemap[ids[k]] < 0)
+                    vRemap[ids[k]] = usedVerts++;
+            }
+        }
+
+        Mesh cm = {0};
+        cm.vertexCount = usedVerts;
+        cm.triangleCount = triCounts[c];
+        cm.vertices = (float *)MemAlloc((unsigned int)usedVerts * 3u * sizeof(float));
+        cm.normals = (float *)MemAlloc((unsigned int)usedVerts * 3u * sizeof(float));
+        cm.texcoords = (float *)MemAlloc((unsigned int)usedVerts * 2u * sizeof(float));
+        cm.indices = (unsigned short *)MemAlloc((unsigned int)cm.triangleCount * 3u * sizeof(unsigned short));
+        if (!cm.vertices || !cm.normals || !cm.texcoords || !cm.indices)
+        {
+            MemFree(cm.vertices);
+            MemFree(cm.normals);
+            MemFree(cm.texcoords);
+            MemFree(cm.indices);
+            continue;
+        }
+
+        Vector3 bmin = {1e9f, 1e9f, 1e9f};
+        Vector3 bmax = {-1e9f, -1e9f, -1e9f};
+        for (int vi = 0; vi < src->vertexCount; vi++)
+        {
+            int dst = vRemap[vi];
+            if (dst < 0)
+                continue;
+            float vx = src->vertices[vi * 3 + 0];
+            float vy = src->vertices[vi * 3 + 1];
+            float vz = src->vertices[vi * 3 + 2];
+            cm.vertices[dst * 3 + 0] = vx;
+            cm.vertices[dst * 3 + 1] = vy;
+            cm.vertices[dst * 3 + 2] = vz;
+            cm.normals[dst * 3 + 0] = src->normals[vi * 3 + 0];
+            cm.normals[dst * 3 + 1] = src->normals[vi * 3 + 1];
+            cm.normals[dst * 3 + 2] = src->normals[vi * 3 + 2];
+            cm.texcoords[dst * 2 + 0] = src->texcoords[vi * 2 + 0];
+            cm.texcoords[dst * 2 + 1] = src->texcoords[vi * 2 + 1];
+            if (vx < bmin.x) bmin.x = vx;
+            if (vy < bmin.y) bmin.y = vy;
+            if (vz < bmin.z) bmin.z = vz;
+            if (vx > bmax.x) bmax.x = vx;
+            if (vy > bmax.y) bmax.y = vy;
+            if (vz > bmax.z) bmax.z = vz;
+        }
+
+        int iCursor = 0;
+        for (int t = 0; t < src->triangleCount; t++)
+        {
+            const unsigned short *ids = &src->indices[t * 3];
+            float cx = (src->vertices[ids[0] * 3 + 0] + src->vertices[ids[1] * 3 + 0] + src->vertices[ids[2] * 3 + 0]) * (1.0f / 3.0f);
+            float cz = (src->vertices[ids[0] * 3 + 2] + src->vertices[ids[1] * 3 + 2] + src->vertices[ids[2] * 3 + 2]) * (1.0f / 3.0f);
+            int gx = (int)(cx * invW);
+            int gz = (int)(cz * invD);
+            if (gx < 0) gx = 0;
+            if (gx >= G) gx = G - 1;
+            if (gz < 0) gz = 0;
+            if (gz >= G) gz = G - 1;
+            if (gz * G + gx != c)
+                continue;
+            cm.indices[iCursor++] = (unsigned short)vRemap[ids[0]];
+            cm.indices[iCursor++] = (unsigned short)vRemap[ids[1]];
+            cm.indices[iCursor++] = (unsigned short)vRemap[ids[2]];
+        }
+
+        UploadMesh(&cm, false);
+        Vector3 center = {(bmin.x + bmax.x) * 0.5f, (bmin.y + bmax.y) * 0.5f, (bmin.z + bmax.z) * 0.5f};
+        Vector3 half = {(bmax.x - bmin.x) * 0.5f, (bmax.y - bmin.y) * 0.5f, (bmax.z - bmin.z) * 0.5f};
+        float radius = sqrtf(half.x * half.x + half.y * half.y + half.z * half.z) + 0.5f;
+        ground->chunks[ground->chunkCount++] = (MapGroundChunk){
+            .mesh = cm,
+            .center = center,
+            .radius = radius,
+        };
+    }
+
+    RL_FREE(vRemap);
+}
+
 MapGroundSurface MapProp_CreateGroundHeightfield16(const char *heightmapPath, float width, float depth,
                                                    float totalHeight, float cliffDepth, float tileSize,
                                                    const char *splatMapPath, const char *grassTexPath,
@@ -584,6 +718,7 @@ MapGroundSurface MapProp_CreateGroundHeightfield16(const char *heightmapPath, fl
              mesh.triangleCount, mesh.indices != NULL);
     MapGroundSurface ground = SetupGroundMaterial(mesh, width, depth, tileSize, splatMapPath, grassTexPath, pathTexPath);
     ground.drawOffset = (Vector3){-width * 0.5f, -cliffDepth, -depth * 0.5f};
+    Ground_BuildChunks(&ground, width, depth);
     return ground;
 }
 
@@ -947,7 +1082,27 @@ void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter)
     };
     if (locGroundOffset >= 0)
         SetShaderValue(groundShader, locGroundOffset, &pos, SHADER_UNIFORM_VEC3);
-    DrawModel(ground->model, pos, 1.0f, WHITE);
+    if (ground->chunkCount > 0)
+    {
+        MapPropViewFrustum frustum;
+        bool cull = MapProp_BuildViewFrustum(&frustum);
+        Matrix transform = MatrixTranslate(pos.x, pos.y, pos.z);
+        for (int c = 0; c < ground->chunkCount; c++)
+        {
+            const MapGroundChunk *chunk = &ground->chunks[c];
+            if (cull)
+            {
+                Vector3 wc = Vector3Add(chunk->center, pos);
+                if (MapProp_FrustumCullsSphere(&frustum, wc, chunk->radius))
+                    continue;
+            }
+            DrawMesh(chunk->mesh, ground->model.materials[0], transform);
+        }
+    }
+    else
+    {
+        DrawModel(ground->model, pos, 1.0f, WHITE);
+    }
 
     rlActiveTextureSlot(GROUND_ROCK_NORMAL_SLOT);
     rlDisableTexture();
@@ -1056,6 +1211,9 @@ void MapProp_UnloadGround(MapGroundSurface *ground)
     ground->debrisTexture = (Texture2D){0};
     ground->rockTexture = (Texture2D){0};
     ground->rockNormalTexture = (Texture2D){0};
+    for (int c = 0; c < ground->chunkCount; c++)
+        UnloadMesh(ground->chunks[c].mesh);
+    ground->chunkCount = 0;
     UnloadModel(ground->model);
     ground->ready = false;
 }

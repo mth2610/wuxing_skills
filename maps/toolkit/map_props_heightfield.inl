@@ -48,7 +48,7 @@ static Mesh Ground_CreateIndexedHeightfield(Image image, Vector3 size, bool pack
             float yb = mesh.vertices[b * 3 + 1];
             float yc = mesh.vertices[c * 3 + 1];
             float yd = mesh.vertices[d * 3 + 1];
-            if (size.y >= 15.0f && (ya <= 0.75f || yb <= 0.75f || yc <= 0.75f || yd <= 0.75f))
+            if (size.y >= 15.0f && (ya <= 0.75f && yb <= 0.75f && yc <= 0.75f && yd <= 0.75f))
                 continue;
             float diffAD = fabsf(ya - yd);
             float diffBC = fabsf(yb - yc);

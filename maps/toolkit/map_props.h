@@ -70,6 +70,16 @@ typedef struct
     const float *normals;          // borrowed from Mesh.normals, may be NULL
 } MapGroundLookup;
 
+#define MAP_GROUND_CHUNK_GRID 6
+#define MAP_GROUND_MAX_CHUNKS (MAP_GROUND_CHUNK_GRID * MAP_GROUND_CHUNK_GRID)
+
+typedef struct
+{
+    Mesh mesh;
+    Vector3 center;
+    float radius;
+} MapGroundChunk;
+
 typedef struct
 {
     Model model;
@@ -83,6 +93,8 @@ typedef struct
     Texture2D rockTexture;
     Texture2D rockNormalTexture;
     MapIslandBoundary boundary;
+    MapGroundChunk chunks[MAP_GROUND_MAX_CHUNKS];
+    int chunkCount;
 } MapGroundSurface;
 
 void MapProp_SetGroundIslandBoundary(MapGroundSurface *ground, const MapIslandBoundary *boundary);
