@@ -799,6 +799,10 @@ static void VFXTest_RefreshInspectorParams(bool force)
     {
         s_inspectorParamCount = VFX_WaterDragon_GetParams(VFX_WaterDragon_GetLiveConfig(), s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
     }
+    else if (VFXTest_IsNewFxNamed("TSUNAMI SWE"))
+    {
+        s_inspectorParamCount = VFX_Tsunami_GetParams(VFX_Tsunami_GetLiveConfig(), s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
+    }
     else if (VFXTest_IsNewFxNamed("SEISMIC WAVE"))
     {
         s_inspectorParamCount = VFX_SeismicWave_GetParams(VFX_SeismicWave_GetLiveConfig(), s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
@@ -1465,6 +1469,12 @@ static bool VFXTest_FireNewFx(int newfxIndex, Vector3 pos)
         VFX_ComposeWaterDragonEx(castSocket, target, VFX_WaterDragon_GetLiveConfig());
         return true;
     }
+    case 55: {
+        Vector3 target = Vector3Add(pos, (Vector3){8.0f, 0.0f, 2.0f});
+        target.y = MapManager_GetGroundHeightAt(target.x, target.z);
+        VFX_ComposeTsunamiEx(pos, target, VFX_Tsunami_GetLiveConfig());
+        return true;
+    }
     default: return false;
     }
 // @gen:newfx_fire end
@@ -1491,7 +1501,7 @@ static const char* s_newFxNames[] = {
     "MOTION RIBBON TRAIL", "VACUUM CONVERGE", "VACUUM RING", "[TRAIL/FLOW] VOLUME TRAIL", "FISSURE STREAK", "STONE PILLAR",
     "GUIDED FIRE", "FIREBALL BURST", "BLACK HOLE", "ICE CRYSTAL", "WATER STREAM",
     "WOOD FLOWER", "WOOD LEAVES", "WOOD PETALS", "WOOD VINE", "GUIDED EARTH", "SEISMIC WAVE",
-    "GUIDED LIQUID", "WATER DRAGON",
+    "GUIDED LIQUID", "WATER DRAGON", "TSUNAMI SWE",
 };
 // @gen:newfx_names end
 
@@ -1516,7 +1526,7 @@ static const int s_newFxCategories[] = {
     6, 1, 6, 6, 6, 6, 6, 6, 6, 6,
     6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
     4, 4, 0, 0, 5, 1, 1, 2, 2, 2,
-    2, 4, 4, 1, 1,
+    2, 4, 4, 1, 1, 1,
 };
 // @gen:newfx_categories end
 
@@ -2708,6 +2718,15 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
             VFX_ComposeWaterDragonEx(castSocket, guidedTarget, VFX_WaterDragon_GetLiveConfig());
             return false;
         }
+        if (s_testCategory == TEST_CAT_NEWFX && VFXTest_IsNewFxNamed("TSUNAMI SWE")) {
+            Vector3 guidedTarget = mouseTarget3D;
+            if (s_clickedOnUI) {
+                guidedTarget = Vector3Add(playerPos, (Vector3){8.0f, 0.0f, 2.0f});
+                guidedTarget.y = MapManager_GetGroundHeightAt(guidedTarget.x, guidedTarget.z);
+            }
+            VFX_ComposeTsunamiEx(playerPos, guidedTarget, VFX_Tsunami_GetLiveConfig());
+            return false;
+        }
         if (s_testCategory == TEST_CAT_NEWFX && VFXTest_IsNewFxNamed("SEISMIC WAVE")) {
             Vector3 castSocket = Vector3Add(playerPos, (Vector3){0.0f, 0.05f, 0.0f});
             Vector3 guidedTarget = mouseTarget3D;
@@ -3487,6 +3506,21 @@ void VFXTest_Draw3D(void)
                   }
                   break;
               }
+              case 55: {
+                  static float s_tsunamiAutoTimer = 0.0f;
+                  if (!VFX_Tsunami_IsAnyActive()) {
+                      s_tsunamiAutoTimer += GetFrameTime();
+                      if (s_tsunamiAutoTimer >= 0.8f) {
+                          s_tsunamiAutoTimer = 0.0f;
+                          Vector3 target = Vector3Add(s_prefabStartPos, (Vector3){8.0f, 0.0f, 2.0f});
+                          target.y = MapManager_GetGroundHeightAt(target.x, target.z);
+                          VFX_ComposeTsunamiEx(s_prefabStartPos, target, VFX_Tsunami_GetLiveConfig());
+                      }
+                  } else {
+                      s_tsunamiAutoTimer = 0.0f;
+                  }
+                  break;
+              }
           }
 // @gen:newfx_draw end
         }
@@ -3530,6 +3564,7 @@ void VFXTest_DrawShadowPass(void)
     }
     VFX_FoliageSystem_DrawShadowPass();
     VC_GuidedLiquid_DrawShadowPass();
+    VC_Tsunami_DrawShadowPass();
     LiquidFlow_DrawShadowPass();
     VC_GuidedEarth_DrawShadowPass();
     VC_SeismicWave_DrawShadowPass();

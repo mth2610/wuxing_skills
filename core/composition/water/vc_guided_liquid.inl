@@ -34,6 +34,7 @@ static GuidedLiquidInstance s_glInstances[GUIDED_LIQUID_MAX_INSTANCES];
 static int s_glNextHandle = 1;
 static VFX_GuidedLiquidConfig s_glLiveConfig;
 static bool s_glLiveInit = false;
+static VFX_GuidedLiquidPreset s_glLastLivePreset = VFX_LIQUID_PRESET_WATER_ORB;
 static AnalyticFlowSample s_glEvalBuf[GUIDED_LIQUID_TOTAL_CAP];
 
 // ── Enum Name Tables ──────────────────────────────────────────────────────────
@@ -43,14 +44,10 @@ static const char *const s_glPresetNames[VFX_LIQUID_PRESET_COUNT] = {
     "Water Orb",
     "Torrent Jet",
     "Vortex Dragon",
-    "Orbital Deluge",
-    "Spring Gush",
-    "Surging Tide",
-    "Molten Geyser",
-    "Mercurial Orb",
+    "Sky Deluge",
+    "Spring Geyser",
     "Whip Lash",
-    "Rain Lance",
-    "Tidal Crescent"
+    "Lotus Burst"
 };
 
 static const char *const s_glSpawnNames[VFX_LIQUID_SPAWN_COUNT] = {
@@ -247,11 +244,11 @@ VFX_GuidedLiquidConfig VFX_GuidedLiquid_DefaultConfig(void)
 
     // 0 = auto-derived from emissionRadius in GL_ResolveCountsAndRadii,
     // or explicitly populated by ApplyPreset so the inspector shows clear values.
-    cfg.particleCount = 512;
-    cfg.emissionRadius = 0.42f;
+    cfg.particleCount = 640;
+    cfg.emissionRadius = 0.36f;
     cfg.emissionInnerRadius = 0.0f;
-    cfg.coneAngleDeg = 20.0f;
-    cfg.dropletRadius = 0.095f;
+    cfg.coneAngleDeg = 18.0f;
+    cfg.dropletRadius = 0.088f;
     cfg.blobVariation = 0.24f;
     cfg.emergeDuration = 0.0f;
     cfg.hoverDuration = 0.0f;
@@ -322,148 +319,91 @@ void VFX_GuidedLiquid_ApplyPreset(VFX_GuidedLiquidConfig *cfg, VFX_GuidedLiquidP
         cfg->emissionShape = VFX_LIQUID_SHAPE_CYLINDER;
         cfg->trajectoryMode = VFX_LIQUID_TRAJ_JET_STREAM;
         cfg->impactMode = VFX_LIQUID_IMPACT_PIERCING_DRILL;
-        cfg->particleCount = 560;
-        cfg->emissionRadius = 0.24f;
-        cfg->dropletRadius = 0.082f;
-        cfg->coneAngleDeg = 10.0f;
-        cfg->launchStaggerDelay = 0.36f;
-        cfg->travelSpeed = 16.5f;
-        cfg->arcHeight = 0.25f;
-        cfg->swirlSpeed = 8.0f;
+        cfg->particleCount = 720;
+        cfg->emissionRadius = 0.18f;
+        cfg->dropletRadius = 0.072f;
+        cfg->coneAngleDeg = 8.0f;
+        cfg->launchStaggerDelay = 0.32f;
+        cfg->travelSpeed = 18.0f;
+        cfg->arcHeight = 0.20f;
+        cfg->swirlSpeed = 9.0f;
         break;
     case VFX_LIQUID_PRESET_VORTEX_DRAGON:
         cfg->spawnMode = VFX_LIQUID_SPAWN_STREAM;
         cfg->emissionShape = VFX_LIQUID_SHAPE_HELIX;
         cfg->trajectoryMode = VFX_LIQUID_TRAJ_SPIRAL_CORKSCREW;
         cfg->impactMode = VFX_LIQUID_IMPACT_VORTEX_MAELSTROM;
-        cfg->particleCount = 580;
-        cfg->emissionRadius = 0.36f;
-        cfg->dropletRadius = 0.095f;
-        cfg->launchStaggerDelay = 0.42f;
-        cfg->travelSpeed = 13.0f;
-        cfg->arcHeight = 1.4f;
-        cfg->guideRadius = 0.65f;
-        cfg->swirlSpeed = 14.0f;
+        cfg->particleCount = 720;
+        cfg->emissionRadius = 0.30f;
+        cfg->dropletRadius = 0.084f;
+        cfg->launchStaggerDelay = 0.40f;
+        cfg->travelSpeed = 13.5f;
+        cfg->arcHeight = 1.3f;
+        cfg->guideRadius = 0.58f;
+        cfg->swirlSpeed = 15.0f;
         break;
     case VFX_LIQUID_PRESET_ORBITAL_DELUGE:
         cfg->spawnMode = VFX_LIQUID_SPAWN_ORBITAL_CONVERGE;
         cfg->emissionShape = VFX_LIQUID_SHAPE_RING;
         cfg->trajectoryMode = VFX_LIQUID_TRAJ_HIGH_CATAPULT;
         cfg->impactMode = VFX_LIQUID_IMPACT_DELUGE_CASCADE;
-        cfg->particleCount = 560;
-        cfg->emissionRadius = 1.15f;
-        cfg->emissionInnerRadius = 0.55f;
-        cfg->dropletRadius = 0.110f;
-        cfg->emergeDuration = 0.45f;
-        cfg->hoverDuration = 0.25f;
-        cfg->travelSpeed = 10.5f;
-        cfg->arcHeight = 3.4f;
-        cfg->swirlSpeed = 9.0f;
+        cfg->particleCount = 720;
+        cfg->emissionRadius = 0.95f;
+        cfg->emissionInnerRadius = 0.48f;
+        cfg->dropletRadius = 0.095f;
+        cfg->emergeDuration = 0.38f;
+        cfg->hoverDuration = 0.22f;
+        cfg->travelSpeed = 11.0f;
+        cfg->arcHeight = 3.2f;
+        cfg->swirlSpeed = 9.5f;
         break;
     case VFX_LIQUID_PRESET_SPRING_GUSH:
         cfg->spawnMode = VFX_LIQUID_SPAWN_GROUND_GUSH;
         cfg->emissionShape = VFX_LIQUID_SHAPE_DISC;
         cfg->trajectoryMode = VFX_LIQUID_TRAJ_HIGH_CATAPULT;
         cfg->impactMode = VFX_LIQUID_IMPACT_SPLASH_CROWN;
-        cfg->particleCount = 520;
-        cfg->emissionRadius = 0.55f;
-        cfg->dropletRadius = 0.098f;
-        cfg->emergeDuration = 0.28f;
-        cfg->travelSpeed = 11.0f;
-        cfg->arcHeight = 2.9f;
-        break;
-    case VFX_LIQUID_PRESET_SURGING_TIDE:
-        cfg->spawnMode = VFX_LIQUID_SPAWN_SURROUND_RING;
-        cfg->emissionShape = VFX_LIQUID_SHAPE_DISC;
-        cfg->trajectoryMode = VFX_LIQUID_TRAJ_SERPENTINE_WAVE;
-        cfg->impactMode = VFX_LIQUID_IMPACT_EXPANDING_PUDDLE;
-        cfg->particleCount = 600;
-        cfg->emissionRadius = 0.72f;
-        cfg->dropletRadius = 0.115f;
-        cfg->travelSpeed = 11.5f;
-        cfg->arcHeight = 0.45f;
-        cfg->wetRadius = 2.6f;
-        break;
-    case VFX_LIQUID_PRESET_MOLTEN_GEYSER:
-        cfg->liquidProfile = 3; // Lava
-        cfg->spawnMode = VFX_LIQUID_SPAWN_GROUND_GUSH;
-        cfg->emissionShape = VFX_LIQUID_SHAPE_SPHERE;
-        cfg->trajectoryMode = VFX_LIQUID_TRAJ_HIGH_CATAPULT;
-        cfg->impactMode = VFX_LIQUID_IMPACT_EXPANDING_PUDDLE;
-        cfg->particleCount = 460;
-        cfg->emissionRadius = 0.46f;
-        cfg->dropletRadius = 0.105f;
-        cfg->travelSpeed = 8.5f;
-        cfg->arcHeight = 2.2f;
-        cfg->liquidBodyColor = (Color){215, 58, 18, 255};
-        cfg->liquidGlowColor = (Color){255, 165, 42, 255};
-        cfg->liquidFoamColor = (Color){64, 24, 16, 255};
-        cfg->ior = 1.55f;
-        cfg->foamAmount = 0.55f;
-        break;
-    case VFX_LIQUID_PRESET_MERCURIAL_ORB:
-        cfg->liquidProfile = 4; // Liquid Metal
-        cfg->spawnMode = VFX_LIQUID_SPAWN_ORBITAL_CONVERGE;
-        cfg->emissionShape = VFX_LIQUID_SHAPE_SPHERE;
-        cfg->trajectoryMode = VFX_LIQUID_TRAJ_GUIDED_HOMING;
-        cfg->impactMode = VFX_LIQUID_IMPACT_EXPLOSIVE_BURST;
-        cfg->particleCount = 460;
-        cfg->emissionRadius = 0.38f;
-        cfg->dropletRadius = 0.090f;
+        cfg->particleCount = 640;
+        cfg->emissionRadius = 0.48f;
+        cfg->dropletRadius = 0.088f;
         cfg->emergeDuration = 0.25f;
-        cfg->travelSpeed = 14.5f;
-        cfg->arcHeight = 1.0f;
-        cfg->cohesionScale = 1.35f;
-        cfg->liquidBodyColor = (Color){188, 202, 218, 255};
-        cfg->liquidGlowColor = (Color){240, 248, 255, 255};
-        cfg->liquidFoamColor = (Color){115, 128, 148, 255};
-        cfg->ior = 2.5f;
-        cfg->foamAmount = 0.15f;
+        cfg->travelSpeed = 11.5f;
+        cfg->arcHeight = 2.8f;
         break;
     case VFX_LIQUID_PRESET_WHIP_LASH:
         cfg->spawnMode = VFX_LIQUID_SPAWN_STREAM;
         cfg->emissionShape = VFX_LIQUID_SHAPE_HELIX;
         cfg->trajectoryMode = VFX_LIQUID_TRAJ_SERPENTINE_WAVE;
         cfg->impactMode = VFX_LIQUID_IMPACT_SPLASH_CROWN;
-        cfg->particleCount = 540;
-        cfg->emissionRadius = 0.28f;
-        cfg->dropletRadius = 0.080f;
-        cfg->launchStaggerDelay = 0.30f;
-        cfg->travelSpeed = 15.5f;
-        cfg->arcHeight = 0.9f;
-        cfg->guideRadius = 0.52f;
-        cfg->swirlSpeed = 11.0f;
+        cfg->particleCount = 680;
+        cfg->emissionRadius = 0.20f;
+        cfg->dropletRadius = 0.074f;
+        cfg->launchStaggerDelay = 0.28f;
+        cfg->travelSpeed = 16.5f;
+        cfg->arcHeight = 0.75f;
+        cfg->guideRadius = 0.48f;
+        cfg->swirlSpeed = 12.0f;
         break;
-    case VFX_LIQUID_PRESET_RAIN_LANCE:
-        cfg->spawnMode = VFX_LIQUID_SPAWN_CONE_SPRAY;
-        cfg->emissionShape = VFX_LIQUID_SHAPE_CYLINDER;
-        cfg->trajectoryMode = VFX_LIQUID_TRAJ_JET_STREAM;
-        cfg->impactMode = VFX_LIQUID_IMPACT_PIERCING_DRILL;
-        cfg->particleCount = 480;
-        cfg->emissionRadius = 0.22f;
-        cfg->coneAngleDeg = 8.0f;
-        cfg->dropletRadius = 0.075f;
-        cfg->travelSpeed = 19.0f;
-        cfg->arcHeight = 0.35f;
-        break;
-    case VFX_LIQUID_PRESET_TIDAL_CRESCENT:
-        cfg->spawnMode = VFX_LIQUID_SPAWN_SURROUND_RING;
-        cfg->emissionShape = VFX_LIQUID_SHAPE_RING;
-        cfg->trajectoryMode = VFX_LIQUID_TRAJ_PARABOLIC_ARC;
-        cfg->impactMode = VFX_LIQUID_IMPACT_EXPANDING_PUDDLE;
-        cfg->particleCount = 560;
-        cfg->emissionRadius = 0.85f;
-        cfg->emissionInnerRadius = 0.42f;
-        cfg->dropletRadius = 0.105f;
-        cfg->travelSpeed = 13.0f;
-        cfg->arcHeight = 0.85f;
-        cfg->wetRadius = 2.4f;
+    case VFX_LIQUID_PRESET_LOTUS_BURST:
+        cfg->spawnMode = VFX_LIQUID_SPAWN_ORBITAL_CONVERGE;
+        cfg->emissionShape = VFX_LIQUID_SHAPE_SPHERE;
+        cfg->trajectoryMode = VFX_LIQUID_TRAJ_GUIDED_HOMING;
+        cfg->impactMode = VFX_LIQUID_IMPACT_EXPLOSIVE_BURST;
+        cfg->particleCount = 680;
+        cfg->emissionRadius = 0.32f;
+        cfg->dropletRadius = 0.086f;
+        cfg->emergeDuration = 0.22f;
+        cfg->travelSpeed = 14.0f;
+        cfg->arcHeight = 1.15f;
+        cfg->wetRadius = 2.6f;
+        cfg->splashDropletCount = 96;
+        cfg->impactShockRing = true;
         break;
     case VFX_LIQUID_PRESET_WATER_ORB:
     case VFX_LIQUID_PRESET_CUSTOM:
     default:
         break;
     }
+    s_glLastLivePreset = cfg->preset;
 }
 
 VFX_GuidedLiquidConfig VFX_GuidedLiquid_PresetConfig(VFX_GuidedLiquidPreset preset)
@@ -953,6 +893,13 @@ bool VFX_GuidedLiquid_IsAnyActive(void)
 
 void VC_GuidedLiquid_Update(float dt)
 {
+    if (s_glLiveInit && s_glLiveConfig.preset != s_glLastLivePreset) {
+        if (s_glLiveConfig.preset != VFX_LIQUID_PRESET_CUSTOM) {
+            VFX_GuidedLiquid_ApplyPreset(&s_glLiveConfig, s_glLiveConfig.preset);
+        } else {
+            s_glLastLivePreset = VFX_LIQUID_PRESET_CUSTOM;
+        }
+    }
     if (dt <= 0.0f) return;
     for (int i = 0; i < GUIDED_LIQUID_MAX_INSTANCES; ++i) {
         GuidedLiquidInstance *inst = &s_glInstances[i];

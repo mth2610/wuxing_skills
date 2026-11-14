@@ -66,25 +66,14 @@ vec3 FresnelSchlick(float ndv, vec3 f0) {
     return f0 + (vec3(1.0) - f0) * (t2 * t2 * t);
 }
 
-// Multi-octave procedural wave generator for realistic dynamic liquid shimmer.
-// Optimized with smooth sine-cosine capillary turbulence + micro-swells.
+// Multi-octave procedural FBM wave generator for crisp, organic dynamic water ripples.
 vec3 WaterMultiOctaveWaves(vec3 worldPosition) {
-    float t = u_time * 1.25;
-    vec3 p = worldPosition;
-
-    // Macro-swell
-    float s1 = sin(p.x * 4.5 + t * 0.85 + sin(p.y * 3.0 + t * 0.65));
-    float s2 = sin(p.y * 5.2 - t * 0.75 + sin(p.z * 3.8 + t * 0.95));
-    float s3 = sin(p.z * 4.2 + t * 1.15 + sin(p.x * 4.8 - t * 0.55));
-    vec2 swell = vec2(s1 + s2, s2 + s3);
-
-    // Smooth capillary wavelets (avoids subpixel aliasing on curved SSF silhouettes)
-    float capFade = 0.5 + 0.5 * sin(dot(p, vec3(2.7, 3.5, 3.1)) + t * 0.7);
-    vec2 capillary = vec2(
-        sin(p.x * 13.0 + p.y * 9.0 + t * 2.4) + cos(p.z * 11.5 + t * 1.9),
-        sin(p.z * 14.0 + p.y * 10.0 + t * 2.2) + cos(p.x * 11.0 + t * 1.7));
-
-    vec2 dh = swell * 0.014 + capillary * (0.004 * capFade);
+    vec2 uv1 = worldPosition.xz * 1.65 + vec2(u_time * 1.20, -u_time * 0.85);
+    vec2 uv2 = worldPosition.xz * 3.40 + vec2(-u_time * 0.95, u_time * 1.35);
+    float h0 = fbm2(uv1) + 0.50 * fbm2(uv2);
+    float hx = fbm2(uv1 + vec2(0.06, 0.0)) + 0.50 * fbm2(uv2 + vec2(0.06, 0.0));
+    float hz = fbm2(uv1 + vec2(0.0, 0.06)) + 0.50 * fbm2(uv2 + vec2(0.0, 0.06));
+    vec2 dh = vec2(h0 - hx, h0 - hz) * 0.85;
     return vec3(-dh.x, 0.0, -dh.y);
 }
 
@@ -357,9 +346,9 @@ void main() {
 
     // Beer-Lambert Volumetric Absorption (clear crystal water core, rich jade-teal depth)
     float materialPeak = max(max(materialBody.r, materialBody.g), max(materialBody.b, 0.001));
-    vec3 materialTransmission = mix(vec3(1.0), clamp(materialBody / materialPeak, vec3(0.18), vec3(1.0)), 0.72);
-    vec3 absorption = -log(materialTransmission) / (LIQUID_REFERENCE_DEPTH_M * 1.45)
-                    + vec3(LIQUID_TURBIDITY_PER_M + extraOpacityPerM * 0.75);
+    vec3 materialTransmission = mix(vec3(1.0), clamp(materialBody / materialPeak, vec3(0.24), vec3(1.0)), 0.58);
+    vec3 absorption = -log(materialTransmission) / (LIQUID_REFERENCE_DEPTH_M * 1.55)
+                    + vec3(LIQUID_TURBIDITY_PER_M + extraOpacityPerM * 0.65);
     vec3 transmittance = exp(-absorption * opticalPath);
 
     float hemi = clamp(worldNormal.y * 0.5 + 0.5, 0.0, 1.0);
@@ -367,33 +356,31 @@ void main() {
     vec3 L = normalize(u_sunDirectionView);
     float ndl = max(dot(N, L), 0.0);
 
-    vec3 waterScatterColor = mix(materialBody, materialGlow, 0.35);
+    vec3 waterScatterColor = mix(materialBody, materialGlow, 0.28);
     vec3 illumination = ambient + u_sunColor * (0.14 + 0.34 * ndl);
     vec3 transmitted = refractedScene * transmittance;
     float illuminationEnergy = dot(illumination, vec3(0.2126, 0.7152, 0.0722));
     float backgroundScatter = 1.0 - dot(transmittance, vec3(0.2126, 0.7152, 0.0722));
-    float scatterAmount = clamp(0.22 + 0.68 * backgroundScatter, 0.0, 1.0);
+    float scatterAmount = clamp(0.18 + 0.65 * backgroundScatter, 0.0, 1.0);
 
-    float grazingWeight = mix(mix(0.26, 1.0, pow(1.0 - ndv, 1.5)), 1.0, mediumOpacity);
-    float suspendedScatter = mix(0.26, 1.0, mediumOpacity);
-    vec3 inScatter = waterScatterColor * scatterAmount * (0.09 + illuminationEnergy * 0.16)
+    float grazingWeight = mix(mix(0.22, 1.0, pow(1.0 - ndv, 1.5)), 1.0, mediumOpacity);
+    float suspendedScatter = mix(0.22, 1.0, mediumOpacity);
+    vec3 inScatter = waterScatterColor * scatterAmount * (0.07 + illuminationEnergy * 0.14)
                    * grazingWeight * suspendedScatter;
     inScatter += materialBody * illumination * (0.20 + 0.80 * ndl) * mediumOpacity * 0.75;
 
     // Backlit Subsurface Scattering (SSS) for wave crests and thin droplet silhouettes
-    // (Inspired by water_vfx.html forward scattering + thin rim extinction)
-    float sssFactor = pow(clamp(1.0 - ndv, 0.0, 1.0), 2.0) * exp(-waterColumnDepth * 0.45);
+    float sssFactor = pow(clamp(1.0 - ndv, 0.0, 1.0), 2.2) * exp(-waterColumnDepth * 0.55);
     vec3 sunDirWorld = normalize((u_viewToWorld * vec4(L, 0.0)).xyz);
     vec3 viewDirWorld = normalize((u_viewToWorld * vec4(V, 0.0)).xyz);
-    float forwardSSS = pow(clamp(dot(-viewDirWorld, sunDirWorld + worldNormal * 0.45), 0.0, 1.0), 2.0);
-    vec3 sssColor = materialGlow * (sssFactor * 0.48 + forwardSSS * 0.42 + max(0.0, dot(worldNormal, vec3(0.0, 1.0, 0.0))) * 0.14 + 0.10 * exp(-waterColumnDepth * 0.9))
+    float forwardSSS = pow(clamp(dot(-viewDirWorld, sunDirWorld + worldNormal * 0.45), 0.0, 1.0), 2.4);
+    vec3 sssColor = materialGlow * (sssFactor * 0.30 + forwardSSS * 0.32 + max(0.0, dot(worldNormal, vec3(0.0, 1.0, 0.0))) * 0.08 + 0.04 * exp(-waterColumnDepth * 0.9))
                   * (1.0 - mediumOpacity * 0.65);
-    /* Smooth dual-layer internal caustics (inspired by water_vfx.html) without dark blotching */
-    float causticA = sin(worldPosition.x * 11.0 + worldPosition.z * 8.5 + u_time * 2.7 + sin(worldPosition.z * 6.0 - u_time * 1.9));
-    float causticB = cos(worldPosition.z * 12.5 - worldPosition.x * 9.5 - u_time * 2.3 + cos(worldPosition.x * 7.0 + u_time * 1.6));
-    float internalCaustics = pow(clamp(0.5 + 0.25 * (causticA + causticB), 0.0, 1.0), 3.0)
+    // Crisp FBM caustic web inside clear water
+    float causticFbm = fbm2(worldPosition.xz * 2.2 - vec2(u_time * 1.45, u_time * 1.05));
+    float internalCaustics = smoothstep(0.48, 0.76, causticFbm)
                            * smoothstep(0.012, 0.08, kernelThickness) * (1.0 - mediumOpacity * 0.75);
-    if (!conductor) inScatter += sssColor + materialGlow * (internalCaustics * 0.16 * (0.35 + illuminationEnergy));
+    if (!conductor) inScatter += sssColor + mix(materialGlow, vec3(0.55, 0.95, 1.0), 0.45) * (internalCaustics * 0.26 * (0.35 + illuminationEnergy));
 
     if (liquidClass == LIQUID_CLASS_EMISSIVE) inScatter *= 0.35;
 
@@ -519,9 +506,11 @@ void main() {
     float curvature = smoothstep(0.0012, 0.010, surfaceLaplacian);
     float receiverProximity = 1.0 - smoothstep(0.010, 0.070, sceneGap);
     float shoreline = smoothstep(0.004, 0.030, thicknessGradient) * receiverProximity * smoothstep(0.018, 0.080, kernelThickness);
-    float crest = curvature * smoothstep(0.025, 0.085, kernelThickness) * (1.0 - smoothstep(0.16, 0.30, kernelThickness)) * 0.55 * mix(1.0, 0.16, airborneWeight);
-    float foamPattern = smoothstep(0.48, 0.76, surfaceNoise);
-    float foamMask = clamp(max(shoreline, crest) * foamPattern, 0.0, 0.72);
+    float crest = curvature * smoothstep(0.025, 0.085, kernelThickness) * (1.0 - smoothstep(0.16, 0.30, kernelThickness)) * 0.62 * mix(1.0, 0.16, airborneWeight);
+    float foamFbm1 = fbm2(worldPosition.xz * 3.8 + vec2(u_time * 1.4, -u_time * 1.0));
+    float foamFbm2 = fbm2(worldPosition.xz * 8.5 - vec2(u_time * 2.0, u_time * 1.3));
+    float foamPattern = smoothstep(0.38, 0.74, foamFbm1 * 0.65 + foamFbm2 * 0.35);
+    float foamMask = clamp(max(shoreline, crest) * foamPattern, 0.0, 0.78);
     vec3 foamColor = mix(materialSoft, vec3(1.0), 0.20);
     vec3 foam = foamColor * foamMask * (0.38 + 0.62 * dot(ambient, vec3(0.333333)))
               * (liquidClass == LIQUID_CLASS_EMISSIVE ? 0.0 : crustGain);

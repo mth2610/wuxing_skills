@@ -140,6 +140,7 @@ void VFX_Compose_Update(float dt)
     VC_EarthCrack_Update(dt);
     VC_GuidedLiquid_Update(dt);
     VC_WaterDragon_Update(dt);
+    VC_Tsunami_Update(dt);
     /* Five-body liquid stress lab (WUXING_LIQUID_BENCH=1). The heartbeat keeps
      * the fixture alive; simulation and surface submission stay in the engine's
      * normal update/composite phases. */
@@ -189,6 +190,7 @@ void VFX_Compose_Draw3D(Camera3D cam)
     VC_EarthCrack_Draw3D(cam);
     VC_GuidedLiquid_Draw3D(cam);
     VC_WaterDragon_Draw3D(cam);
+    VC_Tsunami_Draw3D(cam);
 }
 
 /* Screen-space VFX producers that must submit their particle streams before the
@@ -198,5 +200,6 @@ void VFX_Compose_Draw3D(Camera3D cam)
 void VFX_Compose_SubmitScreenSpaceVFX(void)
 {
     VC_GuidedLiquid_SubmitSurface();
+    VC_Tsunami_SubmitSurface();
     if (LiquidBench_EnvEnabled()) LiquidBench_SubmitSurface();
 }

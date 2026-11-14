@@ -130,6 +130,7 @@ static void WaterFx_InitShared(void)
 #include "ice_crystal.inl"
 #include "vc_guided_liquid.inl"
 #include "vc_water_dragon.inl"
+#include "vc_tsunami_swe.inl"
 // @gen:water_includes begin
 // 4 include(s) — auto-managed by sync_vfx_test.py
 #include "water_stream.inl"

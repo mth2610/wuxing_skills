@@ -684,17 +684,13 @@ void                  VC_EarthCrack_Draw3D(Camera3D cam);
 // ── GENERALIZED GUIDED LIQUID SYSTEM (HỆ THỦY: DẪN LỰC THỦY QUÁI) ───────────
 typedef enum {
     VFX_LIQUID_PRESET_CUSTOM = 0,
-    VFX_LIQUID_PRESET_WATER_ORB,      // Classic guided water orb with droplet halo, ballistic arc & splash crown
-    VFX_LIQUID_PRESET_TORRENT_JET,    // High-pressure continuous water jet torrent with mist wake & piercing impact
-    VFX_LIQUID_PRESET_VORTEX_DRAGON,  // Helical corkscrew water drill spiraling around trajectory into a maelstrom
-    VFX_LIQUID_PRESET_ORBITAL_DELUGE, // Satellite droplets gathering from 360-deg orbit into high-altitude deluge
-    VFX_LIQUID_PRESET_SPRING_GUSH,    // Subterranean artesian spring geyser surging upward into bursting rain
-    VFX_LIQUID_PRESET_SURGING_TIDE,   // Low conformal water surge rushing across terrain and spreading an expansive puddle
-    VFX_LIQUID_PRESET_MOLTEN_GEYSER,  // Lava: slow Bingham gush, short splash, thick crusted puddle
-    VFX_LIQUID_PRESET_MERCURIAL_ORB,  // Liquid metal: dense, high surface tension, tight cohesion, beads on impact
-    VFX_LIQUID_PRESET_WHIP_LASH,      // Serpentine water lash: thin, fast, high swirl, ribbon wake
-    VFX_LIQUID_PRESET_RAIN_LANCE,     // Piercing rain lance: tight cone, flat fast arc, needle impact
-    VFX_LIQUID_PRESET_TIDAL_CRESCENT, // Crescent wave blade: wide ring emission, low surge, expansive puddle
+    VFX_LIQUID_PRESET_WATER_ORB,      // Cohesive guided water orb with ballistic arc & splash crown
+    VFX_LIQUID_PRESET_TORRENT_JET,    // High-pressure piercing water jet torrent & whirlpool drill
+    VFX_LIQUID_PRESET_VORTEX_DRAGON,  // Double-helix corkscrew water dragon into maelstrom
+    VFX_LIQUID_PRESET_ORBITAL_DELUGE, // Converging ring overhead lobbed into crashing deluge cascade
+    VFX_LIQUID_PRESET_SPRING_GUSH,    // Artesian ground geyser erupting upward into splash crown
+    VFX_LIQUID_PRESET_WHIP_LASH,      // Serpentine undulating water whip lash
+    VFX_LIQUID_PRESET_LOTUS_BURST,    // Homing water lotus orb detonating in radial shockwave burst
     VFX_LIQUID_PRESET_COUNT
 } VFX_GuidedLiquidPreset;
 
@@ -873,6 +869,59 @@ void                   VFX_KillWaterDragon(int handle);
 bool                   VFX_WaterDragon_IsAnyActive(void);
 void                   VC_WaterDragon_Update(float dt);
 void                   VC_WaterDragon_Draw3D(Camera3D cam);
+
+// ── Tsunami SWE (Thủy Triều Sóng Nông - Shallow Water Equations) ─────────────
+typedef enum {
+    VFX_TSUNAMI_TIDAL_WAVE = 0,   // Surging curling wall advancing along source -> target
+    VFX_TSUNAMI_RADIAL_DELUGE,    // 360-degree expanding flood ring from source
+    VFX_TSUNAMI_TWIN_TIDAL,       // Twin converging side waves clashing at target
+    VFX_TSUNAMI_PATTERN_COUNT
+} VFX_TsunamiPattern;
+
+typedef enum {
+    VFX_TSUNAMI_PRESET_CUSTOM = 0,
+    VFX_TSUNAMI_PRESET_TIDAL_SURGE,   // Classic curling crescent tsunami wave
+    VFX_TSUNAMI_PRESET_TWIN_PINCER,   // Twin converging side waves clashing at target
+    VFX_TSUNAMI_PRESET_RADIAL_FLOOD,  // 360-degree expanding flood ring
+    VFX_TSUNAMI_PRESET_SWIFT_FLASH,   // Fast low-profile river dash wave
+    VFX_TSUNAMI_PRESET_ABYSSAL_WALL,  // Towering deep-jade tidal wall
+    VFX_TSUNAMI_PRESET_COUNT
+} VFX_TsunamiPreset;
+
+typedef struct VFX_TsunamiConfig {
+    VFX_TsunamiPreset preset;
+    VFX_TsunamiPattern pattern;
+    Vector3 source;
+    Vector3 target;
+    float waveHeight;       // Peak wave height in meters (0.8 to 4.5m)
+    float waveSpeed;        // Propagation speed in m/s (3.0 to 16.0m/s)
+    float width;            // Lateral wave width in meters (4.0 to 20.0m)
+    float length;           // Run-up length in meters (6.0 to 24.0m)
+    float duration;         // Total lifetime in seconds (1.5 to 6.0s)
+    float curlIntensity;    // Breaking-crest overhang intensity (0.0 to 1.5)
+    float drag;             // Bed friction drag (0.1 to 2.5)
+    bool emitCrestSpray;    // Emit SSF breaking-crest spray droplets
+    bool emitWetGround;     // Spawn ground-wetting / absorption marks
+    Color deepColor;        // Deep water Beer-Lambert body color
+    Color crestColor;       // Translucent sunlit crest jade-cyan
+    Color foamColor;        // Breaking foam whitecap color
+} VFX_TsunamiConfig;
+
+VFX_TsunamiConfig  VFX_Tsunami_DefaultConfig(void);
+VFX_TsunamiConfig *VFX_Tsunami_GetLiveConfig(void);
+void               VFX_Tsunami_ApplyPreset(VFX_TsunamiConfig *cfg, VFX_TsunamiPreset preset);
+VFX_TsunamiConfig  VFX_Tsunami_Preset(VFX_TsunamiPreset preset);
+int                VFX_Tsunami_GetParams(VFX_TsunamiConfig *cfg, VFX_ParamDef *outParams, int maxParams);
+const char        *VFX_TsunamiPattern_Name(VFX_TsunamiPattern pattern);
+const char        *VFX_TsunamiPreset_Name(VFX_TsunamiPreset preset);
+int                VFX_ComposeTsunami(const VFX_TsunamiConfig *cfg);
+int                VFX_ComposeTsunamiEx(Vector3 source, Vector3 target, const VFX_TsunamiConfig *cfg);
+void               VFX_KillTsunami(int handle);
+bool               VFX_Tsunami_IsAnyActive(void);
+void               VC_Tsunami_Update(float dt);
+void               VC_Tsunami_Draw3D(Camera3D cam);
+void               VC_Tsunami_SubmitSurface(void);
+void               VC_Tsunami_DrawShadowPass(void);
 
 // Unified / Generalized API
 void VFX_ComposeFlame(Vector3 pos, VC_MaterialId matId, float scale, float intensity);
