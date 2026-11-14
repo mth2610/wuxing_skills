@@ -122,4 +122,9 @@ PlayerWardrobe* Sandbox_GetPlayerWardrobe(void);
 ModularInstance* Sandbox_GetPlayerModularInstance(void);
 void Sandbox_DrawWardrobeUI(void);
 
+// Standalone virtual joystick poll & draw (reused by SCREEN_VFX_TESTER on touch devices).
+bool Sandbox_PollTouchJoystick(float *outJoyX, float *outJoyZ);
+bool Sandbox_IsTouchJoystickPointerActive(void);
+void Sandbox_DrawTouchJoystick(void);
+
 #endif // SANDBOX_CORE_H

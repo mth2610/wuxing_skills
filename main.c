@@ -936,7 +936,7 @@ int main(int argc, char **argv) {
             if (pw && inst) UI_Wardrobe_Toggle(pw, inst);
         }
         if (IsKeyPressed(KEY_M)) g_slowMotion = !g_slowMotion;
-        if (IsKeyPressed(KEY_K)) {
+        if (IsKeyPressed(KEY_K) || VFXTest_ConsumeMapCycleRequest()) {
             int nextMap = (MapManager_GetActiveIndex() + 1) % MapManager_GetCount();
             MapManager_SetActiveIndex(nextMap);
             Vector3 center; float radius;
@@ -1287,6 +1287,12 @@ int main(int argc, char **argv) {
 
         float inputX = 0.0f;
         float inputZ = 0.0f;
+        if (!renderVFXMode) {
+            float joyX = 0.0f, joyZ = 0.0f;
+            Sandbox_PollTouchJoystick(&joyX, &joyZ);
+            inputX += joyX;
+            inputZ += joyZ;
+        }
         if (!renderVFXMode && (IsKeyDown(KEY_W) || IsKeyDown(KEY_UP))) inputZ -= 1.0f;
         if (!renderVFXMode && (IsKeyDown(KEY_S) || IsKeyDown(KEY_DOWN))) inputZ += 1.0f;
         if (!renderVFXMode && (IsKeyDown(KEY_A) || IsKeyDown(KEY_LEFT))) inputX -= 1.0f;
@@ -2102,6 +2108,7 @@ int main(int argc, char **argv) {
             }
         } else if (currentScreen == SCREEN_VFX_TESTER && (!renderVFXMode || captureVFXUI)) {
             VFXTest_DrawHUD();
+            if (!renderVFXMode) Sandbox_DrawTouchJoystick();
             if (s_vfxAnimBannerTimer > 0.0f && s_vfxAnimIndex >= 0) {
                 int total = CharacterModel_GetTotalAnimCount();
                 const char *clipName = CharacterModel_GetAnimName(s_vfxAnimIndex);

@@ -1646,10 +1646,19 @@ static void VFXTest_ApplyTimeOfDay(float hour)
 
 typedef struct VFXTest_UILayout {
     Rectangle header, inspector, browser, help, metrics[3], cameraStatus;
-    Rectangle timeSlider, gfxButton, fogButton;
+    Rectangle timeSlider, mapButton, gfxButton, fogButton;
     int inspectorRows, browserColumns, browserRows;
     float rowHeight, browserCellWidth;
 } VFXTest_UILayout;
+
+static bool s_mapCycleRequested = false;
+
+bool VFXTest_ConsumeMapCycleRequest(void)
+{
+    bool r = s_mapCycleRequested;
+    s_mapCycleRequested = false;
+    return r;
+}
 
 static VFXTest_UILayout VFXTest_UIGetLayout(void)
 {
@@ -1677,6 +1686,10 @@ static VFXTest_UILayout VFXTest_UIGetLayout(void)
     float gfxW = ui.header.width < 700.0f ? 76.0f : 96.0f;
     rightCursor -= (gfxW + 6.0f);
     ui.gfxButton = (Rectangle){rightCursor + 6.0f, top + 5.0f, gfxW, 30.0f};
+
+    float mapW = ui.header.width < 700.0f ? 84.0f : 112.0f;
+    rightCursor -= (mapW + 6.0f);
+    ui.mapButton = (Rectangle){rightCursor + 6.0f, top + 5.0f, mapW, 30.0f};
 
     if (w >= 1150.0f) {
         float leftCursor = ui.header.x + 124.0f;
@@ -1787,12 +1800,13 @@ static Rectangle VFXTest_UIForceButton(VFXTest_UILayout ui, bool vectorField)
 bool VFXTest_IsPointerOverUI(void)
 {
     if (s_hideAllUI) return false;
-    if (s_vfxPointerCaptured) return true;
+    if (s_vfxPointerCaptured || Sandbox_IsTouchJoystickPointerActive()) return true;
     VFXTest_UILayout ui = VFXTest_UIGetLayout();
     Vector2 mouse = GetMousePosition();
     if (CheckCollisionPointRec(mouse, ui.header)) return true;
     if (CheckCollisionPointRec(mouse, ui.cameraStatus)) return true;
     if (CheckCollisionPointRec(mouse, ui.timeSlider)) return true;
+    if (CheckCollisionPointRec(mouse, ui.mapButton)) return true;
     if (CheckCollisionPointRec(mouse, ui.gfxButton)) return true;
     if (CheckCollisionPointRec(mouse, ui.fogButton)) return true;
     for (int i = 0; i < 3; ++i) if (CheckCollisionPointRec(mouse, ui.metrics[i])) return true;
@@ -1947,6 +1961,9 @@ static bool VFXTest_UIHandleInput(Vector3 playerPos)
         FogRenderMode mode = Fog_GetRenderMode();
         Fog_SetRenderMode(mode == FOG_MODE_OFF ? FOG_MODE_HEIGHT :
                           mode == FOG_MODE_HEIGHT ? FOG_MODE_VOLUMETRIC : FOG_MODE_OFF);
+    }
+    if (VFXTest_UIButtonReleased(ui.mapButton)) {
+        s_mapCycleRequested = true;
     }
     if (VFXTest_UIButtonReleased(ui.gfxButton)) {
         GfxQuality_Cycle();
@@ -2123,9 +2140,9 @@ static void VFXTest_UIText(const char *text, Rectangle rect, int fontSize, Color
     } else {
         xOffset = 2;
     }
-    BeginScissorMode((int)rect.x, (int)rect.y, (int)rect.width, (int)rect.height);
+    // Avoid BeginScissorMode here: on letterboxed Vulkan swapchains (e.g. Android),
+    // screen-space scissor rects do not match the viewport-offset UI coordinates.
     DrawText(text, (int)rect.x + xOffset, (int)rect.y + (int)(rect.height - fontSize) / 2, fontSize, color);
-    EndScissorMode();
 }
 
 static void VFXTest_UIDrawButton(Rectangle rect, const char *text, bool active)
@@ -2174,6 +2191,10 @@ static void VFXTest_UIDraw(void)
     const char *fogLabel = fogMode == FOG_MODE_OFF ? "Fog: None" :
                            fogMode == FOG_MODE_HEIGHT ? "Fog: Height" : "Fog: Raymarch";
     VFXTest_UIDrawButton(ui.fogButton, fogLabel, fogMode != FOG_MODE_OFF);
+
+    // Active Map switch button (touch equivalent of K)
+    const char *mapName = MapManager_GetName(MapManager_GetActiveIndex());
+    VFXTest_UIDrawButton(ui.mapButton, TextFormat("Map: %s", mapName ? mapName : "?"), false);
 
     // Active GFX quality tier indicator
     GfxQuality tier = GfxQuality_Get();

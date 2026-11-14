@@ -1367,3 +1367,98 @@ void Sandbox_DrawWardrobeUI(void) {
         UI_Wardrobe_UpdateDraw(Wardrobe_GetGlobalPlayer(), Wardrobe_GetGlobalModularInstance(), GetFrameTime());
     }
 }
+
+static bool s_vfxJoyPointerActive = false;
+
+bool Sandbox_PollTouchJoystick(float *outJoyX, float *outJoyZ) {
+    if (outJoyX) *outJoyX = 0.0f;
+    if (outJoyZ) *outJoyZ = 0.0f;
+    s_vfxJoyPointerActive = false;
+    if (!g_showTouchControls) {
+        g_joystickActive = false;
+        g_joystickKnobOffset = (Vector2){ 0, 0 };
+        return false;
+    }
+
+    float screenHeight = (float)GetScreenHeight();
+    float touchScale = screenHeight / 700.0f;
+    Vector2 joystickCenter = { 150.0f * touchScale, screenHeight - 150.0f * touchScale };
+    float joystickBaseRadius = 65.0f * touchScale;
+
+    static bool s_joyDragging = false;
+    static int s_joyTouchId = -1;
+
+    int inputPointCount = GetTouchPointCount();
+    Vector2 inputPoints[10];
+    for (int i = 0; i < inputPointCount && i < 10; i++) {
+        inputPoints[i] = GetTouchPosition(i);
+    }
+    if (inputPointCount == 0 && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+        inputPoints[0] = GetMousePosition();
+        inputPointCount = 1;
+    }
+
+    if (s_joyDragging && (s_joyTouchId < 0 || s_joyTouchId >= inputPointCount)) {
+        s_joyDragging = false;
+        s_joyTouchId = -1;
+    }
+
+    g_joystickActive = false;
+    g_joystickKnobOffset = (Vector2){ 0, 0 };
+
+    for (int i = 0; i < inputPointCount; i++) {
+        Vector2 pt = inputPoints[i];
+        if (!s_joyDragging && Vector2Distance(pt, joystickCenter) <= joystickBaseRadius * 2.0f) {
+            s_joyDragging = true;
+            s_joyTouchId = i;
+        }
+        if (s_joyDragging && i == s_joyTouchId) {
+            g_joystickActive = true;
+            s_vfxJoyPointerActive = true;
+            Vector2 joyVec = Vector2Subtract(pt, joystickCenter);
+            float len = Vector2Length(joyVec);
+            if (len > joystickBaseRadius) {
+                joyVec = Vector2Scale(Vector2Normalize(joyVec), joystickBaseRadius);
+            }
+            g_joystickKnobOffset = joyVec;
+            if (outJoyX) *outJoyX = joyVec.x / joystickBaseRadius;
+            if (outJoyZ) *outJoyZ = joyVec.y / joystickBaseRadius;
+            break;
+        }
+    }
+    return s_vfxJoyPointerActive;
+}
+
+bool Sandbox_IsTouchJoystickPointerActive(void) {
+    return s_vfxJoyPointerActive;
+}
+
+void Sandbox_DrawTouchJoystick(void) {
+    if (!g_showTouchControls) return;
+
+    rlDrawRenderBatchActive();
+    EndShaderMode();
+    BeginBlendMode(BLEND_ALPHA);
+
+    Camera2D screenOverlayCamera = { 0 };
+    screenOverlayCamera.zoom = 1.0f;
+    BeginMode2D(screenOverlayCamera);
+    rlSetTexture(0);
+
+    float screenHeight = (float)GetScreenHeight();
+    float touchScale = screenHeight / 700.0f;
+    Vector2 joystickCenter = { 150.0f * touchScale, screenHeight - 150.0f * touchScale };
+    float joystickBaseRadius = 65.0f * touchScale;
+    float joystickKnobRadius = 30.0f * touchScale;
+
+    DrawCircleV(joystickCenter, joystickBaseRadius, ColorAlpha(DARKGRAY, 0.3f));
+    DrawCircleLines(joystickCenter.x, joystickCenter.y, joystickBaseRadius, ColorAlpha(WHITE, 0.4f));
+
+    Vector2 knobPos = Vector2Add(joystickCenter, g_joystickKnobOffset);
+    Color knobColor = g_joystickActive ? ColorAlpha(SKYBLUE, 0.8f) : ColorAlpha(LIGHTGRAY, 0.6f);
+    DrawCircleV(knobPos, joystickKnobRadius, knobColor);
+    DrawCircleLines(knobPos.x, knobPos.y, joystickKnobRadius, ColorAlpha(WHITE, 0.7f));
+
+    EndMode2D();
+    EndBlendMode();
+}

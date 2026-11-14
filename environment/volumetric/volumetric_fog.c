@@ -130,8 +130,13 @@ void VolumetricFog_Init(int width, int height) {
         SetTextureWrap(s_jitterTex, TEXTURE_WRAP_REPEAT);
     }
 
-    const char *raymarchFs = FileExists("environment/volumetric/shaders/volumetric_fog.fs")
-        ? "environment/volumetric/shaders/volumetric_fog.fs" : "core/volumetric/shaders/volumetric_fog.fs";
+    const char *raymarchFs =
+#ifdef __ANDROID__
+        "environment/volumetric/shaders/volumetric_fog.fs";
+#else
+        FileExists("environment/volumetric/shaders/volumetric_fog.fs")
+            ? "environment/volumetric/shaders/volumetric_fog.fs" : "core/volumetric/shaders/volumetric_fog.fs";
+#endif
     s_raymarchShader = LoadShader(NULL, raymarchFs);
     s_locDepthTex          = GetShaderLocation(s_raymarchShader, "u_depthTex");
     s_locShadowMap         = GetShaderLocation(s_raymarchShader, "u_shadowMap");
@@ -171,8 +176,13 @@ void VolumetricFog_Init(int width, int height) {
     s_locVolColorSoft      = GetShaderLocation(s_raymarchShader, "u_volColorSoft");
     if (s_locVolColorSoft < 0) s_locVolColorSoft = GetShaderLocation(s_raymarchShader, "u_volColorSoft[0]");
 
-    const char *compositeFs = FileExists("environment/volumetric/shaders/volumetric_composite.fs")
-        ? "environment/volumetric/shaders/volumetric_composite.fs" : "core/volumetric/shaders/volumetric_composite.fs";
+    const char *compositeFs =
+#ifdef __ANDROID__
+        "environment/volumetric/shaders/volumetric_composite.fs";
+#else
+        FileExists("environment/volumetric/shaders/volumetric_composite.fs")
+            ? "environment/volumetric/shaders/volumetric_composite.fs" : "core/volumetric/shaders/volumetric_composite.fs";
+#endif
     s_compositeShader = LoadShader(NULL, compositeFs);
     s_locCompVolTex        = GetShaderLocation(s_compositeShader, "u_volumetricTex");
     s_locCompFullDepth     = GetShaderLocation(s_compositeShader, "u_fullResDepthTex");
@@ -180,8 +190,13 @@ void VolumetricFog_Init(int width, int height) {
     s_locCompLowTexel      = GetShaderLocation(s_compositeShader, "u_lowResTexel");
     s_locCompDepthThreshold= GetShaderLocation(s_compositeShader, "u_depthThreshold");
 
-    const char *heightFogFs = FileExists("environment/volumetric/shaders/height_fog.fs")
-        ? "environment/volumetric/shaders/height_fog.fs" : "core/volumetric/shaders/height_fog.fs";
+    const char *heightFogFs =
+#ifdef __ANDROID__
+        "environment/volumetric/shaders/height_fog.fs";
+#else
+        FileExists("environment/volumetric/shaders/height_fog.fs")
+            ? "environment/volumetric/shaders/height_fog.fs" : "core/volumetric/shaders/height_fog.fs";
+#endif
     s_heightFogShader = LoadShader(NULL, heightFogFs);
     s_locHfInvViewProj        = GetShaderLocation(s_heightFogShader, "u_invViewProj");
     s_locHfCamPos             = GetShaderLocation(s_heightFogShader, "u_camPos");

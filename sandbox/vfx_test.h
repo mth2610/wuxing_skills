@@ -25,6 +25,8 @@ void VFXTest_SetCameraTelemetry(float tiltDegrees, float zoomRatio, float distan
 /* Returns a queued tilt-button step (-1/0/+1), then clears it. The caller owns
  * angular step size, pitch bounds, and the camera transform. */
 int VFXTest_ConsumeCameraTiltStep(void);
+/* Returns true once when the VFX top-bar Map button was pressed, then clears it. */
+bool VFXTest_ConsumeMapCycleRequest(void);
 
 /* Hidden by default: the mannequin (main.c's DrawCharacter3D) sits at the same
  * point the camera pivots on and fixtures spawn at, so it constantly occludes

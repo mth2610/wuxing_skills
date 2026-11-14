@@ -254,6 +254,16 @@ static bool rlvkCompileGlsl(const char *source, int stage /*0=vs 1=fs 2=cs*/, u3
     p_shaderc_compile_options_set_vulkan_rules_relaxed(opts, true);
     // NOTE: spirv-opt stays OFF: it strips the symbol names reflection needs, and gains only
     // ~0.15% even with debug info kept.
+#ifdef __ANDROID__
+    // On Mali Vulkan (Android), unoptimized compute SPIR-V (-O0) causes libGLES_mali's
+    // alloca2const pass to OOM (Scudo internal map failure) in vkCreateComputePipelines.
+    // Running spirv-opt with debug info keeps OpName/OpMemberName for reflection while
+    // eliminating Function allocas before the driver compiler sees them.
+    if (stage == 2) {
+        p_shaderc_compile_options_set_generate_debug_info(opts);
+        p_shaderc_compile_options_set_optimization_level(opts, shaderc_optimization_level_size);
+    }
+#endif
     p_shaderc_compile_options_set_auto_bind_uniforms(opts, true);
     p_shaderc_compile_options_set_auto_map_locations(opts, true);
     p_shaderc_compile_options_set_binding_base_for_stage(opts, shaderc_vertex_shader, shaderc_uniform_kind_buffer, RLVK_UBO_BINDING_VS);
