@@ -2178,10 +2178,10 @@ typedef enum NatureWindResponseKind
 static Vector4 Nature_GetWindResponse(NatureWindResponseKind kind)
 {
     if (kind == NATURE_WIND_RESPONSE_FLOWER)
-        return (Vector4){0.11f, 0.075f, 2.8f, 0.72f};
+        return (Vector4){0.09f, 0.24f, 3.6f, 0.92f};
     if (kind == NATURE_WIND_RESPONSE_STATIC)
         return (Vector4){0.0f, 0.0f, 0.0f, 0.0f};
-    return (Vector4){0.035f, 0.13f, 5.2f, 1.0f};
+    return (Vector4){0.035f, 0.28f, 5.8f, 1.18f};
 }
 
 static inline bool Nature_IsIdentityMatrix(Matrix m)

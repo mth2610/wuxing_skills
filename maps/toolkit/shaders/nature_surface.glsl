@@ -293,9 +293,9 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     float warmShift = clamp(macroPatch * 0.5 + 0.5, 0.0, 1.0);
     float tipHeightMask = FastRamp(0.24, 0.88, h);
     // Rich macro botanical contrast: natural jade-olive hollows vs warm sunlit amber-sage crests
-    vec3 coolEmeraldTip = vec3(0.76, 0.88, 0.72);
-    vec3 warmGoldenTip  = vec3(1.10, 0.96, 0.62);
-    vec3 midOliveTone   = vec3(0.90, 0.92, 0.80);
+    vec3 coolEmeraldTip = vec3(0.80, 0.90, 0.74);
+    vec3 warmGoldenTip  = vec3(1.12, 0.98, 0.64);
+    vec3 midOliveTone   = vec3(0.92, 0.94, 0.82);
     vec3 macroTone = mix(coolEmeraldTip, warmGoldenTip, warmShift);
     macroTone = mix(midOliveTone, macroTone, tipHeightMask);
     baseColor *= mix(vec3(1.0), macroTone, FastRamp(0.12, 0.85, h));
@@ -308,7 +308,7 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     float specScale = 1.0;
     float sssScale  = 1.0;
     vec3 emberGlow  = vec3(0.0);
-    vec3 rootSubstrateTone = vec3(0.155, 0.228, 0.086);
+    vec3 rootSubstrateTone = vec3(0.138, 0.212, 0.078);
 
     if (distSq < 81.0) {
         float closeDetail = (1.0 - distSq * (1.0 / 81.0)) * (1.0 - antiShimmer);
@@ -377,7 +377,7 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     vec3 ambient = mix(ambientGround, skyAmbient, n.y * 0.5 + 0.5);
 
     // Botanical root self-shadowing: velvety olive base eliminates dark grid-row blotches on hills
-    float rootAO = mix(mix(0.64, 0.88, distRootLift), 1.0, smoothstep(0.0, 0.42, h));
+    float rootAO = mix(mix(0.68, 0.90, distRootLift), 1.0, smoothstep(0.0, 0.40, h));
     vec3 lit = baseColor * ambient * rootAO;
 
     float nv = max(dot(faceNormal, viewDir), 0.0);

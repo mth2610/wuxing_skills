@@ -5,7 +5,7 @@ make -f Makefile.Android clean
 
 # build android
 make -f Makefile.Android
-make -f Makefile.Android USE_VULKAN=1
+make -f Makefile.Android USE_VULKAN=1 -j4
 
 
 # pair

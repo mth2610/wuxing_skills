@@ -62,16 +62,16 @@ void main()
         vec2 perpFlow = vec2(-normFlowDir.y, normFlowDir.x);
         float flowSpeed = sqrt(effFlowLenSq);
 
-        vec2 d0 = normalize(normFlowDir * 0.90 + perpFlow * 0.28);
-        vec2 d1 = normalize(normFlowDir * 0.90 - perpFlow * 0.28);
-        vec2 d2 = normalize(normFlowDir * 0.95 + perpFlow * 0.14);
+        vec2 d0 = normalize(normFlowDir * 0.90 + perpFlow * 0.18);
+        vec2 d1 = normalize(normFlowDir * 0.90 - perpFlow * 0.18);
+        vec2 d2 = normalize(normFlowDir * 0.95 + perpFlow * 0.09);
 
         // Rushing downstream wave advection (synced with water_surface.fs)
         vec2 warp = vec2(sin(world.z * 0.45 + t * 0.55), cos(world.x * 0.45 - t * 0.45)) * 0.35;
         vec2 pw = world.xz + warp;
-        float w0 = sin(dot(pw, d0) * (u_waveScale * 1.6) - t * 3.6);
-        float w1 = sin(dot(pw, d1) * (u_waveScale * 2.2) - t * 4.4);
-        float w2 = sin(dot(pw, d2) * (u_waveScale * 3.4) - t * 6.2);
+        float w0 = sin(dot(pw, d0) * (u_waveScale * 1.1) - t * 2.8);
+        float w1 = sin(dot(pw, d1) * (u_waveScale * 1.6) - t * 3.5);
+        float w2 = sin(dot(pw, d2) * (u_waveScale * 2.2) - t * 4.4);
         float dispY = (w0 * 0.45 + w1 * 0.35 + w2 * 0.20) * u_waveHeight * shoreFade;
         local.y += dispY;
         world.y += dispY;

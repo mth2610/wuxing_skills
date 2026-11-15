@@ -535,10 +535,10 @@ static NatureBladeDescriptor Nature_DescribeMeadowBladeCtx(const MapMeadowPlacem
         float bx = clump->position.x + radX * collarRadius;
         float bz = clump->position.z + radZ * collarRadius;
 
-        // Balanced organic clump spread (60-72%) + gentle wind-flow bias (28-40%)
-        // so tufts interlock naturally without looking combed in one direction
-        float flowBias = (archetype == 0) ? (0.28f + 0.10f * (1.0f - diskFrac))
-                                          : (0.34f + 0.12f * (1.0f - diskFrac));
+        // Cohesive wind-stream clump spread (48-58% radial rosette + 42-52% wind-flow alignment)
+        // so tufts form lush interlocking locks without spiky 360-degree wire-mesh cross-hatching
+        float flowBias = (archetype == 0) ? (0.42f + 0.10f * (1.0f - diskFrac))
+                                          : (0.48f + 0.12f * (1.0f - diskFrac));
         float radialWeight = 1.0f - flowBias;
         float splayX = radX * radialWeight + flowX * flowBias;
         float splayZ = radZ * radialWeight + flowZ * flowBias;
@@ -555,24 +555,24 @@ static NatureBladeDescriptor Nature_DescribeMeadowBladeCtx(const MapMeadowPlacem
         float lengthScale, widthScaleVal, leanFactor, droopFactor;
         if (bladeId < 2)
         {
-            lengthScale = 1.05f + 0.10f * bHash2;
-            widthScaleVal = 0.96f + 0.08f * bHash3;
-            leanFactor = 0.40f + 0.12f * bHash;
-            droopFactor = 0.22f + 0.08f * bHash3;
+            lengthScale = 1.04f + 0.10f * bHash2;
+            widthScaleVal = 0.98f + 0.08f * bHash3;
+            leanFactor = 0.46f + 0.12f * bHash;
+            droopFactor = 0.26f + 0.08f * bHash3;
         }
         else if (bladeId < 4)
         {
-            lengthScale = 0.98f + 0.10f * bHash2;
-            widthScaleVal = 1.02f + 0.08f * bHash3;
-            leanFactor = 0.76f + 0.16f * bHash;
-            droopFactor = 0.46f + 0.12f * bHash3;
+            lengthScale = 0.96f + 0.10f * bHash2;
+            widthScaleVal = 1.04f + 0.08f * bHash3;
+            leanFactor = 0.84f + 0.16f * bHash;
+            droopFactor = 0.52f + 0.12f * bHash3;
         }
         else
         {
-            lengthScale = 0.88f + 0.08f * bHash2;
-            widthScaleVal = 1.08f + 0.10f * bHash3;
-            leanFactor = 1.08f + 0.22f * bHash;
-            droopFactor = 0.64f + 0.14f * bHash3;
+            lengthScale = 0.86f + 0.08f * bHash2;
+            widthScaleVal = 1.10f + 0.10f * bHash3;
+            leanFactor = 1.16f + 0.22f * bHash;
+            droopFactor = 0.70f + 0.14f * bHash3;
         }
 
         if (archetype == 0)
@@ -597,8 +597,8 @@ static NatureBladeDescriptor Nature_DescribeMeadowBladeCtx(const MapMeadowPlacem
         }
 
         height = clump->height * lengthScale * 1.05f;
-        width = clump->radius * style.bladeWidthScale * widthMultiplier * widthScaleVal;
-        width = fmaxf(0.027f, width);
+        float baseWidth = fmaxf(0.027f, clump->radius * style.bladeWidthScale * widthScaleVal);
+        width = baseWidth * widthMultiplier;
         lean = height * leanFactor;
         droopY = height * droopFactor;
         if (ctx->botanical > 0.0f)
@@ -610,8 +610,8 @@ static NatureBladeDescriptor Nature_DescribeMeadowBladeCtx(const MapMeadowPlacem
                 stretch *= 1.08f;
             stretch = 1.0f + (stretch - 1.0f) * ctx->botanical;
             height *= stretch;
-            width *= Nature_FastInvSqrt(stretch);
-            width = fmaxf(0.025f, width);
+            baseWidth = fmaxf(0.025f, baseWidth * Nature_FastInvSqrt(stretch));
+            width = baseWidth * widthMultiplier;
             lean *= stretch * (1.0f + ctx->botanical * (0.06f + 0.10f * ctx->habit));
             droopY = height * (droopFactor + ctx->botanical * 0.08f * ctx->habit);
         }

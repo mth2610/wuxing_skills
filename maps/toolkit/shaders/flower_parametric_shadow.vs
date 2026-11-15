@@ -47,7 +47,7 @@ void main()
     int sp = (u_speciesOverride >= 0) ? (u_speciesOverride & 7) : (rawSpecies & 7);
 
     float stemH = max(tex1.x, 0.16);
-    float petalR = max(tex1.y * 1.32, stemH * 0.32);
+    float petalR = clamp(tex1.y * 0.92, 0.042, stemH * 0.16);
     float yaw = tex1.z;
     float cosYaw = cos(yaw);
     float sinYaw = sin(yaw);

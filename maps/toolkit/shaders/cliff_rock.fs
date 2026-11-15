@@ -138,22 +138,27 @@ void main() {
     float strataMacro = sin(strataCoord * 2.40 + strataWarp) * 0.5 + 0.5;
     float strataFine  = sin(strataCoord * 6.80 + strataWarp * 1.8) * 0.5 + 0.5;
     float combinedStrata = strataMacro * 0.65 + strataFine * 0.35;
+    float strataContrast = (strataMacro - 0.5) * 1.35 + (strataFine - 0.5) * 0.65;
 
     // Authentic mountain slate-granite palette (neutral gray with warm feldspar strata)
-    vec3 slateBedrock = vec3(0.48, 0.49, 0.52);
+    vec3 slateBedrock = vec3(0.46, 0.48, 0.51);
     vec3 feldsparVein = vec3(0.62, 0.58, 0.52);
-    vec3 bedrockTint = mix(slateBedrock, feldsparVein, combinedStrata * 0.38) * 1.32;
+    vec3 bedrockTint = mix(slateBedrock, feldsparVein, combinedStrata * 0.42) * 1.30;
 
     vec3 rockBase = triAlbedo * bedrockTint * colDiffuse.rgb;
 
-    // ── 3. Ledge Moss & Lichen Colonization (Where Winds Meet Style) ──
-    // Strictly flat upward horizontal shelves near the rim keep moss while vertical walls stay weathered stone
-    float ledgeFacing = smoothstep(0.64, 0.88, worldNormal.y);
+    // ── 3. Ledge Moss, Rim Turf Overhang & Lichen Colonization (Where Winds Meet Style) ──
+    // Organic sod drape over the top 0.45m cliff lip eliminates hard polygon seams against the meadow
+    float sodDropNoise = sin(worldPosition.x * 1.85 + worldPosition.z * 1.45) * 0.14
+                       + cos(worldPosition.z * 3.40 - worldPosition.x * 2.70) * 0.08;
+    float rimSodDrape = smoothstep(-0.48 + sodDropNoise, -0.04 + sodDropNoise * 0.5, fragLocalY) * fragColor.g;
+    float ledgeFacing = smoothstep(0.60, 0.86, worldNormal.y);
     float creviceMask = smoothstep(-0.35, 0.45, strataContrast * 0.75 + triAlbedo.g - 0.5);
     float upperRimBoost = smoothstep(-3.2, -0.20, fragLocalY) * 0.65 + 0.35;
-    float mossMask = clamp(fragColor.g * ledgeFacing * upperRimBoost * (0.65 + 0.35 * creviceMask), 0.0, 1.0);
-    vec3 mossColor = mix(vec3(0.11, 0.19, 0.06), vec3(0.17, 0.26, 0.09), triAlbedo.g);
-    vec3 rockAlbedo = mix(rockBase, mossColor, mossMask * 0.82);
+    float shelfMoss = fragColor.g * ledgeFacing * upperRimBoost * (0.65 + 0.35 * creviceMask);
+    float mossMask = clamp(max(shelfMoss, rimSodDrape * 0.94), 0.0, 1.0);
+    vec3 mossColor = mix(vec3(0.11, 0.19, 0.07), vec3(0.18, 0.29, 0.10), clamp(triAlbedo.g * 0.75 + rimSodDrape * 0.35, 0.0, 1.0));
+    vec3 rockAlbedo = mix(rockBase, mossColor, mossMask * 0.88);
 
     // ── 4. Deep Crevice Cavity Occlusion (80.lv RTGI Principle) ──
     // Intense occlusion in deep fissures and under shelf overhangs gives rock weight and depth

@@ -322,11 +322,11 @@ static void BuildFloraPlacements(void)
         (MapFloraReedConfig){
             .span = {spanX, spanZ},
             .dem = &s_dem,
-            .minWaterClearance = 0.006f,
-            .maxWaterClearance = 0.22f,
-            .minWetSplatAlpha = 95,
-            .maxWetClearance = 0.34f,
-            .minClusterDistance = 0.10f,
+            .minWaterClearance = 0.005f,
+            .maxWaterClearance = 0.34f,
+            .minWetSplatAlpha = 82,
+            .maxWetClearance = 0.46f,
+            .minClusterDistance = 0.085f,
             .seed = 0x9371a5u,
         });
     TraceLog(LOG_INFO, "SONG_QUAO_REEDS: placements=%d capacity=%d",
@@ -501,12 +501,12 @@ void InitSongQuaoMap(void)
     // Apply dedicated highland valley wind profile
     s_prevWindMacro = Wind_GetMacro();
     WindMacroConfig sqWind = {
-        .baseDirection = {2.35f, 0.0f, 1.15f},
-        .gustAmplitude = 0.85f,
-        .noiseScale = 0.052f,
-        .noiseSpeed = 1.15f,
-        .terrainLiftK = 1.35f,
-        .heightGradientK = 0.65f,
+        .baseDirection = {3.20f, 0.0f, 1.65f},
+        .gustAmplitude = 1.45f,
+        .noiseScale = 0.058f,
+        .noiseSpeed = 1.65f,
+        .terrainLiftK = 1.45f,
+        .heightGradientK = 0.72f,
     };
     Wind_SetMacro(&sqWind);
 
@@ -752,22 +752,22 @@ void InitSongQuaoMap(void)
                                              .center = {kMapCenter.x, 0.0f, kMapCenter.z},
                                              .radiusX = MAP_WIDTH * 0.5f,
                                              .radiusZ = MAP_DEPTH * 0.5f,
-                                             .waveHeight = 0.016f,
-                                             .waveScale = 2.2f,
-                                             .waveSpeed = 0.68f,
-                                             .flowVelocity = {0.26f, 0.38f},
-                                             .detailScale = 0.38f,
-                                             .detailStrength = 0.36f,
-                                             .maxDepth = 1.45f,
-                                             .absorption = {0.38f, 0.09f, 0.032f},
-                                             .scatterColor = {0.09f, 0.34f, 0.32f},
-                                             .scatterCoeff = 0.24f,
-                                             .causticsStrength = 0.52f,
-                                             .causticsScale = 3.80f,
-                                             .foamThreshold = 0.085f,
-                                             .deepColor = {10, 34, 48, 225},
-                                             .shallowColor = {30, 74, 80, 128},
-                                             .foamColor = {248, 252, 255, 240},
+                                             .waveHeight = 0.012f,
+                                             .waveScale = 1.15f,
+                                             .waveSpeed = 0.58f,
+                                             .flowVelocity = {0.24f, 0.35f},
+                                             .detailScale = 0.18f,
+                                             .detailStrength = 0.12f,
+                                             .maxDepth = 1.70f,
+                                             .absorption = {0.52f, 0.14f, 0.06f},
+                                             .scatterColor = {0.08f, 0.38f, 0.36f},
+                                             .scatterCoeff = 0.28f,
+                                             .causticsStrength = 0.38f,
+                                             .causticsScale = 2.10f,
+                                             .foamThreshold = 0.095f,
+                                             .deepColor = {8, 30, 44, 238},
+                                             .shallowColor = {34, 88, 92, 96},
+                                             .foamColor = {245, 250, 255, 220},
                                          });
 
     MapProp_SetWaterTerrainSource(&s_river, SongQuaoWaterBed, SongQuaoWaterSurface, NULL);
@@ -834,28 +834,28 @@ void InitSongQuaoMap(void)
         s_reedPlacements, s_reedCount,
         s_flowerPlacements, SONG_QUAO_FLOWER_CLUSTERS, SONG_QUAO_FLOWER_CLUSTER_COUNT,
         (MapFloraStyle){
-            .grassRootColor = {38, 60, 24, 255},  // Velvety olive-moss base (Ghost of Yotei style)
-            .grassTipColor = {104, 146, 52, 255}, // Natural sunlit olive-jade tips
+            .grassRootColor = {35, 54, 20, 255},  // Deep velvety moss-jade root matching ground_splat.fs
+            .grassTipColor = {102, 142, 50, 255}, // Natural sunlit olive-jade tips
             .bladesPerClump = 5,
             .bladeSegments = 4,
-            .bladeWidthScale = 0.096f,
+            .bladeWidthScale = 0.098f,
             .lodDistance = 30.0f,
             .midLodDistance = 23.0f,
             .drawDistance = 42.0f,
             .shadowDistance = 24.0f,
             .grassState = MAP_GRASS_STATE_LUSH,
-            .reedRootColor = {20, 32, 16, 255},
-            .reedTipColor = {96, 134, 54, 255},
+            .reedRootColor = {22, 36, 16, 255},
+            .reedTipColor = {104, 138, 58, 255},
             .hasReedPlumes = false,
             .botanicalVariation = 1.0f,
             .pampasPlacements = s_pampasPlacements,
             .pampasCount = s_pampasCount,
             .pampasRootColor = {28, 38, 18, 255},
-            .pampasTipColor = {168, 172, 112, 255},
+            .pampasTipColor = {176, 178, 122, 255},
             .enableCoLauPlumes = true,
             .coLauOnReeds = true,
-            .coLauPlumeDensity = 0.90f,
-            .coLauPlumeTint = {235, 236, 230, 255}, // Ethereal silver-white (Bạch Miên Cỏ Lau)
+            .coLauPlumeDensity = 0.92f,
+            .coLauPlumeTint = {238, 239, 233, 255}, // Ethereal silver-white (Bạch Miên Cỏ Lau)
         });
 
     EnvShadow_SetMapCasterCallback(DrawSongQuaoShadowCasters, NULL);

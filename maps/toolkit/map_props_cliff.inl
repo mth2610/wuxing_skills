@@ -23,10 +23,10 @@ typedef struct
 
 static const CliffRowProfile kCliffRowProfiles[17] = {
     // depth, out, noise, ao, moss, haze, strata
-    {0.00f, -0.55f, 0.02f, 0.95f, 0.92f, 0.00f, 0.60f},  // row 0: inward collar flange (tucks 0.55m under meadow turf)
-    {0.06f, 0.00f, 0.14f, 0.90f, 0.68f, 0.00f, 0.72f},   // row 1: smooth rounded rock lip directly at rimPos
-    {0.35f, 0.06f, 0.58f, 0.85f, 0.22f, 0.00f, 0.92f},   // row 2: undercut fracture slot (sod ends by 0.35m)
-    {0.85f, 0.22f, 1.05f, 0.76f, 0.04f, 0.00f, 1.12f},   // row 3: upper buttress crag shelf (clean rock)
+    {0.00f, -0.58f, 0.02f, 0.96f, 0.98f, 0.00f, 0.55f},  // row 0: inward collar flange (tucks 0.58m under meadow turf)
+    {0.08f,  0.02f, 0.16f, 0.92f, 0.84f, 0.00f, 0.68f},  // row 1: smooth rounded sod-draped lip at rimPos
+    {0.32f,  0.10f, 0.52f, 0.84f, 0.42f, 0.00f, 0.88f},  // row 2: upper overhang transition slot
+    {0.82f,  0.24f, 0.98f, 0.74f, 0.12f, 0.00f, 1.10f},  // row 3: upper buttress crag shelf (clean rock)
     {1.55f, 0.16f, 1.25f, 0.64f, 0.00f, 0.00f, 1.18f},   // row 4: vertical faceted wall
     {2.45f, -0.12f, 1.35f, 0.52f, 0.00f, 0.00f, 1.25f},  // row 5: deep crevice fissure
     {3.50f, 0.42f, 1.45f, 0.70f, 0.03f, 0.02f, 1.32f},   // row 6: middle prominent rock shelf
@@ -931,7 +931,7 @@ MapCliffSkirt MapProp_CreateCliffSkirt(const MapGroundSurface *ground, Vector3 m
         MemFree(scratchY);
         return cliff;
     }
-    for (int pass = 0; pass < 3; pass++)
+    for (int pass = 0; pass < 7; pass++)
     {
         for (int i = 0; i < M; i++)
         {

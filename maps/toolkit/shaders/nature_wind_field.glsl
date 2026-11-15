@@ -125,8 +125,8 @@ vec2 NatureVegetationWindBend(vec3 worldPosition, vec2 phaseUV,
 
     // Factor s1 * u_natureWindResponse.y using sin(2*phase) = 2*s1*c1
     float flutterScale = s1 * u_natureWindResponse.y;
-    float axialScale = bendLength * (1.0 + flutterScale * (0.12 + 0.10 * c1));
-    float lateralScale = bendLength * (flutterScale * (0.78 + 0.44 * c1));
+    float axialScale = bendLength * (1.0 + flutterScale * (0.38 + 0.24 * c1));
+    float lateralScale = bendLength * (flutterScale * (0.92 + 0.52 * c1));
 
     vec2 bend = windDirection * axialScale + transverse * lateralScale;
 

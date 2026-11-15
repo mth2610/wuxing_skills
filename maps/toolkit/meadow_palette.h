@@ -21,10 +21,10 @@
  * Colour-space note: this file passes the values through unchanged. Whether they are read as
  * linear or display-referred is decided by the consuming shader, not here.
  */
-#define MEADOW_PALETTE_DEEP_MOSS 0.10f, 0.21f, 0.10f
-#define MEADOW_PALETTE_LUSH_CLOVER 0.18f, 0.34f, 0.11f
-#define MEADOW_PALETTE_SUNLIT_GOLD 0.34f, 0.40f, 0.14f
-#define MEADOW_PALETTE_DRY_CREST 0.44f, 0.38f, 0.18f
+#define MEADOW_PALETTE_DEEP_MOSS 0.09f, 0.19f, 0.08f
+#define MEADOW_PALETTE_LUSH_CLOVER 0.16f, 0.31f, 0.10f
+#define MEADOW_PALETTE_SUNLIT_GOLD 0.31f, 0.38f, 0.13f
+#define MEADOW_PALETTE_DRY_CREST 0.42f, 0.37f, 0.17f
 #define MEADOW_PALETTE_CLOVER_EDGE0 0.14f
 #define MEADOW_PALETTE_CLOVER_EDGE1 0.42f
 #define MEADOW_PALETTE_GOLD_EDGE0 0.36f

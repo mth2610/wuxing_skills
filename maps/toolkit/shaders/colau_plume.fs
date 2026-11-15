@@ -16,9 +16,10 @@ out vec4 finalColor;
 void main()
 {
     float edgeDist = abs(v_strandUV.x);
-    // Smooth ribbon edge with early-Z cutout
-    float alpha = min(1.0, 1.6 * v_strandUV.y * (1.0 - smoothstep(0.52, 1.0, edgeDist)));
-    if (alpha < 0.38)
+    float longitudinal = smoothstep(0.0, 0.16, v_strandUV.y) * (1.0 - smoothstep(0.74, 1.0, v_strandUV.y) * 0.32);
+    // Smooth feathery ribbon edge with early-Z cutout
+    float alpha = min(1.0, 1.75 * longitudinal * (1.0 - smoothstep(0.38, 0.98, edgeDist)));
+    if (alpha < 0.26)
         discard;
 
     // Shadow receiver
@@ -39,9 +40,11 @@ void main()
     vec3 viewDir = normalize(v_worldPos - u_viewPos);
     float mieDot = max(dot(viewDir, -L), 0.0);
     float mie2 = mieDot * mieDot;
-    vec3 backlitSilk = u_lightColor * (mie2 * mie2 * 0.42 * v_strandUV.y);
+    float silkRim = (1.0 - edgeDist * 0.45) * (0.35 + 0.65 * v_strandUV.y);
+    vec3 backlitSilk = u_lightColor * ((mie2 * mie2 * 0.56 + mieDot * 0.18) * silkRim);
 
-    vec3 lit = v_color * mix(0.58, 1.0, shadowVis) + backlitSilk * mix(0.35, 1.0, shadowVis);
+    vec3 plumeTone = mix(v_color * 0.90, v_color * 1.06, v_strandUV.y);
+    vec3 lit = plumeTone * mix(0.64, 1.04, shadowVis) + backlitSilk * mix(0.42, 1.0, shadowVis);
     if (distSq < 900.0) {
         lit += VFXLights_Accumulate(v_worldPos, N, lit * 0.4);
     }

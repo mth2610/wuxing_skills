@@ -200,27 +200,27 @@ void main()
     float flowSpeed = sqrt(effFlowLenSq);
 
     // Multi-phase directional river wave train aligned with current flow (racing downstream)
-    vec2 d0 = normalize(normFlowDir * 0.90 + perpFlow * 0.28);
-    vec2 d1 = normalize(normFlowDir * 0.90 - perpFlow * 0.28);
-    vec2 d2 = normalize(normFlowDir * 0.95 + perpFlow * 0.14);
-    vec2 d3 = normalize(normFlowDir * 0.95 - perpFlow * 0.14);
+    vec2 d0 = normalize(normFlowDir * 0.90 + perpFlow * 0.18);
+    vec2 d1 = normalize(normFlowDir * 0.90 - perpFlow * 0.18);
+    vec2 d2 = normalize(normFlowDir * 0.95 + perpFlow * 0.09);
+    vec2 d3 = normalize(normFlowDir * 0.95 - perpFlow * 0.09);
 
     // Continuous downstream wave advection (phase-shear free across spatially varying flow)
     vec2 warp = vec2(sin(fragWorldXZ.y * 0.45 + t * 0.55), cos(fragWorldXZ.x * 0.45 - t * 0.45)) * 0.35;
     vec2 pw = fragWorldXZ + warp;
 
     vec4 pWave = vec4(
-        dot(pw, d0) * (u_waveScale * 1.6) - t * 3.6,
-        dot(pw, d1) * (u_waveScale * 2.2) - t * 4.4,
-        dot(pw, d2) * (u_waveScale * 3.4) - t * 6.2,
-        dot(pw, d3) * (u_waveScale * 4.8) - t * 8.0
+        dot(pw, d0) * (u_waveScale * 1.1) - t * 2.8,
+        dot(pw, d1) * (u_waveScale * 1.6) - t * 3.5,
+        dot(pw, d2) * (u_waveScale * 2.2) - t * 4.4,
+        dot(pw, d3) * (u_waveScale * 2.9) - t * 5.4
     );
 
     vec4 cosP = cos(pWave);
     vec4 sinP = sin(pWave);
 
     vec2 slope = (d0 * (cosP.x * 0.38) + d1 * (cosP.y * 0.32) + d2 * (cosP.z * 0.18) + d3 * (cosP.w * 0.12))
-               * (u_waveScale * u_waveHeight * 2.4 * shoreFade);
+               * (u_waveScale * u_waveHeight * 1.45 * shoreFade);
 
     vec3 viewVec = u_viewPos - fragPosition;
     float distSq = dot(viewVec, viewVec);
@@ -231,7 +231,7 @@ void main()
     vec2 detailSlope = vec2(0.0);
     if (distSq < 2500.0) {
         // Smooth dual-octave finite difference eliminates texel-level stipple noise
-        const vec2 eps = vec2(0.022, 0.0);
+        const vec2 eps = vec2(0.065, 0.0);
         vec2 detDx0 = xzDx * (u_detailScale * 0.72);
         vec2 detDy0 = xzDy * (u_detailScale * 0.72);
 
@@ -267,7 +267,7 @@ void main()
         }
     }
 
-    slope += detailSlope * (u_detailStrength * 1.25 * shoreFade * detailDistFade);
+    slope += detailSlope * (u_detailStrength * 0.45 * shoreFade * detailDistFade);
 
     // Conditional wave-field sampling (2D Shallow-Water PDE wave grid)
     vec2 interactSlope = vec2(0.0);
@@ -285,11 +285,10 @@ void main()
         if (gridFade > 0.001) {
             vec4 waveField = textureGrad(u_waveFieldTex, waveUv, lakeDx, lakeDy);
             vec2 waveDev = waveField.rg - vec2(128.0 / 255.0);
-            if (abs(waveDev.x) > 0.003 || abs(waveDev.y) > 0.003) {
-                interactSlope += waveDev * (2.8 * gridFade);
-            }
+            float waveGate = smoothstep(0.016, 0.048, length(waveDev));
+            interactSlope += waveDev * (1.65 * gridFade * waveGate);
             float waveCrest = max(0.0, waveField.b - (128.0 / 255.0) - ((u_flowFieldEnabled > 0) ? 0.02 : 0.0));
-            if (waveCrest > 0.003) {
+            if (waveCrest > 0.015) {
                 wakeCrestHighlight = max(wakeCrestHighlight, waveCrest * (0.85 * gridFade));
                 waveCurvature = wakeCrestHighlight * 2.5;
             }
@@ -483,7 +482,7 @@ void main()
     vec3 transmittance = exp(-absorptionCoeff * opticalPath);
 
     // ── 4. WATER CAUSTICS (Refracted Dual-Layer Photon Focusing) ─────────────
-    float depthFadeCaustic = smoothstep(0.008, 0.12, waterDepth) * (1.0 - smoothstep(0.75, 1.45, waterDepth) * 0.50);
+    float depthFadeCaustic = smoothstep(0.008, 0.12, waterDepth) * (1.0 - smoothstep(0.95, 1.70, waterDepth) * 0.55);
     vec3 causticLight = vec3(0.0);
     if (distSq < 1600.0 && depthFadeCaustic * u_causticsStrength > 0.001) {
         vec2 causticRefract = normal.xz * clamp(waterDepth * 0.25, 0.015, 0.18);
@@ -578,8 +577,8 @@ void main()
 
     vec2 rawAzimuth = L.xz + vec2(0.42, -0.34);
     vec2 horizAzimuth = rawAzimuth * inversesqrt(max(dot(rawAzimuth, rawAzimuth), 1e-8));
-    float waveSlopeContrast = dot(normal.xz, horizAzimuth) * 2.2;
-    vec3 waveLighting = effectiveLight * clamp(waveSlopeContrast + (dot(normal, L) - L.y), -0.20, 0.22) * 0.24;
+    float waveSlopeContrast = dot(normal.xz, horizAzimuth) * 1.1;
+    vec3 waveLighting = effectiveLight * clamp(waveSlopeContrast + (dot(normal, L) - L.y), -0.20, 0.22) * 0.07;
 
     // ── 7. SHORELINE & SUBMERGED CONTACT WATERLINE MENISCUS ──────────────────
     float foamDist = clamp(u_foamThreshold, 0.06, 0.13);
@@ -616,10 +615,10 @@ void main()
     // so submerged sand, river pebbles & rocks remain 100% visible and un-clouded.
     float volumeInScatter = 1.0 - exp(-3.8 * waterDepth);
     float depthOpacity = (u_waterShape == 3)
-        ? (1.0 - exp(-2.05 * waterDepth))
+        ? (1.0 - exp(-1.65 * waterDepth))
         : (1.0 - exp(-2.20 * waterDepth));
     float waterColumnAlpha = (u_waterShape == 3)
-        ? clamp(depthOpacity * 0.72, 0.0, 0.82)
+        ? clamp(depthOpacity * 0.78, 0.0, 0.88)
         : clamp(depthOpacity * 0.75, 0.0, 0.85);
     float glintAlphaBoost = clamp(glintSharp * 0.38, 0.0, 0.26);
     float opticalWaterAlpha = (fresnel * 0.55) + waterColumnAlpha + glintAlphaBoost;
@@ -644,20 +643,20 @@ void main()
     if (alpha < 0.002) discard;
 
     // ── 9. ENERGY-CONSERVING COMPOSITION ─────────────────────────────────────
-    vec3 shallowTint = mix(u_shallowColor, vec3(0.22, 0.46, 0.40), 0.40);
-    vec3 deepTint    = mix(u_deepColor,    vec3(0.05, 0.19, 0.22), 0.45);
+    vec3 shallowTint = mix(u_shallowColor, vec3(0.20, 0.46, 0.40), 0.42);
+    vec3 deepTint    = mix(u_deepColor,    vec3(0.04, 0.18, 0.23), 0.48);
 
-    vec3 depthBlend = clamp(mix(vec3(1.0 - smoothstep(0.06, 0.95, waterDepth)), transmittance, 0.68), 0.0, 1.0);
+    vec3 depthBlend = clamp(mix(vec3(1.0 - smoothstep(0.05, 1.45, waterDepth)), transmittance, 0.72), 0.0, 1.0);
     vec3 waterVolumeColor = mix(deepTint, shallowTint, depthBlend);
-    float scatterDensity = 0.40 + 0.60 * volumeInScatter;
-    waterVolumeColor *= (0.85 + u_ambientColor * 0.35 + effectiveLight * 0.26) * scatterDensity;
+    float scatterDensity = 0.42 + 0.58 * volumeInScatter;
+    waterVolumeColor *= (0.86 + u_ambientColor * 0.36 + effectiveLight * 0.28) * scatterDensity;
 
     float shoreFadeOptical = (u_waterShape == 3) ? smoothstep(0.005, 0.18, fragWaterDepth) : 1.0;
 
     float reflectWeight = (u_waterShape == 3)
-        ? clamp((fresnel * 0.68 + 0.10) * shoreFadeOptical, 0.0, 0.78)
+        ? clamp((fresnel * 0.70 + 0.10) * shoreFadeOptical, 0.0, 0.80)
         : clamp(fresnel * 0.72 + 0.12, 0.0, 0.85);
-    vec3 underwaterTerms = waterVolumeColor + causticLight * 1.35 + sssLight + waveLighting;
+    vec3 underwaterTerms = waterVolumeColor + causticLight * 1.42 + sssLight + waveLighting;
     vec3 color = mix(underwaterTerms, reflectedSky, reflectWeight);
 
     color += waveHighlight + sunGlint + waveReflection;

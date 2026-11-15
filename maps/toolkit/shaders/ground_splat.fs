@@ -175,8 +175,12 @@ void main()
     }
 
     // Gate river/lake water phenomena to real water elevation (LANDMINES §340):
-    // Terrain dropping below -0.45m into the outer cloud abyss is free air, never a submerged lakebed.
-    float waterElevationMask = smoothstep(-0.45, -0.15, fragWorldPos.y);
+    // Terrain dropping below -0.45m into the outer cloud abyss is free air, never a submerged lakebed,
+    // while deep wet channels inside the shore basin stay active down to -2.20m.
+    float inWetChannel = 1.0 - smoothstep(-0.10, 0.35, smoothSignedShore);
+    float waterElevationMask = mix(smoothstep(-0.45, -0.15, fragWorldPos.y),
+                                   smoothstep(-2.20, -1.60, fragWorldPos.y),
+                                   inWetChannel);
     lakeDepthFactor *= waterElevationMask;
     shoreFactor *= waterElevationMask;
 
@@ -199,7 +203,8 @@ void main()
     // so lower interior stream bends (~ -0.35m) do not falsely trigger outer cliff rock polygons.
     float outerCliffElev = (1.0 - smoothstep(-1.10, -0.18, fragWorldPos.y))
                          * (1.0 - smoothstep(0.02, 0.38, shoreFactor))
-                         + (1.0 - smoothstep(-1.60, -0.75, fragWorldPos.y));
+                         + (1.0 - smoothstep(-1.60, -0.75, fragWorldPos.y))
+                         * (1.0 - smoothstep(0.02, 0.38, shoreFactor));
     outerCliffElev = clamp(outerCliffElev, 0.0, 1.0);
 
     // ---- 6. Soil Detail ----
@@ -273,12 +278,12 @@ void main()
             variableShore = smoothSignedShore + bankNoiseMacro + bankNoiseMed + bankNoiseMicro;
 
             // Smooth, non-periodic transition across alluvial banks without comb teeth
-            float grassTaper = smoothstep(-0.04, 0.34, variableShore);
-            float rosetteFringe = smoothstep(-0.02, 0.28, variableShore + bankNoiseMicro * 0.65);
-            wGrass = wGrass * mix(grassTaper, rosetteFringe, 0.40);
+            float grassTaper = smoothstep(-0.02, 0.42, variableShore);
+            float rosetteFringe = smoothstep(0.02, 0.34, variableShore + bankNoiseMicro * 0.75);
+            wGrass = wGrass * mix(grassTaper, rosetteFringe, 0.46);
 
-            float riparianFringe = 1.0 - smoothstep(-0.05, 0.36, variableShore);
-            wWetSoil = max(wWetSoil, riparianFringe * 0.92);
+            float riparianFringe = 1.0 - smoothstep(-0.04, 0.44, variableShore);
+            wWetSoil = max(wWetSoil, riparianFringe * 0.94);
         }
 
         // When descending off the meadow lip into the cliff, rock bedrock dominates completely:
@@ -364,7 +369,7 @@ void main()
         float turfDetail = dot(blendedGrass, vec3(0.2126, 0.7152, 0.0722));
         float detailContrast = clamp((turfDetail - 0.22) * 1.65, -0.26, 0.30);
 
-        vec3 turfBase = vec3(0.155, 0.228, 0.086);
+        vec3 turfBase = vec3(0.138, 0.212, 0.078);
         float tintLuma = dot(colDiffuse.rgb, vec3(0.299, 0.587, 0.114));
         if (tintLuma > 0.05) {
             vec3 normalizedTint = clamp(colDiffuse.rgb / tintLuma, vec3(0.78), vec3(1.22));
@@ -391,7 +396,7 @@ void main()
 
         vec3 targetCanopyColor = MeadowCanopyColor(habitatVal);
         // Deep verdant moss-clover undergrowth beneath 3D grass tufts so grazing angles never flash yellow-tan
-        vec3 nearCanopySubstrate = mix(vec3(0.092, 0.156, 0.054), targetCanopyColor * 0.52, 0.52);
+        vec3 nearCanopySubstrate = mix(vec3(0.086, 0.148, 0.050), targetCanopyColor * 0.50, 0.54);
         grassAlbedo = mix(grassAlbedo,
                           nearCanopySubstrate * (1.0 + detailContrast * (0.58 + GS_NEAR_DETAIL_BOOST * detailResolve)),
                           0.56 - GS_NEAR_DETAIL_BOOST * 0.42 * detailResolve);
@@ -580,16 +585,16 @@ void main()
             // [VISUAL FIX]: Xóa sọc sóng cát tuần hoàn bằng nhiễu uốn miền (domain warp) nhẹ
             float warpSand = sin(fragWorldPos.x * 0.75 + fragWorldPos.z * 0.55) * 2.2
                            + cos(fragWorldPos.z * 1.15 - fragWorldPos.x * 0.85) * 1.4;
-            float sandPhase1 = (fragWorldPos.z + fragWorldPos.x * 0.65) * 4.2 + warpSand;
-            float sandPhase2 = (fragWorldPos.x - fragWorldPos.z * 0.55) * 6.8 - warpSand * 0.8;
+            float sandPhase1 = (fragWorldPos.z + fragWorldPos.x * 0.65) * 2.1 + warpSand;
+            float sandPhase2 = (fragWorldPos.x - fragWorldPos.z * 0.55) * 3.2 - warpSand * 0.8;
             float sinP1 = sin(sandPhase1);
             float sinP2 = sin(sandPhase2);
             float sandRipple = (sinP1 * 0.60 + sinP2 * 0.40) * 0.5 + 0.5;
 
             // Rich mountain stream alluvial riverbed sand & gravel (Ghost of Tsushima / Where Winds Meet riverbed palette)
-            vec3 drySand = mix(vec3(0.42, 0.40, 0.34), vec3(0.50, 0.47, 0.40), sandRipple * 0.16);
-            vec3 wetSand = mix(vec3(0.35, 0.33, 0.28), vec3(0.42, 0.39, 0.34), sandRipple * 0.16);
-            vec3 submergedSand = mix(vec3(0.36, 0.42, 0.38), vec3(0.44, 0.50, 0.44), sandRipple * 0.16);
+            vec3 drySand = mix(vec3(0.42, 0.40, 0.34), vec3(0.50, 0.47, 0.40), sandRipple * 0.09);
+            vec3 wetSand = mix(vec3(0.35, 0.33, 0.28), vec3(0.42, 0.39, 0.34), sandRipple * 0.09);
+            vec3 submergedSand = mix(vec3(0.36, 0.42, 0.38), vec3(0.44, 0.50, 0.44), sandRipple * 0.09);
 
             float wetLevel = clamp(shoreFactor * 0.85 + streamWet * 0.50, 0.0, 1.0);
             vec3 sandBase = mix(drySand, wetSand, wetLevel);
@@ -608,7 +613,7 @@ void main()
             float beachDryMix = clamp(shoreFactor * 0.35 + riparianSandMargin * 0.70, 0.0, 1.0) * (1.0 - smoothstep(0.04, 0.35, wCliff));
             drySoilColor = mix(drySoilColor, drySand * (0.88 + 0.28 * colorDirt.rgb), beachDryMix);
 
-            vec2 gravelUV = tiledUV * 3.4;
+            vec2 gravelUV = tiledUV * 1.65;
             vec3 fineGravelTex = textureLod(texPath, gravelUV, mipTiled).rgb;
 
             float barNoise = sin(fragWorldPos.x * 0.65 + fragWorldPos.z * 0.50)
@@ -623,7 +628,7 @@ void main()
             pebbleMineral = mix(pebbleMineral, vec3(0.40, 0.45, 0.36), fineGravelTex.g);
 
             float gravelAO = 1.0 - pebbleCrevice * 0.22 * shingleBar;
-            vec3 riverbedBed = mix(sandBase, pebbleMineral, gravelHighlight * 0.72 * shingleBar) * gravelAO;
+            vec3 riverbedBed = mix(sandBase, pebbleMineral, gravelHighlight * 0.38 * shingleBar) * gravelAO;
 
             if (highDetailGround && camDistSqXZ < 400.0) {
                 float cosP1 = cos(sandPhase1);
@@ -640,17 +645,17 @@ void main()
             //    Exposed river gravel, wet sand ripples, and rounded pebbles continuous with riverbed
             // 2. Mid-Bank Sand & Pebble Terrace:
             //    Golden-sand matrix with embedded quartzite pebbles
-            vec3 exposedSandBar = mix(sandBase, pebbleMineral, gravelHighlight * 0.62 * shingleBar) * gravelAO;
+            vec3 exposedSandBar = mix(sandBase, pebbleMineral, gravelHighlight * 0.68 * shingleBar) * gravelAO;
 
             // 3. Upper-Bank Moss & Loam Fringe:
             //    Moist humus with velvet bryophyte moss interweaving with grass roots
-            vec3 bankMossTone = mix(vec3(0.18, 0.28, 0.11), vec3(0.26, 0.38, 0.15), dirtDetail.r);
-            vec3 bankLoamTone = mix(vec3(0.26, 0.22, 0.17), vec3(0.35, 0.30, 0.23), dirtDetail.g);
-            vec3 upperBankFringe = mix(bankLoamTone, bankMossTone, 0.45 + 0.35 * microSediment.g) * (0.90 + 0.25 * colorDirt.rgb);
+            vec3 bankMossTone = mix(vec3(0.15, 0.25, 0.09), vec3(0.23, 0.35, 0.13), dirtDetail.r);
+            vec3 bankLoamTone = mix(vec3(0.24, 0.20, 0.15), vec3(0.33, 0.28, 0.21), dirtDetail.g);
+            vec3 upperBankFringe = mix(bankLoamTone, bankMossTone, 0.52 + 0.35 * microSediment.g) * (0.90 + 0.25 * colorDirt.rgb);
 
             float bankDist = max(variableShore, 0.0);
-            float bankZoneMid = smoothstep(0.01, 0.20, bankDist);
-            float bankZoneUpper = smoothstep(0.10, 0.40, bankDist);
+            float bankZoneMid = smoothstep(0.01, 0.22, bankDist);
+            float bankZoneUpper = smoothstep(0.12, 0.44, bankDist);
 
             vec3 exposedBankSoil = mix(riverbedBed, exposedSandBar, bankZoneMid);
             exposedBankSoil = mix(exposedBankSoil, upperBankFringe, bankZoneUpper);
@@ -676,8 +681,8 @@ void main()
 
     // Subtle submerged bed depth tint: crystal-clear turquoise mountain water revealing golden riverbed pebbles
     if (lakeDepthFactor > 0.0) {
-        vec3 bedWaterTint = mix(vec3(0.22, 0.52, 0.46), vec3(0.12, 0.36, 0.38), smoothstep(0.25, 1.20, lakeDepthFactor));
-        blendedAlbedo = mix(blendedAlbedo, bedWaterTint * 0.82, smoothstep(0.25, 0.95, lakeDepthFactor) * 0.20);
+        vec3 bedWaterTint = mix(vec3(0.20, 0.54, 0.48), vec3(0.06, 0.28, 0.34), smoothstep(0.10, 1.00, lakeDepthFactor));
+        blendedAlbedo = mix(blendedAlbedo, bedWaterTint * 0.86, smoothstep(0.10, 1.00, lakeDepthFactor) * 0.34);
     }
 
     float rockContactAO = 1.0;
@@ -751,7 +756,8 @@ void main()
             nRaw += (tangent * distantTuftNormal.x + bitangent * distantTuftNormal.y) * wGrass;
         }
         if (isRiparian > 0.01) {
-            nRaw += (tangent * proceduralPebbleNormal.x + bitangent * proceduralPebbleNormal.y) * (isRiparian * 0.58 * puddleFlatten);
+            float underwaterAtten = 1.0 - clamp(lakeDepthFactor * 1.4, 0.0, 0.75);
+            nRaw += (tangent * proceduralPebbleNormal.x + bitangent * proceduralPebbleNormal.y) * (isRiparian * 0.58 * puddleFlatten * underwaterAtten);
         }
         if (wCliff > 0.01) {
             float cliffBlend = smoothstep(0.04, 0.40, wCliff);

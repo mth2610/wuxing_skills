@@ -164,7 +164,7 @@ void EvaluateFlowerGeometry(
     }
 
     float cupDish = (1.0 - s * s) * (-0.08 * petalR * t);
-    cupY += cupDish + flutter * t * petalR * 0.14;
+    cupY += cupDish + flutter * t * petalR * 0.28;
 
     vec3 localPetal = radial * radialDist + headBasis[1] * cupY + tangent * (s * wid);
     outLocalPos = headPos + localPetal;
@@ -193,7 +193,7 @@ void main()
         : ((rawSpecies <= 8) ? rawSpecies : (rawSpecies & 7));
 
     float stemH = max(tex1.x, 0.16);
-    float petalR = max(tex1.y * 1.32, stemH * 0.32);
+    float petalR = clamp(tex1.y * 0.92, 0.042, stemH * 0.16);
     float yaw = tex1.z;
     float cosYaw = cos(yaw);
     float sinYaw = sin(yaw);
@@ -236,8 +236,8 @@ void main()
         bendMag = maxAllowedBend;
     }
 
-    float flutter = sin(mod(u_time * 3.2, 6283.185307) + seed * 6.2831853 + float(idx) * 1.047) *
-                    (0.04 + 0.08 * min(u_windStrength, 1.5));
+    float flutter = sin(mod(u_time * 4.2, 6283.185307) + seed * 6.2831853 + float(idx) * 1.047) *
+                    (0.12 + 1.85 * min(u_windStrength, 0.25));
 
     vec3 localPos, localNormal;
     float ao;

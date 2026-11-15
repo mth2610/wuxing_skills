@@ -127,9 +127,11 @@ void main()
         float centerRib = (1.0 / (1.0 + s26 + 0.48 * s26 * s26)) * (1.0 - t * 0.55);
         float sideVeins = (distSq < 484.0) ? (sin(s * 26.0 - t * 14.0) * 0.5 + 0.5) : 0.5;
         float veinMask = mix(centerRib, sideVeins * (1.0 - s * 0.40), 0.38) * (1.0 - t * 0.30);
-        membraneThickness = clamp(0.18 + veinMask * 0.58 + (1.0 - t) * 0.30, 0.12, 1.0);
+        membraneThickness = clamp(0.16 + veinMask * 0.56 + (1.0 - t) * 0.32, 0.10, 1.0);
         float veinContrast = (u_sssParams.w > 0.01) ? u_sssParams.w : 0.92;
-        albedo *= mix(0.84, 1.06, 1.0 - veinMask * 0.38 * veinContrast);
+        float throatCup = mix(0.76, 1.08, smoothstep(0.04, 0.62, t));
+        float edgeRoll = smoothstep(0.58, 0.96, s) * smoothstep(0.18, 0.85, t);
+        albedo *= mix(0.84, 1.06, 1.0 - veinMask * 0.38 * veinContrast) * throatCup * (1.0 + edgeRoll * 0.08);
 
         // Petal vein micro-normal relief for silky specular catchlights & cupped petal curvature
         if (part == 2 && distSq < 484.0) {
@@ -182,9 +184,9 @@ void main()
     vec3 sssLight = sssTint * u_lightColor * (sssFactor * mix(0.45, 1.0, shadowVis));
     vec3 rimLight = mix(albedo, vec3(1.0, 0.97, 0.90), 0.5) * u_lightColor * (fresnel * 0.32 * rimStrength * petalShadow);
     vec3 specLight = u_lightColor * (spec * petalShadow);
-    float baseContactAO = (part >= 2) ? mix(0.36, 1.0, smoothstep(0.0, 0.52, t)) : mix(0.55, 1.0, smoothstep(0.0, 0.45, t));
+    float baseContactAO = (part >= 2) ? mix(0.30, 1.0, smoothstep(0.0, 0.56, t)) : mix(0.52, 1.0, smoothstep(0.0, 0.45, t));
     vec3 ambientLight = (albedo * skyTint + groundBounce) * (v_ao * baseContactAO) * mix(0.68, 1.0, shadowVis);
-    directLight *= mix(0.58, 1.0, smoothstep(0.0, 0.42, t));
+    directLight *= mix(0.50, 1.0, smoothstep(0.0, 0.46, t));
 
     vec3 lit = ambientLight + directLight + sssLight + rimLight + specLight;
     if (distSq < 1225.0) {

@@ -14,7 +14,7 @@
 #define SONG_QUAO_LAKE_RADIUS_X 14.516575f
 #define SONG_QUAO_LAKE_RADIUS_Z 12.500000f
 #define SONG_QUAO_LAKE_WATER_Y 0.196050f
-#define SONG_QUAO_LAKE_BED_MIN_Y -0.288579f
+#define SONG_QUAO_LAKE_BED_MIN_Y -0.350103f
 #include "song_quao_rock_data.h"
 #include "song_quao_flora_data.h"
 #include "song_quao_debris_data.h"

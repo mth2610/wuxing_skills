@@ -219,15 +219,15 @@ void MapFlora_GenerateFlowerPlacements(
             bool tallAccent = (variant == 2 || variant == 4 || variant == 6 || variant == 8);
             float coreLift = isColony ? (1.0f - 0.14f * radialNorm) : 0.86f;
             // Wildflower stalks emerge proudly above the waving meadow blades (0.62m..1.05m; Cỏ Lau 2.2m..2.9m)
-            float driftHeightBase = (variant == 8) ? 2.50f : (tallAccent ? 0.76f : 0.64f);
-            outPlacements[outIdx].height = (driftHeightBase + (Nature_Random01(&rng) * 0.18f - 0.06f)) * coreLift;
+            float driftHeightBase = (variant == 8) ? 2.20f : (tallAccent ? 0.68f : 0.54f);
+            outPlacements[outIdx].height = (driftHeightBase + (Nature_Random01(&rng) * 0.16f - 0.05f)) * coreLift;
 
-            float baseBloomRadius = (variant == 8) ? 0.280f : (tallAccent ? 0.155f : 0.138f);
-            outPlacements[outIdx].bloomRadius = baseBloomRadius * (0.88f + Nature_Random01(&rng) * 0.44f) * (0.92f + 0.14f * coreLift);
+            float baseBloomRadius = (variant == 8) ? 0.220f : (tallAccent ? 0.092f : 0.078f);
+            outPlacements[outIdx].bloomRadius = baseBloomRadius * (0.86f + Nature_Random01(&rng) * 0.36f) * (0.92f + 0.12f * coreLift);
             outPlacements[outIdx].petalColor = MapProp_GetFlowerSpeciesColor(variant, Nature_Random01(&rng) > 0.74f);
             outPlacements[outIdx].petalCount = (unsigned char)(5 + (variant % 3));
             outPlacements[outIdx].bloomVariant = (unsigned char)variant;
-            outPlacements[outIdx].petalLengthScale = 1.08f + Nature_Random01(&rng) * 0.28f;
+            outPlacements[outIdx].petalLengthScale = 0.96f + Nature_Random01(&rng) * 0.22f;
         }
     }
 }
@@ -425,7 +425,7 @@ int MapFlora_GenerateMeadowPlacements(
         float flowAngle = -16.0f + macroSwirl + wave1 * 22.0f + eddy * 14.0f + patchAngleOffset;
 
         float hash = Nature_Hash01((unsigned int)i * 747796405u ^ (unsigned int)(cellX * 19349663) ^ (unsigned int)(cellZ * 83492791));
-        clump->rotationDeg = flowAngle + (hash - 0.5f) * 60.0f;
+        clump->rotationDeg = flowAngle + (hash - 0.5f) * 38.0f;
 
         float localHeight = clump->height;
         float localRadius = clump->radius;
@@ -672,7 +672,7 @@ MapFloraSystem MapProp_CreateFloraSystem(
 {
     MapFloraSystem flora = {0};
     flora.windDirection = (Vector2){0.95f, -0.31f};
-    flora.windStrength = 0.052f;
+    flora.windStrength = 0.088f;
 
     // 1. Valley / Meadow Grass (8.5m fine chunks cull off-screen margins without starving batching)
     if (grassPlacements && grassCount > 0)
@@ -770,14 +770,14 @@ MapFloraSystem MapProp_CreateFloraSystem(
 
                         Color tint = baseTint;
                         float tintDice = Nature_Random01(&cRng);
-                        if (tintDice > 0.88f)
-                            tint = (Color){232, 169, 173, 255}; // Soft Rose
-                        else if (tintDice > 0.68f)
-                            tint = (Color){230, 201, 140, 255}; // Golden Amber
+                        if (tintDice > 0.82f)
+                            tint = (Color){242, 232, 206, 255}; // Warm Champagne Silk
+                        else if (tintDice > 0.58f)
+                            tint = (Color){236, 238, 232, 255}; // Silver-Mist White
 
-                        // Natural riverbank reed plume height: ~1.45m - 1.85m (human eye-level)
-                        float h = 1.48f + 0.36f * Nature_Random01(&cRng);
-                        float sc = 0.85f + 0.25f * (mp->radius / 0.30f);
+                        // Natural riverbank reed plume height: ~1.38m - 1.80m with fuller feathery volume
+                        float h = 1.38f + 0.42f * Nature_Random01(&cRng);
+                        float sc = 1.06f + 0.34f * (mp->radius / 0.30f);
 
                         placements[idx++] = (MapCoLauPlacement){
                             .position = mp->position,
@@ -880,14 +880,14 @@ void MapProp_DrawFloraSystem(MapFloraSystem *flora)
     }
     if (flora->reedCount > 0)
     {
-        // Keep windStrength <= 0.06f so reeds use the fast 32x32 GPU wind cache
+        // Keep windStrength <= 0.12f so reeds use the fast 32x32 GPU wind cache
         MapProp_DrawMeadow(&flora->reedMeadow, (Vector3){0}, flora->time,
-                           flora->windDirection, 0.058f);
+                           flora->windDirection, 0.095f);
     }
     if (flora->pampasCount > 0)
     {
         MapProp_DrawMeadow(&flora->pampasMeadow, (Vector3){0}, flora->time,
-                           flora->windDirection, 0.052f);
+                           flora->windDirection, 0.088f);
     }
     if (flora->coLauCount > 0 && flora->coLauField.ready)
     {
@@ -897,7 +897,7 @@ void MapProp_DrawFloraSystem(MapFloraSystem *flora)
     if (flora->flowerClusterCount > 0 && flora->flowerFields)
     {
         MapProp_DrawFlowerFieldBatch(flora->flowerFields, flora->flowerClusterCount,
-                                     (Vector3){0}, flora->time, flora->windDirection, 0.032f);
+                                     (Vector3){0}, flora->time, flora->windDirection, 0.075f);
     }
 }
 
@@ -917,12 +917,12 @@ void MapProp_DrawFloraShadowCasters(MapFloraSystem *flora)
         if (flora->reedCount > 0)
         {
             MapProp_DrawMeadowShadowCasters(&flora->reedMeadow, offset, flora->time,
-                                            flora->windDirection, 0.058f);
+                                            flora->windDirection, 0.095f);
         }
         if (flora->pampasCount > 0)
         {
             MapProp_DrawMeadowShadowCasters(&flora->pampasMeadow, offset, flora->time,
-                                            flora->windDirection, 0.052f);
+                                            flora->windDirection, 0.088f);
         }
     }
     if (Nature_ShadowCasterTypeEnabled(true))
@@ -930,13 +930,13 @@ void MapProp_DrawFloraShadowCasters(MapFloraSystem *flora)
         if (flora->coLauCount > 0 && flora->coLauField.ready)
         {
             MapProp_DrawCoLauFieldShadowCaster(
-                &flora->coLauField, offset, flora->time, flora->windDirection, 0.032f);
+                &flora->coLauField, offset, flora->time, flora->windDirection, flora->windStrength);
         }
         if (GfxQuality_Get() >= GFX_ULTRA && flora->flowerFields && flora->flowerClusterCount > 0)
         {
             MapProp_DrawFlowerFieldShadowCasterBatch(
                 flora->flowerFields, flora->flowerClusterCount, offset,
-                flora->time, flora->windDirection, 0.032f);
+                flora->time, flora->windDirection, 0.075f);
         }
     }
 }

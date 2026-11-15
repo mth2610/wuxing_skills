@@ -425,7 +425,7 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
     w_lake=w_lake*w_lake*(3.0-2.0*w_lake)
     # Smooth C2 bowl bathymetry with convex bank blending: eliminates 1m grid-step sawtooth walls
     lake_depth_profile = gaussian_filter_2d(np.clip(lake_inside / 7.5, 0.0, 1.0), 1.8)
-    lake_carve = 0.08 * w_lake + 1.25 * np.power(lake_depth_profile, 1.25)
+    lake_carve = 0.08 * w_lake + 1.62 * np.power(lake_depth_profile, 1.18)
     target_lake_bed = np.minimum(terrain, lake_y - lake_carve)
     terrain = terrain * (1.0 - w_lake) + target_lake_bed * w_lake
     # Re-route after compression; retain every branch over the area threshold.
@@ -473,7 +473,7 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
         corridor[sl]=np.maximum(corridor[sl],weight)
         level=conditioned[r,c]*(1-t)+conditioned[nr,nc]*t
         # Carve a smooth U-shaped bed with wide C2 bank interpolation across cells
-        bed=np.minimum(terrain[sl],level-0.46*weight)
+        bed=np.minimum(terrain[sl],level-1.35*weight)
         terrain[sl]=terrain[sl]*(1.0-weight)+bed*weight
         w_surf=np.clip((radius*1.85-dist)/max(radius*1.85,1e-6),0,1)
         w_surf=w_surf*w_surf*(3.0-2.0*w_surf)
@@ -485,6 +485,19 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
     bed_smooth = normalized_smooth(terrain, valid, 1.75)
     smooth_mask = np.clip(corridor * 0.90 + w_lake * 0.92, 0.0, 0.94)
     terrain = terrain * (1.0 - smooth_mask) + bed_smooth * smooth_mask
+    # Post-smoothing channel thalweg deepening up to 1.70m max depth (clamped at >= -0.35m)
+    est_lake_w = np.clip(lake_blend * 2.2, 0.0, 1.0)
+    est_stream_surf = np.where(has_stream_surf, avg_stream_surf, terrain - 0.25)
+    est_water_plane = est_stream_surf * (1.0 - est_lake_w) + np.maximum(est_stream_surf, lake_y) * est_lake_w
+    est_wd = np.where(valid & (perimeter > cliff_margin), np.maximum(0.0, est_water_plane - terrain), 0.0)
+    pre_wet = est_wd > 0.002
+    if pre_wet.any():
+        dist_in = distance_inside(pre_wet, sx, sz)
+        shelf_t = np.clip((dist_in - 0.85) / 2.15, 0.0, 1.0)
+        shelf_smooth = gaussian_filter_2d(shelf_t * shelf_t * (3.0 - 2.0 * shelf_t) * pre_wet, 0.85) * pre_wet
+        target_wd = np.clip(est_wd + (est_wd * 0.65 + 0.80) * shelf_smooth, est_wd,
+                            np.minimum(1.70, np.maximum(est_wd, est_water_plane + 0.35)))
+        terrain = np.where(pre_wet, np.minimum(terrain, est_water_plane - target_wd), terrain)
     # Continuous water_plane field (extends smoothly onto adjacent dry banks for exact zero-depth contour clipping)
     lake_plane_w = np.clip(lake_blend * 2.2, 0.0, 1.0)
     stream_plane = np.where(has_stream_surf, avg_stream_surf, terrain - 0.25)
