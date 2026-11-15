@@ -224,32 +224,33 @@ void main()
 
     vec3 viewVec = u_viewPos - fragPosition;
     float distSq = dot(viewVec, viewVec);
-    float detailDistFade = 1.0 / (1.0 + distSq * 0.0015);
-    float dualDetailFade = 1.0 - smoothstep(256.0, 484.0, distSq);
+    float detailDistFade = 1.0 / (1.0 + distSq * 0.0038);
+    float dualDetailFade = 1.0 - smoothstep(256.0, 576.0, distSq);
 
     float flowSpeedSq = dot(flowVel, flowVel);
     vec2 detailSlope = vec2(0.0);
     if (distSq < 2500.0) {
-        const vec2 eps = vec2(0.006, 0.0);
-        vec2 detDx0 = xzDx * u_detailScale;
-        vec2 detDy0 = xzDy * u_detailScale;
+        // Smooth dual-octave finite difference eliminates texel-level stipple noise
+        const vec2 eps = vec2(0.022, 0.0);
+        vec2 detDx0 = xzDx * (u_detailScale * 0.72);
+        vec2 detDy0 = xzDy * (u_detailScale * 0.72);
 
         if (flowSpeedSq > 0.000025) {
             // Constant scalar phase rate prevents spatial phase-shearing across variable-speed flow fields
-            float flowProgress = u_time * 0.55;
+            float flowProgress = u_time * 0.48;
             float phase0 = fract(flowProgress);
             float phase1 = fract(flowProgress + 0.5);
             float flowWeight = abs(2.0 * phase0 - 1.0);
 
-            vec2 baseUV = fragWorldXZ * u_detailScale;
-            vec2 flowAdvect = flowVel * 1.6;
+            vec2 baseUV = fragWorldXZ * (u_detailScale * 0.72);
+            vec2 flowAdvect = flowVel * 1.45;
             vec2 uv0 = baseUV - flowAdvect * phase0;
             vec2 uv1 = baseUV - flowAdvect * phase1 + vec2(3.7, 5.1);
             float n0 = textureGrad(texture0, uv0, detDx0, detDy0).r;
             vec2 s0 = vec2(textureGrad(texture0, uv0 + eps.xy, detDx0, detDy0).r,
                            textureGrad(texture0, uv0 + eps.yx, detDx0, detDy0).r) - n0;
 
-            if (distSq < 484.0) {
+            if (distSq < 576.0) {
                 float n1 = textureGrad(texture0, uv1, detDx0, detDy0).r;
                 vec2 s1 = vec2(textureGrad(texture0, uv1 + eps.xy, detDx0, detDy0).r,
                                textureGrad(texture0, uv1 + eps.yx, detDx0, detDy0).r) - n1;
@@ -258,7 +259,7 @@ void main()
                 detailSlope = s0;
             }
         } else {
-            vec2 detailUv0 = fragWorldXZ * u_detailScale + fract(vec2(t * 0.011, -t * 0.007));
+            vec2 detailUv0 = fragWorldXZ * (u_detailScale * 0.72) + fract(vec2(t * 0.011, -t * 0.007));
             float d0_val = textureGrad(texture0, detailUv0, detDx0, detDy0).r;
             vec2 d0_grad = vec2(textureGrad(texture0, detailUv0 + eps.xy, detDx0, detDy0).r,
                                 textureGrad(texture0, detailUv0 + eps.yx, detDx0, detDy0).r) - d0_val;
@@ -266,7 +267,7 @@ void main()
         }
     }
 
-    slope += detailSlope * (u_detailStrength * 2.40 * shoreFade * detailDistFade);
+    slope += detailSlope * (u_detailStrength * 1.25 * shoreFade * detailDistFade);
 
     // Conditional wave-field sampling (2D Shallow-Water PDE wave grid)
     vec2 interactSlope = vec2(0.0);
@@ -496,8 +497,8 @@ void main()
         float causticMin = min(c0, c1) * 2.2;
         float causticWave = causticMin * sqrt(max(causticMin, 0.0));
 
-        float causticIntensity = smoothstep(0.46, 0.86, causticWave) *
-                                 u_causticsStrength * 0.095 * depthFadeCaustic;
+        float causticIntensity = smoothstep(0.42, 0.84, causticWave) *
+                                 u_causticsStrength * 0.24 * depthFadeCaustic;
         causticLight = effectiveLight * (causticIntensity * transmittance);
     }
 
@@ -517,7 +518,7 @@ void main()
     sssLight += effectiveLight * vec3(0.06, 0.36, 0.28) * (sssMie3 * 0.38 * clamp(waterDepth * 1.5, 0.0, 1.0) * u_scatterCoeff);
 
     // ── 6. HYBRID FRESNEL & ENVIRONMENT REFLECTION (Energy-Conserving) ───────
-    const float F0 = 0.04;
+    const float F0 = 0.02;
     float omv = 1.0 - NdotV;
     float omv2 = omv * omv;
     float fresnel = F0 + (1.0 - F0) * (omv2 * omv2 * omv);
@@ -624,14 +625,22 @@ void main()
     float opticalWaterAlpha = (fresnel * 0.55) + waterColumnAlpha + glintAlphaBoost;
 
     float shoreEdgeFade = radialEdgeFade;
+    float meniscusDepth = waterDepth;
     if (u_waterShape == 3) {
-        shoreEdgeFade = smoothstep(0.000, 0.035, fragWaterDepth);
+        // Multi-octave world-space domain warp breaks up 1.0m piecewise-linear water mesh triangles
+        float edgeMacro = textureGrad(texture0, fragWorldXZ * 0.85 + vec2(1.7, 3.1), xzDx * 0.85, xzDy * 0.85).r;
+        float edgeMicro = textureGrad(texture0, fragWorldXZ * 3.10 - vec2(4.2, 0.9), xzDx * 3.10, xzDy * 3.10).r;
+        float swirl = sin(fragWorldXZ.x * 2.1 + fragWorldXZ.y * 1.7 + (edgeMacro - 0.5) * 3.2) * 0.5 + 0.5;
+        float shoreWarp = ((edgeMacro - 0.5) * 0.022 + (edgeMicro - 0.5) * 0.012 + (swirl - 0.5) * 0.008) + 0.005;
+        float warpedDepth = max(fragWaterDepth - shoreWarp, 0.0);
+        meniscusDepth = warpedDepth;
+        shoreEdgeFade = smoothstep(0.001, 0.072, warpedDepth);
     } else if (u_waterShape != 0) {
         shoreEdgeFade = smoothstep(0.001, 0.045, waterDepth);
     }
     float surfaceAlpha = opticalWaterAlpha * shoreEdgeFade;
 
-    float alpha = clamp(surfaceAlpha + brokenFoam * 0.45 * smoothstep(0.002, 0.045, waterDepth), 0.0, 0.92);
+    float alpha = clamp(surfaceAlpha + brokenFoam * 0.45 * smoothstep(0.002, 0.065, meniscusDepth) * shoreEdgeFade, 0.0, 0.92);
     if (alpha < 0.002) discard;
 
     // ── 9. ENERGY-CONSERVING COMPOSITION ─────────────────────────────────────

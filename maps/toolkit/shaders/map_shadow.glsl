@@ -300,11 +300,29 @@ float MapShadowVisibilityCovLS(vec4 lightSpace, vec4 staticLightSpace, vec3 norm
     float cosTheta = dot(normal, lightDir) * inversesqrt(max(normLenSq, 1e-12));
     float slope = 1.0 - clamp(cosTheta, 0.0, 1.0);
 
-    float dynamicShadow = MapDynamicShadowVisibilityCovLS(lightSpace, slope, dynamicCoverage);
+    vec4 dynLS = lightSpace;
+    vec4 statLS = staticLightSpace;
+#ifdef MAP_SHADOW_NORMAL_OFFSET_TEXELS
+    float nLenSq = dot(normal, normal);
+    if (nLenSq > 1e-12) {
+        vec3 nUnit = normal * inversesqrt(nLenSq);
+        vec3 pushOffset = nUnit * (float(MAP_SHADOW_NORMAL_OFFSET_TEXELS) * (0.35 + 0.65 * slope));
+        if (u_shadowEnabled > 0.5 && u_shadowTexel > 0.0) {
+            float dynTexel = MapShadowWorldTexelSize(u_lightVP, u_shadowTexel);
+            dynLS.xyz += (u_lightVP * vec4(pushOffset * dynTexel, 0.0)).xyz;
+        }
+        if (u_staticShadowEnabled > 0.5 && u_staticShadowTexel > 0.0) {
+            float statTexel = MapShadowWorldTexelSize(u_staticLightVP, u_staticShadowTexel);
+            statLS.xyz += (u_staticLightVP * vec4(pushOffset * statTexel, 0.0)).xyz;
+        }
+    }
+#endif
+
+    float dynamicShadow = MapDynamicShadowVisibilityCovLS(dynLS, slope, dynamicCoverage);
     if (dynamicShadow <= 0.001)
         return 0.0;
 
-    return min(dynamicShadow, MapStaticShadowVisibilityLS(staticLightSpace, slope));
+    return min(dynamicShadow, MapStaticShadowVisibilityLS(statLS, slope));
 }
 
 float MapShadowVisibilityCov(vec3 worldPos, vec3 normal, vec3 lightDir, out float dynamicCoverage)

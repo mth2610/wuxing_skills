@@ -1315,7 +1315,7 @@ void MapProp_PopulateRockItems(MapRockSystem *sys, const MapGroundSurface *groun
     {
         const MapRockItem *item = &items[i];
         Vector3 pos = item->position;
-        Vector3 normal;
+        Vector3 normal = {0.0f, 1.0f, 0.0f};
         if (ground && ground->ready)
         {
             if (!MapProp_SampleGroundSurface(ground, groundCenter, item->position.x, item->position.z, &pos, &normal))
@@ -1356,6 +1356,10 @@ void MapProp_PopulateRockItems(MapRockSystem *sys, const MapGroundSurface *groun
         }
         float heightScale = item->heightScale;
         float radiusScale = item->radiusScale;
+        float slopeCos = fmaxf(normal.y, 0.25f);
+        float tanSlope = sqrtf(fmaxf(0.0f, 1.0f - slopeCos * slopeCos)) / slopeCos;
+        float slopeSink = tanSlope * radiusScale * 0.55f;
+        sinkOffset = fminf(sinkOffset + slopeSink, fmaxf(sinkOffset, heightScale * 0.65f));
 
         // Let river stones sit naturally on the riverbed rather than stretching vertically
         // into unnatural dome halos above deep water.
@@ -1398,19 +1402,19 @@ float MapProp_EvaluateRockSuppression(float x, float z, const MapRockItem *items
             continue;
         float dx = x - items[i].position.x;
         float dz = z - items[i].position.z;
-        // Suppress grass fully inside rock mesh footprint (coreR = 0.85 * r)
-        // and taper smoothly outside (maxR = 1.25 * r) so blades don't stab through rock faces.
-        float maxR = r * 1.25f;
+        // Suppress grass only inside the tight rock ground-contact core (coreR = 0.42 * r)
+        // and taper over a narrow skirt (maxR = 0.72 * r) so meadow tufts hug boulders with zero bald holes.
+        float maxR = r * 0.72f;
         if (fabsf(dx) > maxR || fabsf(dz) > maxR)
             continue;
         float distSq = dx * dx + dz * dz;
         if (distSq > maxR * maxR)
             continue;
-        float coreR = r * 0.85f;
+        float coreR = r * 0.42f;
         if (distSq <= coreR * coreR)
             return 0.0f;
         float dist = sqrtf(distSq);
-        float t = (dist - coreR) / (r * 0.40f);
+        float t = (dist - coreR) / (r * 0.30f);
         float fade = t * t * (3.0f - 2.0f * t);
         if (fade < suppression)
             suppression = fade;

@@ -742,9 +742,12 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
             dist = 1.35 + 0.80 * c_idx
             cx_pos = x + np.cos(ang) * dist
             cz_pos = z + np.sin(ang) * dist
+            cr = min(max(int(round(cz_pos / sz)), 0), h - 1)
+            cc = min(max(int(round(cx_pos / sx)), 0), w - 1)
+            cy = float(ground[cr, cc])
             c_rScale = rScale * (0.42 + 0.20 * c_idx)
             c_hScale = hScale * (0.42 + 0.20 * c_idx)
-            rock_items.append(dict(x=cx_pos, y=y, z=cz_pos, rScale=c_rScale, hScale=c_hScale, rot=rot + 30 * c_idx, archetype=0))
+            rock_items.append(dict(x=cx_pos, y=cy, z=cz_pos, rScale=c_rScale, hScale=c_hScale, rot=rot + 30 * c_idx, archetype=0))
     # 3. River stones
     for i, (x, z, y) in enumerate(river_stones):
         rScale = 0.45 + 0.26 * ((i * 19) % 10) / 10.0

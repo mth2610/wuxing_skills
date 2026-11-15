@@ -369,9 +369,11 @@ int MapFlora_GenerateMeadowPlacements(
         },
         config.densityFn, config.densityUserData);
 
+    int writeCount = 0;
     for (int i = 0; i < count; i++)
     {
-        MapMeadowPlacement *clump = &outPlacements[i];
+        MapMeadowPlacement clumpVal = outPlacements[i];
+        MapMeadowPlacement *clump = &clumpVal;
         float cx = clump->position.x;
         float cz = clump->position.z;
 
@@ -472,13 +474,16 @@ int MapFlora_GenerateMeadowPlacements(
         if (config.edgeTaperFn)
         {
             float taper = config.edgeTaperFn(cx, cz, config.edgeTaperUserData);
+            if (taper <= 0.01f)
+                continue;
             taper = fminf(1.0f, fmaxf(0.28f, taper));
             clump->height *= taper;
-            clump->radius *= (1.24f - 0.24f * taper);
+            clump->radius *= (0.72f + 0.28f * taper);
         }
+        outPlacements[writeCount++] = *clump;
     }
 
-    return count;
+    return writeCount;
 }
 
 int MapFlora_GenerateReedPlacements(
@@ -669,7 +674,7 @@ MapFloraSystem MapProp_CreateFloraSystem(
     flora.windDirection = (Vector2){0.95f, -0.31f};
     flora.windStrength = 0.052f;
 
-    // 1. Valley / Meadow Grass (18m chunk size cuts draw calls & frustum checks while keeping tight culling)
+    // 1. Valley / Meadow Grass (8.5m fine chunks cull off-screen margins without starving batching)
     if (grassPlacements && grassCount > 0)
     {
         float lodDist = (style.lodDistance > 0.0f) ? style.lodDistance : 20.0f;
@@ -681,7 +686,7 @@ MapFloraSystem MapProp_CreateFloraSystem(
                                                       .bladesPerClump = (style.bladesPerClump > 0) ? style.bladesPerClump : 5,
                                                       .bladeSegments = (style.bladeSegments > 0) ? style.bladeSegments : 3,
                                                       .bladeWidthScale = (style.bladeWidthScale > 0.0f) ? style.bladeWidthScale : 0.136f,
-                                                      .chunkSize = 18.0f,
+                                                      .chunkSize = 8.5f,
                                                       .lodDistance = lodDist,
                                                       .midLodDistance = midDist,
                                                       .drawDistance = (style.drawDistance > 0.0f) ? style.drawDistance : 38.0f,
@@ -706,10 +711,10 @@ MapFloraSystem MapProp_CreateFloraSystem(
                                                     .bladesPerClump = 5,
                                                     .bladeSegments = 3,
                                                     .bladeWidthScale = 0.136f,
-                                                    .chunkSize = 20.0f,
+                                                    .chunkSize = 10.0f,
                                                     .lodDistance = 13.5f,
                                                     .midLodDistance = 7.0f,
-                                                    .drawDistance = 24.0f,
+                                                    .drawDistance = 30.0f,
                                                     .shadowDistance = (style.shadowDistance < 0.0f) ? 0.0f : ((style.shadowDistance > 0.0f) ? fminf(style.shadowDistance, 7.5f) : 7.5f),
                                                     .texturePath = NULL,
                                                     .hasPlumes = false,
@@ -728,10 +733,10 @@ MapFloraSystem MapProp_CreateFloraSystem(
                                                       .bladesPerClump = 5,
                                                       .bladeSegments = 3,
                                                       .bladeWidthScale = 0.112f,
-                                                      .chunkSize = 20.0f,
+                                                      .chunkSize = 10.0f,
                                                       .lodDistance = 13.5f,
                                                       .midLodDistance = 7.0f,
-                                                      .drawDistance = 24.0f,
+                                                      .drawDistance = 30.0f,
                                                       .shadowDistance = (style.shadowDistance < 0.0f) ? 0.0f : ((style.shadowDistance > 0.0f) ? fminf(style.shadowDistance, 7.5f) : 7.5f),
                                                       .texturePath = NULL,
                                                       .growthForm = MAP_MEADOW_GROWTH_PAMPAS,
@@ -818,9 +823,9 @@ MapFloraSystem MapProp_CreateFloraSystem(
                     stemColor, centerColor,
                     NULL, 0.0f, 1, 1);
 
-                // High-fidelity LOD: near 3D petals to 22m, far drift to 48m, shadow casters to 14m
-                MapProp_SetFlowerFieldLod(&flora.flowerFields[i], 22.0f, 14.0f);
-                MapProp_SetFlowerFieldDrawDistance(&flora.flowerFields[i], 48.0f);
+                // High-fidelity LOD: near 3D petals across default 35deg viewport, far drift to 44m
+                MapProp_SetFlowerFieldLod(&flora.flowerFields[i], 26.0f, 16.0f);
+                MapProp_SetFlowerFieldDrawDistance(&flora.flowerFields[i], 44.0f);
                 placementOffset += count;
             }
         }

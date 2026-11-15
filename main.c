@@ -356,6 +356,13 @@ static void CompositeScreenSpaceVFX(Camera3D camera)
   rlViewport(0, 0, GetRenderWidth(), GetRenderHeight());
 }
 
+static inline float QualityToRenderScale(GfxQuality q) {
+  return (q >= GFX_ULTRA) ? 1.00f :
+         (q >= GFX_HIGH)  ? 0.92f :
+         (q >= GFX_MED)   ? 0.78f :
+         (q >= GFX_LOW)   ? 0.65f : 0.92f;
+}
+
 int main(int argc, char **argv) {
   // Widened/heightened from 1200x700 so the sandbox tuning panel
   // (sandbox/ui_panel.c) has room for multi-column tunable layouts as skills
@@ -577,14 +584,15 @@ int main(int argc, char **argv) {
      render scale rather than the window: the frame is fill-bound, and the post
      composite upscales to the swapchain (that blit already existed for the
      Android native-size mismatch). See post_process/render_scale.h. */
+  GfxQuality_InitDefault();
   RenderScale_Init(GetRenderWidth(), GetRenderHeight());
+  RenderScale_SetScale(QualityToRenderScale(GfxQuality_Get()));
   SceneTargets_Init(RenderScale_GetWidth(), RenderScale_GetHeight());
   ScreenDistort_Init();
   LiquidSurface_Init(screenWidth, screenHeight);
   LiquidMetaball3D_Init();
   PostFX_Init(RenderScale_GetWidth(), RenderScale_GetHeight());
   SurfaceMaterial_Init(); // G2 — must precede InitSandbox (CharacterModel_Load applies it)
-  GfxQuality_InitDefault();
   GasSystem_Init(screenWidth, screenHeight);
   Atmosphere_Init();      // G3 — ambient dust motes over the arena
   Atmosphere_Configure((Vector3){6.0f, 3.0f, 4.4f}, (Vector3){15.0f, 5.0f, 15.0f},
@@ -766,8 +774,8 @@ int main(int argc, char **argv) {
                                .chromaticEnabled = false,
                                .chromaticStrength = 0.15f,
                                .vignetteEnabled = true,
-                               .vignetteRadius = 0.85f,
-                               .vignetteSoftness = 0.45f,
+                               .vignetteRadius = 1.15f,
+                               .vignetteSoftness = 0.65f,
                                .colorGradeEnabled = true,
                                .contrast = 1.12f,
                                /* 1.55, up from 1.28 on 19/08/2026. ACES desaturates, and
@@ -944,11 +952,7 @@ int main(int argc, char **argv) {
     if (resolvedQuality != s_lastScaledQuality)
     {
         s_lastScaledQuality = resolvedQuality;
-        float targetScale = (resolvedQuality >= GFX_ULTRA) ? 1.00f :
-                            (resolvedQuality >= GFX_HIGH)  ? 0.72f :
-                            (resolvedQuality >= GFX_MED)   ? 0.66f :
-                            (resolvedQuality >= GFX_LOW)   ? 0.62f : 0.72f;
-        RenderScale_SetScale(targetScale);
+        RenderScale_SetScale(QualityToRenderScale(resolvedQuality));
     }
     TimeFX_SetRawDelta(rawDt);
     float dt = headlessFixedStep ? rawDt : TimeFX_Apply(rawDt);

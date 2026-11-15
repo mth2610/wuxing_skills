@@ -155,31 +155,46 @@ int MapProp_GenerateMeadowPlacements(MapMeadowPlacement *outPlacements, int maxC
     if (distribution.jitter > 0.95f)
         distribution.jitter = 0.95f;
 
-    float rowSpacing = distribution.spacing * 0.8660254f;
+    // Area-equivalent square strata + R2 low-discrepancy + smooth curl domain warp
+    // breaks regular 60-degree hex corridors visible at 35-degree isometric camera tilt
+    float cellStep = distribution.spacing * 0.9306049f;
+    float rowSpacing = cellStep;
     int columns = (int)ceilf((distribution.maxBounds.x - distribution.minBounds.x) /
-                             distribution.spacing);
+                             cellStep);
     int rows = (int)ceilf((distribution.maxBounds.y - distribution.minBounds.y) /
                           rowSpacing);
     unsigned int rng = distribution.seed ? distribution.seed : 1u;
     int count = 0;
     unsigned int accepted = 0;
     unsigned int selectionRng = rng ^ 0xa511e9b3u;
-    const float jitterXScale = distribution.spacing * distribution.jitter;
+    const float jitterXScale = cellStep * distribution.jitter;
     const float jitterZScale = rowSpacing * distribution.jitter;
     const float radiusSpan = distribution.maxRadius - distribution.minRadius;
     const float heightSpan = distribution.maxHeight - distribution.minHeight;
     const bool sampleGround = (ground != NULL && ground->ready);
+    const float kR2G1 = 0.754877666f;
+    const float kR2G2 = 0.569840291f;
 
     for (int row = 0; row < rows; row++)
     {
-        float rowOffset = (row & 1) ? (distribution.spacing * 0.5f) : 0.0f;
         float baseZ = distribution.minBounds.y + ((float)row + 0.5f) * rowSpacing;
         for (int column = 0; column < columns; column++)
         {
-            float jx = (Nature_Random01(&rng) - 0.5f) * jitterXScale;
-            float jz = (Nature_Random01(&rng) - 0.5f) * jitterZScale;
-            float x = distribution.minBounds.x + (float)column * distribution.spacing + rowOffset + jx;
+            float baseX = distribution.minBounds.x + ((float)column + 0.5f) * cellStep;
+            float r2x = fmodf((float)column * kR2G1 + (float)row * kR2G2, 1.0f) - 0.5f;
+            float r2z = fmodf((float)column * kR2G2 + (float)row * 0.324717957f, 1.0f) - 0.5f;
+            float randX = Nature_Random01(&rng) - 0.5f;
+            float randZ = Nature_Random01(&rng) - 0.5f;
+            float warpX = sinf(baseZ * 0.43f + cosf(baseX * 0.27f) * 1.4f) * (cellStep * 0.62f);
+            float warpZ = cosf(baseX * 0.39f - sinf(baseZ * 0.31f) * 1.4f) * (cellStep * 0.62f);
+            float jx = (r2x * 0.55f + randX * 0.45f) * jitterXScale + warpX * distribution.jitter;
+            float jz = (r2z * 0.55f + randZ * 0.45f) * jitterZScale + warpZ * distribution.jitter;
+            float x = baseX + jx;
             float z = baseZ + jz;
+            if (x < distribution.minBounds.x) x = distribution.minBounds.x;
+            if (x > distribution.maxBounds.x) x = distribution.maxBounds.x;
+            if (z < distribution.minBounds.y) z = distribution.minBounds.y;
+            if (z > distribution.maxBounds.y) z = distribution.maxBounds.y;
             float density = densityFn ? densityFn(x, z, userData) : 1.0f;
             if (density <= 0.0f)
             {
@@ -1451,6 +1466,15 @@ void MapProp_PrepareMeadow(MapMeadowSurface *meadow, Vector3 worldOffset)
     if (NatureParametric_IsPrepared(meadow, worldOffset, view.bands))
         return;
     Nature_RefreshFrustumCache();
+
+    // Velocity-padded predictive frustum margin prevents edge pop-in during fast Khinh Cong / dashes
+    static Vector3 s_prevCamPos = {0};
+    static bool s_hasPrevCam = false;
+    float camMove = s_hasPrevCam ? Vector3Distance(camera.position, s_prevCamPos) : 0.0f;
+    s_prevCamPos = camera.position;
+    s_hasPrevCam = true;
+    float cullMargin = 2.0f + fminf(camMove * 1.5f, 4.0f);
+
     const bool hasDrawDist = (view.drawDistance > 0.0f);
     for (int i = 0; i < meadow->chunkCount; i++)
     {
@@ -1460,14 +1484,14 @@ void MapProp_PrepareMeadow(MapMeadowSurface *meadow, Vector3 worldOffset)
         {
             float dx = camera.position.x - center.x;
             float dz = camera.position.z - center.z;
-            float maxDrawDist = view.drawDistance + chunk->radius;
+            float maxDrawDist = view.drawDistance + chunk->radius + cullMargin;
             if (dx * dx + dz * dz > maxDrawDist * maxDrawDist)
             {
                 chunk->visibleThisFrame = false;
                 continue;
             }
         }
-        chunk->visibleThisFrame = Nature_IsChunkVisibleFast(center, chunk->radius);
+        chunk->visibleThisFrame = Nature_IsChunkVisibleFast(center, chunk->radius + cullMargin);
     }
     NatureParametric_PrepareVisible(meadow, worldOffset, view.bands);
 }
@@ -1924,7 +1948,7 @@ void MapProp_DrawMeadowShadowCasters(MapMeadowSurface *meadow, Vector3 worldOffs
     float groundRadius = fmaxf(halfExtent, 8.0f) / fmaxf(fabsf(sunDir.y), 0.32f);
     // Mobile/Medium: thu gọn bán kính đổ bóng động của cỏ để tránh quá tải tile binning & shadow overdraw
     float qualityDistScale = (quality >= GFX_HIGH) ? 1.0f : 0.62f;
-    float sweepPad = (quality >= GFX_HIGH) ? 6.0f : 3.5f;
+    float sweepPad = (quality >= GFX_HIGH) ? 3.2f : 2.2f;
     float maxDist = fminf(meadow->shadowDistance * qualityDistScale + 4.0f, halfExtent + 4.0f);
     bool filterActive = Nature_ShadowCasterFilterActive();
     Vector3 shadowSweepOffset = {sunDir.x * 1.8f, 0.0f, sunDir.z * 1.8f};

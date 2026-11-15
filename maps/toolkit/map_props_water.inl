@@ -1877,8 +1877,9 @@ void MapProp_UpdateWaterSurface(MapWaterSurface *water, float dt)
 
     if (interactorActive)
     {
-        float moveDx = water->hasInteractorPrev ? (water->interactorPos.x - water->interactorPrevPos.x) : (water->interactorVel.x * dt);
-        float moveDz = water->hasInteractorPrev ? (water->interactorPos.z - water->interactorPrevPos.z) : (water->interactorVel.z * dt);
+        Vector3 prevPos = water->hasInteractorPrev ? water->interactorPrevPos : water->interactorPos;
+        float moveDx = water->hasInteractorPrev ? (water->interactorPos.x - prevPos.x) : (water->interactorVel.x * dt);
+        float moveDz = water->hasInteractorPrev ? (water->interactorPos.z - prevPos.z) : (water->interactorVel.z * dt);
         water->interactorPrevPos = water->interactorPos;
         water->hasInteractorPrev = true;
 
@@ -1895,41 +1896,53 @@ void MapProp_UpdateWaterSurface(MapWaterSurface *water, float dt)
             int rCells = (int)ceilf(brushRad / dx);
             float invRSq = 1.0f / brushRadSq;
 
-            int ci = (int)roundf((water->interactorPos.x - center.x + radX) / dx);
-            int cj = (int)roundf((water->interactorPos.z - center.z + radZ) / dz);
+            // Sub-sample along high-speed dash/Khinh Cong path so SWE wakes stay continuous
+            int subSteps = (int)ceilf(dragLen / fmaxf(dx * 0.55f, 0.08f));
+            if (subSteps < 1) subSteps = 1;
+            if (subSteps > 8) subSteps = 8;
+            float invSubSteps = 1.0f / (float)subSteps;
 
-            for (int dj = -rCells; dj <= rCells; dj++)
+            for (int step = 0; step < subSteps; step++)
             {
-                int nj = cj + dj;
-                if (nj < 1 || nj >= n - 1)
-                    continue;
-                float dzOffset = (float)dj * dz;
-                float dzSq = dzOffset * dzOffset;
-                int row = nj * n;
-                for (int di = -rCells; di <= rCells; di++)
+                float frac = (float)(step + 1) * invSubSteps;
+                float sampleX = prevPos.x + moveDx * frac;
+                float sampleZ = prevPos.z + moveDz * frac;
+                int ci = (int)roundf((sampleX - center.x + radX) / dx);
+                int cj = (int)roundf((sampleZ - center.z + radZ) / dz);
+
+                for (int dj = -rCells; dj <= rCells; dj++)
                 {
-                    int ni = ci + di;
-                    if (ni < 1 || ni >= n - 1)
+                    int nj = cj + dj;
+                    if (nj < 1 || nj >= n - 1)
                         continue;
-                    float dxOffset = (float)di * dx;
-                    float distSq = dxOffset * dxOffset + dzSq;
-                    if (distSq > brushRadSq)
-                        continue;
-
-                    int idx = row + ni;
-                    if (water->waterDepth[idx] > 0.02f)
+                    float dzOffset = (float)dj * dz;
+                    float dzSq = dzOffset * dzOffset;
+                    int row = nj * n;
+                    for (int di = -rCells; di <= rCells; di++)
                     {
-                        float falloff = expf(-distSq * invRSq * 2.5f) * dragStrength;
-                        float push = 0.06f * falloff;
-                        if (dirX > 0.0f)
-                            water->fluxR[idx] += push * dirX;
-                        else
-                            water->fluxL[idx] += push * (-dirX);
+                        int ni = ci + di;
+                        if (ni < 1 || ni >= n - 1)
+                            continue;
+                        float dxOffset = (float)di * dx;
+                        float distSq = dxOffset * dxOffset + dzSq;
+                        if (distSq > brushRadSq)
+                            continue;
 
-                        if (dirZ > 0.0f)
-                            water->fluxB[idx] += push * dirZ;
-                        else
-                            water->fluxT[idx] += push * (-dirZ);
+                        int idx = row + ni;
+                        if (water->waterDepth[idx] > 0.02f)
+                        {
+                            float falloff = expf(-distSq * invRSq * 2.5f) * dragStrength * invSubSteps;
+                            float push = 0.06f * falloff;
+                            if (dirX > 0.0f)
+                                water->fluxR[idx] += push * dirX;
+                            else
+                                water->fluxL[idx] += push * (-dirX);
+
+                            if (dirZ > 0.0f)
+                                water->fluxB[idx] += push * dirZ;
+                            else
+                                water->fluxT[idx] += push * (-dirZ);
+                        }
                     }
                 }
             }

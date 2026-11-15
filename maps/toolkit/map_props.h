@@ -269,7 +269,7 @@ void MapProp_DrawCloudSea(const MapCloudSea *cloud, Vector3 worldCenter, float y
 void MapProp_DrawIslandMist(const MapCloudSea *cloud, Vector3 worldCenter);
 void MapProp_UnloadCloudSea(MapCloudSea *cloud);
 
-#define MAX_CLIFF_CHUNKS 32
+#define MAX_CLIFF_CHUNKS 48
 
 typedef struct
 {

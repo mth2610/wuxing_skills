@@ -38,6 +38,14 @@ uniform mat4 u_cloudWorldFromShader;
 
 out vec4 finalColor;
 
+// Reoriented Normal Mapping (Barré-Brisebois & Hill): stacks micro-grain onto macro rock facets without flattening.
+vec3 PropBlendRNM(vec3 n1, vec3 n2) {
+    vec3 t = n1 + vec3(0.0, 0.0, 1.0);
+    vec3 u = n2 * vec3(-1.0, -1.0, 1.0);
+    vec3 r = t * dot(t, u) - u * t.z;
+    return r * inversesqrt(max(dot(r, r), 1e-8));
+}
+
 void main() {
     // [VULKAN / SPIR-V FIX]: Tính trước đạo hàm UV trong luồng đồng nhất
     vec2 uvDx = dFdx(fragTexCoord);
@@ -58,7 +66,7 @@ void main() {
 
     // Biplanar texture projection (Quilez): 2 taps instead of 3, eliminates UV stretching across polyhedral facets
     vec3 absWorldN = abs(worldSmoothN);
-    float biplanarTiling = (isRiverStone > 0.5) ? 0.35 : 0.28;
+    float biplanarTiling = (isRiverStone > 0.5) ? 0.82 : 0.68;
     vec2 uvY = worldPosition.xz * biplanarTiling;
     vec2 uvH = (absWorldN.x > absWorldN.z) ? worldPosition.zy * biplanarTiling : worldPosition.xy * biplanarTiling;
     float wY = clamp((absWorldN.y - 0.35) * (1.0 / 0.50), 0.0, 1.0);
@@ -72,23 +80,27 @@ void main() {
     vec4 albedo = (texY * wY + texH * wH);
 
     // Natural mineral lithology calibration: preserve genuine granite, river stone & scree tones
-    albedo.rgb = mix(albedo.rgb, vec3(dot(albedo.rgb, vec3(0.3333333))), 0.06) * 0.95;
+    albedo.rgb = mix(albedo.rgb, vec3(dot(albedo.rgb, vec3(0.3333333))), 0.08) * 0.96;
     albedo.rgb *= colDiffuse.rgb;
 
     vec3 normY = textureGrad(texture2, uvY, uvDxY, uvDyY).rgb * 2.0 - 1.0;
     vec3 normH = textureGrad(texture2, uvH, uvDxH, uvDyH).rgb * 2.0 - 1.0;
-    vec3 normalSample = normY * wY + normH * wH;
+    vec3 macroNorm = normY * wY + normH * wH;
+    macroNorm *= inversesqrt(max(dot(macroNorm, macroNorm), 1e-8));
+    vec3 normalSample = macroNorm;
 
-    // High-frequency crystalline mineral grain & micro-facet detail on close zoom (< 18m)
-    if (camDistSq < 324.0) {
-        float detailWeight = (1.0 - camDistSq * (1.0 / 324.0)) * 0.38;
-        vec2 detailUV = uvH * 3.2;
-        vec2 detailDx = uvDxH * 3.2;
-        vec2 detailDy = uvDyH * 3.2;
+    // High-frequency crystalline mineral grain & micro-facet detail via RNM (< 24m)
+    if (camDistSq < 576.0) {
+        float detailWeight = (1.0 - camDistSq * (1.0 / 576.0)) * 0.65;
+        vec2 detailUV = uvH * 2.8 + vec2(0.17, 0.31);
+        vec2 detailDx = uvDxH * 2.8;
+        vec2 detailDy = uvDyH * 2.8;
         vec3 detailNorm = textureGrad(texture2, detailUV, detailDx, detailDy).rgb * 2.0 - 1.0;
-        normalSample = mix(normalSample, detailNorm, detailWeight);
+        detailNorm.xy *= 0.85 * detailWeight;
+        detailNorm *= inversesqrt(max(dot(detailNorm, detailNorm), 1e-8));
+        normalSample = PropBlendRNM(macroNorm, detailNorm);
         vec3 detailAlb = textureGrad(texture0, detailUV, detailDx, detailDy).rgb;
-        albedo.rgb *= mix(vec3(1.0), detailAlb * 1.28, detailWeight * 0.35);
+        albedo.rgb *= mix(vec3(1.0), clamp(detailAlb * 1.32, vec3(0.72), vec3(1.26)), detailWeight * 0.42);
     }
 
     // Bảo vệ chống suy biến vector tiếp tuyến T (NaN) và bảo toàn chiều Bitangent (handedness)
@@ -122,20 +134,27 @@ void main() {
     actualLight *= 1.0 / (1.0 + max(worldLightDir.y - 0.36, 0.0) * 0.82);
     vec3 actualAmbient = (dot(u_ambientColor, u_ambientColor) > 0.001) ? u_ambientColor : vec3(0.36, 0.42, 0.50);
 
-    // Coherent world-space geological strata variation matching island bedrock
-    float strataNoise = sin(worldPosition.y * 3.8 + sin(worldPosition.x * 0.28 + worldPosition.z * 0.22) * 1.35) * 0.5 + 0.5;
-    float fineStrata = sin(worldPosition.y * 12.0 + normalSample.x * 1.8) * 0.5 + 0.5;
-    vec3 rockAlbedo = albedo.rgb * mix(vec3(0.88, 0.86, 0.84), vec3(1.10, 1.05, 0.98), strataNoise * 0.70 + fineStrata * 0.30);
+    // Coherent world-space geological strata & fracture cavity variation
+    float strataNoise = sin(worldPosition.y * 4.2 + sin(worldPosition.x * 0.32 + worldPosition.z * 0.26) * 1.45) * 0.5 + 0.5;
+    float fineStrata = sin(worldPosition.y * 14.0 + normalSample.x * 2.1) * 0.5 + 0.5;
+    float fractureWave = abs(sin(worldPosition.x * 2.9 + worldPosition.y * 1.7 + sin(worldPosition.z * 2.4) * 1.1));
+    float fractureCavity = smoothstep(0.0, 0.22, fractureWave);
+    vec3 rockAlbedo = albedo.rgb * mix(vec3(0.84, 0.82, 0.80), vec3(1.12, 1.07, 1.00), strataNoise * 0.65 + fineStrata * 0.35);
+    rockAlbedo *= mix(0.68, 1.04, fractureCavity);
 
     // Top-surface moss & lichen colonization harmonized with song_quao meadow palette
+    float mossPatch = sin(worldPosition.x * 2.7 + cos(worldPosition.z * 2.3) * 1.4) * 0.5 + 0.5;
     float altitudeMoss = (1.0 - smoothstep(9.5, 13.5, worldPosition.y)) * 0.40 + 0.60;
-    float topMossMask = smoothstep(0.48, 0.78, worldNormal.y) * smoothstep(-0.18, 0.38, fragLocalY)
-                      * smoothstep(0.22, 0.68, albedo.g) * altitudeMoss;
+    float crevicePocket = (1.0 - fractureCavity) * 0.35 + (1.0 - macroNorm.z) * 0.25;
+    float topMossMask = smoothstep(0.46, 0.78, worldNormal.y + crevicePocket * 0.22)
+                      * smoothstep(-0.22, 0.32, fragLocalY)
+                      * smoothstep(0.18, 0.68, mossPatch * 0.55 + albedo.g * 0.45)
+                      * altitudeMoss;
     topMossMask *= (1.0 - isRiverStone * 0.90);
-    vec3 crownMossAlbedo = mix(vec3(0.15, 0.28, 0.09), vec3(0.28, 0.44, 0.14), albedo.r);
-    vec3 lichenTone = vec3(0.52, 0.49, 0.22);
-    crownMossAlbedo = mix(crownMossAlbedo, lichenTone, smoothstep(0.46, 0.84, albedo.r));
-    rockAlbedo = mix(rockAlbedo, crownMossAlbedo, topMossMask * 0.84);
+    vec3 crownMossAlbedo = mix(vec3(0.14, 0.25, 0.08), vec3(0.24, 0.38, 0.13), mossPatch);
+    vec3 lichenTone = vec3(0.48, 0.46, 0.22);
+    crownMossAlbedo = mix(crownMossAlbedo, lichenTone, smoothstep(0.52, 0.86, albedo.r) * 0.65);
+    rockAlbedo = mix(rockAlbedo, crownMossAlbedo, topMossMask * 0.82);
 
     // Lower skirt earthy moss & turf grounding blend matching meadow roots & dark loam
     float skirtMask = (1.0 - smoothstep(-0.46, 0.22, fragLocalY));
@@ -205,8 +224,10 @@ void main() {
     }
     float groundAO = clamp(worldPosition.y * 0.35 + 0.75, 0.40, 1.0);
     float skirtAO = clamp(0.54 + 0.46 * smoothstep(-0.50, 0.12, fragLocalY), 0.54, 1.0);
-    float creviceAO = clamp(normalSample.z * 1.30 - 0.22, 0.52, 1.0);
+    float creviceAO = clamp((normalSample.z * 1.30 - 0.22) * mix(0.62, 1.0, fractureCavity), 0.42, 1.0);
+    float mossSSS = pow(max(dot(viewDir, -modelLightDir), 0.0), 3.0) * topMossMask * shadow * 0.22;
     vec3 lit = rockAlbedo * (ambient * groundAO * skirtAO * creviceAO + diff * actualLight * shadow)
+             + crownMossAlbedo * actualLight * mossSSS
              + spec * actualLight * shadow;
 
     lit += VFXLights_Accumulate(fragPosition, normal, albedo.rgb);

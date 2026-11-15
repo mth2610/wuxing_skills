@@ -23,13 +23,13 @@ typedef struct
 
 static const CliffRowProfile kCliffRowProfiles[17] = {
     // depth, out, noise, ao, moss, haze, strata
-    {0.00f, -0.55f, 0.02f, 0.95f, 0.95f, 0.00f, 0.60f},  // row 0: inward collar flange (tucks 0.55m under meadow turf)
-    {0.06f, 0.00f, 0.15f, 0.90f, 0.92f, 0.00f, 0.70f},   // row 1: smooth rounded rock lip directly at rimPos
-    {0.35f, 0.06f, 0.60f, 0.85f, 0.82f, 0.00f, 0.90f},   // row 2: undercut fracture slot
-    {0.85f, 0.22f, 1.05f, 0.78f, 0.65f, 0.00f, 1.10f},   // row 3: upper buttress crag shelf
-    {1.55f, 0.16f, 1.25f, 0.65f, 0.42f, 0.00f, 1.18f},   // row 4: vertical faceted wall
-    {2.45f, -0.12f, 1.35f, 0.52f, 0.25f, 0.00f, 1.25f},  // row 5: deep crevice fissure
-    {3.50f, 0.42f, 1.45f, 0.70f, 0.12f, 0.02f, 1.32f},   // row 6: middle prominent rock shelf
+    {0.00f, -0.55f, 0.02f, 0.95f, 0.92f, 0.00f, 0.60f},  // row 0: inward collar flange (tucks 0.55m under meadow turf)
+    {0.06f, 0.00f, 0.14f, 0.90f, 0.68f, 0.00f, 0.72f},   // row 1: smooth rounded rock lip directly at rimPos
+    {0.35f, 0.06f, 0.58f, 0.85f, 0.22f, 0.00f, 0.92f},   // row 2: undercut fracture slot (sod ends by 0.35m)
+    {0.85f, 0.22f, 1.05f, 0.76f, 0.04f, 0.00f, 1.12f},   // row 3: upper buttress crag shelf (clean rock)
+    {1.55f, 0.16f, 1.25f, 0.64f, 0.00f, 0.00f, 1.18f},   // row 4: vertical faceted wall
+    {2.45f, -0.12f, 1.35f, 0.52f, 0.00f, 0.00f, 1.25f},  // row 5: deep crevice fissure
+    {3.50f, 0.42f, 1.45f, 0.70f, 0.03f, 0.02f, 1.32f},   // row 6: middle prominent rock shelf
     {4.80f, 0.28f, 1.40f, 0.58f, 0.04f, 0.06f, 1.26f},   // row 7: sheer vertical drop
     {6.20f, 0.10f, 1.30f, 0.48f, 0.01f, 0.14f, 1.18f},   // row 8: cloud sea immersion line
     {7.80f, 0.30f, 1.18f, 0.44f, 0.00f, 0.28f, 1.10f},   // row 9: sub-cloud lower bastion
@@ -821,8 +821,8 @@ MapCliffSkirt MapProp_CreateCliffSkirt(const MapGroundSurface *ground, Vector3 m
         return cliff;
     }
 
-    // Target ~0.95m column spacing, clustered in chunks of 48 columns
-    int desiredCols = (int)(totalPerimeter / 0.95f + 0.5f);
+    // Target ~0.48m column spacing, clustered in chunks of 48 columns for smooth rim silhouettes
+    int desiredCols = (int)(totalPerimeter / 0.48f + 0.5f);
     int numChunks = (desiredCols + 47) / 48;
     if (numChunks < 4)
         numChunks = 4;
@@ -931,7 +931,7 @@ MapCliffSkirt MapProp_CreateCliffSkirt(const MapGroundSurface *ground, Vector3 m
         MemFree(scratchY);
         return cliff;
     }
-    for (int pass = 0; pass < 2; pass++)
+    for (int pass = 0; pass < 3; pass++)
     {
         for (int i = 0; i < M; i++)
         {

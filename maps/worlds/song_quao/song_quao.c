@@ -215,7 +215,29 @@ static float SongQuaoEdgeTaper(float cx, float cz, void *userData)
     (void)userData;
     Vector3 pos, normal;
     if (!MapProp_SampleGroundSurface(&s_ground, kMapCenter, cx, cz, &pos, &normal))
-        return 0.5f;
+        return 0.0f;
+
+    if (pos.y <= GRASS_CLIFF_MIN_Y || normal.y <= GRASS_MIN_NORMAL_Y)
+        return 0.0f;
+
+    // 4-direction cliff-drop setback so plateau rim grass blades never overhang the abyss lip.
+    static const float kDirX[4] = {1.0f, -1.0f, 0.0f, 0.0f};
+    static const float kDirZ[4] = {0.0f, 0.0f, 1.0f, -1.0f};
+    float rimTaper = 1.0f;
+    for (int d = 0; d < 4; d++)
+    {
+        Vector3 pNear, nNear;
+        bool okNear = MapProp_SampleGroundSurface(&s_ground, kMapCenter, cx + kDirX[d] * 0.42f, cz + kDirZ[d] * 0.42f,
+                                                  &pNear, &nNear);
+        if (!okNear || pNear.y <= GRASS_CLIFF_MIN_Y || (pos.y - pNear.y > 0.40f && (pNear.y < -0.30f || nNear.y < 0.60f)))
+            return 0.0f;
+
+        Vector3 pFar, nFar;
+        bool okFar = MapProp_SampleGroundSurface(&s_ground, kMapCenter, cx + kDirX[d] * 0.78f, cz + kDirZ[d] * 0.78f,
+                                                 &pFar, &nFar);
+        if (!okFar || pFar.y <= GRASS_CLIFF_MIN_Y || (pos.y - pFar.y > 0.55f && (pFar.y < -0.35f || nFar.y < 0.62f)))
+            rimTaper = 0.48f;
+    }
 
     float signedShore = SongQuaoSampleSignedShore(cx, cz);
     float shoreTaper = (signedShore >= 0.95f)
@@ -230,7 +252,7 @@ static float SongQuaoEdgeTaper(float cx, float cz, void *userData)
     float rockSupp = MapProp_EvaluateRockSuppression(
         cx, cz, SONG_QUAO_ROCK_ITEMS, SONG_QUAO_ROCK_ITEM_COUNT);
     float rockTaper = 0.20f + 0.80f * rockSupp;
-    return shoreTaper * cliffTaper * slopeTaper * rockTaper;
+    return shoreTaper * cliffTaper * slopeTaper * rockTaper * rimTaper;
 }
 
 // Terrain-water SWE sources: real DEM bed and the baked steady water-surface elevation.
@@ -814,13 +836,13 @@ void InitSongQuaoMap(void)
         (MapFloraStyle){
             .grassRootColor = {38, 60, 24, 255},  // Velvety olive-moss base (Ghost of Yotei style)
             .grassTipColor = {104, 146, 52, 255}, // Natural sunlit olive-jade tips
-            .bladesPerClump = 4,
-            .bladeSegments = 3,
-            .bladeWidthScale = 0.095f,
-            .lodDistance = 16.5f,
-            .midLodDistance = 8.5f,
-            .drawDistance = 58.0f,
-            .shadowDistance = 7.5f,
+            .bladesPerClump = 5,
+            .bladeSegments = 4,
+            .bladeWidthScale = 0.096f,
+            .lodDistance = 30.0f,
+            .midLodDistance = 23.0f,
+            .drawDistance = 42.0f,
+            .shadowDistance = 24.0f,
             .grassState = MAP_GRASS_STATE_LUSH,
             .reedRootColor = {20, 32, 16, 255},
             .reedTipColor = {96, 134, 54, 255},

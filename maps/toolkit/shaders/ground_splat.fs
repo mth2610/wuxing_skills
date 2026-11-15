@@ -2,8 +2,9 @@
 
 // Đợt E / E2 — VFX point lights.
 #include "core/shaders/common/vfx_lights.glsl"
-// Dynamic PCF penumbra radius for smooth, natural shadow edges on terrain and submerged riverbed.
-#define MAP_DYNAMIC_SHADOW_RADIUS 1.55
+// Dynamic PCF penumbra radius & normal offset eliminate riverbed shadow acne stripes and texel dots.
+#define MAP_DYNAMIC_SHADOW_RADIUS 1.85
+#define MAP_SHADOW_NORMAL_OFFSET_TEXELS 2.0
 
 #include "maps/toolkit/shaders/map_shadow.glsl"
 #include "environment/shaders/cloud_shadow.glsl"
@@ -182,10 +183,24 @@ void main()
     // ---- 5. Geometry Normal & Slope ----
     vec3 geomNormal = fragNormal * inversesqrt(max(dot(fragNormal, fragNormal), 1e-8));
     vec3 geomWorldNormal = fragWorldNormal * inversesqrt(max(dot(fragWorldNormal, fragWorldNormal), 1e-8));
-    float slope = clamp(1.0 - geomWorldNormal.y, 0.0, 1.0);
+    // True geometric face slope from screen-space world derivatives (uniform control flow):
+    // prevents smoothed vertex normals from keeping the top ~1.5m of steep cliff dropoffs green.
+    vec3 dpdx = dFdx(fragWorldPos);
+    vec3 dpdy = dFdy(fragWorldPos);
+    vec3 faceCross = cross(dpdx, dpdy);
+    float faceLenSq = dot(faceCross, faceCross);
+    float geoSlope = (faceLenSq > 1e-10)
+        ? clamp(1.0 - abs(faceCross.y) * inversesqrt(faceLenSq), 0.0, 1.0)
+        : 0.0;
+    float smoothSlope = clamp(1.0 - geomWorldNormal.y, 0.0, 1.0);
+    float slope = max(smoothSlope, geoSlope);
 
-    // Plateau rim drops into the abyss strictly below -0.15m (LANDMINES.md §135, §340)
-    float outerCliffElev = 1.0 - smoothstep(-1.80, -0.15, fragWorldPos.y);
+    // Plateau rim drops into the abyss strictly below -0.55m (LANDMINES.md §135, §398)
+    // so lower interior stream bends (~ -0.35m) do not falsely trigger outer cliff rock polygons.
+    float outerCliffElev = (1.0 - smoothstep(-1.10, -0.18, fragWorldPos.y))
+                         * (1.0 - smoothstep(0.02, 0.38, shoreFactor))
+                         + (1.0 - smoothstep(-1.60, -0.75, fragWorldPos.y));
+    outerCliffElev = clamp(outerCliffElev, 0.0, 1.0);
 
     // ---- 6. Soil Detail ----
     bool soilPossible = distToPath < PATH_INFLUENCE
@@ -235,30 +250,32 @@ void main()
 
         // Separate interior grassy terrace embankments and riverbeds from the outer island cliff rim (LANDMINES.md §135)
         float rimMask = outerCliffElev * (1.0 - smoothstep(0.0, 0.45, shoreFactor));
-        float wSlope = max(smoothstep(0.50, 0.72, slope), rimMask * smoothstep(0.20, 0.38, slope));
-        float outerAbyssMask = outerCliffElev * smoothstep(0.10, 0.28, slope);
-        float rockCliff = max(smoothstep(0.48, 0.82, rockScree), outerAbyssMask * smoothstep(0.18, 0.36, slope));
+        float cliffSlopeGate = smoothstep(0.36, 0.60, slope) * (1.0 - smoothstep(0.02, 0.40, shoreFactor));
+        float wSlope = max(cliffSlopeGate, rimMask * smoothstep(0.18, 0.38, slope));
+        float outerAbyssMask = outerCliffElev * smoothstep(0.12, 0.30, slope);
+        float rockCliff = max(smoothstep(0.48, 0.82, rockScree), outerAbyssMask);
         wCliff = clamp(max(wSlope, max(rockCliff, outerAbyssMask)), 0.0, 1.0) * (1.0 - shoreFactor * 0.99);
 
         // Organic 3-Zone Riparian & Riverbed System (GPU Gems 3 Continuous Isosurface Blending):
         // Zone 1: Submerged riverbed (variableShore < -0.04m) -> 0% grass, 100% alluvial sand & shingle
-        // Zone 2: Bank transition margin (-0.04m .. 0.35m) -> rosette grass fingers & gravel bars
+        // Zone 2: Bank transition margin (-0.04m .. 0.35m) -> organic turf drift & gravel bars
         // Zone 3: Riparian meadow (variableShore > 0.35m) -> lush meadow turf
         if (u_ecologyEnabled != 0) {
-            float bankNoiseMacro = sin(fragWorldPos.x * 0.28 + fragWorldPos.z * 0.22) * 0.28
-                                 + cos(fragWorldPos.z * 0.48 - fragWorldPos.x * 0.36) * 0.18;
-            float bankNoiseMed   = sin(fragWorldPos.x * 1.15 - fragWorldPos.z * 0.88) * 0.12
-                                 + cos(fragWorldPos.z * 1.55 + fragWorldPos.x * 1.25) * 0.08;
-            float bankNoiseMicro = sin(fragWorldPos.x * 3.40 + fragWorldPos.z * 2.80) * 0.05
-                                 + cos(fragWorldPos.z * 4.60 - fragWorldPos.x * 3.80) * 0.03;
-            float bankGrain      = sin(fragWorldPos.x * 9.2 + fragWorldPos.z * 6.8)
-                                 * cos(fragWorldPos.z * 8.4 - fragWorldPos.x * 10.1);
-            variableShore = smoothSignedShore + bankNoiseMacro + bankNoiseMed + bankNoiseMicro + bankGrain * 0.05;
+            vec2 warpXZ = fragWorldPos.xz + vec2(
+                sin(fragWorldPos.z * 0.41 + fragWorldPos.x * 0.19) * 0.35,
+                cos(fragWorldPos.x * 0.37 - fragWorldPos.z * 0.23) * 0.35);
+            float bankNoiseMacro = sin(warpXZ.x * 0.31 + warpXZ.y * 0.24) * 0.22
+                                 + cos(warpXZ.y * 0.53 - warpXZ.x * 0.39) * 0.14;
+            float bankNoiseMed   = sin(warpXZ.x * 1.27 - warpXZ.y * 0.91) * 0.08
+                                 + cos(warpXZ.y * 1.73 + warpXZ.x * 1.19) * 0.05;
+            float bankNoiseMicro = sin(warpXZ.x * 3.70 + warpXZ.y * 2.50) * 0.03
+                                 + cos(warpXZ.y * 4.90 - warpXZ.x * 3.30) * 0.02;
+            variableShore = smoothSignedShore + bankNoiseMacro + bankNoiseMed + bankNoiseMicro;
 
-            // Continuous, differentiable transition across all zones without discrete if/else boundary jumps
-            float grassTaper = smoothstep(-0.04, 0.32, variableShore);
-            float rosetteFringe = smoothstep(-0.02, 0.26, variableShore + bankGrain * 0.12);
-            wGrass = wGrass * mix(grassTaper, rosetteFringe, 0.50);
+            // Smooth, non-periodic transition across alluvial banks without comb teeth
+            float grassTaper = smoothstep(-0.04, 0.34, variableShore);
+            float rosetteFringe = smoothstep(-0.02, 0.28, variableShore + bankNoiseMicro * 0.65);
+            wGrass = wGrass * mix(grassTaper, rosetteFringe, 0.40);
 
             float riparianFringe = 1.0 - smoothstep(-0.05, 0.36, variableShore);
             wWetSoil = max(wWetSoil, riparianFringe * 0.92);
@@ -285,8 +302,8 @@ void main()
     if (highDetailGround && soilPossible && u_groundReliefEnabled != 0 && detailResolve > 0.10 && camDistSqXZ < 400.0) {
         float combinedSoil = weights.y + weights.w;
         float dominantWeight = max(max(weights.x, combinedSoil), weights.z);
-        bool boundary = dominantWeight < 0.96;
-        if (boundary) {
+        float boundaryBlend = 1.0 - smoothstep(0.84, 0.97, dominantWeight);
+        if (boundaryBlend > 0.005) {
             vec4 substrateRelief = textureLod(u_groundRelief, tiledUV, mipTiled);
             litterClasses = substrateRelief.ba;
             float soilHeight = substrateRelief.g;
@@ -298,10 +315,10 @@ void main()
             candidates /= max(dot(candidates, vec3(1.0)), 0.0001);
             float pathRatio = weights.w / max(combinedSoil, 0.0001);
             vec4 groupedResolved = vec4(candidates.x, candidates.y * (1.0 - pathRatio), candidates.z, candidates.y * pathRatio);
-            resolved = mix(resolved, groupedResolved, detailResolve * 0.52);
+            resolved = mix(resolved, groupedResolved, detailResolve * 0.52 * boundaryBlend);
 
             float heightDelta = (substrateRelief.r - soilHeight) * (resolved.x - (1.0 - resolved.x));
-            reliefShadow = clamp(1.0 + heightDelta * 0.28 * detailResolve, 0.85, 1.05);
+            reliefShadow = clamp(1.0 + heightDelta * 0.28 * detailResolve * boundaryBlend, 0.85, 1.05);
         }
     }
     wGrass = resolved.x; wDrySoil = resolved.y;
@@ -523,19 +540,20 @@ void main()
             float strataFine  = sin(strataCoord * 6.80 + strataWarp * 1.8) * 0.5 + 0.5;
             float combinedStrata = strataMacro * 0.65 + strataFine * 0.35;
 
-            vec3 slateBedrock = vec3(0.48, 0.49, 0.52);
-            vec3 feldsparVein = vec3(0.62, 0.58, 0.52);
-            vec3 stoneTint = mix(slateBedrock, feldsparVein, combinedStrata * 0.38) * 1.32;
-            vec3 rockBase = triRock * stoneTint;
+            float fissure = smoothstep(0.0, 0.28, abs(sin(strikeCoord * 1.45 + strataWarp * 0.90)));
+            vec3 slateBedrock = vec3(0.45, 0.46, 0.50);
+            vec3 feldsparVein = vec3(0.64, 0.59, 0.52);
+            vec3 stoneTint = mix(slateBedrock, feldsparVein, combinedStrata * 0.42) * 1.32;
+            vec3 rockBase = triRock * stoneTint * mix(0.76, 1.04, fissure);
 
-            // Velvet moss on upward-facing rock ledges near the plateau
-            float ledgeFacing = clamp(geomWorldNormal.y * 1.45 - 0.18, 0.0, 1.0);
-            vec3 ledgeMoss = mix(vec3(0.15, 0.25, 0.09), vec3(0.25, 0.38, 0.13), triRock.g);
-            cliffAlbedo = mix(rockBase, ledgeMoss, ledgeFacing * 0.85);
+            // Velvet moss restricted strictly to flat horizontal ledges, matching turf hue
+            float ledgeFacing = smoothstep(0.76, 0.94, geomWorldNormal.y);
+            vec3 ledgeMoss = mix(vec3(0.09, 0.14, 0.05), vec3(0.12, 0.18, 0.07), triRock.g);
+            cliffAlbedo = mix(rockBase, ledgeMoss, ledgeFacing * 0.36);
 
-            rockNormX.xy *= 2.2;
-            rockNormY.xy *= 2.2;
-            rockNormZ.xy *= 2.2;
+            rockNormX.xy *= 2.6;
+            rockNormY.xy *= 2.6;
+            rockNormZ.xy *= 2.6;
             vec3 sgnN = sign(geomNormal);
             vec3 worldNx = vec3(rockNormX.z * sgnN.x, rockNormX.y, rockNormX.x * sgnN.x);
             vec3 worldNy = vec3(rockNormY.x, rockNormY.z * sgnN.y, rockNormY.y);
@@ -544,13 +562,13 @@ void main()
 
             // Stepped horizontal fracture ledges (80.lv terrace-form rocks)
             float shelfPhase = fragWorldPos.y * 2.80 + strikeCoord * 0.25;
-            float shelfNormMod = sin(shelfPhase) * 0.25;
+            float shelfNormMod = sin(shelfPhase) * 0.28;
             rawCliffN.y += shelfNormMod * (1.0 - absWN.y);
             cliffTriNormal = rawCliffN * inversesqrt(max(dot(rawCliffN, rawCliffN), 1e-8));
 
-            float normCrevice = clamp(rockNormX.z * triWeights.x + rockNormY.z * triWeights.y + rockNormZ.z * triWeights.z, 0.35, 1.0);
-            cliffOcclusion = mix(0.72, 1.0, normCrevice);
-            cliffRoughnessMod = (1.0 - normCrevice) * 0.12;
+            float normCrevice = clamp(rockNormX.z * triWeights.x + rockNormY.z * triWeights.y + rockNormZ.z * triWeights.z, 0.32, 1.0);
+            cliffOcclusion = mix(0.58, 1.0, normCrevice * mix(0.78, 1.0, fissure));
+            cliffRoughnessMod = (1.0 - normCrevice) * 0.14;
         }
 
         float cliffMix = smoothstep(0.01, 0.14, wCliff);
@@ -776,9 +794,11 @@ void main()
     rawShadow *= 1.0 - GS_FAR_CANOPY_SHADE * canopyFarField;
 
     // [VISUAL FIX]: Làm mềm bóng đổ trên cả thảm cỏ lẫn bãi cát ven sông (xóa vệt bóng răng lược đen)
-    float softShadowVis = rawShadow * mix(rawShadow, 1.0, 0.58);
-    float resolvedShadow = mix(rawShadow, softShadowVis, max(wGrass, isRiparian * 0.85));
-    float shadowFloor = mix(0.24, 0.32, max(wGrass, isRiparian * 0.72));
+    // On submerged/wet creek sand, thin grass shadow casters alias into dark dashes; soften toward sky ambient.
+    float wetSandMask = clamp(max(lakeDepthFactor * 4.0, isRiparian * 0.92), 0.0, 1.0);
+    float softShadowVis = mix(sqrt(max(rawShadow, 0.0)), 1.0, mix(0.16, 0.62, wetSandMask));
+    float resolvedShadow = mix(rawShadow, softShadowVis, max(wGrass, wetSandMask));
+    float shadowFloor = mix(0.26, 0.48, max(wGrass, wetSandMask));
     float shadow = mix(shadowFloor, 1.0, resolvedShadow);
     float sunVisibility = (shadow > 0.001) ? shadow * Environment_CloudVisibility(u_cloudNoise, fragWorldPos) * rockContactAO : 0.0;
 

@@ -147,12 +147,13 @@ void main() {
     vec3 rockBase = triAlbedo * bedrockTint * colDiffuse.rgb;
 
     // ── 3. Ledge Moss & Lichen Colonization (Where Winds Meet Style) ──
-    // Upward-facing horizontal shelves receive rain-fed moss and alpine lichen
-    float ledgeFacing = clamp(worldNormal.y * 1.45 - 0.18, 0.0, 1.0);
-    float upperRimBoost = smoothstep(-8.0, -0.4, fragLocalY) * 0.25 + 0.75;
-    float mossMask = fragColor.g * ledgeFacing * upperRimBoost;
-    vec3 mossColor = mix(vec3(0.15, 0.25, 0.09), vec3(0.25, 0.38, 0.13), triAlbedo.g);
-    vec3 rockAlbedo = mix(rockBase, mossColor, mossMask * 0.85);
+    // Strictly flat upward horizontal shelves near the rim keep moss while vertical walls stay weathered stone
+    float ledgeFacing = smoothstep(0.64, 0.88, worldNormal.y);
+    float creviceMask = smoothstep(-0.35, 0.45, strataContrast * 0.75 + triAlbedo.g - 0.5);
+    float upperRimBoost = smoothstep(-3.2, -0.20, fragLocalY) * 0.65 + 0.35;
+    float mossMask = clamp(fragColor.g * ledgeFacing * upperRimBoost * (0.65 + 0.35 * creviceMask), 0.0, 1.0);
+    vec3 mossColor = mix(vec3(0.11, 0.19, 0.06), vec3(0.17, 0.26, 0.09), triAlbedo.g);
+    vec3 rockAlbedo = mix(rockBase, mossColor, mossMask * 0.82);
 
     // ── 4. Deep Crevice Cavity Occlusion (80.lv RTGI Principle) ──
     // Intense occlusion in deep fissures and under shelf overhangs gives rock weight and depth

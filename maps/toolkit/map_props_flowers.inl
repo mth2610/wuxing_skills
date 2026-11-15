@@ -770,7 +770,16 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
     }
 
     const char *envFlowerParametric = getenv("WUXING_FLOWER_PARAMETRIC");
-    if (envFlowerParametric && strcmp(envFlowerParametric, "1") == 0 && !field.textured && FlowerParametric_Init())
+    bool useParametricFlowers = (GfxQuality_Get() >= GFX_MED);
+    if (envFlowerParametric && (strcmp(envFlowerParametric, "0") == 0 || strcmp(envFlowerParametric, "false") == 0))
+    {
+        useParametricFlowers = false;
+    }
+    else if (envFlowerParametric && (strcmp(envFlowerParametric, "1") == 0 || strcmp(envFlowerParametric, "true") == 0))
+    {
+        useParametricFlowers = true;
+    }
+    if (useParametricFlowers && !field.textured && FlowerParametric_Init())
     {
         int rows = (count + 255) / 256;
         if (rows < 1)

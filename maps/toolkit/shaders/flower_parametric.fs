@@ -32,57 +32,58 @@ void GetFlowerSpeciesColors(int sp, float t, float s, float isInner, float seed,
         sssColor = vec3(0.94, 0.98, 0.88);
     } else if (sp == 1) {
         vec3 core = vec3(0.68, 0.34, 0.08);
-        vec3 mid  = vec3(0.86, 0.69, 0.24) + vec3(hueShift, hueShift * 0.5, 0.0);
-        vec3 tip  = vec3(0.94, 0.85, 0.44);
+        vec3 mid  = vec3(0.78, 0.60, 0.18) + vec3(hueShift * 0.7, hueShift * 0.4, 0.0);
+        vec3 tip  = vec3(0.90, 0.78, 0.38);
         albedo = mix(core, mix(mid, tip, sMid), sBase);
-        if (isInner > 0.5) albedo = mix(vec3(0.64, 0.28, 0.06), vec3(0.88, 0.62, 0.18), t);
-        sssColor = vec3(0.95, 0.74, 0.24);
+        if (isInner > 0.5) albedo = mix(vec3(0.52, 0.22, 0.05), vec3(0.82, 0.54, 0.14), t);
+        sssColor = vec3(0.92, 0.68, 0.20);
     } else if (sp == 2) {
-        vec3 core = vec3(0.38, 0.02, 0.05);
-        vec3 mid  = vec3(0.84, 0.16, 0.20) + vec3(hueShift * 0.5, 0.0, 0.0);
-        vec3 tip  = vec3(0.94, 0.38, 0.24);
+        vec3 core = vec3(0.34, 0.02, 0.04);
+        vec3 mid  = vec3(0.76, 0.15, 0.18) + vec3(hueShift * 0.4, 0.0, 0.0);
+        vec3 tip  = vec3(0.88, 0.34, 0.24);
         albedo = mix(core, mix(mid, tip, sMid), sBase);
-        if (isInner > 0.5) albedo = mix(vec3(0.85, 0.22, 0.18), vec3(0.94, 0.76, 0.34), smoothstep(0.55, 1.0, t));
-        sssColor = vec3(0.95, 0.26, 0.14);
+        if (isInner > 0.5) albedo = mix(vec3(0.78, 0.20, 0.16), vec3(0.88, 0.70, 0.30), smoothstep(0.55, 1.0, t));
+        sssColor = vec3(0.92, 0.24, 0.14);
     } else if (sp == 3) {
-        vec3 core = vec3(0.28, 0.66, 0.68);
-        vec3 mid  = vec3(0.34, 0.52, 0.78) + vec3(0.0, hueShift, hueShift);
-        vec3 tip  = vec3(0.68, 0.82, 0.92);
+        vec3 core = vec3(0.18, 0.28, 0.48);
+        vec3 mid  = vec3(0.34, 0.48, 0.70) + vec3(0.0, hueShift * 0.6, hueShift * 0.8);
+        vec3 tip  = vec3(0.64, 0.76, 0.88);
         albedo = mix(core, mix(mid, tip, sMid), sBase);
-        if (isInner > 0.5) albedo = mix(vec3(0.36, 0.72, 0.74), vec3(0.80, 0.90, 0.94), t);
-        sssColor = vec3(0.38, 0.72, 0.86);
+        if (isInner > 0.5) albedo = mix(vec3(0.32, 0.56, 0.62), vec3(0.76, 0.84, 0.90), t);
+        sssColor = vec3(0.42, 0.66, 0.84);
     } else if (sp == 4) {
-        vec3 core = vec3(0.82, 0.28, 0.42);
-        vec3 mid  = vec3(0.92, 0.62, 0.72) + vec3(hueShift * 0.5, 0.0, hueShift * 0.5);
-        vec3 tip  = vec3(0.96, 0.88, 0.90);
+        vec3 core = vec3(0.66, 0.20, 0.34);
+        vec3 mid  = vec3(0.84, 0.54, 0.64) + vec3(hueShift * 0.4, 0.0, hueShift * 0.4);
+        vec3 tip  = vec3(0.93, 0.84, 0.86);
         albedo = mix(core, mix(mid, tip, sMid), sBase);
-        if (isInner > 0.5) albedo = mix(vec3(0.88, 0.60, 0.20), vec3(0.96, 0.84, 0.48), t);
-        sssColor = vec3(0.95, 0.56, 0.68);
+        if (isInner > 0.5) albedo = mix(vec3(0.80, 0.52, 0.16), vec3(0.90, 0.78, 0.42), t);
+        sssColor = vec3(0.92, 0.52, 0.64);
     } else if (sp == 5 || sp == 6) {
-        vec3 core = vec3(0.28, 0.14, 0.42);
-        vec3 mid  = vec3(0.54, 0.36, 0.74) + vec3(hueShift, 0.0, hueShift);
-        vec3 tip  = vec3(0.80, 0.68, 0.88);
+        vec3 core = vec3(0.24, 0.12, 0.38);
+        vec3 mid  = vec3(0.48, 0.32, 0.68) + vec3(hueShift * 0.8, 0.0, hueShift * 0.8);
+        vec3 tip  = vec3(0.76, 0.64, 0.84);
         albedo = mix(core, mix(mid, tip, sMid), sBase);
-        if (isInner > 0.5) albedo = mix(vec3(0.90, 0.74, 0.26), vec3(0.96, 0.90, 0.68), t);
-        sssColor = vec3(0.76, 0.44, 0.88);
+        if (isInner > 0.5) albedo = mix(vec3(0.84, 0.66, 0.22), vec3(0.92, 0.84, 0.60), t);
+        sssColor = vec3(0.74, 0.42, 0.84);
     } else if (sp == 8) {
-        vec3 core = vec3(0.52, 0.45, 0.30);
-        vec3 mid  = vec3(0.89, 0.90, 0.86) + vec3(hueShift * 0.3);
-        vec3 tip  = vec3(0.98, 0.98, 0.96);
+        vec3 core = vec3(0.46, 0.40, 0.26);
+        vec3 mid  = vec3(0.84, 0.85, 0.80) + vec3(hueShift * 0.25);
+        vec3 tip  = vec3(0.94, 0.94, 0.90);
         albedo = mix(core, mix(mid, tip, sMid), sBase);
-        if (isInner > 0.5) albedo = mix(vec3(0.85, 0.82, 0.76), vec3(0.96, 0.94, 0.90), t);
-        sssColor = vec3(0.98, 0.94, 0.86);
+        if (isInner > 0.5) albedo = mix(vec3(0.78, 0.75, 0.68), vec3(0.90, 0.88, 0.82), t);
+        sssColor = vec3(0.94, 0.90, 0.82);
     } else {
-        vec3 core = vec3(0.95, 0.68, 0.16);
-        vec3 mid  = vec3(0.99, 0.94, 0.82);
-        vec3 tip  = vec3(1.00, 0.98, 0.92);
+        vec3 core = vec3(0.86, 0.58, 0.14);
+        vec3 mid  = vec3(0.93, 0.89, 0.78);
+        vec3 tip  = vec3(0.96, 0.94, 0.88);
         albedo = mix(core, mix(mid, tip, sMid), sBase);
-        if (isInner > 0.5) albedo = mix(vec3(0.96, 0.70, 0.18), vec3(1.00, 0.92, 0.55), t);
-        sssColor = vec3(1.00, 0.88, 0.62);
+        if (isInner > 0.5) albedo = mix(vec3(0.88, 0.62, 0.16), vec3(0.94, 0.86, 0.50), t);
+        sssColor = vec3(0.96, 0.84, 0.58);
     }
 
     if (dot(customTint, customTint) > 0.05 && isInner < 0.5) {
-        albedo = mix(albedo, customTint * mix(0.76, 1.12, t), 0.32);
+        vec3 naturalTint = mix(customTint, vec3(dot(customTint, vec3(0.3333))), 0.14);
+        albedo = mix(albedo, naturalTint * mix(0.72, 1.04, t), 0.22);
     }
 }
 
@@ -124,11 +125,22 @@ void main()
         // Xấp xỉ hữu tỉ cho exp(-s * s * 26.0)
         float s26 = s * s * 26.0;
         float centerRib = (1.0 / (1.0 + s26 + 0.48 * s26 * s26)) * (1.0 - t * 0.55);
-        float sideVeins = (distSq < 324.0) ? (sin(s * 24.0 - t * 12.0) * 0.5 + 0.5) : 0.5;
-        float veinMask = mix(centerRib, sideVeins * (1.0 - s * 0.45), 0.32) * (1.0 - t * 0.35);
-        membraneThickness = clamp(0.22 + veinMask * 0.55 + (1.0 - t) * 0.28, 0.15, 1.0);
-        float veinContrast = (u_sssParams.w > 0.01) ? u_sssParams.w : 0.85;
-        albedo *= mix(0.90, 1.06, 1.0 - veinMask * 0.32 * veinContrast);
+        float sideVeins = (distSq < 484.0) ? (sin(s * 26.0 - t * 14.0) * 0.5 + 0.5) : 0.5;
+        float veinMask = mix(centerRib, sideVeins * (1.0 - s * 0.40), 0.38) * (1.0 - t * 0.30);
+        membraneThickness = clamp(0.18 + veinMask * 0.58 + (1.0 - t) * 0.30, 0.12, 1.0);
+        float veinContrast = (u_sssParams.w > 0.01) ? u_sssParams.w : 0.92;
+        albedo *= mix(0.84, 1.06, 1.0 - veinMask * 0.38 * veinContrast);
+
+        // Petal vein micro-normal relief for silky specular catchlights & cupped petal curvature
+        if (part == 2 && distSq < 484.0) {
+            float veinSlope = cos(s * 26.0 - t * 14.0) * sign(v_uv.x - 0.5) * (1.0 - s * 0.40) * 0.16;
+            vec3 sideVec = cross(vec3(0.0, 1.0, 0.0), N);
+            float svLenSq = dot(sideVec, sideVec);
+            if (svLenSq > 1e-6) {
+                N = N + (sideVec * inversesqrt(svLenSq)) * veinSlope;
+                N *= inversesqrt(max(dot(N, N), 1e-8));
+            }
+        }
     }
 
     float shadowVis = FoliageShadowVisibility(
@@ -158,11 +170,11 @@ void main()
     float oneMinusNV = clamp(1.0 - max(dot(N, V), 0.0), 0.0, 1.0);
     float fresnel = (oneMinusNV * oneMinusNV) * (oneMinusNV * sqrt(oneMinusNV));
     float ndh = max(dot(N, H), 0.0);
-    float specLobe = (part < 2) ? FastPow16(ndh) : (FastPow16(ndh) * FastPow8(ndh));
-    float specStrength = (part < 2) ? 0.14 : 0.24;
+    float specLobe = (part < 2) ? FastPow16(ndh) : (part == 3 ? FastPow8(ndh) : (FastPow16(ndh) * FastPow8(ndh)));
+    float specStrength = (part < 2) ? 0.14 : (part == 3 ? 0.06 : 0.26);
     float spec = specLobe * specStrength * (0.4 + 0.6 * t);
 
-    vec3 skyTint = u_ambientColor * mix(0.78, 1.24, clamp(N.y * 0.5 + 0.5, 0.0, 1.0));
+    vec3 skyTint = u_ambientColor * mix(vec3(0.76, 0.82, 0.96), vec3(1.18, 1.18, 1.14), clamp(N.y * 0.5 + 0.5, 0.0, 1.0));
     vec3 groundBounce = vec3(0.14, 0.24, 0.09) * u_ambientColor * (1.0 - v_ao);
 
     float rimStrength = (u_sssParams.z > 0.01) ? u_sssParams.z : 0.78;
@@ -170,9 +182,9 @@ void main()
     vec3 sssLight = sssTint * u_lightColor * (sssFactor * mix(0.45, 1.0, shadowVis));
     vec3 rimLight = mix(albedo, vec3(1.0, 0.97, 0.90), 0.5) * u_lightColor * (fresnel * 0.32 * rimStrength * petalShadow);
     vec3 specLight = u_lightColor * (spec * petalShadow);
-    float baseContactAO = mix(0.62, 1.0, smoothstep(0.0, 0.45, t));
+    float baseContactAO = (part >= 2) ? mix(0.36, 1.0, smoothstep(0.0, 0.52, t)) : mix(0.55, 1.0, smoothstep(0.0, 0.45, t));
     vec3 ambientLight = (albedo * skyTint + groundBounce) * (v_ao * baseContactAO) * mix(0.68, 1.0, shadowVis);
-    directLight *= mix(0.75, 1.0, smoothstep(0.0, 0.35, t));
+    directLight *= mix(0.58, 1.0, smoothstep(0.0, 0.42, t));
 
     vec3 lit = ambientLight + directLight + sssLight + rimLight + specLight;
     if (distSq < 1225.0) {
