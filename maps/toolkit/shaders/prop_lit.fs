@@ -33,6 +33,7 @@ uniform vec3 u_lightDir;      // surface -> light, shader/view space (PropLit_Up
 uniform vec3 u_lightColor;    // sun color, normalized 0..1
 uniform vec3 u_ambientColor;  // ambient floor color, normalized 0..1
 uniform vec3 u_viewPos;       // camera position in the same shader/view space
+uniform float u_rockAridMode; // 0.0 = lush moss/woodland, 1.0 = arid earth/Ninh Thuan granite
 uniform sampler2D u_cloudNoise;
 uniform mat4 u_cloudWorldFromShader;
 
@@ -144,24 +145,28 @@ void main() {
     vec3 rockAlbedo = albedo.rgb * mix(vec3(0.84, 0.82, 0.80), vec3(1.12, 1.07, 1.00), strataNoise * 0.65 + fineStrata * 0.35);
     rockAlbedo *= mix(0.68, 1.04, fractureCavity);
 
-    // Top-surface moss & lichen colonization restricted to genuine upward-facing pockets & shelves
+    // Top-surface moss & lichen colonization (or sun-bleached desert varnish & crustose lichen in arid mode)
     float mossPatch = sin(worldPosition.x * 2.7 + cos(worldPosition.z * 2.3) * 1.4) * 0.5 + 0.5;
     float altitudeMoss = (1.0 - smoothstep(9.5, 13.5, worldPosition.y)) * 0.40 + 0.60;
     float crevicePocket = (1.0 - fractureCavity) * 0.38 + (1.0 - macroNorm.z) * 0.28;
     float topMossMask = smoothstep(0.62, 0.88, worldNormal.y + crevicePocket * 0.16)
                       * smoothstep(0.08, 0.38, fragLocalY)
                       * smoothstep(0.28, 0.74, mossPatch * 0.55 + albedo.g * 0.45)
-                      * altitudeMoss;
+                      * mix(altitudeMoss, 1.0, u_rockAridMode);
     topMossMask *= (1.0 - isRiverStone * 0.92);
-    vec3 crownMossAlbedo = mix(vec3(0.13, 0.22, 0.08), vec3(0.20, 0.32, 0.11), mossPatch * 0.7 + detailLuma * 0.3);
+    vec3 lushCrownMoss = mix(vec3(0.13, 0.22, 0.08), vec3(0.20, 0.32, 0.11), mossPatch * 0.7 + detailLuma * 0.3);
     vec3 lichenTone = vec3(0.46, 0.45, 0.24);
-    crownMossAlbedo = mix(crownMossAlbedo, lichenTone, smoothstep(0.56, 0.88, albedo.r) * 0.50);
-    rockAlbedo = mix(rockAlbedo, crownMossAlbedo, topMossMask * 0.64);
+    lushCrownMoss = mix(lushCrownMoss, lichenTone, smoothstep(0.56, 0.88, albedo.r) * 0.50);
+    vec3 aridCrownVarnish = mix(vec3(0.46, 0.35, 0.22), vec3(0.64, 0.50, 0.30), mossPatch * 0.65 + detailLuma * 0.35);
+    vec3 crownMossAlbedo = mix(lushCrownMoss, aridCrownVarnish, u_rockAridMode);
+    rockAlbedo = mix(rockAlbedo, crownMossAlbedo, topMossMask * mix(0.64, 0.52, u_rockAridMode));
 
-    // Tight basal soil & root-humus collar grounding (-0.42m .. -0.04m) so boulders sit embedded in turf
-    float skirtMask = (1.0 - smoothstep(-0.42, -0.04, fragLocalY)) * (1.0 - isRiverStone * 0.85);
-    vec3 skirtLoam = vec3(0.13, 0.11, 0.08);
-    vec3 skirtMossAlbedo = mix(skirtLoam, vec3(0.15, 0.24, 0.09), clamp(worldNormal.y * 0.85 + (1.0 - fractureCavity) * 0.35, 0.0, 1.0));
+    // Tight basal soil & root-humus collar grounding (or windblown ochre grus sand skirt in arid mode)
+    float skirtMask = (1.0 - smoothstep(-0.42, mix(-0.04, 0.08, u_rockAridMode), fragLocalY)) * (1.0 - isRiverStone * 0.85);
+    vec3 skirtLoam = mix(vec3(0.13, 0.11, 0.08), vec3(0.44, 0.33, 0.22), u_rockAridMode);
+    vec3 lushSkirtMoss = mix(skirtLoam, vec3(0.15, 0.24, 0.09), clamp(worldNormal.y * 0.85 + (1.0 - fractureCavity) * 0.35, 0.0, 1.0));
+    vec3 aridSkirtSand = mix(skirtLoam, vec3(0.56, 0.44, 0.30), clamp(worldNormal.y * 0.85 + detailLuma * 0.35, 0.0, 1.0));
+    vec3 skirtMossAlbedo = mix(lushSkirtMoss, aridSkirtSand, u_rockAridMode);
     rockAlbedo = mix(rockAlbedo, skirtMossAlbedo, skirtMask * 0.68);
     rockAlbedo *= mix(0.68, 1.0, smoothstep(-0.36, 0.02, fragLocalY));
 
@@ -217,8 +222,9 @@ void main() {
     }
 
     vec3 ambient = Environment_HemisphereIrradiance(normal, actualAmbient);
-    // Warm meadow turf bounce into lower rock facets
-    vec3 turfBounce = vec3(0.20, 0.32, 0.12) * actualAmbient * max(-worldNormal.y * 0.5 + 0.5, 0.0) * 0.45;
+    // Warm meadow turf bounce (or sun-baked desert sand bounce in arid mode) into lower rock facets
+    vec3 bounceTint = mix(vec3(0.20, 0.32, 0.12), vec3(0.48, 0.35, 0.21), u_rockAridMode);
+    vec3 turfBounce = bounceTint * actualAmbient * max(-worldNormal.y * 0.5 + 0.5, 0.0) * mix(0.45, 0.62, u_rockAridMode);
     ambient = (ambient + turfBounce) * contactAO;
     if (isRiverStone > 0.5) {
         vec3 streamBounce = actualAmbient * vec3(0.85, 1.12, 1.20) + vec3(0.04, 0.10, 0.12);
@@ -227,7 +233,7 @@ void main() {
     float groundAO = clamp(worldPosition.y * 0.35 + 0.75, 0.40, 1.0);
     float skirtAO = clamp(0.54 + 0.46 * smoothstep(-0.50, 0.12, fragLocalY), 0.54, 1.0);
     float creviceAO = clamp((normalSample.z * 1.30 - 0.22) * mix(0.62, 1.0, fractureCavity), 0.42, 1.0);
-    float mossSSS = pow(max(dot(viewDir, -modelLightDir), 0.0), 3.0) * topMossMask * shadow * 0.22;
+    float mossSSS = pow(max(dot(viewDir, -modelLightDir), 0.0), 3.0) * topMossMask * shadow * 0.22 * (1.0 - u_rockAridMode);
     vec3 lit = rockAlbedo * (ambient * groundAO * skirtAO * creviceAO + diff * actualLight * shadow)
              + crownMossAlbedo * actualLight * mossSSS
              + spec * actualLight * shadow;

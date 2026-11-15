@@ -127,6 +127,19 @@ void MapProp_SetGroundRockMaps(MapGroundSurface *ground, const char *diffusePath
 void MapProp_SetGroundHabitat(MapGroundSurface *ground,
                               const Vector4 *pathSegments, int segmentCount,
                               Vector4 lakeParams);
+
+typedef struct
+{
+    float aridFactor;       // 0.0 = lush wood meadow (default), 1.0 = arid earth/stone park
+    float strataStrength;   // 0.0..1.0 GPU Gems 3 Ch. 1 3D warped strata & bedrock shelf relief
+    Vector3 grusColor;      // Arkosic granite sand / grus albedo
+    Vector3 hardpanColor;   // Sun-baked ochre hardpan / cracked clay albedo
+    Vector3 lichenColor;    // Dry crustose desert lichen / mineral crust albedo
+} MapGroundBiomeProfile;
+
+void MapProp_SetGroundBiomeProfile(const MapGroundBiomeProfile *profile);
+void MapProp_SetRockAridMode(float aridMode);
+void MapProp_SetCliffAridMode(float aridMode);
 void MapProp_UnloadGround(MapGroundSurface *ground);
 float MapProp_SampleGroundHeight(const MapGroundSurface *ground, Vector3 worldCenter, float x, float z);
 bool MapProp_SampleGroundSurface(const MapGroundSurface *ground, Vector3 worldCenter,
@@ -202,9 +215,12 @@ typedef struct
     MapRockArchetype archetype;
 } MapRockItem;
 
+#define MAP_ROCK_VARIANTS_PER_ARCHETYPE 4
+
 typedef struct
 {
     MapRockSet models[MAP_ROCK_ARCHETYPE_COUNT];
+    MapRockSet variants[MAP_ROCK_ARCHETYPE_COUNT][MAP_ROCK_VARIANTS_PER_ARCHETYPE - 1];
     MapRockSet boulders;
     MapRockSet crags;
     MapRockSet riverStones;

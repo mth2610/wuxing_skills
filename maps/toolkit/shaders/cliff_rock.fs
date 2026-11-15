@@ -36,6 +36,7 @@ uniform vec3 u_lightColor;    // sun color * intensity
 uniform vec3 u_ambientColor;  // ambient sky color
 uniform vec3 u_viewPos;       // camera pos in view space
 uniform vec3 u_hazeColor;     // atmosphere / cloud haze color
+uniform float u_cliffAridMode;// 0.0 = lush moss rim, 1.0 = arid earth/ochre crust rim
 uniform sampler2D u_cloudNoise;
 uniform mat4 u_cloudWorldFromShader;
 
@@ -140,15 +141,15 @@ void main() {
     float combinedStrata = strataMacro * 0.65 + strataFine * 0.35;
     float strataContrast = (strataMacro - 0.5) * 1.35 + (strataFine - 0.5) * 0.65;
 
-    // Authentic mountain slate-granite palette (neutral gray with warm feldspar strata)
-    vec3 slateBedrock = vec3(0.46, 0.48, 0.51);
-    vec3 feldsparVein = vec3(0.62, 0.58, 0.52);
-    vec3 bedrockTint = mix(slateBedrock, feldsparVein, combinedStrata * 0.42) * 1.30;
+    // Authentic mountain slate-granite palette (or warm pink-ochre Ninh Thuan granite in arid mode)
+    vec3 slateBedrock = mix(vec3(0.46, 0.48, 0.51), vec3(0.56, 0.46, 0.37), u_cliffAridMode);
+    vec3 feldsparVein = mix(vec3(0.62, 0.58, 0.52), vec3(0.75, 0.62, 0.48), u_cliffAridMode);
+    vec3 bedrockTint = mix(slateBedrock, feldsparVein, combinedStrata * mix(0.42, 0.68, u_cliffAridMode)) * 1.30;
 
     vec3 rockBase = triAlbedo * bedrockTint * colDiffuse.rgb;
 
-    // ── 3. Ledge Moss, Rim Turf Overhang & Lichen Colonization (Where Winds Meet Style) ──
-    // Organic sod drape over the top 0.45m cliff lip eliminates hard polygon seams against the meadow
+    // ── 3. Ledge Moss, Rim Turf Overhang & Lichen Colonization (or arid ochre crust & caliche rim) ──
+    // Organic sod/crust drape over the top 0.45m cliff lip eliminates hard polygon seams against the ground
     float sodDropNoise = sin(worldPosition.x * 1.85 + worldPosition.z * 1.45) * 0.14
                        + cos(worldPosition.z * 3.40 - worldPosition.x * 2.70) * 0.08;
     float rimSodDrape = smoothstep(-0.48 + sodDropNoise, -0.04 + sodDropNoise * 0.5, fragLocalY) * fragColor.g;
@@ -157,8 +158,10 @@ void main() {
     float upperRimBoost = smoothstep(-3.2, -0.20, fragLocalY) * 0.65 + 0.35;
     float shelfMoss = fragColor.g * ledgeFacing * upperRimBoost * (0.65 + 0.35 * creviceMask);
     float mossMask = clamp(max(shelfMoss, rimSodDrape * 0.94), 0.0, 1.0);
-    vec3 mossColor = mix(vec3(0.11, 0.19, 0.07), vec3(0.18, 0.29, 0.10), clamp(triAlbedo.g * 0.75 + rimSodDrape * 0.35, 0.0, 1.0));
-    vec3 rockAlbedo = mix(rockBase, mossColor, mossMask * 0.88);
+    vec3 lushMossColor = mix(vec3(0.11, 0.19, 0.07), vec3(0.18, 0.29, 0.10), clamp(triAlbedo.g * 0.75 + rimSodDrape * 0.35, 0.0, 1.0));
+    vec3 aridRimColor  = mix(vec3(0.50, 0.39, 0.24), vec3(0.64, 0.50, 0.32), clamp(triAlbedo.g * 0.75 + rimSodDrape * 0.35, 0.0, 1.0));
+    vec3 mossColor = mix(lushMossColor, aridRimColor, u_cliffAridMode);
+    vec3 rockAlbedo = mix(rockBase, mossColor, mossMask * mix(0.88, 0.76, u_cliffAridMode));
 
     // ── 4. Deep Crevice Cavity Occlusion (80.lv RTGI Principle) ──
     // Intense occlusion in deep fissures and under shelf overhangs gives rock weight and depth

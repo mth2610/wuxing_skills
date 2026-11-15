@@ -32,10 +32,12 @@ typedef enum {
     CHAR_ANIM_JUMP_DOWN, // Landing / jumping down from height (e.g. Mixamo Jumping Down)
     CHAR_ANIM_DODGE,
 
-    // Basic Martial Attacks
+    // Unarmed Martial Arts (Quyền / Cước / Chưởng / Thủ)
     CHAR_ANIM_PUNCH,
     CHAR_ANIM_KICK,
     CHAR_ANIM_PALM,
+    CHAR_ANIM_BLOCK,    // unarmed guard / brace
+    CHAR_ANIM_PARRY,    // unarmed deflect / Taiji化勁
 
     // Sword Arts (Kiếm Pháp)
     CHAR_ANIM_SWORD_IDLE,
@@ -44,12 +46,14 @@ typedef enum {
     CHAR_ANIM_SWORD_PARRY,
     CHAR_ANIM_SWORD_BLOCK,
 
-    // Flourish / Skills
-    CHAR_ANIM_CAST, // skill-cast flourish — triggered on a successful CastSkill
+    // Qi / Skills (Nội Công & Chiêu Thức)
+    CHAR_ANIM_CAST,     // skill-cast flourish — triggered on a successful CastSkill
+    CHAR_ANIM_MEDITATE, // Thiền Định / Qi gathering / Taiji stance loop
 
     // Reactions
     CHAR_ANIM_HIT,
     CHAR_ANIM_KNOCKDOWN,
+    CHAR_ANIM_DEATH,
 
     CHAR_ANIM_COUNT
 } CharacterAnimSlot;

@@ -1056,10 +1056,8 @@ MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int 
         style.alphaCutoff = 0.42f;
     if (style.alphaCutoff > 0.9f)
         style.alphaCutoff = 0.9f;
-    if (style.grassState != MAP_GRASS_STATE_LUSH)
-    {
-        MapProp_SetGrassState(style.grassState, 0.85f);
-    }
+    MapProp_SetGrassState(style.grassState,
+                          (style.grassState == MAP_GRASS_STATE_SCORCHED) ? 0.85f : 0.0f);
     if (style.dryness > 0.0f || style.scorch > 0.0f)
     {
         MapGrassCondition cond = MapProp_GetGrassCondition();

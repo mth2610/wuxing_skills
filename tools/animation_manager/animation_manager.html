@@ -1,0 +1,1766 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Wuxing Skills — Animation Manager</title>
+  <style>
+    :root {
+      --bg-0: #0d1016;
+      --bg-1: #141923;
+      --bg-2: #1c2331;
+      --bg-3: #252e40;
+      --border: #2d374d;
+      --text-0: #e8eef7;
+      --text-1: #9aa7bd;
+      --text-2: #66748c;
+      --accent: #38bdf8;
+      --accent-dim: rgba(56, 189, 248, 0.14);
+      --jade: #34d399;
+      --jade-dim: rgba(52, 211, 153, 0.14);
+      --amber: #fbbf24;
+      --amber-dim: rgba(251, 191, 36, 0.14);
+      --rose: #f87171;
+      --rose-dim: rgba(248, 113, 113, 0.14);
+      --radius: 8px;
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0; width: 100%; height: 100%;
+      background: var(--bg-0); color: var(--text-0);
+      font-family: var(--font); font-size: 13px; overflow: hidden;
+    }
+
+    .app { display: grid; grid-template-rows: 54px 1fr; height: 100vh; }
+
+    header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 14px; background: var(--bg-1); border-bottom: 1px solid var(--border);
+      gap: 10px;
+    }
+    .brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; white-space: nowrap; }
+    .brand-badge {
+      padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600;
+      background: var(--accent-dim); color: var(--accent); border: 1px solid rgba(56,189,248,0.3);
+    }
+    .toolbar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+    .main {
+      display: grid;
+      grid-template-columns: 310px 1fr 350px;
+      height: 100%; overflow: hidden;
+    }
+
+    .panel {
+      display: flex; flex-direction: column;
+      background: var(--bg-1); border-right: 1px solid var(--border);
+      overflow: hidden;
+    }
+    .panel.right { border-right: none; border-left: 1px solid var(--border); }
+
+    .panel-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 9px 12px; background: var(--bg-2); border-bottom: 1px solid var(--border);
+      font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.04em;
+      color: var(--text-1);
+    }
+
+    .panel-body {
+      flex: 1; overflow-y: auto; padding: 10px;
+      display: flex; flex-direction: column; gap: 8px;
+    }
+
+    button {
+      display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+      padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border);
+      background: var(--bg-2); color: var(--text-0); font-family: inherit; font-size: 12px;
+      font-weight: 500; cursor: pointer; transition: 0.12s ease; white-space: nowrap;
+    }
+    button:hover:not(:disabled) { background: var(--bg-3); border-color: #42506e; }
+    button:disabled { opacity: 0.42; cursor: not-allowed; }
+    button.primary { background: #0284c7; border-color: #38bdf8; color: #fff; }
+    button.primary:hover:not(:disabled) { background: #0369a1; }
+    button.jade { background: #059669; border-color: #34d399; color: #fff; }
+    button.jade:hover:not(:disabled) { background: #047857; }
+    button.danger { background: var(--rose-dim); border-color: rgba(248,113,113,0.4); color: var(--rose); }
+    button.danger:hover:not(:disabled) { background: rgba(248,113,113,0.25); }
+    button.sm { padding: 4px 8px; font-size: 11px; }
+
+    input[type="text"], input[type="search"], select, textarea {
+      width: 100%; padding: 7px 9px; border-radius: 6px;
+      border: 1px solid var(--border); background: var(--bg-0); color: var(--text-0);
+      font-family: inherit; font-size: 12px; outline: none;
+    }
+    input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+    textarea { resize: vertical; min-height: 76px; line-height: 1.45; }
+
+    .status-card {
+      padding: 8px 10px; border-radius: var(--radius);
+      background: var(--bg-2); border: 1px solid var(--border);
+      display: flex; flex-direction: column; gap: 4px; font-size: 11.5px;
+    }
+    .status-row { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+
+    .dropzone {
+      border: 1.5px dashed #3b4863; border-radius: var(--radius);
+      padding: 12px 10px; text-align: center; color: var(--text-1);
+      background: rgba(255,255,255,0.015); cursor: pointer; transition: 0.15s;
+    }
+    .dropzone:hover, .dropzone.dragover {
+      border-color: var(--accent); background: var(--accent-dim); color: var(--text-0);
+    }
+
+    .clip-card {
+      display: flex; flex-direction: column; gap: 5px;
+      padding: 8px 10px; border-radius: var(--radius);
+      background: var(--bg-2); border: 1px solid var(--border);
+      cursor: pointer; transition: 0.12s;
+    }
+    .clip-card:hover { border-color: #4b5b7c; }
+    .clip-card.active { border-color: var(--accent); background: rgba(56,189,248,0.1); }
+
+    .clip-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+    .clip-name {
+      font-family: var(--mono); font-size: 12px; font-weight: 600;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .clip-meta {
+      display: flex; align-items: center; gap: 5px; flex-wrap: wrap;
+      font-size: 11px; color: var(--text-1);
+    }
+    .tag {
+      padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 600;
+      background: var(--bg-3); color: var(--text-1); border: 1px solid var(--border);
+    }
+    .tag.slot { background: var(--jade-dim); color: var(--jade); border-color: rgba(52,211,153,0.3); }
+    .tag.warn { background: var(--amber-dim); color: var(--amber); border-color: rgba(251,191,36,0.3); }
+    .tag.raw { background: var(--accent-dim); color: var(--accent); border-color: rgba(56,189,248,0.3); }
+
+    .viewport-wrap {
+      position: relative; display: flex; flex-direction: column;
+      background: #0a0d12; overflow: hidden;
+    }
+    #canvas-container { flex: 1; position: relative; overflow: hidden; }
+    canvas { display: block; width: 100%; height: 100%; }
+
+    .vp-overlay-top {
+      position: absolute; top: 10px; left: 10px; right: 10px;
+      display: flex; justify-content: space-between; align-items: flex-start;
+      pointer-events: none; gap: 10px;
+    }
+    .vp-pill-group { display: flex; gap: 6px; flex-wrap: wrap; pointer-events: auto; }
+    .vp-stats {
+      padding: 6px 10px; border-radius: 6px; background: rgba(13,16,22,0.82);
+      border: 1px solid var(--border); font-family: var(--mono); font-size: 11px;
+      color: var(--text-1); pointer-events: auto;
+    }
+
+    .vp-banner {
+      position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+      pointer-events: none; padding: 20px;
+    }
+    .vp-banner-box {
+      pointer-events: auto; max-width: 440px; padding: 18px 20px; border-radius: 12px;
+      background: rgba(20, 25, 35, 0.92); border: 1px solid var(--border);
+      text-align: center; box-shadow: 0 16px 40px rgba(0,0,0,0.5);
+    }
+    .vp-banner-box h3 { margin: 0 0 8px; font-size: 15px; }
+    .vp-banner-box p { margin: 0 0 12px; color: var(--text-1); font-size: 12.5px; line-height: 1.5; }
+
+    .timeline {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 14px; background: var(--bg-1); border-top: 1px solid var(--border);
+    }
+    .timeline input[type="range"] { flex: 1; accent-color: var(--accent); cursor: pointer; }
+    .time-readout { font-family: var(--mono); font-size: 11px; color: var(--text-1); min-width: 115px; text-align: right; }
+
+    .field { display: flex; flex-direction: column; gap: 4px; }
+    .field-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    label { font-size: 11px; font-weight: 600; color: var(--text-1); }
+    .hint { font-size: 11px; color: var(--text-2); line-height: 1.35; }
+
+    .split-right { display: grid; grid-template-rows: 43% 57%; height: 100%; overflow: hidden; }
+    .sub-panel { display: flex; flex-direction: column; overflow: hidden; }
+    .sub-panel + .sub-panel { border-top: 1px solid var(--border); }
+
+    #toast {
+      position: fixed; bottom: 64px; left: 50%; transform: translateX(-50%);
+      padding: 8px 14px; border-radius: 8px; background: var(--bg-3);
+      border: 1px solid var(--accent); color: var(--text-0); font-size: 12px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.45); opacity: 0; pointer-events: none;
+      transition: opacity 0.2s; z-index: 100;
+    }
+    #toast.show { opacity: 1; }
+
+    dialog {
+      background: var(--bg-1); color: var(--text-0); border: 1px solid var(--border);
+      border-radius: 10px; max-width: 640px; width: 92%; padding: 18px;
+      box-shadow: 0 20px 50px rgba(0,0,0,0.65);
+    }
+    dialog::backdrop { background: rgba(0,0,0,0.65); }
+    dialog h3 { margin: 0 0 10px; font-size: 15px; }
+    dialog p { color: var(--text-1); line-height: 1.5; font-size: 12.5px; }
+    dialog code {
+      font-family: var(--mono); background: var(--bg-0); padding: 1px 5px;
+      border-radius: 4px; color: var(--accent); font-size: 11.5px;
+    }
+  </style>
+
+  <script src="https://cdn.jsdelivr.net/npm/three@0.147.0/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/controls/OrbitControls.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/loaders/GLTFLoader.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/libs/fflate.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/loaders/FBXLoader.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/exporters/GLTFExporter.js"></script>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="brand">
+      <span>Wuxing Animation Manager</span>
+      <span class="brand-badge">WebGL · Three.js</span>
+    </div>
+    <div class="toolbar">
+      <input type="file" id="input-folder" webkitdirectory multiple hidden />
+      <input type="file" id="input-char-glb" accept=".glb,.gltf" hidden />
+      <input type="file" id="input-bank-glb" accept=".glb,.gltf" hidden />
+      <input type="file" id="input-raw-anims" accept=".fbx,.glb,.gltf" multiple hidden />
+      <input type="file" id="input-manifest-json" accept=".json" hidden />
+
+      <button id="btn-open-folder" class="primary" title="Auto-load character.glb, humanoid_anims.glb & all raw .fbx/.glb from folder">Open Folder</button>
+      <button id="btn-load-char">Character .GLB</button>
+      <button id="btn-load-bank">Anim Bank .GLB</button>
+      <button id="btn-load-raw">+ Raw (.fbx/.glb)</button>
+      <button id="btn-load-manifest">Import JSON</button>
+      <span style="width:1px;height:20px;background:var(--border);"></span>
+      <button id="btn-export-glb" class="jade" disabled>Export Bank .GLB</button>
+      <button id="btn-export-json" disabled>Export AI Manifest (.json)</button>
+      <button id="btn-help">?</button>
+    </div>
+  </header>
+
+  <div class="main">
+    <!-- LEFT: ANIMATION BANK (humanoid_anims.glb) -->
+    <section class="panel">
+      <div class="panel-header">
+        <span>Anim Bank (<span id="bank-count">0</span>)</span>
+        <button id="btn-undo-delete" class="sm" disabled>Undo</button>
+      </div>
+      <div class="panel-body">
+        <div class="status-card">
+          <div class="status-row">
+            <span class="hint">Character:</span>
+            <strong id="char-status" style="font-family:var(--mono);font-size:11px;color:var(--amber);">Not loaded</strong>
+          </div>
+          <div class="status-row">
+            <span class="hint">Anim Bank:</span>
+            <strong id="bank-status" style="font-family:var(--mono);font-size:11px;color:var(--amber);">Not loaded</strong>
+          </div>
+        </div>
+        <input type="search" id="search-bank" placeholder="Filter clips by name, slot, or tag..." />
+        <div id="bank-list" style="display:flex;flex-direction:column;gap:6px;"></div>
+      </div>
+    </section>
+
+    <!-- CENTER: 3D VIEWPORT + TIMELINE -->
+    <section class="viewport-wrap">
+      <div id="canvas-container">
+        <div class="vp-overlay-top">
+          <div class="vp-pill-group">
+            <button id="btn-toggle-skel" class="sm">Skeleton: ON</button>
+            <button id="btn-toggle-mesh" class="sm">Mesh: ON</button>
+            <button id="btn-rest-pose" class="sm">Rest Pose</button>
+            <button id="btn-reset-cam" class="sm">Reset Camera</button>
+            <button id="btn-bg-cycle" class="sm">BG: Dark</button>
+          </div>
+          <div class="vp-stats" id="vp-stats">Clip: — | Bones: 0</div>
+        </div>
+
+        <div class="vp-banner" id="vp-banner">
+          <div class="vp-banner-box">
+            <h3>Load Workspace Folder</h3>
+            <p id="vp-banner-msg">
+              Browser security blocks automatic reading of sibling files on <code>file://</code>.<br />
+              Click <strong>Open Folder</strong> and select <code>tools/animation_manager</code> (or drag &amp; drop all files here) to auto-load <code>character.glb</code>, <code>humanoid_anims.glb</code>, and all raw <code>.fbx</code> clips.
+            </p>
+            <button id="btn-banner-folder" class="primary">Open tools/animation_manager Folder</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="timeline">
+        <button id="btn-play" class="sm primary" disabled>Play</button>
+        <button id="btn-stop" class="sm" disabled>Stop</button>
+        <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+          <input type="checkbox" id="chk-loop" checked /> Loop
+        </label>
+        <input type="range" id="scrubber" min="0" max="1" step="0.001" value="0" disabled />
+        <select id="sel-speed" style="width:auto;padding:4px 6px;">
+          <option value="0.25">0.25x</option>
+          <option value="0.5">0.5x</option>
+          <option value="1" selected>1.0x</option>
+          <option value="1.5">1.5x</option>
+          <option value="2">2.0x</option>
+        </select>
+        <div class="time-readout" id="time-readout">0.00s / 0.00s</div>
+      </div>
+    </section>
+
+    <!-- RIGHT: RAW STAGING + METADATA INSPECTOR -->
+    <section class="panel right">
+      <div class="split-right">
+        <div class="sub-panel">
+          <div class="panel-header">
+            <span>Raw Animations (<span id="raw-count">0</span>)</span>
+            <button id="btn-merge-all" class="sm jade" disabled>Merge All → Bank</button>
+          </div>
+          <div class="panel-body">
+            <div id="drop-raw" class="dropzone">
+              Drop <strong>.fbx / .glb / .gltf</strong> files here<br />
+              <span class="hint">Preview on Character &amp; merge into Bank .GLB</span>
+            </div>
+            <label style="display:flex;align-items:center;gap:6px;font-weight:500;cursor:pointer;">
+              <input type="checkbox" id="chk-remap-bones" checked />
+              Auto-remap bone prefixes (<code>mixamorig:</code>, <code>Armature|</code>)
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;font-weight:500;cursor:pointer;" title="Prevents smaller/larger rigs from squashing the character mesh">
+              <input type="checkbox" id="chk-retarget-rot" checked />
+              Rotation-only retarget (preserve character proportions)
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;font-weight:500;cursor:pointer;" title="Zeroes horizontal X/Z root motion so the character stays centered on the grid">
+              <input type="checkbox" id="chk-in-place" checked />
+              In-place (lock root X/Z to center)
+            </label>
+            <div id="raw-list" style="display:flex;flex-direction:column;gap:6px;"></div>
+          </div>
+        </div>
+
+        <div class="sub-panel">
+          <div class="panel-header">
+            <span>Clip Metadata &amp; AI Description</span>
+            <span id="inspector-source" class="tag">None</span>
+          </div>
+          <div class="panel-body" id="inspector-body">
+            <div class="hint" style="padding:12px 0;text-align:center;">
+              Select any clip from Anim Bank or Raw Animations to inspect &amp; edit its name, slot, and AI description.
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<dialog id="help-dialog">
+  <h3>Wuxing Animation Manager — Guide</h3>
+  <p>
+    <strong>1. Auto-Loading Files in <code>tools/animation_manager/</code>:</strong><br />
+    • <strong>With local server</strong> (<code>http://localhost</code>): Automatically fetches <code>character.glb</code>, <code>humanoid_anims.glb</code>, and all <code>*.fbx</code>/<code>*.glb</code> files in the directory on startup.<br />
+    • <strong>Without server (<code>file://</code>)</strong>: Browsers block silent <code>file://</code> directory reads, so click <strong>Open Folder</strong> once (or drag-and-drop all files onto the window) — it automatically routes <code>character.glb</code> → Character, <code>humanoid_anims.glb</code> → Anim Bank, and all other <code>.fbx/.glb</code> → Raw Animations.
+  </p>
+  <p>
+    <strong>2. Where Name &amp; Description are stored:</strong><br />
+    • <strong>Inside <code>humanoid_anims.glb</code></strong>: <code>animations[i].name</code> (keep <code>&lt;= 31</code> chars for Raylib) and <code>animations[i].extras</code> (<code>description</code>, <code>slot</code>, <code>loop</code>, <code>tags</code>, <code>ai_usage</code>).<br />
+    • <strong>Sidecar <code>player_anims.json</code></strong>: Export alongside <code>.glb</code> so both <code>character_model.c</code> and AI coding agents can read every clip's description directly.
+  </p>
+  <div style="display:flex;justify-content:flex-end;margin-top:12px;">
+    <button id="btn-close-help" class="primary">Got it</button>
+  </div>
+</dialog>
+
+<script>
+(() => {
+  if (typeof THREE === 'undefined') {
+    alert('Failed to load Three.js from CDN. Check your internet connection and reload.');
+    return;
+  }
+  const { OrbitControls, GLTFLoader, FBXLoader, GLTFExporter } = THREE;
+
+  const WUXING_SLOT_GROUPS = [
+    { label: 'Locomotion', slots: ['idle', 'walk', 'run'] },
+    { label: 'Agility / Mobility', slots: ['jump', 'jump_down', 'dodge'] },
+    { label: 'Unarmed Martial Arts', slots: ['punch', 'kick', 'palm', 'block', 'parry'] },
+    { label: 'Sword Arts', slots: ['sword_idle', 'sword_slash', 'sword_thrust', 'sword_parry', 'sword_block'] },
+    { label: 'Qi / Skills', slots: ['cast', 'meditate'] },
+    { label: 'Reactions', slots: ['hit', 'knockdown', 'death'] },
+    { label: 'Special', slots: ['custom'] },
+  ];
+  const WUXING_SLOTS = WUXING_SLOT_GROUPS.flatMap((g) => g.slots);
+
+  const state = {
+    charFileName: '',
+    charScene: null,
+    charBones: new Set(),
+    charBind: null,
+
+    bankFileName: 'humanoid_anims.glb',
+    bankScene: null,
+    bankBones: new Set(),
+    bankBind: null,
+    bankClips: [], // { id, clip, meta: { slot, loop, tags, description } }
+
+    rawClips: [],  // { id, fileName, clip, sourceScene, meta }
+    deletedHistory: [],
+    selected: null,
+    dirHandle: null,
+
+    playing: false,
+    loop: true,
+    speed: 1.0,
+    bgIndex: 0,
+    showSkeleton: true,
+    showMesh: true,
+  };
+
+  let uid = 1;
+  const nextId = (p) => `${p}_${uid++}`;
+
+  // ---------- Three.js Viewport ----------
+  const container = document.getElementById('canvas-container');
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.1;
+  container.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  const BG_COLORS = [0x0b0f17, 0x262d3d, 0xd8dee9];
+  scene.background = new THREE.Color(BG_COLORS[0]);
+
+  const camera = new THREE.PerspectiveCamera(45, 1, 0.05, 500);
+  camera.position.set(2.2, 1.65, 3.2);
+
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.target.set(0, 0.95, 0);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+
+  scene.add(new THREE.HemisphereLight(0xdbeafe, 0x1e293b, 1.25));
+  const dirLight = new THREE.DirectionalLight(0xfff7ed, 2.2);
+  dirLight.position.set(3, 6, 4);
+  scene.add(dirLight);
+  const rimLight = new THREE.DirectionalLight(0x38bdf8, 0.9);
+  rimLight.position.set(-3, 3, -4);
+  scene.add(rimLight);
+  scene.add(new THREE.GridHelper(30, 30, 0x334155, 0x1e293b));
+
+  let modelRoot = null;
+  let skeletonHelper = null;
+  let mixer = null;
+  let activeAction = null;
+  let activeClipDuration = 0;
+
+  function resizeViewport() {
+    const w = container.clientWidth || 1;
+    const h = container.clientHeight || 1;
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+    renderer.setSize(w, h, false);
+  }
+  window.addEventListener('resize', resizeViewport);
+  setTimeout(resizeViewport, 0);
+
+  const clock = new THREE.Clock();
+  function animate() {
+    requestAnimationFrame(animate);
+    const dt = clock.getDelta();
+    controls.update();
+
+    if (mixer && state.playing && activeAction) {
+      mixer.update(dt * state.speed);
+      const t = activeAction.time;
+      const dur = activeClipDuration || 1;
+      document.getElementById('scrubber').value = Math.min(1, t / dur);
+      document.getElementById('time-readout').textContent = `${t.toFixed(2)}s / ${dur.toFixed(2)}s`;
+      if (!state.loop && t >= dur - 0.001) {
+        state.playing = false;
+        document.getElementById('btn-play').textContent = 'Play';
+      }
+    }
+    renderer.render(scene, camera);
+  }
+  animate();
+
+  // ---------- Helpers ----------
+  function showToast(msg) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.classList.add('show');
+    clearTimeout(el._t);
+    el._t = setTimeout(() => el.classList.remove('show'), 2800);
+  }
+
+  function toSnakeCase(str) {
+    return (str || 'untitled_clip').trim().toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'untitled_clip';
+  }
+
+  function collectBoneNames(root) {
+    const names = new Set();
+    if (!root) return names;
+    root.traverse((obj) => {
+      if (obj.isBone || obj.type === 'Bone') names.add(obj.name);
+    });
+    if (names.size === 0) {
+      root.traverse((obj) => { if (obj.name) names.add(obj.name); });
+    }
+    return names;
+  }
+
+  function stripBonePrefix(name) {
+    let n = name;
+    if (n.includes('|')) n = n.split('|').pop();
+    if (n.includes('/')) n = n.split('/').pop();
+    n = n.replace(/^mixamorig\d*[:_]?/i, '');
+    return n;
+  }
+
+  function captureBindPose(root) {
+    const world = new Map();
+    const local = new Map();
+    let hipsWorldY = 0;
+    const hipsParentWorldQuat = new THREE.Quaternion();
+    const hipsParentWorldScale = new THREE.Vector3(1, 1, 1);
+    const dstHipsParentWorldQuatInv = new THREE.Quaternion();
+
+    if (!root) return { world, local, hipsWorldY, hipsParentWorldQuat, hipsParentWorldScale, dstHipsParentWorldQuatInv };
+    root.updateMatrixWorld(true);
+    root.traverse((o) => {
+      if (o.name) {
+        const wq = new THREE.Quaternion();
+        o.getWorldQuaternion(wq);
+        world.set(o.name.toLowerCase(), wq);
+        world.set(stripBonePrefix(o.name).toLowerCase(), wq);
+        local.set(o.name.toLowerCase(), o.quaternion.clone());
+        local.set(stripBonePrefix(o.name).toLowerCase(), o.quaternion.clone());
+
+        if (/^hips$/i.test(stripBonePrefix(o.name))) {
+          const wp = new THREE.Vector3();
+          o.getWorldPosition(wp);
+          hipsWorldY = wp.y;
+          if (o.parent) {
+            o.parent.getWorldQuaternion(hipsParentWorldQuat);
+            o.parent.getWorldScale(hipsParentWorldScale);
+            dstHipsParentWorldQuatInv.copy(hipsParentWorldQuat).invert();
+          }
+        }
+      }
+    });
+    return { world, local, hipsWorldY, hipsParentWorldQuat, hipsParentWorldScale, dstHipsParentWorldQuatInv };
+  }
+
+  function analyzeBindTransform(srcBind, dstBind) {
+    if (!srcBind || !dstBind) {
+      return { needsPosRetarget: false, needsRotRetarget: false, hipsRatio: 1.0, label: 'direct (no bind diff)' };
+    }
+    let hipsRatio = 1.0;
+    if (srcBind.hipsWorldY > 0.01 && dstBind.hipsWorldY > 0.01) {
+      hipsRatio = dstBind.hipsWorldY / srcBind.hipsWorldY;
+    }
+    const scaleDiff = Math.abs(hipsRatio - 1.0) > 0.02;
+    const parentRotDeg = THREE.MathUtils.radToDeg(srcBind.hipsParentWorldQuat.angleTo(dstBind.hipsParentWorldQuat));
+    const parentScaleDiff = srcBind.hipsParentWorldScale.distanceTo(dstBind.hipsParentWorldScale) > 0.01;
+    let maxBoneDiffDeg = 0;
+    for (const [k, wSrc] of srcBind.world.entries()) {
+      const wDst = dstBind.world.get(k);
+      if (wDst) {
+        const d = THREE.MathUtils.radToDeg(wSrc.angleTo(wDst));
+        if (d > maxBoneDiffDeg) maxBoneDiffDeg = d;
+      }
+    }
+    const needsPosRetarget = scaleDiff || parentRotDeg > 0.5 || parentScaleDiff;
+    const needsRotRetarget = maxBoneDiffDeg > 0.5;
+    const label = (needsPosRetarget || needsRotRetarget)
+      ? `retargeted (scale ${hipsRatio.toFixed(2)}x, Δrest ${maxBoneDiffDeg.toFixed(1)}°)`
+      : 'direct (aligned rig)';
+    return { needsPosRetarget, needsRotRetarget, hipsRatio, label };
+  }
+
+  function remapClipToBones(clip, targetBoneSet, rotationOnly = false, targetScene = null, srcBind = null, dstBind = null, inPlace = false) {
+    if (!targetBoneSet || targetBoneSet.size === 0) return clip.clone();
+    const lookup = new Map();
+    for (const b of targetBoneSet) {
+      lookup.set(b.toLowerCase(), b);
+      lookup.set(stripBonePrefix(b).toLowerCase(), b);
+    }
+
+    const bindInfo = rotationOnly ? analyzeBindTransform(srcBind, dstBind) : { needsPosRetarget: false, needsRotRetarget: false, hipsRatio: 1.0, label: 'raw' };
+    const hipsRatio = bindInfo.hipsRatio;
+
+    const cloned = clip.clone();
+    const keptTracks = [];
+    let matched = 0;
+
+    const srcWorldBind = srcBind ? srcBind.world : new Map();
+    const srcLocalBind = srcBind ? srcBind.local : new Map();
+    const dstWorldBind = dstBind ? dstBind.world : new Map();
+    const dstLocalBind = dstBind ? dstBind.local : new Map();
+
+    const qSrc = new THREE.Quaternion();
+    const qDst = new THREE.Quaternion();
+    const qDelta = new THREE.Quaternion();
+    const mMat = new THREE.Quaternion();
+    const mInv = new THREE.Quaternion();
+    const vTmp = new THREE.Vector3();
+
+    for (const track of cloned.tracks) {
+      const dotIdx = track.name.indexOf('.');
+      if (dotIdx === -1) continue;
+      const nodeName = track.name.slice(0, dotIdx);
+      const prop = track.name.slice(dotIdx);
+
+      const strippedLower = stripBonePrefix(nodeName).toLowerCase();
+      if (rotationOnly) {
+        if (prop === '.scale') continue;
+        if (prop === '.position') {
+          if (strippedLower !== 'hips' && strippedLower !== 'root') continue;
+          const vals = track.values;
+          if (bindInfo.needsPosRetarget) {
+            const sScale = srcBind ? srcBind.hipsParentWorldScale : new THREE.Vector3(1, 1, 1);
+            const sQuat = srcBind ? srcBind.hipsParentWorldQuat : new THREE.Quaternion();
+            const dScale = dstBind ? dstBind.hipsParentWorldScale : new THREE.Vector3(1, 1, 1);
+            const dQuatInv = dstBind ? dstBind.dstHipsParentWorldQuatInv : new THREE.Quaternion();
+            for (let i = 0; i < vals.length; i += 3) {
+              vTmp.set(vals[i] * sScale.x, vals[i + 1] * sScale.y, vals[i + 2] * sScale.z);
+              vTmp.applyQuaternion(sQuat);
+              vTmp.multiplyScalar(hipsRatio);
+              vTmp.applyQuaternion(dQuatInv);
+              vals[i] = inPlace ? 0 : (vTmp.x / (dScale.x || 1));
+              vals[i + 1] = vTmp.y / (dScale.y || 1);
+              vals[i + 2] = inPlace ? 0 : (vTmp.z / (dScale.z || 1));
+            }
+          } else if (inPlace) {
+            for (let i = 0; i < vals.length; i += 3) {
+              vals[i] = 0;
+              vals[i + 2] = 0;
+            }
+          }
+        }
+      }
+
+      let targetName = nodeName;
+      let isMatched = false;
+      if (targetBoneSet.has(nodeName)) {
+        matched++;
+        isMatched = true;
+      } else {
+        const candidate = lookup.get(nodeName.toLowerCase()) || lookup.get(strippedLower);
+        if (candidate) {
+          targetName = candidate;
+          track.name = candidate + prop;
+          matched++;
+          isMatched = true;
+        }
+      }
+      // Drop unmatched tracks: Three.js PropertyBinding falls back to root (AuxScene) when a node name is missing,
+      // which would overwrite the character root transform with an extra finger/end-bone rotation.
+      if (!isMatched) continue;
+
+      // Apply bind-pose quaternion retargeting ONLY when source & target bind poses actually differ
+      if (rotationOnly && bindInfo.needsRotRetarget && prop === '.quaternion') {
+        const wSrc = srcWorldBind.get(nodeName.toLowerCase()) || srcWorldBind.get(strippedLower);
+        const lSrc = srcLocalBind.get(nodeName.toLowerCase()) || srcLocalBind.get(strippedLower);
+        const wDst = dstWorldBind.get(targetName.toLowerCase()) || dstWorldBind.get(strippedLower);
+        const lDst = dstLocalBind.get(targetName.toLowerCase()) || dstLocalBind.get(strippedLower);
+        if (wSrc && lSrc && wDst && lDst) {
+          // M = wDst^-1 * wSrc
+          mMat.copy(wDst).invert().multiply(wSrc);
+          mInv.copy(mMat).invert();
+          const lSrcInv = lSrc.clone().invert();
+          const vals = track.values;
+          for (let i = 0; i < vals.length; i += 4) {
+            qSrc.set(vals[i], vals[i + 1], vals[i + 2], vals[i + 3]);
+            // qDelta = lSrc^-1 * qSrc
+            qDelta.copy(lSrcInv).multiply(qSrc);
+            // qDst = lDst * M * qDelta * M^-1
+            qDst.copy(lDst).multiply(mMat).multiply(qDelta).multiply(mInv).normalize();
+            vals[i] = qDst.x;
+            vals[i + 1] = qDst.y;
+            vals[i + 2] = qDst.z;
+            vals[i + 3] = qDst.w;
+          }
+        }
+      }
+      keptTracks.push(track);
+    }
+    cloned.tracks = keptTracks;
+    cloned._matchedTracks = matched;
+    cloned._totalTracks = clip.tracks.length;
+    cloned._retargetLabel = bindInfo.label;
+    return cloned;
+  }
+
+  function applyRootEulerOffset(clip, degX, degY, degZ) {
+    if (!degX && !degY && !degZ) return clip;
+    const euler = new THREE.Euler(
+      THREE.MathUtils.degToRad(degX || 0),
+      THREE.MathUtils.degToRad(degY || 0),
+      THREE.MathUtils.degToRad(degZ || 0),
+      'XYZ'
+    );
+    const qOff = new THREE.Quaternion().setFromEuler(euler);
+    const qTmp = new THREE.Quaternion();
+    const vTmp = new THREE.Vector3();
+    const out = clip.clone();
+    for (const track of out.tracks) {
+      const dot = track.name.indexOf('.');
+      if (dot === -1) continue;
+      const bone = stripBonePrefix(track.name.slice(0, dot)).toLowerCase();
+      const prop = track.name.slice(dot);
+      if (bone !== 'hips' && bone !== 'root') continue;
+      if (prop === '.quaternion') {
+        for (let i = 0; i < track.values.length; i += 4) {
+          qTmp.set(track.values[i], track.values[i + 1], track.values[i + 2], track.values[i + 3]);
+          qTmp.premultiply(qOff).normalize();
+          track.values[i] = qTmp.x; track.values[i + 1] = qTmp.y; track.values[i + 2] = qTmp.z; track.values[i + 3] = qTmp.w;
+        }
+      } else if (prop === '.position') {
+        for (let i = 0; i < track.values.length; i += 3) {
+          vTmp.set(track.values[i], track.values[i + 1], track.values[i + 2]).applyQuaternion(qOff);
+          track.values[i] = vTmp.x; track.values[i + 1] = vTmp.y; track.values[i + 2] = vTmp.z;
+        }
+      }
+    }
+    out._matchedTracks = clip._matchedTracks;
+    out._totalTracks = clip._totalTracks;
+    return out;
+  }
+
+  function guessSlotFromName(name) {
+    const n = (name || '').toLowerCase();
+    if (n.includes('sword') && n.includes('idle')) return 'sword_idle';
+    if (n.includes('sword') && (n.includes('slash') || n.includes('cleave') || n.includes('backhand'))) return 'sword_slash';
+    if (n.includes('sword') && (n.includes('thrust') || n.includes('lunge'))) return 'sword_thrust';
+    if (n.includes('sword') && n.includes('parry')) return 'sword_parry';
+    if (n.includes('sword') && n.includes('block')) return 'sword_block';
+    if (n.includes('meditat') || n.includes('thiendinh')) return 'meditate';
+    if (n.includes('parry') || n.includes('deflect') || n.includes('taiji')) return 'parry';
+    if (n.includes('block') || n.includes('guard')) return 'block';
+    if (n.includes('idle')) return 'idle';
+    if (n.includes('walk')) return 'walk';
+    if (n.includes('run')) return 'run';
+    if (n.includes('jump_down') || n.includes('jumping_down')) return 'jump_down';
+    if (n.includes('jump')) return 'jump';
+    if (n.includes('dodge') || n.includes('evade')) return 'dodge';
+    if (n.includes('punch') || n.includes('fist') || n.includes('elbow')) return 'punch';
+    if (n.includes('kick')) return 'kick';
+    if (n.includes('palm')) return 'palm';
+    if (n.includes('cast')) return 'cast';
+    if (n.includes('death') || n.includes('die')) return 'death';
+    if (n.includes('knockdown')) return 'knockdown';
+    if (n.includes('hit') || n.includes('hurt')) return 'hit';
+    return 'custom';
+  }
+
+  // ---------- GLB Extras Reader/Writer ----------
+  function readGlbAnimationExtras(arrayBuffer) {
+    try {
+      const view = new DataView(arrayBuffer);
+      if (view.byteLength < 20 || view.getUint32(0, true) !== 0x46546C67) return [];
+      const chunk0Len = view.getUint32(12, true);
+      if (view.getUint32(16, true) !== 0x4E4F534A) return [];
+      const gltf = JSON.parse(new TextDecoder().decode(new Uint8Array(arrayBuffer, 20, chunk0Len)));
+      return (gltf.animations || []).map((a) => ({ name: a.name || '', extras: a.extras || null }));
+    } catch { return []; }
+  }
+
+  function injectGlbAnimationExtras(arrayBuffer, entries) {
+    const view = new DataView(arrayBuffer);
+    if (view.getUint32(0, true) !== 0x46546C67) return arrayBuffer;
+    const chunk0Len = view.getUint32(12, true);
+    if (view.getUint32(16, true) !== 0x4E4F534A) return arrayBuffer;
+    const gltf = JSON.parse(new TextDecoder().decode(new Uint8Array(arrayBuffer, 20, chunk0Len)));
+
+    if (Array.isArray(gltf.nodes)) {
+      // 1. Restore original bone names (e.g. "mixamorig:Hips") that Three.js GLTFLoader sanitized on import
+      gltf.nodes.forEach((node) => {
+        if (node.extras && typeof node.extras.name === 'string' && node.extras.name.length > 0) {
+          node.name = node.extras.name;
+        }
+      });
+
+      // 2. Raylib LoadModelAnimations() requires gltf.skins[0].joints to exist even for anim-only GLBs
+      if (!Array.isArray(gltf.skins) || gltf.skins.length === 0) {
+        const jointIndices = [];
+        const visited = new Set();
+        const hipsIdx = gltf.nodes.findIndex((n) => /^(mixamorig\d*[:_]?)?hips$/i.test(n.name || ''));
+        const addSubtree = (idx) => {
+          if (idx == null || idx < 0 || idx >= gltf.nodes.length || visited.has(idx)) return;
+          visited.add(idx);
+          jointIndices.push(idx);
+          const ch = gltf.nodes[idx].children;
+          if (Array.isArray(ch)) ch.forEach(addSubtree);
+        };
+        if (hipsIdx >= 0) {
+          addSubtree(hipsIdx);
+        } else {
+          gltf.nodes.forEach((n, idx) => {
+            if (n.name && !/^(auxscene|scene|rootnode)$/i.test(n.name)) jointIndices.push(idx);
+          });
+        }
+        if (jointIndices.length > 0) {
+          gltf.skins = [{ name: 'Armature', joints: jointIndices, skeleton: jointIndices[0] }];
+        }
+      }
+    }
+
+    if (Array.isArray(gltf.animations)) {
+      gltf.animations.forEach((anim, idx) => {
+        const entry = entries[idx];
+        if (!entry) return;
+        anim.name = entry.clip.name;
+        anim.extras = {
+          slot: entry.meta.slot || 'custom',
+          loop: !!entry.meta.loop,
+          tags: entry.meta.tags || [],
+          description: entry.meta.description || '',
+          ai_usage: `Slot '${entry.meta.slot || 'custom'}': ${entry.meta.description || 'No description.'}`,
+        };
+      });
+    }
+
+    const rawJsonBytes = new TextEncoder().encode(JSON.stringify(gltf));
+    const paddedJsonLen = (rawJsonBytes.length + 3) & ~3;
+    const paddedJson = new Uint8Array(paddedJsonLen);
+    paddedJson.set(rawJsonBytes);
+    for (let i = rawJsonBytes.length; i < paddedJsonLen; i++) paddedJson[i] = 0x20;
+
+    const restBytes = new Uint8Array(arrayBuffer, 20 + chunk0Len);
+    const totalLen = 12 + 8 + paddedJsonLen + restBytes.length;
+    const out = new Uint8Array(totalLen);
+    const outView = new DataView(out.buffer);
+    outView.setUint32(0, 0x46546C67, true);
+    outView.setUint32(4, 2, true);
+    outView.setUint32(8, totalLen, true);
+    outView.setUint32(12, paddedJsonLen, true);
+    outView.setUint32(16, 0x4E4F534A, true);
+    out.set(paddedJson, 20);
+    out.set(restBytes, 20 + paddedJsonLen);
+    return out.buffer;
+  }
+
+  // ---------- Viewport Mounting & Framing ----------
+  function frameCameraToObject(obj) {
+    const box = new THREE.Box3().setFromObject(obj);
+    if (box.isEmpty()) return;
+    const size = new THREE.Vector3();
+    const center = new THREE.Vector3();
+    box.getSize(size);
+    box.getCenter(center);
+
+    const maxDim = Math.max(size.x, size.y, size.z, 0.5);
+    const dist = maxDim * 1.85;
+    controls.target.copy(center);
+    camera.position.set(center.x + dist * 0.55, center.y + maxDim * 0.35, center.z + dist * 0.9);
+    controls.update();
+  }
+
+  function mountSceneOnViewport(sceneObj) {
+    if (modelRoot) scene.remove(modelRoot);
+    if (skeletonHelper) scene.remove(skeletonHelper);
+    if (mixer) mixer.stopAllAction();
+
+    modelRoot = sceneObj;
+    const box = new THREE.Box3().setFromObject(modelRoot);
+    const size = new THREE.Vector3();
+    box.getSize(size);
+    if (size.y > 10 && !modelRoot._scaledCm) {
+      modelRoot.scale.multiplyScalar(0.01);
+      modelRoot._scaledCm = true;
+    }
+    modelRoot.updateMatrixWorld(true);
+    scene.add(modelRoot);
+
+    skeletonHelper = new THREE.SkeletonHelper(modelRoot);
+    skeletonHelper.visible = state.showSkeleton;
+    scene.add(skeletonHelper);
+
+    modelRoot.traverse((o) => {
+      if (o.isMesh) {
+        o.visible = state.showMesh;
+        o.frustumCulled = false;
+      }
+    });
+
+    mixer = new THREE.AnimationMixer(modelRoot);
+    activeAction = null;
+    frameCameraToObject(modelRoot);
+  }
+
+  // ---------- Loaders ----------
+  const gltfLoader = new GLTFLoader();
+  const fbxLoader = new FBXLoader();
+
+  async function loadCharacterGLB(name, buf) {
+    return new Promise((resolve) => {
+      gltfLoader.parse(buf, '', (gltf) => {
+        state.charFileName = name;
+        state.charScene = gltf.scene;
+        state.charBones = collectBoneNames(gltf.scene);
+        state.charBind = captureBindPose(gltf.scene);
+
+        mountSceneOnViewport(state.charScene);
+        document.getElementById('vp-banner').style.display = 'none';
+        const st = document.getElementById('char-status');
+        st.textContent = `${name} (${state.charBones.size} bones)`;
+        st.style.color = 'var(--jade)';
+
+        // If character.glb itself has animations and no bank loaded yet, offer them
+        if (gltf.animations?.length && state.bankClips.length === 0) {
+          loadBankFromGltf(name, buf, gltf);
+        }
+        if (state.selected) {
+          const list = state.selected.kind === 'bank' ? state.bankClips : state.rawClips;
+          const cur = list.find((c) => c.id === state.selected.id);
+          if (cur) playEntry(cur);
+        }
+        resolve(true);
+      }, (err) => {
+        console.error('Character GLB error:', err);
+        showToast(`Failed to load ${name}`);
+        resolve(false);
+      });
+    });
+  }
+
+  function loadBankFromGltf(name, buf, gltf) {
+    const glbExtras = readGlbAnimationExtras(buf);
+    state.bankFileName = name;
+    state.bankScene = gltf.scene;
+    state.bankBones = collectBoneNames(gltf.scene);
+    state.bankBind = captureBindPose(gltf.scene);
+    state.deletedHistory = [];
+
+    state.bankClips = (gltf.animations || []).map((clip, i) => {
+      const ex = glbExtras[i]?.extras || {};
+      const slot = ex.slot || guessSlotFromName(clip.name);
+      const isLoop = typeof ex.loop === 'boolean' ? ex.loop : ['idle', 'walk', 'run', 'sword_idle'].includes(slot);
+      return {
+        id: nextId('bank'),
+        clip,
+        meta: {
+          slot,
+          loop: isLoop,
+          tags: Array.isArray(ex.tags) ? ex.tags : [],
+          description: ex.description || '',
+        },
+      };
+    });
+
+    const st = document.getElementById('bank-status');
+    st.textContent = `${name} (${state.bankClips.length} clips)`;
+    st.style.color = 'var(--jade)';
+    document.getElementById('btn-export-glb').disabled = false;
+    document.getElementById('btn-export-json').disabled = false;
+
+    if (!state.charScene && state.bankScene) {
+      mountSceneOnViewport(state.bankScene);
+      document.getElementById('vp-banner').style.display = 'none';
+    }
+
+    renderBankList();
+    if (state.bankClips.length > 0) {
+      const idleClip = state.bankClips.find((c) => c.clip.name.toLowerCase() === 'idle') || state.bankClips[0];
+      selectClip('bank', idleClip.id);
+    }
+  }
+
+  async function loadBankGLB(name, buf) {
+    return new Promise((resolve) => {
+      gltfLoader.parse(buf, '', (gltf) => {
+        loadBankFromGltf(name, buf, gltf);
+        resolve(true);
+      }, (err) => {
+        console.error('Bank GLB error:', err);
+        showToast(`Failed to load ${name}`);
+        resolve(false);
+      });
+    });
+  }
+
+  async function loadRawFile(name, buf) {
+    const ext = name.split('.').pop().toLowerCase();
+    const baseName = toSnakeCase(name.replace(/\.[^.]+$/, ''));
+
+    if (ext === 'fbx') {
+      try {
+        const fbx = fbxLoader.parse(buf, '');
+        const fbxBind = captureBindPose(fbx);
+        const anims = fbx.animations || [];
+        anims.forEach((clip, idx) => {
+          const cleanName = anims.length === 1 ? baseName : `${baseName}_${idx}`;
+          clip.name = cleanName.slice(0, 31);
+          const slot = guessSlotFromName(clip.name);
+          state.rawClips.push({
+            id: nextId('raw'),
+            fileName: name,
+            clip,
+            sourceScene: fbx,
+            sourceBind: fbxBind,
+            meta: {
+              slot,
+              loop: ['idle', 'walk', 'run', 'sword_idle'].includes(slot),
+              tags: [],
+              description: '',
+            },
+          });
+        });
+      } catch (e) {
+        console.error(`FBX parse error (${name}):`, e);
+        showToast(`FBX parse error: ${name}`);
+      }
+    } else if (ext === 'glb' || ext === 'gltf') {
+      const glbExtras = ext === 'glb' ? readGlbAnimationExtras(buf) : [];
+      await new Promise((resolve) => {
+        gltfLoader.parse(buf, '', (gltf) => {
+          const gltfBind = captureBindPose(gltf.scene);
+          (gltf.animations || []).forEach((clip, idx) => {
+            if (!clip.name || clip.name === 'mixamo.com') clip.name = `${baseName}${idx > 0 ? '_' + idx : ''}`;
+            const ex = glbExtras[idx]?.extras || {};
+            const slot = ex.slot || guessSlotFromName(clip.name);
+            state.rawClips.push({
+              id: nextId('raw'),
+              fileName: name,
+              clip,
+              sourceScene: gltf.scene,
+              sourceBind: gltfBind,
+              meta: {
+                slot,
+                loop: typeof ex.loop === 'boolean' ? ex.loop : ['idle', 'walk', 'run', 'sword_idle'].includes(slot),
+                tags: Array.isArray(ex.tags) ? ex.tags : [],
+                description: ex.description || '',
+              },
+            });
+          });
+          resolve();
+        }, () => resolve());
+      });
+    }
+    renderRawList();
+  }
+
+  // Smart batch router: routes character.glb, humanoid_anims.glb, *.json, and raw *.fbx/*.glb
+  async function ingestFileList(fileEntries) {
+    // fileEntries: array of { name, getBuffer: () => Promise<ArrayBuffer>, getText?: () => Promise<string> }
+    state.rawClips = [];
+    const charEntry = fileEntries.find((f) => f.name.toLowerCase() === 'character.glb')
+      || fileEntries.find((f) => f.name.toLowerCase() === 'player.glb');
+    const bankEntry = fileEntries.find((f) => f.name.toLowerCase() === 'humanoid_anims.glb');
+    const jsonEntry = fileEntries.find((f) => f.name.toLowerCase() === 'player_anims.json');
+
+    if (charEntry) await loadCharacterGLB(charEntry.name, await charEntry.getBuffer());
+    if (bankEntry) await loadBankGLB(bankEntry.name, await bankEntry.getBuffer());
+
+    for (const f of fileEntries) {
+      const lower = f.name.toLowerCase();
+      if (f === charEntry || f === bankEntry) continue;
+      if (lower.endsWith('.fbx') || lower.endsWith('.glb') || lower.endsWith('.gltf')) {
+        await loadRawFile(f.name, await f.getBuffer());
+      }
+    }
+
+    if (jsonEntry && jsonEntry.getText) {
+      await applyManifestText(await jsonEntry.getText());
+    }
+    renderBankList();
+    renderRawList();
+    showToast(`Loaded: ${charEntry ? charEntry.name : 'no char'}, ${state.bankClips.length} bank, ${state.rawClips.length} raw`);
+  }
+
+  // ---------- Auto-load on HTTP (if served via local server) ----------
+  async function tryAutoLoadOverHttp() {
+    if (window.location.protocol === 'file:') return;
+    document.getElementById('vp-banner-msg').innerHTML = 'Scanning <code>tools/animation_manager/</code>...';
+    try {
+      const res = await fetch('./');
+      if (!res.ok) return;
+      const html = await res.text();
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const links = Array.from(doc.querySelectorAll('a'))
+        .map((a) => decodeURIComponent(a.getAttribute('href') || '').split('/').pop())
+        .filter((n) => /\.(glb|gltf|fbx|json)$/i.test(n));
+
+      if (links.length === 0) return;
+      const entries = links.map((name) => ({
+        name,
+        getBuffer: () => fetch('./' + encodeURIComponent(name)).then((r) => r.arrayBuffer()),
+        getText: () => fetch('./' + encodeURIComponent(name)).then((r) => r.text()),
+      }));
+      await ingestFileList(entries);
+    } catch (e) {
+      console.warn('Auto-scan skipped:', e);
+    }
+  }
+
+  // ---------- Playback & Selection ----------
+  function getActivePreviewBones() {
+    return state.charBones.size > 0 ? state.charBones : state.bankBones;
+  }
+
+  function playEntry(entry) {
+    const activeScene = state.charScene || state.bankScene || entry.sourceScene;
+    if (!activeScene) return;
+    if (modelRoot !== activeScene) mountSceneOnViewport(activeScene);
+
+    let clipToPlay = entry.clip;
+    let trackInfo = `${clipToPlay.tracks.length} tracks`;
+    const targetBones = getActivePreviewBones();
+    const shouldRemap = document.getElementById('chk-remap-bones').checked;
+    const rotOnly = document.getElementById('chk-retarget-rot').checked;
+    const inPlace = document.getElementById('chk-in-place').checked;
+
+    if ((shouldRemap || rotOnly) && targetBones.size > 0) {
+      const srcBind = entry.sourceBind || state.bankBind;
+      const dstBind = state.charScene ? state.charBind : state.bankBind;
+      clipToPlay = remapClipToBones(entry.clip, targetBones, rotOnly, activeScene, srcBind, dstBind, inPlace);
+      trackInfo = `${clipToPlay._matchedTracks}/${clipToPlay._totalTracks} matched · ${clipToPlay._retargetLabel || 'direct'}`;
+    }
+    if (entry.meta.rotOffset) {
+      const { x = 0, y = 0, z = 0 } = entry.meta.rotOffset;
+      clipToPlay = applyRootEulerOffset(clipToPlay, x, y, z);
+    }
+
+    if (!mixer) return;
+    mixer.stopAllAction();
+    activeScene.traverse((o) => { if (o.isSkinnedMesh && o.skeleton) o.skeleton.pose(); });
+
+    activeAction = mixer.clipAction(clipToPlay);
+    state.loop = !!entry.meta.loop;
+    document.getElementById('chk-loop').checked = state.loop;
+    activeAction.setLoop(state.loop ? THREE.LoopRepeat : THREE.LoopOnce, Infinity);
+    activeAction.clampWhenFinished = !state.loop;
+    activeAction.reset().play();
+
+    activeClipDuration = clipToPlay.duration || 0.01;
+    state.playing = true;
+    document.getElementById('btn-play').disabled = false;
+    document.getElementById('btn-stop').disabled = false;
+    document.getElementById('scrubber').disabled = false;
+    document.getElementById('btn-play').textContent = 'Pause';
+    document.getElementById('vp-stats').textContent = `[${entry.fileName ? 'Raw: ' + entry.fileName : 'Bank'}] ${entry.clip.name} (${trackInfo}) | Bones: ${targetBones.size}`;
+  }
+
+  function selectClip(kind, id) {
+    state.selected = { kind, id };
+    const list = kind === 'bank' ? state.bankClips : state.rawClips;
+    const entry = list.find((c) => c.id === id);
+    if (!entry) return;
+    renderBankList();
+    renderRawList();
+    renderInspector(kind, entry);
+    playEntry(entry);
+  }
+
+  // ---------- Merge & Delete ----------
+  function mergeRawClip(rawId) {
+    if (!state.bankScene && !state.charScene) {
+      showToast('Load Anim Bank .GLB or Character .GLB first!');
+      return;
+    }
+    const raw = state.rawClips.find((c) => c.id === rawId);
+    if (!raw) return;
+
+    const targetBones = state.bankBones.size > 0 ? state.bankBones : state.charBones;
+    const targetScene = state.bankScene || state.charScene;
+    const dstBind = state.bankScene ? state.bankBind : state.charBind;
+    const shouldRemap = document.getElementById('chk-remap-bones').checked;
+    const rotOnly = document.getElementById('chk-retarget-rot').checked;
+    const inPlace = document.getElementById('chk-in-place').checked;
+    let mergedClip = (shouldRemap || rotOnly)
+      ? remapClipToBones(raw.clip, targetBones, rotOnly, targetScene, raw.sourceBind, dstBind, inPlace)
+      : raw.clip.clone();
+    if (raw.meta.rotOffset) {
+      const { x = 0, y = 0, z = 0 } = raw.meta.rotOffset;
+      mergedClip = applyRootEulerOffset(mergedClip, x, y, z);
+    }
+
+    let name = mergedClip.name || 'new_clip';
+    const existing = new Set(state.bankClips.map((c) => c.clip.name));
+    if (existing.has(name)) {
+      let n = 2;
+      while (existing.has(`${name}_${n}`)) n++;
+      name = `${name}_${n}`;
+    }
+    mergedClip.name = name;
+
+    const newEntry = {
+      id: nextId('bank'),
+      clip: mergedClip,
+      meta: { ...raw.meta, tags: [...(raw.meta.tags || [])] },
+    };
+    state.bankClips.push(newEntry);
+    document.getElementById('btn-export-glb').disabled = false;
+    document.getElementById('btn-export-json').disabled = false;
+    renderBankList();
+    selectClip('bank', newEntry.id);
+    showToast(`Merged "${name}" into Anim Bank`);
+  }
+
+  function deleteBankClip(id) {
+    const idx = state.bankClips.findIndex((c) => c.id === id);
+    if (idx === -1) return;
+    const [removed] = state.bankClips.splice(idx, 1);
+    state.deletedHistory.push({ entry: removed, index: idx });
+    document.getElementById('btn-undo-delete').disabled = false;
+
+    if (state.selected?.id === id) {
+      state.selected = null;
+      if (state.bankClips.length > 0) {
+        selectClip('bank', state.bankClips[Math.min(idx, state.bankClips.length - 1)].id);
+      } else {
+        renderInspector(null, null);
+      }
+    }
+    renderBankList();
+    showToast(`Removed "${removed.clip.name}" from Anim Bank`);
+  }
+
+  function undoDelete() {
+    const item = state.deletedHistory.pop();
+    if (!item) return;
+    state.bankClips.splice(Math.min(item.index, state.bankClips.length), 0, item.entry);
+    document.getElementById('btn-undo-delete').disabled = state.deletedHistory.length === 0;
+    renderBankList();
+    selectClip('bank', item.entry.id);
+  }
+
+  // ---------- UI Rendering ----------
+  function renderBankList() {
+    const q = document.getElementById('search-bank').value.trim().toLowerCase();
+    const listEl = document.getElementById('bank-list');
+    document.getElementById('bank-count').textContent = state.bankClips.length;
+    document.getElementById('btn-merge-all').disabled = state.rawClips.length === 0;
+
+    const filtered = state.bankClips.filter((e) => {
+      if (!q) return true;
+      return e.clip.name.toLowerCase().includes(q)
+        || (e.meta.slot || '').toLowerCase().includes(q)
+        || (e.meta.tags || []).join(',').toLowerCase().includes(q);
+    });
+
+    listEl.innerHTML = '';
+    for (const e of filtered) {
+      const isSel = state.selected?.kind === 'bank' && state.selected?.id === e.id;
+      const card = document.createElement('div');
+      card.className = `clip-card ${isSel ? 'active' : ''}`;
+      card.innerHTML = `
+        <div class="clip-top">
+          <span class="clip-name" title="${e.clip.name}">${e.clip.name}</span>
+          <button class="sm danger btn-del" title="Remove from Bank .GLB">✕</button>
+        </div>
+        <div class="clip-meta">
+          <span class="tag slot">${e.meta.slot}</span>
+          <span>${e.clip.duration.toFixed(2)}s</span>
+          ${e.meta.loop ? '<span class="tag">loop</span>' : ''}
+          ${e.clip.name.length > 31 ? '<span class="tag warn">&gt;31ch</span>' : ''}
+          ${!e.meta.description ? '<span class="tag warn">no desc</span>' : ''}
+        </div>
+      `;
+      card.addEventListener('click', (ev) => {
+        if (ev.target.closest('.btn-del')) { ev.stopPropagation(); deleteBankClip(e.id); return; }
+        selectClip('bank', e.id);
+      });
+      listEl.appendChild(card);
+    }
+  }
+
+  function renderRawList() {
+    const listEl = document.getElementById('raw-list');
+    document.getElementById('raw-count').textContent = state.rawClips.length;
+    document.getElementById('btn-merge-all').disabled = state.rawClips.length === 0;
+
+    listEl.innerHTML = '';
+    for (const e of state.rawClips) {
+      const isSel = state.selected?.kind === 'raw' && state.selected?.id === e.id;
+      const card = document.createElement('div');
+      card.className = `clip-card ${isSel ? 'active' : ''}`;
+      card.innerHTML = `
+        <div class="clip-top">
+          <span class="clip-name" title="${e.clip.name}">${e.clip.name}</span>
+          <div style="display:flex;gap:4px;">
+            <button class="sm jade btn-merge" title="Merge into Anim Bank .GLB">+ Bank</button>
+            <button class="sm danger btn-rm" title="Remove">✕</button>
+          </div>
+        </div>
+        <div class="clip-meta">
+          <span class="tag raw">${e.fileName}</span>
+          <span class="tag slot">${e.meta.slot}</span>
+          <span>${e.clip.duration.toFixed(2)}s</span>
+        </div>
+      `;
+      card.addEventListener('click', (ev) => {
+        if (ev.target.closest('.btn-merge')) { ev.stopPropagation(); mergeRawClip(e.id); return; }
+        if (ev.target.closest('.btn-rm')) {
+          ev.stopPropagation();
+          state.rawClips = state.rawClips.filter((x) => x.id !== e.id);
+          renderRawList();
+          return;
+        }
+        selectClip('raw', e.id);
+      });
+      listEl.appendChild(card);
+    }
+  }
+
+  function renderInspector(kind, entry) {
+    const body = document.getElementById('inspector-body');
+    const badge = document.getElementById('inspector-source');
+    if (!entry) {
+      badge.textContent = 'None';
+      body.innerHTML = `<div class="hint" style="padding:12px 0;text-align:center;">Select a clip to edit metadata.</div>`;
+      return;
+    }
+
+    badge.textContent = kind === 'bank' ? 'Anim Bank' : 'Raw Clip';
+    const slotOptions = WUXING_SLOT_GROUPS.map((grp) =>
+      `<optgroup label="${grp.label}">${grp.slots.map((s) =>
+        `<option value="${s}" ${entry.meta.slot === s ? 'selected' : ''}>${s}</option>`
+      ).join('')}</optgroup>`
+    ).join('');
+
+    body.innerHTML = `
+      <div class="field">
+        <div class="field-row">
+          <label>Clip Name (<= 31 chars for Raylib)</label>
+          <span id="name-len" class="hint">${entry.clip.name.length}/31</span>
+        </div>
+        <div style="display:flex;gap:6px;">
+          <input type="text" id="inp-name" value="${entry.clip.name}" />
+          <button id="btn-snake" class="sm">snake</button>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end;">
+        <div class="field">
+          <label>Wuxing Action Slot</label>
+          <select id="inp-slot">${slotOptions}</select>
+        </div>
+        <label style="display:flex;align-items:center;gap:5px;padding-bottom:7px;cursor:pointer;">
+          <input type="checkbox" id="inp-loop" ${entry.meta.loop ? 'checked' : ''} /> Loopable
+        </label>
+      </div>
+
+      <div class="field">
+        <label>Tags (comma-separated)</label>
+        <input type="text" id="inp-tags" value="${(entry.meta.tags || []).join(', ')}" placeholder="e.g. wuxia, melee, combo_1" />
+      </div>
+
+      <div class="field">
+        <div class="field-row">
+          <label>AI-Readable Description</label>
+          <button id="btn-auto-desc" class="sm">Auto-Template</button>
+        </div>
+        <textarea id="inp-desc" placeholder="Describe motion, timing, impact frame, and exact gameplay usage so an AI knows when to trigger this clip...">${entry.meta.description || ''}</textarea>
+      </div>
+
+      <div class="field">
+        <div class="field-row">
+          <label>Root Orientation Fix (Pitch X / Yaw Y / Roll Z °)</label>
+          <button id="btn-rot-reset" class="sm">Reset 0°</button>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;">
+          <input type="text" id="inp-rx" value="${entry.meta.rotOffset?.x || 0}" title="Pitch X degrees" />
+          <input type="text" id="inp-ry" value="${entry.meta.rotOffset?.y || 0}" title="Yaw Y degrees" />
+          <input type="text" id="inp-rz" value="${entry.meta.rotOffset?.z || 0}" title="Roll Z degrees" />
+        </div>
+        <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:2px;">
+          <button class="sm rot-nudge" data-axis="x" data-deg="-90">-90° X</button>
+          <button class="sm rot-nudge" data-axis="x" data-deg="90">+90° X</button>
+          <button class="sm rot-nudge" data-axis="y" data-deg="90">+90° Y</button>
+          <button class="sm rot-nudge" data-axis="y" data-deg="180">180° Y</button>
+          <button class="sm rot-nudge" data-axis="z" data-deg="90">+90° Z</button>
+        </div>
+      </div>
+
+      <div class="hint">
+        Duration: <strong>${entry.clip.duration.toFixed(3)}s</strong> · Tracks: <strong>${entry.clip.tracks.length}</strong>
+      </div>
+    `;
+
+    const sync = () => {
+      entry.clip.name = document.getElementById('inp-name').value.trim() || 'unnamed_clip';
+      document.getElementById('name-len').textContent = `${entry.clip.name.length}/31`;
+      document.getElementById('name-len').style.color = entry.clip.name.length > 31 ? 'var(--amber)' : 'var(--text-2)';
+      entry.meta.slot = document.getElementById('inp-slot').value;
+      entry.meta.loop = document.getElementById('inp-loop').checked;
+      entry.meta.tags = document.getElementById('inp-tags').value.split(',').map((s) => s.trim()).filter(Boolean);
+      entry.meta.description = document.getElementById('inp-desc').value.trim();
+      renderBankList();
+      renderRawList();
+    };
+
+    ['inp-name', 'inp-slot', 'inp-loop', 'inp-tags', 'inp-desc'].forEach((id) => {
+      document.getElementById(id).addEventListener('input', sync);
+      document.getElementById(id).addEventListener('change', sync);
+    });
+
+    document.getElementById('btn-snake').addEventListener('click', () => {
+      document.getElementById('inp-name').value = toSnakeCase(document.getElementById('inp-name').value).slice(0, 31);
+      sync();
+    });
+
+    document.getElementById('btn-auto-desc').addEventListener('click', () => {
+      const slot = document.getElementById('inp-slot').value;
+      const loopStr = document.getElementById('inp-loop').checked ? 'looping' : 'one-shot';
+      const dur = entry.clip.duration.toFixed(2);
+      document.getElementById('inp-desc').value =
+        `[Slot: ${slot}] ${loopStr} animation (${dur}s) named '${entry.clip.name}'. Use for ${slot.replace(/_/g, ' ')} state in humanoid combat/locomotion.`;
+      sync();
+    });
+
+    const updateRot = () => {
+      entry.meta.rotOffset = {
+        x: parseFloat(document.getElementById('inp-rx').value) || 0,
+        y: parseFloat(document.getElementById('inp-ry').value) || 0,
+        z: parseFloat(document.getElementById('inp-rz').value) || 0,
+      };
+      playEntry(entry);
+    };
+    ['inp-rx', 'inp-ry', 'inp-rz'].forEach((id) => {
+      document.getElementById(id).addEventListener('change', updateRot);
+    });
+    document.getElementById('btn-rot-reset').addEventListener('click', () => {
+      document.getElementById('inp-rx').value = 0;
+      document.getElementById('inp-ry').value = 0;
+      document.getElementById('inp-rz').value = 0;
+      updateRot();
+    });
+    body.querySelectorAll('.rot-nudge').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const ax = btn.dataset.axis;
+        const deg = parseFloat(btn.dataset.deg) || 0;
+        const inp = document.getElementById(`inp-${ax}`);
+        inp.value = ((parseFloat(inp.value) || 0) + deg) % 360;
+        updateRot();
+      });
+    });
+  }
+
+  // ---------- Export Bank .GLB & AI Manifest ----------
+  function exportBankGLB() {
+    const exportRoot = state.bankScene || state.charScene;
+    if (!exportRoot) return;
+    const exporter = new GLTFExporter();
+    const clips = state.bankClips.map((e) => e.clip);
+
+    exporter.parse(
+      exportRoot,
+      (result) => {
+        if (!(result instanceof ArrayBuffer)) { showToast('Expected binary GLB output'); return; }
+        const patched = injectGlbAnimationExtras(result, state.bankClips);
+        const blob = new Blob([patched], { type: 'model/gltf-binary' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = state.bankFileName || 'humanoid_anims.glb';
+        a.click();
+        URL.revokeObjectURL(url);
+        showToast(`Exported ${a.download} (${clips.length} clips + extras)`);
+      },
+      (err) => { console.error(err); showToast('GLB export failed'); },
+      { binary: true, animations: clips }
+    );
+  }
+
+  function exportAIManifest() {
+    const slots = {};
+    const catalog = {};
+    for (const e of state.bankClips) {
+      const slot = e.meta.slot || 'custom';
+      if (slot !== 'custom') {
+        if (!slots[slot]) slots[slot] = [];
+        if (!slots[slot].includes(e.clip.name)) slots[slot].push(e.clip.name);
+      }
+      catalog[e.clip.name] = {
+        slot,
+        duration_sec: Number(e.clip.duration.toFixed(3)),
+        loop: !!e.meta.loop,
+        tags: e.meta.tags || [],
+        description: e.meta.description || '',
+      };
+    }
+
+    const manifest = {
+      description: 'Wuxing Skills - Decoupled Humanoid Animation Manifest & AI Catalog',
+      source_glb: state.bankFileName || 'humanoid_anims.glb',
+      slots,
+      clips: catalog,
+    };
+
+    const blob = new Blob([JSON.stringify(manifest, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'player_anims.json';
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('Exported player_anims.json');
+  }
+
+  async function applyManifestText(text) {
+    try {
+      const data = JSON.parse(text);
+      let updated = 0;
+      if (data.clips) {
+        for (const e of state.bankClips) {
+          const info = data.clips[e.clip.name];
+          if (info) {
+            if (info.slot) e.meta.slot = info.slot;
+            if (typeof info.loop === 'boolean') e.meta.loop = info.loop;
+            if (Array.isArray(info.tags)) e.meta.tags = info.tags;
+            if (info.description) e.meta.description = info.description;
+            updated++;
+          }
+        }
+      }
+      if (data.slots) {
+        for (const [slotName, names] of Object.entries(data.slots)) {
+          if (!Array.isArray(names)) continue;
+          for (const clipName of names) {
+            const match = state.bankClips.find((c) => c.clip.name === clipName);
+            if (match && (match.meta.slot === 'custom' || !data.clips?.[clipName])) {
+              match.meta.slot = slotName;
+              updated++;
+            }
+          }
+        }
+      }
+      renderBankList();
+      if (state.selected) {
+        const list = state.selected.kind === 'bank' ? state.bankClips : state.rawClips;
+        const cur = list.find((c) => c.id === state.selected.id);
+        if (cur) renderInspector(state.selected.kind, cur);
+      }
+      if (updated > 0) showToast(`Imported JSON metadata for ${updated} clip(s)`);
+    } catch (e) { console.error(e); }
+  }
+
+  // ---------- IndexedDB Folder Handle Persistence ----------
+  function openHandleDB() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open('wuxing_anim_mgr_db', 1);
+      req.onupgradeneeded = () => req.result.createObjectStore('handles');
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+  async function saveDirHandle(handle) {
+    try {
+      const db = await openHandleDB();
+      const tx = db.transaction('handles', 'readwrite');
+      tx.objectStore('handles').put(handle, 'workspace');
+    } catch {}
+  }
+  async function loadSavedDirHandle() {
+    try {
+      const db = await openHandleDB();
+      return await new Promise((resolve) => {
+        const req = db.transaction('handles', 'readonly').objectStore('handles').get('workspace');
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => resolve(null);
+      });
+    } catch { return null; }
+  }
+  async function loadFromDirHandle(dirHandle) {
+    state.dirHandle = dirHandle;
+    const entries = [];
+    for await (const [name, handle] of dirHandle.entries()) {
+      if (handle.kind === 'file' && /\.(glb|gltf|fbx|json)$/i.test(name)) {
+        entries.push({
+          name,
+          getBuffer: async () => (await handle.getFile()).arrayBuffer(),
+          getText: async () => (await handle.getFile()).text(),
+        });
+      }
+    }
+    await ingestFileList(entries);
+  }
+
+  // ---------- Event Wiring ----------
+  async function openFolderWorkflow() {
+    if (state.dirHandle) {
+      try {
+        const perm = await state.dirHandle.requestPermission({ mode: 'readwrite' });
+        if (perm === 'granted') {
+          await loadFromDirHandle(state.dirHandle);
+          return;
+        }
+      } catch {}
+    }
+    if (window.showDirectoryPicker) {
+      try {
+        const dirHandle = await window.showDirectoryPicker({ id: 'wuxing_anim_mgr', mode: 'readwrite' });
+        await saveDirHandle(dirHandle);
+        await loadFromDirHandle(dirHandle);
+        return;
+      } catch (e) {
+        if (e.name === 'AbortError') return;
+      }
+    }
+    document.getElementById('input-folder').click();
+  }
+
+  document.getElementById('btn-open-folder').addEventListener('click', openFolderWorkflow);
+  document.getElementById('btn-banner-folder').addEventListener('click', openFolderWorkflow);
+  document.getElementById('input-folder').addEventListener('change', async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length) {
+      await ingestFileList(files.map((f) => ({
+        name: f.name,
+        getBuffer: () => f.arrayBuffer(),
+        getText: () => f.text(),
+      })));
+    }
+    e.target.value = '';
+  });
+
+  document.getElementById('btn-load-char').addEventListener('click', () => document.getElementById('input-char-glb').click());
+  document.getElementById('btn-load-bank').addEventListener('click', () => document.getElementById('input-bank-glb').click());
+  document.getElementById('btn-load-raw').addEventListener('click', () => document.getElementById('input-raw-anims').click());
+  document.getElementById('btn-load-manifest').addEventListener('click', () => document.getElementById('input-manifest-json').click());
+
+  document.getElementById('input-char-glb').addEventListener('change', async (e) => {
+    const f = e.target.files[0];
+    if (f) await loadCharacterGLB(f.name, await f.arrayBuffer());
+    e.target.value = '';
+  });
+  document.getElementById('input-bank-glb').addEventListener('change', async (e) => {
+    const f = e.target.files[0];
+    if (f) await loadBankGLB(f.name, await f.arrayBuffer());
+    e.target.value = '';
+  });
+  document.getElementById('input-raw-anims').addEventListener('change', async (e) => {
+    for (const f of Array.from(e.target.files || [])) await loadRawFile(f.name, await f.arrayBuffer());
+    e.target.value = '';
+  });
+  document.getElementById('input-manifest-json').addEventListener('change', async (e) => {
+    const f = e.target.files[0];
+    if (f) await applyManifestText(await f.text());
+    e.target.value = '';
+  });
+
+  // Global drag & drop onto window (supports dropping multiple files at once)
+  document.body.addEventListener('dragover', (e) => e.preventDefault());
+  document.body.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    const files = Array.from(e.dataTransfer?.files || []);
+    if (!files.length) return;
+    if (e.target.closest('#drop-raw')) {
+      for (const f of files) await loadRawFile(f.name, await f.arrayBuffer());
+    } else {
+      await ingestFileList(files.map((f) => ({
+        name: f.name,
+        getBuffer: () => f.arrayBuffer(),
+        getText: () => f.text(),
+      })));
+    }
+  });
+  document.getElementById('drop-raw').addEventListener('click', () => document.getElementById('input-raw-anims').click());
+
+  document.getElementById('btn-export-glb').addEventListener('click', exportBankGLB);
+  document.getElementById('btn-export-json').addEventListener('click', exportAIManifest);
+  document.getElementById('btn-undo-delete').addEventListener('click', undoDelete);
+  document.getElementById('search-bank').addEventListener('input', renderBankList);
+  document.getElementById('btn-merge-all').addEventListener('click', () => {
+    state.rawClips.map((c) => c.id).forEach(mergeRawClip);
+  });
+
+  // Timeline controls
+  document.getElementById('btn-play').addEventListener('click', () => {
+    if (!activeAction) return;
+    state.playing = !state.playing;
+    if (state.playing && !state.loop && activeAction.time >= activeClipDuration - 0.005) activeAction.reset().play();
+    document.getElementById('btn-play').textContent = state.playing ? 'Pause' : 'Play';
+  });
+  document.getElementById('btn-stop').addEventListener('click', () => {
+    if (!activeAction) return;
+    state.playing = false;
+    activeAction.time = 0;
+    mixer.update(0);
+    document.getElementById('scrubber').value = 0;
+    document.getElementById('time-readout').textContent = `0.00s / ${activeClipDuration.toFixed(2)}s`;
+    document.getElementById('btn-play').textContent = 'Play';
+  });
+  document.getElementById('chk-loop').addEventListener('change', (e) => {
+    state.loop = e.target.checked;
+    if (activeAction) {
+      activeAction.setLoop(state.loop ? THREE.LoopRepeat : THREE.LoopOnce, Infinity);
+      activeAction.clampWhenFinished = !state.loop;
+    }
+  });
+  document.getElementById('sel-speed').addEventListener('change', (e) => { state.speed = parseFloat(e.target.value) || 1.0; });
+  document.getElementById('scrubber').addEventListener('input', (e) => {
+    if (!activeAction || !mixer) return;
+    state.playing = false;
+    document.getElementById('btn-play').textContent = 'Play';
+    const t = parseFloat(e.target.value) * activeClipDuration;
+    activeAction.time = t;
+    mixer.update(0);
+    document.getElementById('time-readout').textContent = `${t.toFixed(2)}s / ${activeClipDuration.toFixed(2)}s`;
+  });
+
+  document.getElementById('btn-toggle-skel').addEventListener('click', (e) => {
+    state.showSkeleton = !state.showSkeleton;
+    if (skeletonHelper) skeletonHelper.visible = state.showSkeleton;
+    e.target.textContent = `Skeleton: ${state.showSkeleton ? 'ON' : 'OFF'}`;
+  });
+  document.getElementById('btn-toggle-mesh').addEventListener('click', (e) => {
+    state.showMesh = !state.showMesh;
+    if (modelRoot) modelRoot.traverse((o) => { if (o.isMesh) o.visible = state.showMesh; });
+    e.target.textContent = `Mesh: ${state.showMesh ? 'ON' : 'OFF'}`;
+  });
+  document.getElementById('btn-rest-pose').addEventListener('click', () => {
+    if (!modelRoot) return;
+    state.playing = false;
+    document.getElementById('btn-play').textContent = 'Play';
+    if (mixer) mixer.stopAllAction();
+    modelRoot.traverse((o) => { if (o.isSkinnedMesh && o.skeleton) o.skeleton.pose(); });
+    document.getElementById('vp-stats').textContent = `Clip: Rest Pose (Bind) | Bones: ${getActivePreviewBones().size}`;
+  });
+  document.getElementById('chk-retarget-rot').addEventListener('change', () => {
+    if (state.selected) selectClip(state.selected.kind, state.selected.id);
+  });
+  document.getElementById('chk-in-place').addEventListener('change', () => {
+    if (state.selected) selectClip(state.selected.kind, state.selected.id);
+  });
+  document.getElementById('btn-reset-cam').addEventListener('click', () => {
+    if (modelRoot) frameCameraToObject(modelRoot);
+  });
+  document.getElementById('btn-bg-cycle').addEventListener('click', (e) => {
+    state.bgIndex = (state.bgIndex + 1) % BG_COLORS.length;
+    scene.background = new THREE.Color(BG_COLORS[state.bgIndex]);
+    e.target.textContent = `BG: ${['Dark', 'Mid', 'Light'][state.bgIndex]}`;
+  });
+
+  const helpDlg = document.getElementById('help-dialog');
+  document.getElementById('btn-help').addEventListener('click', () => helpDlg.showModal());
+  document.getElementById('btn-close-help').addEventListener('click', () => helpDlg.close());
+
+  (async () => {
+    await tryAutoLoadOverHttp();
+    if (window.location.protocol === 'file:') {
+      const saved = await loadSavedDirHandle();
+      if (saved) {
+        state.dirHandle = saved;
+        const perm = await saved.queryPermission({ mode: 'readwrite' }).catch(() => 'prompt');
+        if (perm === 'granted') {
+          await loadFromDirHandle(saved);
+        } else {
+          document.getElementById('btn-banner-folder').textContent = `Grant Permission: ${saved.name}/`;
+          document.getElementById('btn-open-folder').textContent = `Reconnect ${saved.name}/`;
+          document.getElementById('vp-banner-msg').innerHTML =
+            `Remembered folder <code>${saved.name}/</code>. Click below to grant read/write permission (no path selection needed).`;
+        }
+      }
+    }
+  })();
+})();
+</script>
+</body>
+</html>

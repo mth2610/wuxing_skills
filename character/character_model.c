@@ -97,14 +97,18 @@ static const char *s_slotNames[CHAR_ANIM_COUNT] = {
     [CHAR_ANIM_PUNCH]       = "PUNCH",
     [CHAR_ANIM_KICK]        = "KICK",
     [CHAR_ANIM_PALM]        = "PALM",
+    [CHAR_ANIM_BLOCK]       = "BLOCK",
+    [CHAR_ANIM_PARRY]       = "PARRY",
     [CHAR_ANIM_SWORD_IDLE]  = "SWORD_IDLE",
     [CHAR_ANIM_SWORD_SLASH] = "SWORD_SLASH",
     [CHAR_ANIM_SWORD_THRUST]= "SWORD_THRUST",
     [CHAR_ANIM_SWORD_PARRY] = "SWORD_PARRY",
     [CHAR_ANIM_SWORD_BLOCK] = "SWORD_BLOCK",
     [CHAR_ANIM_CAST]        = "CAST",
+    [CHAR_ANIM_MEDITATE]    = "MEDITATE",
     [CHAR_ANIM_HIT]         = "HIT",
     [CHAR_ANIM_KNOCKDOWN]   = "KNOCKDOWN",
+    [CHAR_ANIM_DEATH]       = "DEATH",
 };
 
 static const char *s_keywords[CHAR_ANIM_COUNT][6] = {
@@ -117,14 +121,18 @@ static const char *s_keywords[CHAR_ANIM_COUNT][6] = {
     [CHAR_ANIM_PUNCH]       = { "punch", "jab", "cross", "hook", NULL },
     [CHAR_ANIM_KICK]        = { "kick", NULL },
     [CHAR_ANIM_PALM]        = { "palm", "push", "slap", NULL },
+    [CHAR_ANIM_BLOCK]       = { "unarmed_block", "block", "guard", NULL },
+    [CHAR_ANIM_PARRY]       = { "unarmed_parry", "parry", "deflect", "taiji", NULL },
     [CHAR_ANIM_SWORD_IDLE]  = { "loco_idle_sword", "sword_idle", "idle_sword", NULL },
     [CHAR_ANIM_SWORD_SLASH] = { "sword_slash", "slash", "cleave", "whirlwind", NULL },
     [CHAR_ANIM_SWORD_THRUST]= { "sword_thrust", "thrust", "lunge", NULL },
-    [CHAR_ANIM_SWORD_PARRY] = { "sword_parry", "parry", "deflect", NULL },
-    [CHAR_ANIM_SWORD_BLOCK] = { "sword_block", "block", "guard", NULL },
+    [CHAR_ANIM_SWORD_PARRY] = { "sword_parry", NULL },
+    [CHAR_ANIM_SWORD_BLOCK] = { "sword_block", NULL },
     [CHAR_ANIM_CAST]        = { "cast", "spell", "flourish", NULL },
+    [CHAR_ANIM_MEDITATE]    = { "meditate", "meditation", "thiendinh", "charge", NULL },
     [CHAR_ANIM_HIT]         = { "hit", "hurt", "damage", NULL },
     [CHAR_ANIM_KNOCKDOWN]   = { "down", "fall", "knockdown", NULL },
+    [CHAR_ANIM_DEATH]       = { "death", "die", "defeat", NULL },
 };
 
 static void ToLowerCopy(char *dst, const char *src, int maxLen) {
@@ -315,8 +323,23 @@ bool CharacterModel_LoadEx(const char *meshPath, const char *animBankPath) {
     if (s_slots[CHAR_ANIM_HIT].count == 0 && s_slots[CHAR_ANIM_IDLE].count > 0) {
         AddSlotIndex(CHAR_ANIM_HIT, s_slots[CHAR_ANIM_IDLE].indices[0]);
     }
+    if (s_slots[CHAR_ANIM_BLOCK].count == 0 && s_slots[CHAR_ANIM_PALM].count > 0) {
+        AddSlotIndex(CHAR_ANIM_BLOCK, s_slots[CHAR_ANIM_PALM].indices[0]);
+    }
+    if (s_slots[CHAR_ANIM_PARRY].count == 0) {
+        if (s_slots[CHAR_ANIM_BLOCK].count > 0)
+            AddSlotIndex(CHAR_ANIM_PARRY, s_slots[CHAR_ANIM_BLOCK].indices[0]);
+        else if (s_slots[CHAR_ANIM_PALM].count > 0)
+            AddSlotIndex(CHAR_ANIM_PARRY, s_slots[CHAR_ANIM_PALM].indices[0]);
+    }
+    if (s_slots[CHAR_ANIM_MEDITATE].count == 0 && s_slots[CHAR_ANIM_IDLE].count > 0) {
+        AddSlotIndex(CHAR_ANIM_MEDITATE, s_slots[CHAR_ANIM_IDLE].indices[0]);
+    }
     if (s_slots[CHAR_ANIM_KNOCKDOWN].count == 0 && s_slots[CHAR_ANIM_HIT].count > 0) {
         AddSlotIndex(CHAR_ANIM_KNOCKDOWN, s_slots[CHAR_ANIM_HIT].indices[0]);
+    }
+    if (s_slots[CHAR_ANIM_DEATH].count == 0 && s_slots[CHAR_ANIM_KNOCKDOWN].count > 0) {
+        AddSlotIndex(CHAR_ANIM_DEATH, s_slots[CHAR_ANIM_KNOCKDOWN].indices[0]);
     }
 
     // Optional JSON manifest override

@@ -51,6 +51,8 @@ static int s_cliffLocLightColor = -1;
 static int s_cliffLocAmbientColor = -1;
 static int s_cliffLocViewPos = -1;
 static int s_cliffLocHazeColor = -1;
+static int s_cliffLocAridMode = -1;
+static float s_cliffAridMode = 0.0f;
 
 static void Cliff_EnsureShaderLocs(Shader shader)
 {
@@ -63,6 +65,7 @@ static void Cliff_EnsureShaderLocs(Shader shader)
     s_cliffLocAmbientColor = GetShaderLocation(shader, "u_ambientColor");
     s_cliffLocViewPos = GetShaderLocation(shader, "u_viewPos");
     s_cliffLocHazeColor = GetShaderLocation(shader, "u_hazeColor");
+    s_cliffLocAridMode = GetShaderLocation(shader, "u_cliffAridMode");
     s_cliffCachedShaderId = shader.id;
 }
 
@@ -98,6 +101,64 @@ static float Cliff_Fbm1(float x, int seed, int octaves)
         sum += (Cliff_Noise1(x, seed + o * 131) * 2.0f - 1.0f) * amp;
         norm += amp;
         x *= 2.03f;
+        amp *= 0.5f;
+    }
+    return norm > 0.0f ? sum / norm : 0.0f;
+}
+
+// ── GPU Gems 3 Ch. 1 3D Volumetric Density Noise (bake-time only) ──────────
+
+static inline float Cliff_Hash3(int x, int y, int z, int seed)
+{
+    unsigned int h = (unsigned int)x * 73856093u ^
+                     (unsigned int)y * 19349663u ^
+                     (unsigned int)z * 83492791u ^
+                     (unsigned int)seed * 0x165667b1u;
+    h ^= h >> 15;
+    h *= 0x85ebca6bu;
+    h ^= h >> 13;
+    h *= 0xc2b2ae35u;
+    h ^= h >> 16;
+    return (float)(h & 0x00ffffffu) * (1.0f / 16777216.0f);
+}
+
+static float Cliff_Noise3(float x, float y, float z, int seed)
+{
+    int ix = (int)floorf(x), iy = (int)floorf(y), iz = (int)floorf(z);
+    float fx = x - (float)ix, fy = y - (float)iy, fz = z - (float)iz;
+    float ux = fx * fx * (3.0f - 2.0f * fx);
+    float uy = fy * fy * (3.0f - 2.0f * fy);
+    float uz = fz * fz * (3.0f - 2.0f * fz);
+
+    float c000 = Cliff_Hash3(ix, iy, iz, seed);
+    float c100 = Cliff_Hash3(ix + 1, iy, iz, seed);
+    float c010 = Cliff_Hash3(ix, iy + 1, iz, seed);
+    float c110 = Cliff_Hash3(ix + 1, iy + 1, iz, seed);
+    float c001 = Cliff_Hash3(ix, iy, iz + 1, seed);
+    float c101 = Cliff_Hash3(ix + 1, iy, iz + 1, seed);
+    float c011 = Cliff_Hash3(ix, iy + 1, iz + 1, seed);
+    float c111 = Cliff_Hash3(ix + 1, iy + 1, iz + 1, seed);
+
+    float x00 = c000 + (c100 - c000) * ux;
+    float x10 = c010 + (c110 - c010) * ux;
+    float x01 = c001 + (c101 - c001) * ux;
+    float x11 = c011 + (c111 - c011) * ux;
+
+    float y0 = x00 + (x10 - x00) * uy;
+    float y1 = x01 + (x11 - x01) * uy;
+    return y0 + (y1 - y0) * uz;
+}
+
+static float Cliff_Fbm3(float x, float y, float z, int seed, int octaves)
+{
+    float sum = 0.0f, amp = 0.5f, norm = 0.0f;
+    for (int o = 0; o < octaves; o++)
+    {
+        sum += (Cliff_Noise3(x, y, z, seed + o * 179) * 2.0f - 1.0f) * amp;
+        norm += amp;
+        x *= 2.04f;
+        y *= 2.04f;
+        z *= 2.04f;
         amp *= 0.5f;
     }
     return norm > 0.0f ? sum / norm : 0.0f;
@@ -159,8 +220,18 @@ static void Cliff_UpdateLighting(Shader shader, Camera3D cam)
         SetShaderValue(shader, s_cliffLocHazeColor, &haze, SHADER_UNIFORM_VEC3);
     }
 
+    if (s_cliffLocAridMode >= 0)
+    {
+        SetShaderValue(shader, s_cliffLocAridMode, &s_cliffAridMode, SHADER_UNIFORM_FLOAT);
+    }
+
     MapShadow_UpdateShader(shader);
     EndShaderMode();
+}
+
+void MapProp_SetCliffAridMode(float aridMode)
+{
+    s_cliffAridMode = aridMode;
 }
 
 // ── Ordered coast contour via marching squares ─────────────────────────────
@@ -1063,18 +1134,39 @@ MapCliffSkirt MapProp_CreateCliffSkirt(const MapGroundSurface *ground, Vector3 m
             float nOut = profNO[r * M + i];
             float nUp = profNU[r * M + i];
 
-            float pillar = (Cliff_Fbm1(s * 0.055f, 41, 3) - 0.40f) * 3.4f;
-            float crevice = (Cliff_Fbm1(s * 0.180f, 73, 3) - 0.50f) * 1.6f;
+            // GPU Gems 3 Ch. 1 3D Volumetric Density Field Displacement:
+            // Pre-warped 3D coordinates drive cantilevered overhangs, stepped tectonic shelves & dihedral fissures.
+            float approxX = rimPos[i].x + rimNorm[i].x * (d + rp->out);
+            float approxY = rimY[i] - depth;
+            float approxZ = rimPos[i].z + rimNorm[i].y * (d + rp->out);
 
-            // Polyhedral cleavage facets (sharp angular granite fractures, 80.lv)
-            float facetPhase = s * 0.42f + (float)r * 0.48f;
+            float warpX = Cliff_Fbm3(approxX * 0.055f, approxY * 0.055f, approxZ * 0.055f, 31, 2) * 3.8f;
+            float warpY = Cliff_Fbm3(approxX * 0.055f + 7.1f, approxY * 0.055f, approxZ * 0.055f, 47, 2) * 2.2f;
+            float warpZ = Cliff_Fbm3(approxX * 0.055f, approxY * 0.055f + 5.3f, approxZ * 0.055f, 59, 2) * 3.8f;
+
+            float wx = approxX + warpX;
+            float wy = approxY + warpY;
+            float wz = approxZ + warpZ;
+
+            float pillar = Cliff_Fbm3(wx * 0.065f, wy * 0.032f, wz * 0.065f, 41, 3) * 3.4f;
+            float crevice = Cliff_Fbm3(wx * 0.16f, wy * 0.11f, wz * 0.16f, 73, 3) * 1.6f;
+
+            // Dihedral vertical joint fissures (ridged 3D noise)
+            float fissureRaw = Cliff_Noise3(wx * 0.14f, wy * 0.045f, wz * 0.14f, 89) * 2.0f - 1.0f;
+            float fissureCut = (1.0f - fabsf(fissureRaw)) * 1.4f - 0.55f;
+
+            // Polyhedral cleavage facets (sharp angular granite fractures)
+            float facetPhase = s * 0.42f + (float)r * 0.48f + warpY * 0.45f;
             float facetFold = fabsf(Cliff_Noise1(facetPhase, 97) * 2.0f - 1.0f);
             float sharpFacet = (facetFold - 0.5f) * 1.8f;
 
-            // Stepped horizontal rock shelves (terrace-form rocks, 80.lv)
-            float shelfStep = floorf(depth * 0.55f) * 0.32f;
-            float shelfEdge = sinf(depth * 3.4f + pillar * 0.7f) * 0.42f;
-            float relief = (pillar + crevice + sharpFacet * 1.35f + shelfStep + shelfEdge) * rp->noise;
+            // Stepped tectonic shelves + cantilevered overhang ledges on mid cliff rows (GPU Gems 3 §1.3.4)
+            float shelfStep = floorf((depth + warpY * 0.35f) * 0.55f) * 0.36f;
+            float shelfEdge = sinf((depth + warpY * 0.45f) * 3.2f + pillar * 0.65f) * 0.48f;
+            float overhangMask = (r >= 2 && r <= 6) ? sinf(((float)(r - 2) / 4.0f) * PI) : 0.0f;
+            float overhangMod = overhangMask * Cliff_Fbm3(wx * 0.08f, wy * 0.18f, wz * 0.08f, 113, 2) * 2.1f;
+
+            float relief = (pillar + crevice + fissureCut + sharpFacet * 1.35f + shelfStep + shelfEdge + overhangMod) * rp->noise;
 
             // Lateral shear displacement along rim tangent (breaks cylindrical symmetry)
             Vector2 rimTan = {-rimNorm[i].y, rimNorm[i].x};

@@ -14,6 +14,8 @@ static int s_locLightDir = -1;
 static int s_locLightColor = -1;
 static int s_locAmbientColor = -1;
 static int s_locViewPos = -1;
+static int s_locRockAridMode = -1;
+static float s_rockAridMode = 0.0f;
 
 Shader PropLit_GetShader(void)
 {
@@ -56,6 +58,7 @@ Shader PropLit_GetShader(void)
     s_locLightColor = GetShaderLocation(shader, "u_lightColor");
     s_locAmbientColor = GetShaderLocation(shader, "u_ambientColor");
     s_locViewPos = GetShaderLocation(shader, "u_viewPos");
+    s_locRockAridMode = GetShaderLocation(shader, "u_rockAridMode");
 
     MapShadow_ConfigureShader(shader);
 
@@ -142,6 +145,16 @@ void PropLit_UpdateLighting(void)
     SetShaderValue(shader, s_locViewPos, &viewPos, SHADER_UNIFORM_VEC3);
   }
 
+  if (s_locRockAridMode >= 0)
+  {
+    SetShaderValue(shader, s_locRockAridMode, &s_rockAridMode, SHADER_UNIFORM_FLOAT);
+  }
+
   MapShadow_UpdateShader(shader);
   EndShaderMode();
+}
+
+void MapProp_SetRockAridMode(float aridMode)
+{
+  s_rockAridMode = aridMode;
 }

@@ -63,6 +63,12 @@ uniform vec4 u_pathSegs[MAX_PATH_SEGS];
 uniform int u_pathSegCount;
 uniform vec4 u_lakeParams;
 
+uniform float u_aridBiomeFactor;
+uniform float u_strataStrength;
+uniform vec3 u_aridGrusColor;
+uniform vec3 u_aridHardpanColor;
+uniform vec3 u_aridLichenColor;
+
 out vec4 finalColor;
 
 #define LAYER_EPS 0.003
@@ -369,23 +375,23 @@ void main()
         float turfDetail = dot(blendedGrass, vec3(0.2126, 0.7152, 0.0722));
         float detailContrast = clamp((turfDetail - 0.22) * 1.65, -0.26, 0.30);
 
-        vec3 turfBase = vec3(0.138, 0.212, 0.078);
+        vec3 turfBase = mix(vec3(0.138, 0.212, 0.078), u_aridGrusColor, u_aridBiomeFactor);
         float tintLuma = dot(colDiffuse.rgb, vec3(0.299, 0.587, 0.114));
         if (tintLuma > 0.05) {
             vec3 normalizedTint = clamp(colDiffuse.rgb / tintLuma, vec3(0.78), vec3(1.22));
             turfBase *= mix(vec3(1.0), normalizedTint, 0.30);
         }
 
-        vec3 humusPocketTone = vec3(0.152, 0.168, 0.088);
-        float humusPocketMask = (1.0 - smoothstep(0.14, 0.28, turfDetail)) * detailResolve * 0.28;
+        vec3 humusPocketTone = mix(vec3(0.152, 0.168, 0.088), u_aridHardpanColor, u_aridBiomeFactor);
+        float humusPocketMask = (1.0 - smoothstep(0.14, 0.28, turfDetail)) * detailResolve * mix(0.28, 0.62, u_aridBiomeFactor);
         turfBase = mix(turfBase, humusPocketTone, humusPocketMask);
 
         vec3 litterChroma = clamp(blendedGrass / max(turfDetail, 0.06), vec3(0.72), vec3(1.34));
-        float chromaStrength = mix(0.34, 0.56, detailResolve);
-        grassAlbedo = turfBase * mix(vec3(1.0), litterChroma, chromaStrength) * (1.0 + detailContrast);
+        float chromaStrength = mix(0.34, 0.56, detailResolve) * (1.0 - u_aridBiomeFactor * 0.65);
+        grassAlbedo = turfBase * mix(vec3(1.0), litterChroma, chromaStrength) * (1.0 + detailContrast * mix(1.0, 1.85, u_aridBiomeFactor));
 
         vec3 litterTint = mix(vec3(1.0), vec3(1.06, 1.02, 0.92), litterClasses.x);
-        litterTint *= mix(vec3(1.0), vec3(0.93, 1.04, 0.93), litterClasses.y);
+        litterTint *= mix(vec3(1.0), mix(vec3(0.93, 1.04, 0.93), vec3(1.04, 0.96, 0.86), u_aridBiomeFactor), litterClasses.y);
         grassAlbedo *= mix(vec3(1.0), litterTint, detailResolve * 0.32);
 
         float habW1 = sin(fragWorldPos.x * 0.085 + fragWorldPos.z * 0.055) * 0.5 + 0.5;
@@ -394,15 +400,18 @@ void main()
         float analyticHabitat = habW1 * 0.50 + habW2 * 0.35 + habW3 * 0.15;
         float habitatVal = (u_ecologyEnabled != 0) ? mix(analyticHabitat, ecology.a, 0.25) : analyticHabitat;
 
-        vec3 targetCanopyColor = MeadowCanopyColor(habitatVal);
-        // Deep verdant moss-clover undergrowth beneath 3D grass tufts so grazing angles never flash yellow-tan
-        vec3 nearCanopySubstrate = mix(vec3(0.086, 0.148, 0.050), targetCanopyColor * 0.50, 0.54);
+        vec3 aridCanopy = mix(u_aridHardpanColor * 1.12, u_aridGrusColor * 1.06, habitatVal);
+        vec3 targetCanopyColor = mix(MeadowCanopyColor(habitatVal), aridCanopy, u_aridBiomeFactor);
+        // Deep verdant moss-clover undergrowth beneath 3D grass tufts (or dry ochre crust in arid biome)
+        vec3 lushSubstrate = mix(vec3(0.086, 0.148, 0.050), targetCanopyColor * 0.50, 0.54);
+        vec3 aridSubstrate = mix(u_aridHardpanColor, u_aridGrusColor, 0.45 + 0.25 * detailContrast);
+        vec3 nearCanopySubstrate = mix(lushSubstrate, aridSubstrate, u_aridBiomeFactor);
         grassAlbedo = mix(grassAlbedo,
                           nearCanopySubstrate * (1.0 + detailContrast * (0.58 + GS_NEAR_DETAIL_BOOST * detailResolve)),
                           0.56 - GS_NEAR_DETAIL_BOOST * 0.42 * detailResolve);
 
         if (u_ecologyEnabled != 0)
-            grassAlbedo *= mix(vec3(1.0), vec3(0.90, 0.99, 0.92), ecology.b);
+            grassAlbedo *= mix(vec3(1.0), mix(vec3(0.90, 0.99, 0.92), vec3(1.04, 0.98, 0.90), u_aridBiomeFactor), ecology.b);
 
         if (camDistSqXZ > 64.0) {
             float camDist = camDistSqXZ * inversesqrt(camDistSqXZ);
@@ -425,8 +434,8 @@ void main()
                 float tuftWaveA = sin(fragWorldPos.x * 4.6 + cos(fragWorldPos.z * 3.9));
                 float tuftWaveB = cos(fragWorldPos.z * 5.1 - sin(fragWorldPos.x * 4.2));
                 float tuftGrain = clamp(mix(hillCrestNoise, 0.5 + (turfDetail - 0.22) * 0.65, 0.45), 0.0, 1.0);
-                distantTuftRelief = (tuftWaveA * tuftWaveB) * 0.16 * distantCanopyBlend;
-                distantTuftNormal = vec2(tuftWaveA, tuftWaveB) * (0.14 * distantCanopyBlend);
+                distantTuftRelief = (tuftWaveA * tuftWaveB) * 0.16 * distantCanopyBlend * (1.0 - u_aridBiomeFactor);
+                distantTuftNormal = vec2(tuftWaveA, tuftWaveB) * (0.14 * distantCanopyBlend * (1.0 - u_aridBiomeFactor));
 
                 canopyColor *= mix(0.92, 1.08, tuftGrain);
 
@@ -458,8 +467,8 @@ void main()
         float porousDarkening = smoothstep(0.0, 0.45, wWetSoil) * (1.0 - wWetSoil * 0.35);
         float soilLuma = dot(dirtDetail, vec3(0.299, 0.587, 0.114));
         pebbleRelief = smoothstep(0.26, 0.72, soilLuma);
-        vec3 loamDark  = vec3(0.10, 0.08, 0.05);
-        vec3 loamLight = vec3(0.18, 0.14, 0.09);
+        vec3 loamDark  = mix(vec3(0.10, 0.08, 0.05), u_aridHardpanColor * 0.68, u_aridBiomeFactor);
+        vec3 loamLight = mix(vec3(0.18, 0.14, 0.09), u_aridGrusColor * 0.92, u_aridBiomeFactor);
         vec3 warmLoamColor = mix(loamDark, loamLight, pebbleRelief) * (0.86 + 0.28 * dirtDetail) * (1.0 - porousDarkening * 0.32);
 
         vec3 cliffAlbedo = warmLoamColor;
@@ -546,15 +555,17 @@ void main()
             float combinedStrata = strataMacro * 0.65 + strataFine * 0.35;
 
             float fissure = smoothstep(0.0, 0.28, abs(sin(strikeCoord * 1.45 + strataWarp * 0.90)));
-            vec3 slateBedrock = vec3(0.45, 0.46, 0.50);
-            vec3 feldsparVein = vec3(0.64, 0.59, 0.52);
-            vec3 stoneTint = mix(slateBedrock, feldsparVein, combinedStrata * 0.42) * 1.32;
+            vec3 slateBedrock = mix(vec3(0.45, 0.46, 0.50), vec3(0.56, 0.47, 0.38), u_aridBiomeFactor);
+            vec3 feldsparVein = mix(vec3(0.64, 0.59, 0.52), vec3(0.76, 0.64, 0.50), u_aridBiomeFactor);
+            vec3 stoneTint = mix(slateBedrock, feldsparVein, combinedStrata * mix(0.42, 0.72, u_aridBiomeFactor)) * 1.32;
             vec3 rockBase = triRock * stoneTint * mix(0.76, 1.04, fissure);
 
-            // Velvet moss restricted strictly to flat horizontal ledges, matching turf hue
+            // Velvet moss restricted strictly to flat horizontal ledges (or dry crustose lichen in arid biome)
             float ledgeFacing = smoothstep(0.76, 0.94, geomWorldNormal.y);
-            vec3 ledgeMoss = mix(vec3(0.09, 0.14, 0.05), vec3(0.12, 0.18, 0.07), triRock.g);
-            cliffAlbedo = mix(rockBase, ledgeMoss, ledgeFacing * 0.36);
+            vec3 lushLedgeMoss = mix(vec3(0.09, 0.14, 0.05), vec3(0.12, 0.18, 0.07), triRock.g);
+            vec3 aridLedgeCrust = mix(u_aridLichenColor, u_aridGrusColor * 0.95, triRock.g);
+            vec3 ledgeMoss = mix(lushLedgeMoss, aridLedgeCrust, u_aridBiomeFactor);
+            cliffAlbedo = mix(rockBase, ledgeMoss, ledgeFacing * mix(0.36, 0.52, u_aridBiomeFactor));
 
             rockNormX.xy *= 2.6;
             rockNormY.xy *= 2.6;
@@ -565,9 +576,9 @@ void main()
             vec3 worldNz = vec3(rockNormZ.x * sgnN.z, rockNormZ.y, rockNormZ.z * sgnN.z);
             vec3 rawCliffN = worldNx * triWeights.x + worldNy * triWeights.y + worldNz * triWeights.z;
 
-            // Stepped horizontal fracture ledges (80.lv terrace-form rocks)
-            float shelfPhase = fragWorldPos.y * 2.80 + strikeCoord * 0.25;
-            float shelfNormMod = sin(shelfPhase) * 0.28;
+            // GPU Gems 3 Ch. 1 Pre-Warped Stepped Horizontal Fracture Ledges & Exfoliation Shelves
+            float shelfPhase = fragWorldPos.y * 2.80 + strikeCoord * 0.25 + strataWarp * 0.65;
+            float shelfNormMod = (sin(shelfPhase) * 0.28 + sin(shelfPhase * 2.4) * 0.12 * u_strataStrength) * (1.0 + u_strataStrength * 1.15);
             rawCliffN.y += shelfNormMod * (1.0 - absWN.y);
             cliffTriNormal = rawCliffN * inversesqrt(max(dot(rawCliffN, rawCliffN), 1e-8));
 
@@ -647,10 +658,9 @@ void main()
             //    Golden-sand matrix with embedded quartzite pebbles
             vec3 exposedSandBar = mix(sandBase, pebbleMineral, gravelHighlight * 0.68 * shingleBar) * gravelAO;
 
-            // 3. Upper-Bank Moss & Loam Fringe:
-            //    Moist humus with velvet bryophyte moss interweaving with grass roots
-            vec3 bankMossTone = mix(vec3(0.15, 0.25, 0.09), vec3(0.23, 0.35, 0.13), dirtDetail.r);
-            vec3 bankLoamTone = mix(vec3(0.24, 0.20, 0.15), vec3(0.33, 0.28, 0.21), dirtDetail.g);
+            // 3. Upper-Bank Moss & Loam Fringe (or dry gravel/crust in arid biome)
+            vec3 bankMossTone = mix(mix(vec3(0.15, 0.25, 0.09), vec3(0.23, 0.35, 0.13), dirtDetail.r), u_aridLichenColor, u_aridBiomeFactor);
+            vec3 bankLoamTone = mix(mix(vec3(0.24, 0.20, 0.15), vec3(0.33, 0.28, 0.21), dirtDetail.g), u_aridGrusColor, u_aridBiomeFactor);
             vec3 upperBankFringe = mix(bankLoamTone, bankMossTone, 0.52 + 0.35 * microSediment.g) * (0.90 + 0.25 * colorDirt.rgb);
 
             float bankDist = max(variableShore, 0.0);
@@ -714,7 +724,7 @@ void main()
         }
 
         if (debris.a > 0.04) {
-            vec3 mossColor = mix(vec3(0.18, 0.30, 0.10), vec3(0.28, 0.42, 0.14), fineGrain);
+            vec3 mossColor = mix(mix(vec3(0.18, 0.30, 0.10), vec3(0.28, 0.42, 0.14), fineGrain), u_aridLichenColor, u_aridBiomeFactor);
             float mossMask = smoothstep(0.12, 0.60, debris.a) * debrisDistFade * grassDebrisAtten;
             blendedAlbedo = mix(blendedAlbedo, mossColor, mossMask * 0.28);
         }
@@ -843,6 +853,13 @@ void main()
     float specGGX = (D_GGX * G_Smith * F_Schlick) / (4.0 * NdotV * NdotL_clamped + 0.001);
     vec3 drySpec = actualLight * specGGX * (NdotL_clamped * sunVisibility);
     groundLit += drySpec * (0.85 - wGrass * 0.65);
+
+    // Quartz / mica grain sparkle on sunlit desert grus & granite
+    if (u_aridBiomeFactor > 0.05 && sunVisibility > 0.01 && camDistSqXZ < 625.0) {
+        float quartzHash = fract(sin(dot(floor(fragWorldPos.xz * 28.0), vec2(12.9898, 78.233))) * 43758.5453);
+        float quartzGlint = pow(NdotH, 48.0) * smoothstep(0.93, 0.995, quartzHash);
+        groundLit += actualLight * (quartzGlint * sunVisibility * u_aridBiomeFactor * 0.55);
+    }
 
     // ---- 12. Capillary Wetness Mechanics (Tight meniscus waterline contact sheen) ----
     if ((wWetSoil > 0.04 || isRiparian > 0.04) && lakeDepthFactor < 0.45) {

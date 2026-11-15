@@ -327,7 +327,8 @@ def write_water_mesh(path, ground, surface, sx, sz):
 
 def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
                 cliff_margin=8.5, res_scale=1.0, stream_ratio=0.01,
-                prefix='map', out_dir='assets/maps', lake_level=None):
+                prefix='map', out_dir='assets/maps', lake_level=None,
+                biome='wood_meadow'):
     import hashlib
     import re
     import time
@@ -337,8 +338,8 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
     if not all(np.isfinite(v) and v>0 for v in (max_dim,height_range,cliff_depth,cliff_margin,res_scale)) or not 0<stream_ratio<1:
         raise ValueError('Invalid dimensions or stream ratio')
 
-    cached_npz = os.path.join(out_dir, f'{prefix}_source_analysis.npz')
-    cached_manifest = os.path.join(out_dir, f'{prefix}_manifest.json')
+    cached_npz = dem_path if (str(dem_path).endswith('.npz') and os.path.exists(dem_path)) else os.path.join(out_dir, f'{prefix}_source_analysis.npz')
+    cached_manifest = os.path.join(os.path.dirname(cached_npz), os.path.basename(cached_npz).replace('_source_analysis.npz', '_manifest.json'))
     if (not os.path.exists(dem_path) or str(dem_path).endswith('.npz')) and os.path.exists(cached_npz) and os.path.exists(cached_manifest):
         with open(cached_manifest, 'r') as mf:
             old_manifest = json.load(mf)
@@ -413,6 +414,19 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
     rolling=normalized_smooth(dem,valid,max(0.8,2.4/min(sx,sz)))
     normalized=np.clip((rolling-lo)/max(hi-lo,1e-9),0,1)
     terrain=height_range*np.power(normalized,1.15)
+    if biome == 'earth_arid':
+        # GPU Gems 3 Ch. 1 Pre-Warped Bedrock Terracing:
+        # Carve stepped granite benches and exposed shelves onto arid hillsides.
+        Xg, Zg = np.meshgrid(np.arange(w) * sx, np.arange(h) * sz)
+        warp_x = np.sin(Xg * 0.042 + Zg * 0.028) * 1.45 + np.cos(Zg * 0.085 - Xg * 0.051) * 0.72
+        step_h = 1.65
+        tau = (terrain + warp_x * 0.55) / step_h
+        frac = tau - np.floor(tau)
+        smooth_frac = np.clip((frac - 0.18) / (0.82 - 0.18), 0.0, 1.0)
+        smooth_frac = smooth_frac * smooth_frac * (3.0 - 2.0 * smooth_frac)
+        terraced = (np.floor(tau) + smooth_frac) * step_h - warp_x * 0.55
+        outcrop_w = np.clip((terrain - 2.2) / 6.5, 0.0, 0.52)
+        terrain = terrain * (1.0 - outcrop_w) + terraced * outcrop_w
     perimeter=distance_inside(valid,sx,sz)
     cliff=np.clip(perimeter/cliff_margin,0,1); cliff=cliff*cliff*(3-2*cliff)
     cliff=gaussian_filter_2d(cliff, 1.4)
@@ -555,6 +569,13 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
     water_plane = np.where(valid, water_plane * rim_water_taper + (ground - 0.35) * (1.0 - rim_water_taper), ground - 0.35)
 
     water_depth = np.maximum(0.0, water_plane - ground)
+    if biome == 'earth_arid':
+        # Dry Wadi + Shallow Oasis Pool: drain ~75% upstream channels into dry boulder arroyos,
+        # keeping surface water only in the lowest oasis basin (lake_blend > 0.15).
+        oasis_mask = lake_blend > 0.15
+        clean_wet = clean_wet & oasis_mask
+        water_plane = np.where(oasis_mask, water_plane, ground - 0.25)
+        water_depth = np.maximum(0.0, water_plane - ground)
     wet = clean_wet & (water_depth > 0.002)
     water_depth = np.where(wet, water_depth, 0.0)
 
@@ -568,9 +589,16 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
     twi_s = sample(twi)
 
     # Rock scree emerges only on steeper cliffs (> 17 deg), keeping rolling hills green
-    rock_slope = np.clip((slope_s - 17.0) / 15.0, 0.0, 1.0)
-    rock_ridge = np.clip((tpi_s - 5.5) / 14.0, 0.0, 1.0) * np.clip((ground - 3.5) / 8.0, 0.0, 1.0)
-    rock = np.maximum(np.maximum(rock_slope, rock_ridge), 1.0 - cliff)
+    # (or aggressively exposed on ridges, shoulders, and dry wadi banks in earth_arid mode)
+    if biome == 'earth_arid':
+        rock_slope = np.clip((slope_s - 8.5) / 11.0, 0.0, 1.0)
+        rock_ridge = np.clip((tpi_s - 1.5) / 8.0, 0.0, 1.0) * np.clip((ground - 1.5) / 5.5, 0.0, 1.0)
+        rock = np.maximum(np.maximum(rock_slope, rock_ridge), 1.0 - cliff)
+        rock = np.maximum(rock, corridor * 0.55)
+    else:
+        rock_slope = np.clip((slope_s - 17.0) / 15.0, 0.0, 1.0)
+        rock_ridge = np.clip((tpi_s - 5.5) / 14.0, 0.0, 1.0) * np.clip((ground - 3.5) / 8.0, 0.0, 1.0)
+        rock = np.maximum(np.maximum(rock_slope, rock_ridge), 1.0 - cliff)
     rock[water_depth > 0.01] = 0.0
 
     moisture = np.clip((twi_s - 5.5) / 8.0, 0.0, 1.0)
@@ -907,6 +935,7 @@ if __name__=='__main__':
     parser.add_argument('--lake-level',type=float,help='Candidate lake source elevation in metres; default detects a lowland plateau')
     parser.add_argument('--prefix',default='song_quao')
     parser.add_argument('--out-dir',default='assets/maps/song_quao')
+    parser.add_argument('--biome',choices=['wood_meadow','earth_arid'],default='wood_meadow')
     args=parser.parse_args()
     process_dem(args.dem_path,args.max_dim,args.height_range,args.cliff_depth,args.cliff_margin,
-                args.resolution_scale,args.stream_ratio,args.prefix,args.out_dir,args.lake_level)
+                args.resolution_scale,args.stream_ratio,args.prefix,args.out_dir,args.lake_level,args.biome)

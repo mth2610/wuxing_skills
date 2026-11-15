@@ -193,7 +193,7 @@ static Mesh Nature_GenMeshIcoSphere(float radius, int subdivisions)
     return mesh;
 }
 
-static Mesh Nature_BuildProceduralRockMesh(int rockType)
+static Mesh Nature_BuildProceduralRockMeshVariant(int rockType, int variantSeed)
 {
     int subdivisions = 3; // 1280 triangles, 3840 vertices
     if (rockType == MAP_ROCK_RIVER_STONE || rockType == MAP_ROCK_SCREE)
@@ -205,6 +205,10 @@ static Mesh Nature_BuildProceduralRockMesh(int rockType)
     float *origTexcoords = (float *)RL_MALLOC((size_t)mesh.vertexCount * 2u * sizeof(float));
     if (origTexcoords)
         memcpy(origTexcoords, mesh.texcoords, (size_t)mesh.vertexCount * 2u * sizeof(float));
+
+    const float vPhase = (float)(variantSeed & 3) * 1.5707963f; // 90 deg step per variant
+    const float vAsymX = (variantSeed == 1) ? 1.16f : ((variantSeed == 2) ? 0.90f : ((variantSeed == 3) ? 1.08f : 1.0f));
+    const float vAsymZ = (variantSeed == 1) ? 0.88f : ((variantSeed == 2) ? 1.15f : ((variantSeed == 3) ? 0.94f : 1.0f));
 
     // Deep polyhedral cleavage planes for sharp, chiseled granite / karst facets
     static const float kBoulderPlanes[9][4] = {
@@ -471,10 +475,10 @@ static Mesh Nature_BuildProceduralRockMesh(int rockType)
         else if (rockType == MAP_ROCK_SCREE)
         {
             // Scree / Talus gravel: irregular shattered angular chip
-            float chipNoise = 0.38f * cosf(3.0f * angle) + 0.28f * sinf(5.0f * angle) - 0.22f * fabsf(cosf(7.0f * angle));
-            vx = cosA * horizR * (1.0f + chipNoise) * 1.15f;
-            vy = y * 0.45f + 0.12f * sinf(x * 8.0f);
-            vz = sinA * horizR * (1.0f + chipNoise) * 0.82f;
+            float chipNoise = 0.38f * cosf(3.0f * angle + vPhase) + 0.28f * sinf(5.0f * angle - vPhase * 0.7f) - 0.22f * fabsf(cosf(7.0f * angle));
+            vx = cosA * horizR * (1.0f + chipNoise) * 1.15f * vAsymX;
+            vy = y * 0.45f + 0.12f * sinf(x * 8.0f + vPhase);
+            vz = sinA * horizR * (1.0f + chipNoise) * 0.82f * vAsymZ;
 
             for (int p = 0; p < 5; p++)
             {
@@ -489,15 +493,36 @@ static Mesh Nature_BuildProceduralRockMesh(int rockType)
         }
         else
         {
-            // Granite boulder / Tor: massive polyhedral corestone with crisp cleavage planes
-            float c1 = cosf(3.0f * angle + 0.35f);
-            float c2 = sinf(4.0f * angle - 0.65f);
-            float c3 = cosf(6.0f * angle + 1.2f);
-            float cleavage = 0.26f * c1 + 0.16f * c2 - 0.12f * fabsf(c3);
+            // Granite boulder / Ninh Thuan exfoliated corestone tor:
+            // GPU Gems 3 Ch. 1 pre-warped cleavage planes + spheroidal onion-skin exfoliation shells + tafoni cavities
+            float warpAngle = angle + 0.35f * sinf(y * 3.1f + vPhase) + vPhase;
+            float c1 = cosf(3.0f * warpAngle + 0.35f);
+            float c2 = sinf(4.0f * warpAngle - 0.65f);
+            float c3 = cosf(6.0f * warpAngle + 1.2f);
+            float cleavage = 0.24f * c1 + 0.15f * c2 - 0.11f * fabsf(c3);
 
-            vx = cosA * horizR * (1.0f + cleavage) * 1.24f;
+            vx = cosA * horizR * (1.0f + cleavage) * 1.22f * vAsymX;
             vy = y * 0.82f;
-            vz = sinA * horizR * (1.0f + cleavage) * 0.88f;
+            vz = sinA * horizR * (1.0f + cleavage) * 0.88f * vAsymZ;
+
+            // Variant 2: Pedestal / neck-pinch wind-scoured corestone (Nui Chua balanced boulder)
+            if (variantSeed == 2)
+            {
+                float neckBand = expf(-((y + 0.28f) * (y + 0.28f)) * 7.5f);
+                float pinch = 1.0f - 0.24f * neckBand;
+                vx *= pinch;
+                vz *= pinch;
+            }
+            // Variant 3: Split-joint granite block with tectonic fracture groove
+            else if (variantSeed == 3)
+            {
+                float jointDist = fabsf(vx * 0.86f + vz * 0.50f - 0.06f * sinf(vy * 3.0f));
+                if (jointDist < 0.22f && vy > -0.25f)
+                {
+                    float groove = (1.0f - jointDist / 0.22f) * (vy + 0.25f) * 0.38f;
+                    vy -= groove;
+                }
+            }
 
             for (int p = 0; p < 9; p++)
             {
@@ -510,14 +535,32 @@ static Mesh Nature_BuildProceduralRockMesh(int rockType)
                 {
                     float u = dist + 0.06f;
                     float softDist = 0.5f * (u + sqrtf(u * u + 0.008f));
-                    const float clipStrength = 0.92f;
+                    const float clipStrength = (variantSeed == 1) ? 0.80f : 0.90f;
                     vx -= nx * softDist * clipStrength;
                     vy -= ny * softDist * clipStrength;
                     vz -= nz * softDist * clipStrength;
                 }
             }
 
-            float strata = vy * 7.5f + angle * 0.9f;
+            // Spheroidal exfoliation onion-skin shell steps (Ninh Thuan granite weathering)
+            float shellCoord = (vy + 0.85f) * 4.2f + 0.45f * sinf(vx * 2.8f + vz * 2.3f + vPhase);
+            float shellIdx = floorf(shellCoord);
+            float shellFrac = shellCoord - shellIdx;
+            float exfoliationStep = 0.038f * (Rock_Smoothstep(0.08f, 0.28f, shellFrac) - 0.5f);
+            float rLen = sqrtf(vx * vx + vz * vz + 1e-6f);
+            vx += (vx / rLen) * exfoliationStep;
+            vz += (vz / rLen) * exfoliationStep;
+
+            // Subtle wind-eroded tafoni pocket on lower windward flank
+            float tafoniWave = sinf(vx * 5.2f + vPhase) * cosf(vz * 4.8f - vPhase) * sinf(vy * 6.0f);
+            if (tafoniWave > 0.45f && vy < 0.35f && vy > -0.45f)
+            {
+                float scoop = (tafoniWave - 0.45f) * 0.16f;
+                vx *= (1.0f - scoop);
+                vz *= (1.0f - scoop);
+            }
+
+            float strata = vy * 7.5f + angle * 0.9f + vPhase;
             float terrace = 0.045f * (sinf(strata) + 0.35f * sinf(strata * 2.0f));
             vy += terrace;
 
@@ -848,11 +891,11 @@ static Mesh Nature_BuildProceduralRockMesh(int rockType)
     return mesh;
 }
 
-static MapRockSet Rock_CreateTypedSet(int rockType, const char *diffusePath,
-                                      const char *normalPath, const char *roughnessPath)
+static MapRockSet Rock_CreateTypedSetVariant(int rockType, int variantSeed, const char *diffusePath,
+                                             const char *normalPath, const char *roughnessPath)
 {
     MapRockSet rocks = {0};
-    Mesh mesh = Nature_BuildProceduralRockMesh(rockType);
+    Mesh mesh = Nature_BuildProceduralRockMeshVariant(rockType, variantSeed);
     MapProp_MeshBounds(&mesh, &rocks.boundsCenter, &rocks.boundsRadius);
     // Fold boundsCenter offset length into boundsRadius once at init so per-frame culling needs no sqrtf
     float centerLen = Vector3Length(rocks.boundsCenter);
@@ -875,6 +918,12 @@ static MapRockSet Rock_CreateTypedSet(int rockType, const char *diffusePath,
 
     rocks.ready = true;
     return rocks;
+}
+
+static MapRockSet Rock_CreateTypedSet(int rockType, const char *diffusePath,
+                                      const char *normalPath, const char *roughnessPath)
+{
+    return Rock_CreateTypedSetVariant(rockType, 0, diffusePath, normalPath, roughnessPath);
 }
 
 MapRockSet MapProp_CreateRocks(const char *diffusePath, const char *normalPath, const char *roughnessPath)
@@ -1094,7 +1143,11 @@ MapRockSystem MapProp_CreateRockSystem(const char *diffusePath, const char *norm
         const char *nPath = (normalPath && FileExists(kArchNormal[a])) ? kArchNormal[a] : normalPath;
         const char *rPath = (roughnessPath && FileExists(kArchRoughness[a])) ? kArchRoughness[a] : roughnessPath;
 
-        sys.models[a] = Rock_CreateTypedSet(a, dPath, nPath, rPath);
+        sys.models[a] = Rock_CreateTypedSetVariant(a, 0, dPath, nPath, rPath);
+        for (int v = 0; v < MAP_ROCK_VARIANTS_PER_ARCHETYPE - 1; v++)
+        {
+            sys.variants[a][v] = Rock_CreateTypedSetVariant(a, v + 1, dPath, nPath, rPath);
+        }
     }
 
     // Aliases for backwards compatibility
@@ -1160,10 +1213,23 @@ int MapProp_AddRockCluster(MapRockSystem *sys, Vector3 center, MapRockArchetype 
     return added;
 }
 
-static inline const MapRockSet *Rock_ResolveArchetypeSet(const MapRockSystem *sys, MapRockArchetype archetype)
+static inline int Rock_HashVariant(int idx, float x, float z)
 {
-    if ((int)archetype >= 0 && archetype < MAP_ROCK_ARCHETYPE_COUNT && sys->models[archetype].ready)
-        return &sys->models[archetype];
+    unsigned int h = (unsigned int)idx * 2654435761u ^
+                     (unsigned int)((int)(x * 13.0f) * 73856093) ^
+                     (unsigned int)((int)(z * 17.0f) * 19349663);
+    return (int)(h & 3u);
+}
+
+static inline const MapRockSet *Rock_ResolveArchetypeSet(const MapRockSystem *sys, MapRockArchetype archetype, int variant)
+{
+    if ((int)archetype >= 0 && archetype < MAP_ROCK_ARCHETYPE_COUNT)
+    {
+        if (variant > 0 && variant < MAP_ROCK_VARIANTS_PER_ARCHETYPE && sys->variants[archetype][variant - 1].ready)
+            return &sys->variants[archetype][variant - 1];
+        if (sys->models[archetype].ready)
+            return &sys->models[archetype];
+    }
     if (archetype == MAP_ROCK_CRAG)
         return &sys->crags;
     if (archetype == MAP_ROCK_RIVER_STONE)
@@ -1183,7 +1249,8 @@ void MapProp_DrawRockSystem(const MapRockSystem *sys, bool drawShadows)
     for (int i = 0; i < sys->count; i++)
     {
         const MapRockItem *p = &sys->items[i];
-        const MapRockSet *set = Rock_ResolveArchetypeSet(sys, p->archetype);
+        int variant = Rock_HashVariant(i, p->position.x, p->position.z);
+        const MapRockSet *set = Rock_ResolveArchetypeSet(sys, p->archetype, variant);
         if (!set->ready)
             continue;
 
@@ -1245,6 +1312,7 @@ void MapProp_DrawRockSystemShadowCasters(MapRockSystem *sys, Shader depthShader)
         return;
 
     Shader prevShaders[MAP_ROCK_ARCHETYPE_COUNT] = {0};
+    Shader prevVariantShaders[MAP_ROCK_ARCHETYPE_COUNT][MAP_ROCK_VARIANTS_PER_ARCHETYPE - 1] = {{0}};
     for (int a = 0; a < MAP_ROCK_ARCHETYPE_COUNT; a++)
     {
         if (sys->models[a].ready && sys->models[a].model.materialCount > 0)
@@ -1252,10 +1320,17 @@ void MapProp_DrawRockSystemShadowCasters(MapRockSystem *sys, Shader depthShader)
             prevShaders[a] = sys->models[a].model.materials[0].shader;
             sys->models[a].model.materials[0].shader = depthShader;
         }
+        for (int v = 0; v < MAP_ROCK_VARIANTS_PER_ARCHETYPE - 1; v++)
+        {
+            if (sys->variants[a][v].ready && sys->variants[a][v].model.materialCount > 0)
+            {
+                prevVariantShaders[a][v] = sys->variants[a][v].model.materials[0].shader;
+                sys->variants[a][v].model.materials[0].shader = depthShader;
+            }
+        }
     }
 
     Vector3 focus = EnvShadow_GetFocus();
-    float maxShadowDistSq = 28.0f * 28.0f;
     Vector3 rotAxis = {0.0f, 1.0f, 0.0f};
     for (int i = 0; i < sys->count; i++)
     {
@@ -1267,7 +1342,8 @@ void MapProp_DrawRockSystemShadowCasters(MapRockSystem *sys, Shader depthShader)
         float pad = p->radiusScale * 2.0f;
         if (dx * dx + dz * dz > (28.0f + pad) * (28.0f + pad))
             continue;
-        const MapRockSet *set = Rock_ResolveArchetypeSet(sys, p->archetype);
+        int variant = Rock_HashVariant(i, p->position.x, p->position.z);
+        const MapRockSet *set = Rock_ResolveArchetypeSet(sys, p->archetype, variant);
         if (!set->ready || set->model.materialCount < 1)
             continue;
 
@@ -1284,6 +1360,13 @@ void MapProp_DrawRockSystemShadowCasters(MapRockSystem *sys, Shader depthShader)
         {
             sys->models[a].model.materials[0].shader = prevShaders[a];
         }
+        for (int v = 0; v < MAP_ROCK_VARIANTS_PER_ARCHETYPE - 1; v++)
+        {
+            if (sys->variants[a][v].ready && sys->variants[a][v].model.materialCount > 0)
+            {
+                sys->variants[a][v].model.materials[0].shader = prevVariantShaders[a][v];
+            }
+        }
     }
 }
 
@@ -1296,6 +1379,13 @@ void MapProp_UnloadRockSystem(MapRockSystem *sys)
         if (sys->models[a].ready)
         {
             MapProp_UnloadRocks(&sys->models[a]);
+        }
+        for (int v = 0; v < MAP_ROCK_VARIANTS_PER_ARCHETYPE - 1; v++)
+        {
+            if (sys->variants[a][v].ready)
+            {
+                MapProp_UnloadRocks(&sys->variants[a][v]);
+            }
         }
     }
     if (sys->items)

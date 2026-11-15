@@ -27,6 +27,16 @@ static int locThinShadowBoost = -1;
 static int locTexGrass = -1, locTexPath = -1;
 static int locTexGrassMaterial = -1, locTexSoilMaterial = -1;
 static int locSeismicOriginDir = -1, locSeismicParams = -1, locSeismicProfile = -1;
+static int locAridBiomeFactor = -1, locStrataStrength = -1;
+static int locAridGrusColor = -1, locAridHardpanColor = -1, locAridLichenColor = -1;
+
+static MapGroundBiomeProfile s_groundBiomeProfile = {
+    .aridFactor = 0.0f,
+    .strataStrength = 0.25f,
+    .grusColor = {0.58f, 0.46f, 0.34f},
+    .hardpanColor = {0.42f, 0.31f, 0.21f},
+    .lichenColor = {0.50f, 0.40f, 0.19f}};
+static bool s_groundBiomeDirty = true;
 
 #define MAX_GROUND_PATH_SEGS 16
 #define GROUND_CLOUD_TEXTURE_SLOT 7         // Raw 2D binding; not a cubemap material map.
@@ -497,11 +507,17 @@ static MapGroundSurface SetupGroundMaterial(Mesh mesh, float width, float depth,
         locSeismicOriginDir = GetShaderLocation(groundShader, "u_seismicOriginDir");
         locSeismicParams = GetShaderLocation(groundShader, "u_seismicParams");
         locSeismicProfile = GetShaderLocation(groundShader, "u_seismicProfile");
+        locAridBiomeFactor = GetShaderLocation(groundShader, "u_aridBiomeFactor");
+        locStrataStrength = GetShaderLocation(groundShader, "u_strataStrength");
+        locAridGrusColor = GetShaderLocation(groundShader, "u_aridGrusColor");
+        locAridHardpanColor = GetShaderLocation(groundShader, "u_aridHardpanColor");
+        locAridLichenColor = GetShaderLocation(groundShader, "u_aridLichenColor");
         VFXLight_RegisterShader(groundShader);
 
         s_groundShaderId = groundShader.id;
         s_groundStateShaderId = 0;
         s_groundHabitatDirty = true;
+        s_groundBiomeDirty = true;
     }
 
     // 3. Assign Shader and Textures to Material
@@ -1058,6 +1074,21 @@ void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter)
         s_groundHabitatDirty = false;
     }
 
+    if (s_groundBiomeDirty)
+    {
+        if (locAridBiomeFactor >= 0)
+            SetShaderValue(groundShader, locAridBiomeFactor, &s_groundBiomeProfile.aridFactor, SHADER_UNIFORM_FLOAT);
+        if (locStrataStrength >= 0)
+            SetShaderValue(groundShader, locStrataStrength, &s_groundBiomeProfile.strataStrength, SHADER_UNIFORM_FLOAT);
+        if (locAridGrusColor >= 0)
+            SetShaderValue(groundShader, locAridGrusColor, &s_groundBiomeProfile.grusColor, SHADER_UNIFORM_VEC3);
+        if (locAridHardpanColor >= 0)
+            SetShaderValue(groundShader, locAridHardpanColor, &s_groundBiomeProfile.hardpanColor, SHADER_UNIFORM_VEC3);
+        if (locAridLichenColor >= 0)
+            SetShaderValue(groundShader, locAridLichenColor, &s_groundBiomeProfile.lichenColor, SHADER_UNIFORM_VEC3);
+        s_groundBiomeDirty = false;
+    }
+
     MapShadow_UpdateShader(groundShader);
 
     Vector4 seismicOriginDir = {0}, seismicParams = {0}, seismicProfile = {0};
@@ -1246,4 +1277,22 @@ void MapProp_SetGroundDebrisMap(MapGroundSurface *ground, const char *debrisMapP
     if (!ground || !ground->ready)
         return;
     ground->debrisTexture = debrisMapPath ? MapLoadMippedTexture(debrisMapPath, TEXTURE_WRAP_REPEAT) : (Texture2D){0};
+}
+
+void MapProp_SetGroundBiomeProfile(const MapGroundBiomeProfile *profile)
+{
+    if (profile)
+    {
+        s_groundBiomeProfile = *profile;
+    }
+    else
+    {
+        s_groundBiomeProfile = (MapGroundBiomeProfile){
+            .aridFactor = 0.0f,
+            .strataStrength = 0.25f,
+            .grusColor = {0.58f, 0.46f, 0.34f},
+            .hardpanColor = {0.42f, 0.31f, 0.21f},
+            .lichenColor = {0.50f, 0.40f, 0.19f}};
+    }
+    s_groundBiomeDirty = true;
 }

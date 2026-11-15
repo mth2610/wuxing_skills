@@ -1,4 +1,5 @@
 #include "maps/map_manager.h"
+#include "maps/toolkit/map_props.h"
 #include "environment/environment_system.h"
 #include <stdlib.h>
 #include <string.h>
@@ -213,8 +214,14 @@ void MapManager_SetActiveIndex(int index) {
         // up with zero zones instead of inheriting stale ones.
         s_zoneCount = 0;
         // Maps remain loaded across switches; reset opt-in direct radiance
-        // before Init so legacy maps cannot inherit another map's HDR sun.
+        // and global biome/grass state before Init so legacy maps cannot
+        // inherit another map's HDR sun, arid biome, or grass dryness.
         Environment_SetSunIntensity(1.0f);
+        MapProp_SetGroundBiomeProfile(NULL);
+        MapProp_SetRockAridMode(0.0f);
+        MapProp_SetCliffAridMode(0.0f);
+        MapProp_SetGrassState(MAP_GRASS_STATE_LUSH, 0.0f);
+        MapProp_ClearGrassBurnZones();
         if (s_maps[s_activeMapIndex].Init) {
             s_maps[s_activeMapIndex].Init();
         }
@@ -226,8 +233,8 @@ Vector3 MapManager_GetActiveSpawnPoint(void) {
     if (s_mapCount == 0) return (Vector3){ 6.0f, 0.0f, 4.4f };
     const char *name = s_maps[s_activeMapIndex].name;
     Vector3 pt;
-    if (strcmp(name, "SONG_QUAO") == 0) {
-        // Song Quao island center is (94.15f, 150.0f). Spawn near the main meadow plateau.
+    if (strcmp(name, "SONG_QUAO") == 0 || strcmp(name, "NINH_THUAN") == 0) {
+        // Island center is (94.15f, 150.0f). Spawn near the main plateau.
         pt = (Vector3){ 94.15f, 0.0f, 150.0f };
     } else {
         // DEFAULT_ARENA and default fallback
@@ -244,7 +251,7 @@ void MapManager_GetActiveBounds(Vector3 *outCenter, float *outRadius) {
         return;
     }
     const char *name = s_maps[s_activeMapIndex].name;
-    if (strcmp(name, "SONG_QUAO") == 0) {
+    if (strcmp(name, "SONG_QUAO") == 0 || strcmp(name, "NINH_THUAN") == 0) {
         if (outCenter) *outCenter = (Vector3){ 94.15f, 0.0f, 150.0f };
         if (outRadius) *outRadius = 135.0f;
     } else {

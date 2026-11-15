@@ -637,6 +637,11 @@ void InitSongQuaoMap(void)
     else
         SpawnSongQuaoMistVolumes();
 
+    MapProp_SetGroundBiomeProfile(NULL);
+    MapProp_SetRockAridMode(0.0f);
+    MapProp_SetCliffAridMode(0.0f);
+    MapProp_SetGrassState(MAP_GRASS_STATE_LUSH, 0.0f);
+
     if (s_ready)
     {
         EnvShadow_SetFocus(s_lastShadowFocus, SHADOW_FOCUS_RADIUS);
