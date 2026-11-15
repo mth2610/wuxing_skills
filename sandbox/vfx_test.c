@@ -1553,7 +1553,7 @@ static int s_vfxInspectorScroll = 0;
 static int s_vfxBrowserScroll = 0;
 static int s_vfxDraggingSlider = -1;
 static float s_vfxTelemetryFps, s_vfxTelemetryFrameMs, s_vfxTelemetryPeakMs;
-static float s_vfxTelemetryTilt = 36.0f, s_vfxTelemetryDistance = 12.0f, s_vfxTelemetryZoom = 1.5f;
+static float s_vfxTelemetryTilt = SANDBOX_CAMERA_PITCH_DEGREES, s_vfxTelemetryDistance = SANDBOX_CAMERA_DEFAULT_DISTANCE / SANDBOX_CAMERA_DEFAULT_ZOOM, s_vfxTelemetryZoom = SANDBOX_CAMERA_DEFAULT_ZOOM;
 static int s_vfxPendingTiltStep;
 
 void VFXTest_SetPerformanceTelemetry(float fps, float frameTimeMs, float peakFrameMs)

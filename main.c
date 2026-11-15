@@ -1272,7 +1272,7 @@ int main(int argc, char **argv) {
         CameraFX_Update(&camera, dt);
     } else if (currentScreen == SCREEN_VFX_TESTER) {
         static float vfxCameraAngle = SANDBOX_CAMERA_DEFAULT_YAW;
-        static float vfxCamDist = 18.0f / 1.5f; // Zoom 1.5x default (12.0f)
+        static float vfxCamDist = SANDBOX_CAMERA_DEFAULT_DISTANCE / SANDBOX_CAMERA_DEFAULT_ZOOM; // Zoom 1.8x default (10.0f)
         static float vfxCamPitch = SANDBOX_CAMERA_PITCH_DEGREES;
 
         static float s_vfxPlayerVelY = 0.0f;
@@ -1290,7 +1290,7 @@ int main(int argc, char **argv) {
             s_vfxPlayerJumping = false;
             vfxCameraAngle = SANDBOX_CAMERA_DEFAULT_YAW;
             float prefDist = VFXTest_GetPreferredCameraDistance();
-            vfxCamDist = (prefDist > 0.0f) ? prefDist : (18.0f / 1.5f);
+            vfxCamDist = (prefDist > 0.0f) ? prefDist : (SANDBOX_CAMERA_DEFAULT_DISTANCE / SANDBOX_CAMERA_DEFAULT_ZOOM);
             float prefPitch = VFXTest_GetPreferredCameraPitch();
             vfxCamPitch = (prefPitch > 0.0f) ? prefPitch : SANDBOX_CAMERA_PITCH_DEGREES;
         }

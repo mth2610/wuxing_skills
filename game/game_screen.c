@@ -25,12 +25,12 @@
 #define PI 3.14159265358979323846f
 #endif
 
-#define GAME_DEFAULT_TILT_DEGREES 36.0f
-#define GAME_DEFAULT_ZOOM_RATIO 1.5f
+#define GAME_DEFAULT_TILT_DEGREES 35.264f
+#define GAME_DEFAULT_ZOOM_RATIO 1.8f
 
 static float s_camAngle = 0.0f;
-static float s_camDist = 18.0f / 1.5f; // Zoom 1.5x default (12.0f)
-static float s_camPitch = 36.0f;        // Tilt 36 deg default
+static float s_camDist = SANDBOX_CAMERA_DEFAULT_DISTANCE / GAME_DEFAULT_ZOOM_RATIO; // Zoom 1.8x default (10.0f)
+static float s_camPitch = GAME_DEFAULT_TILT_DEGREES; // Tilt 35.264 deg default
 static bool s_backToMenu = false;
 
 // --- Module 7 match state ---
@@ -224,8 +224,8 @@ static void PlaceHeroesAtTeamSpawns(void)
 void GameScreen_Init(PlayerEntity *player)
 {
     s_camAngle = 0.0f;
-    s_camDist = 18.0f / 1.5f; // Zoom 1.5x default (12.0f)
-    s_camPitch = 36.0f;        // Tilt 36 deg default
+    s_camDist = SANDBOX_CAMERA_DEFAULT_DISTANCE / GAME_DEFAULT_ZOOM_RATIO; // Zoom 1.8x default (10.0f)
+    s_camPitch = GAME_DEFAULT_TILT_DEGREES; // Tilt 35.264 deg default
     s_backToMenu = false;
     UI_Init();
     ResetMatch(player);
