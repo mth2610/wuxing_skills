@@ -16,7 +16,9 @@
 #include "combat/combat.h"
 #include "audio/audio_system.h"
 #include "sandbox/sandbox_core.h"
+#include "rlgl.h"
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 
 #ifndef PI
@@ -38,6 +40,60 @@ static char s_onlineCode[16] = {0};      // EOS room code shown while hosting
 static float s_introTimer = 0.0f;
 static int s_lastBossPhase = -1;      // minion waves trigger on phase change (M8)
 static float s_swingSlowTimer = 0.0f; // movement damped while a swing plays
+static UITouchCombatInput s_gameTouchInput = {0};
+
+static void BuildGameTouchSlots(const PlayerEntity *player, UITouchSkillSlot outSlots[5])
+{
+    const Agent *a = player ? Entity_GetAgent(player->agentId) : NULL;
+    for (int k = 0; k < 5; k++)
+    {
+        outSlots[k].skillIndex = -1;
+        outSlots[k].shortLabel[0] = '\0';
+        outSlots[k].color = (Color){120, 180, 230, 255};
+        outSlots[k].ready = false;
+    }
+    if (!a) return;
+
+    if (a->taijiActive)
+    {
+        int phong = Skill_GetIndexByName("TAIJI_PHONG");
+        int loi   = Skill_GetIndexByName("TAIJI_LOI");
+        int taijiIdx[2] = {phong, loi};
+        for (int k = 0; k < 2; k++)
+        {
+            if (taijiIdx[k] >= 0)
+            {
+                outSlots[k].skillIndex = taijiIdx[k];
+                UI_FormatShortSkillName(GetRegisteredSkillName(taijiIdx[k]), outSlots[k].shortLabel, sizeof(outSlots[k].shortLabel));
+                outSlots[k].color = GetRegisteredSkillColor(taijiIdx[k]);
+                outSlots[k].ready = SkillManager_CanCast(taijiIdx[k], player->agentId);
+            }
+        }
+        return;
+    }
+
+    for (int k = 0; k < AGENT_SKILL_SLOTS && k < 4; k++)
+    {
+        int idx = a->equippedSkills[k];
+        if (idx >= 0)
+        {
+            outSlots[k].skillIndex = idx;
+            UI_FormatShortSkillName(GetRegisteredSkillName(idx), outSlots[k].shortLabel, sizeof(outSlots[k].shortLabel));
+            outSlots[k].color = GetRegisteredSkillColor(idx);
+            outSlots[k].ready = SkillManager_CanCast(idx, player->agentId);
+        }
+    }
+
+    // 5th skill button: LEAF_WHIRLWIND (Mộc), matching the 5-skill mobile bar
+    int fifthIdx = Skill_GetIndexByName("LEAF_WHIRLWIND");
+    if (fifthIdx >= 0)
+    {
+        outSlots[4].skillIndex = fifthIdx;
+        UI_FormatShortSkillName(GetRegisteredSkillName(fifthIdx), outSlots[4].shortLabel, sizeof(outSlots[4].shortLabel));
+        outSlots[4].color = GetRegisteredSkillColor(fifthIdx);
+        outSlots[4].ready = SkillManager_CanCast(fifthIdx, player->agentId);
+    }
+}
 
 // Team battle: two spawn clusters facing each other across the plateau
 // center; heroes fan out ±z within their cluster.
@@ -71,10 +127,10 @@ static void EquipDefaultLoadout(int agentId)
         const char *name;
         int element;
     } kLoadout[AGENT_SKILL_SLOTS] = {
-        {"GLACIAL_CANNON", 0}, // Thủy
-        {"FIRE", 2},           // Hỏa
-        {"STONE_PRISON", 3},   // Thổ
-        {"LEAF_WHIRLWIND", 1}, // Mộc
+        {"GLACIAL_CANNON", 0},    // Thủy
+        {"FIRE", 2},              // Hỏa
+        {"EARTH_DISC_VOLLEY", 3}, // Thổ
+        {"METAL_BLADE_STORM", 4}, // Kim
     };
     for (int slot = 0; slot < AGENT_SKILL_SLOTS; slot++)
     {
@@ -503,6 +559,43 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
     UI_SetCamera(camera);
     UI_Update(dt);
     PlayerIntent intent = Control_ReadIntent();
+
+    UITouchSkillSlot touchSlots[5];
+    BuildGameTouchSlots(player, touchSlots);
+    int touchExtraSkillIdx = -1;
+    if (s_state == GAME_FIGHTING && !UI_IsLoadoutOpen())
+    {
+        UI_PollTouchCombat(touchSlots, &s_gameTouchInput);
+        if (s_gameTouchInput.joyActive)
+        {
+            float s = sinf(s_camAngle);
+            float c = cosf(s_camAngle);
+            intent.moveDir.x += s_gameTouchInput.joyX * c + s_gameTouchInput.joyZ * s;
+            intent.moveDir.y += -s_gameTouchInput.joyX * s + s_gameTouchInput.joyZ * c;
+        }
+        if (s_gameTouchInput.attackPressed && intent.basicAttack == 0)
+            intent.basicAttack = 1 + GetRandomValue(0, 2);
+        if (s_gameTouchInput.khinhCongPressed)
+        {
+            intent.jump = true;
+            intent.dash = true;
+        }
+        for (int k = 0; k < 4; k++)
+        {
+            if (s_gameTouchInput.skillPressed[k] && intent.castSkillSlot < 0)
+            {
+                intent.castSkillSlot = k;
+                break;
+            }
+        }
+        if (s_gameTouchInput.skillPressed[4] && touchSlots[4].skillIndex >= 0)
+            touchExtraSkillIdx = touchSlots[4].skillIndex;
+    }
+    else
+    {
+        memset(&s_gameTouchInput, 0, sizeof(s_gameTouchInput));
+    }
+
     // Module 9 auto-targeting: an incoming enemy projectile (đối-đòn) or
     // the boss overrides the raw mouse aim — mobile-first UX (thiết kế §XI).
     if (s_state == GAME_FIGHTING && !UI_IsLoadoutOpen())
@@ -531,6 +624,18 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
             // Cast flourish: control casts silently (pure logic) — it
             // reports the fired skill back so the character swings.
             int castIdx = Control_ConsumeCastFired();
+            if (castIdx < 0 && touchExtraSkillIdx >= 0 &&
+                !Entity_IsStunned(player->agentId) &&
+                SkillManager_CanCast(touchExtraSkillIdx, player->agentId))
+            {
+                SkillParams sp = {.level = 1, .quantity = 1, .sizeScale = 1.0f};
+                if (CastSkill(touchExtraSkillIdx, player->agentId, player->position, intent.aimPoint, sp))
+                {
+                    SkillManager_TriggerCooldown(touchExtraSkillIdx, player->agentId, 1.0f);
+                    Control_FaceTowards(intent.aimPoint);
+                    castIdx = touchExtraSkillIdx;
+                }
+            }
             if (castIdx >= 0)
             {
                 float castSecs = Skill_GetCastAnimSeconds(castIdx);
@@ -748,32 +853,59 @@ void GameScreen_Draw3D(const PlayerEntity *player)
 
 void GameScreen_DrawHUD(const PlayerEntity *player)
 {
+    rlDrawRenderBatchActive();
+    EndShaderMode();
+    BeginBlendMode(BLEND_ALPHA);
+    Camera2D cam2d = {0};
+    cam2d.zoom = 1.0f;
+    BeginMode2D(cam2d);
+    rlSetTexture(0);
+
     const Agent *agent = Entity_GetAgent(player->agentId);
     float hp = agent ? agent->health : 0.0f;
     float maxHp = agent ? agent->maxHealth : 1.0f;
     float ratio = (maxHp > 0.0f) ? (hp / maxHp) : 0.0f;
-    if (ratio < 0.0f)
-        ratio = 0.0f;
-    if (ratio > 1.0f)
-        ratio = 1.0f;
-
-    const int barX = 20, barY = 20, barW = 220, barH = 18;
-    DrawRectangle(barX, barY, barW, barH, (Color){30, 30, 30, 220});
-    DrawRectangle(barX, barY, (int)(barW * ratio), barH, (Color){190, 40, 40, 255});
-    DrawRectangleLines(barX, barY, barW, barH, (Color){220, 220, 220, 180});
+    if (ratio < 0.0f) ratio = 0.0f;
+    if (ratio > 1.0f) ratio = 1.0f;
 
     float mana = agent ? agent->mana : 0.0f;
     float maxMana = agent ? agent->maxMana : 1.0f;
     float manaRatio = (maxMana > 0.0f) ? (mana / maxMana) : 0.0f;
-    if (manaRatio < 0.0f)
-        manaRatio = 0.0f;
-    if (manaRatio > 1.0f)
-        manaRatio = 1.0f;
+    if (manaRatio < 0.0f) manaRatio = 0.0f;
+    if (manaRatio > 1.0f) manaRatio = 1.0f;
 
-    const int manaBarY = barY + barH + 6;
-    DrawRectangle(barX, manaBarY, barW, barH, (Color){30, 30, 30, 220});
-    DrawRectangle(barX, manaBarY, (int)(barW * manaRatio), barH, (Color){60, 90, 220, 255});
-    DrawRectangleLines(barX, manaBarY, barW, barH, (Color){220, 220, 220, 180});
+    // --- Top-left Player Status Card (Wuxia style, crisp quad borders) ---
+    const int cardX = 16, cardY = 14, cardW = 248, cardH = 62;
+    Rectangle cardRec = {(float)cardX, (float)cardY, (float)cardW, (float)cardH};
+    DrawRectangleRec(cardRec, (Color){14, 16, 24, 210});
+    DrawRectangleLinesEx(cardRec, 1.5f, (agent && agent->taijiActive)
+                                             ? (Color){245, 215, 115, 240}
+                                             : (Color){165, 140, 85, 200});
+
+    const int barX = cardX + 12, barY = cardY + 12, barW = 224, barH = 16;
+    Rectangle hpRec = {(float)barX, (float)barY, (float)barW, (float)barH};
+    DrawRectangleRec(hpRec, (Color){24, 18, 22, 235});
+    if (ratio > 0.0f)
+    {
+        int fillW = (int)(barW * ratio);
+        DrawRectangle(barX, barY, fillW, barH, (Color){195, 48, 52, 255});
+        DrawRectangle(barX, barY, fillW, 4, (Color){235, 95, 95, 190});
+    }
+    DrawRectangleLinesEx(hpRec, 1.0f, (Color){185, 160, 110, 175});
+    DrawText(TextFormat("HP %d/%d", (int)hp, (int)maxHp), barX + 6, barY + 3, 10, (Color){245, 240, 235, 245});
+
+    const int manaBarY = barY + barH + 8, manaH = 12;
+    Rectangle mpRec = {(float)barX, (float)manaBarY, (float)barW, (float)manaH};
+    DrawRectangleRec(mpRec, (Color){18, 22, 34, 235});
+    if (manaRatio > 0.0f)
+    {
+        int fillW = (int)(barW * manaRatio);
+        Color mpCol = (agent && agent->taijiActive) ? (Color){230, 185, 70, 255} : (Color){55, 125, 225, 255};
+        DrawRectangle(barX, manaBarY, fillW, manaH, mpCol);
+        DrawRectangle(barX, manaBarY, fillW, 3, (Color){145, 205, 255, 140});
+    }
+    DrawRectangleLinesEx(mpRec, 1.0f, (Color){125, 150, 195, 175});
+    DrawText(TextFormat("MP %d/%d", (int)mana, (int)maxMana), barX + 6, manaBarY + 1, 10, (Color){225, 235, 250, 240});
 
     // Module 9 overlay: skill slot chips + auto-aim reticle.
     UI_DrawOverlay(player->agentId);
@@ -788,16 +920,28 @@ void GameScreen_DrawHUD(const PlayerEntity *player)
         if (boss)
         {
             float bRatio = (boss->maxHealth > 0.0f) ? boss->health / boss->maxHealth : 0.0f;
-            if (bRatio < 0.0f)
-                bRatio = 0.0f;
-            if (bRatio > 1.0f)
-                bRatio = 1.0f;
-            const int bw = 420, bh = 14, bx = sw / 2 - bw / 2, by = 16;
-            DrawRectangle(bx, by, bw, bh, (Color){20, 20, 20, 220});
-            DrawRectangle(bx, by, (int)(bw * bRatio), bh, (Color){150, 40, 170, 255});
-            DrawRectangleLines(bx, by, bw, bh, (Color){220, 220, 220, 180});
+            if (bRatio < 0.0f) bRatio = 0.0f;
+            if (bRatio > 1.0f) bRatio = 1.0f;
+            int bw = sw - 560;
+            if (bw > 420) bw = 420;
+            if (bw < 240) bw = 240;
+            const int bh = 14, bx = sw / 2 - bw / 2, by = 36;
+            Rectangle plate = {(float)(bx - 12), 12.0f, (float)(bw + 24), 46.0f};
+            DrawRectangleRec(plate, (Color){14, 14, 22, 205});
+            DrawRectangleLinesEx(plate, 1.5f, (Color){165, 130, 185, 190});
+
             const char *bn = "HAC DIEN TON GIA";
-            DrawText(bn, sw / 2 - MeasureText(bn, 16) / 2, by + bh + 4, 16, (Color){230, 230, 240, 255});
+            DrawText(bn, sw / 2 - MeasureText(bn, 14) / 2, 17, 14, (Color){238, 226, 248, 255});
+
+            Rectangle bRec = {(float)bx, (float)by, (float)bw, (float)bh};
+            DrawRectangleRec(bRec, (Color){22, 16, 28, 235});
+            if (bRatio > 0.0f)
+            {
+                int fillW = (int)(bw * bRatio);
+                DrawRectangle(bx, by, fillW, bh, (Color){160, 46, 185, 255});
+                DrawRectangle(bx, by, fillW, 4, (Color){215, 110, 235, 180});
+            }
+            DrawRectangleLinesEx(bRec, 1.0f, (Color){200, 175, 220, 180});
         }
     }
 
@@ -851,6 +995,16 @@ void GameScreen_DrawHUD(const PlayerEntity *player)
         DrawText(t, sw / 2 - MeasureText(t, 44) / 2, sh / 2 - 60, 44, (Color){200, 70, 70, 255});
         const char *hint = "ENTER";
         DrawText(hint, sw / 2 - MeasureText(hint, 18) / 2, sh / 2 - 8, 18, (Color){200, 200, 200, 255});
+    }
+
+    EndMode2D();
+    EndBlendMode();
+
+    if (s_state == GAME_FIGHTING && !UI_IsLoadoutOpen())
+    {
+        UITouchSkillSlot touchSlots[5];
+        BuildGameTouchSlots(player, touchSlots);
+        UI_DrawTouchCombat(touchSlots, &s_gameTouchInput);
     }
 }
 

@@ -28,6 +28,9 @@
 #include "core/vfx_light.h"
 #include "sandbox/vfx_test.h" // MỚI: Chỉ giữ duy nhất file test này để điều phối
 #include "core/resource_manager.h"
+#if defined(PLATFORM_ANDROID) || defined(__ANDROID__)
+#include <sys/stat.h>
+#endif
 #include "skills/skill_helper.h"
 #include "core/composition/visual_composer.h"
 #include "core/time_fx.h"
@@ -76,6 +79,30 @@ PlayerEntity player = {0};
 static float s_vfxPlayerYaw = 0.0f;
 static int   s_vfxAnimIndex = -1;
 static float s_vfxAnimBannerTimer = 0.0f;
+
+static void BuildVfxTouchSlots(UITouchSkillSlot outSlots[5]) {
+    static const char *kTouchSkills[5] = {
+        "GLACIAL_CANNON",
+        "FIRE",
+        "EARTH_DISC_VOLLEY",
+        "METAL_BLADE_STORM",
+        "LEAF_WHIRLWIND"
+    };
+    for (int k = 0; k < 5; k++) {
+        int idx = Skill_GetIndexByName(kTouchSkills[k]);
+        if (idx < 0) idx = GetSkillAtOrderIndex(k);
+        outSlots[k].skillIndex = idx;
+        if (idx >= 0) {
+            UI_FormatShortSkillName(GetRegisteredSkillName(idx), outSlots[k].shortLabel, sizeof(outSlots[k].shortLabel));
+            outSlots[k].color = GetRegisteredSkillColor(idx);
+            outSlots[k].ready = true;
+        } else {
+            outSlots[k].shortLabel[0] = '\0';
+            outSlots[k].color = GRAY;
+            outSlots[k].ready = false;
+        }
+    }
+}
 
 /* Field-only environment probe: no synthetic particles or arrival blast. */
 static void CastEnvironmentGuide(Vector3 origin, float yaw)
@@ -462,7 +489,25 @@ int main(int argc, char **argv) {
       configFlags |= FLAG_WINDOW_HIDDEN;
   }
   SetConfigFlags(configFlags);
+#if defined(PLATFORM_ANDROID) || defined(__ANDROID__)
+  // Ensure rlvk persists its VkPipelineCache to the app's writable cache dir
+  // instead of falling back to read-only "/" and recompiling 105 pipelines on every launch.
+  if (getenv("TMPDIR") == NULL) {
+      mkdir("/data/data/com.mth2610.wuxing/cache", 0755);
+      setenv("TMPDIR", "/data/data/com.mth2610.wuxing/cache", 0);
+  }
+#endif
   InitWindow(screenWidth, screenHeight, "Avatar: True 3D Element Testbed");
+  if (!headlessMode) {
+      BeginDrawing();
+      ClearBackground((Color){10, 12, 18, 255});
+      int sw = GetScreenWidth(), sh = GetScreenHeight();
+      const char *title = "NGU HANH TY VO";
+      const char *sub   = "Dang khoi tao shader & tai nguyen...";
+      DrawText(title, sw / 2 - MeasureText(title, 36) / 2, sh / 2 - 36, 36, (Color){235, 210, 130, 255});
+      DrawText(sub, sw / 2 - MeasureText(sub, 18) / 2, sh / 2 + 16, 18, (Color){170, 180, 200, 255});
+      EndDrawing();
+  }
 
   // Second half of making a headless capture reproducible (the first is the
   // pinned timestep — see TimeFX_SetRawDelta below). raylib seeds its RNG from
@@ -1285,13 +1330,50 @@ int main(int argc, char **argv) {
             }
         }
 
+        static UITouchCombatInput s_vfxTouchInput = {0};
+        UITouchSkillSlot vfxTouchSlots[5];
+        BuildVfxTouchSlots(vfxTouchSlots);
+
         float inputX = 0.0f;
         float inputZ = 0.0f;
         if (!renderVFXMode) {
-            float joyX = 0.0f, joyZ = 0.0f;
-            Sandbox_PollTouchJoystick(&joyX, &joyZ);
-            inputX += joyX;
-            inputZ += joyZ;
+            UI_PollTouchCombat(vfxTouchSlots, &s_vfxTouchInput);
+            inputX += s_vfxTouchInput.joyX;
+            inputZ += s_vfxTouchInput.joyZ;
+
+            if (s_vfxTouchInput.khinhCongPressed && !s_vfxPlayerJumping && player.position.y <= groundY + 0.05f) {
+                s_vfxPlayerVelY = 5.8f;
+                s_vfxPlayerJumping = true;
+                Vector3 fwd = { sinf(s_vfxPlayerYaw), 0.0f, cosf(s_vfxPlayerYaw) };
+                player.position.x += fwd.x * 0.85f;
+                player.position.z += fwd.z * 0.85f;
+                CharacterModel_TriggerAttackTimed(&player.anim, CHAR_ANIM_KICK, 0.40f);
+                if (inWater && player.position.y < waterSurfaceY + 0.15f) {
+                    MapManager_AddWaterRipple(player.position, 3.2f, 0.85f);
+                }
+            }
+            if (s_vfxTouchInput.attackPressed) {
+                int r = GetRandomValue(0, 2);
+                CharacterAnimSlot slot = (r == 0) ? CHAR_ANIM_PUNCH : (r == 1) ? CHAR_ANIM_KICK : CHAR_ANIM_PALM;
+                CharacterModel_TriggerAttackTimed(&player.anim, slot, 0.45f);
+                Vector3 fwd = { sinf(s_vfxPlayerYaw), 0.0f, cosf(s_vfxPlayerYaw) };
+                Vector3 hitPos = Vector3Add(player.position, Vector3Scale(fwd, 0.8f));
+                hitPos.y += 0.85f;
+                Wind_SpawnRadialBlast(hitPos, 1.5f, 4.2f, 0.28f);
+                Wind_SpawnGust(hitPos, fwd, 1.4f, 3.4f, 0.22f);
+            }
+            for (int k = 0; k < 5; k++) {
+                if (s_vfxTouchInput.skillPressed[k] && vfxTouchSlots[k].skillIndex >= 0) {
+                    Vector3 fwd = { sinf(s_vfxPlayerYaw), 0.0f, cosf(s_vfxPlayerYaw) };
+                    Vector3 aim = Vector3Add(player.position, Vector3Scale(fwd, 5.0f));
+                    aim.y = MapManager_GetGroundHeightAt(aim.x, aim.z);
+                    SkillParams sp = { .level = 1, .quantity = 1, .sizeScale = 1.0f };
+                    if (CastSkill(vfxTouchSlots[k].skillIndex, player.agentId, player.position, aim, sp)) {
+                        CharacterModel_TriggerAttackTimed(&player.anim, CHAR_ANIM_CAST,
+                                                          Skill_GetCastAnimSeconds(vfxTouchSlots[k].skillIndex));
+                    }
+                }
+            }
         }
         if (!renderVFXMode && (IsKeyDown(KEY_W) || IsKeyDown(KEY_UP))) inputZ -= 1.0f;
         if (!renderVFXMode && (IsKeyDown(KEY_S) || IsKeyDown(KEY_DOWN))) inputZ += 1.0f;
@@ -2108,7 +2190,11 @@ int main(int argc, char **argv) {
             }
         } else if (currentScreen == SCREEN_VFX_TESTER && (!renderVFXMode || captureVFXUI)) {
             VFXTest_DrawHUD();
-            if (!renderVFXMode) Sandbox_DrawTouchJoystick();
+            if (!renderVFXMode) {
+                UITouchSkillSlot vfxTouchSlots[5];
+                BuildVfxTouchSlots(vfxTouchSlots);
+                UI_DrawTouchCombat(vfxTouchSlots, NULL);
+            }
             if (s_vfxAnimBannerTimer > 0.0f && s_vfxAnimIndex >= 0) {
                 int total = CharacterModel_GetTotalAnimCount();
                 const char *clipName = CharacterModel_GetAnimName(s_vfxAnimIndex);

@@ -300,6 +300,27 @@ VFX_MetalBladesConfig VFX_MetalBlades_DefaultConfig(void)
     return cfg;
 }
 
+static void MetalBlade_ComputeHoverPose(Vector3 origin, Vector3 fwd, float angle,
+                                        float radius, float height,
+                                        Vector3 *outPos, Vector3 *outFwd)
+{
+    Vector3 right = { -fwd.z, 0.0f, fwd.x };
+    Vector3 radial = Vector3Add(
+        Vector3Scale(right, sinf(angle)),
+        Vector3Scale(fwd, 0.55f + 0.35f * cosf(angle))
+    );
+    *outPos = (Vector3){
+        origin.x + radial.x * radius,
+        origin.y + height,
+        origin.z + radial.z * radius
+    };
+    *outFwd = Vector3Normalize((Vector3){
+        fwd.x + right.x * sinf(angle) * 0.14f,
+        -0.06f,
+        fwd.z + right.z * sinf(angle) * 0.14f
+    });
+}
+
 int VFX_ComposeMetalBlades(Vector3 origin, Vector3 forward, const VFX_MetalBladesConfig *cfg)
 {
     MetalBlade_InitMesh();
@@ -349,7 +370,7 @@ int VFX_ComposeMetalBlades(Vector3 origin, Vector3 forward, const VFX_MetalBlade
         b->impacted       = false;
         b->slotAngleRad   = angle;
         b->slotRadius     = c.haloRadius;
-        b->slotHeight     = c.haloHeight + 0.75f * cosf(tNorm * PI);
+        b->slotHeight     = c.haloHeight + 0.45f * cosf(tNorm * PI);
         b->jitterRollDeg  = (float)GetRandomValue(-8, 8);
         b->rollDeg        = b->jitterRollDeg;
         b->rollSpeedDeg   = 720.0f;
@@ -358,21 +379,7 @@ int VFX_ComposeMetalBlades(Vector3 origin, Vector3 forward, const VFX_MetalBlade
         b->maxRange       = c.maxRange;
         b->trailHandle    = -1;
 
-        Vector3 right = { -fwd.z, 0.0f, fwd.x };
-        Vector3 radial = Vector3Add(
-            Vector3Scale(right, sinf(angle)),
-            Vector3Scale(fwd, -0.42f - 0.26f * cosf(angle))
-        );
-        b->pos = (Vector3){
-            origin.x + radial.x * b->slotRadius,
-            origin.y + b->slotHeight,
-            origin.z + radial.z * b->slotRadius
-        };
-        b->forward = Vector3Normalize((Vector3){
-            fwd.x + right.x * sinf(angle) * 0.22f,
-            -0.20f,
-            fwd.z + right.z * sinf(angle) * 0.22f
-        });
+        MetalBlade_ComputeHoverPose(origin, fwd, angle, b->slotRadius, b->slotHeight, &b->pos, &b->forward);
         b->trailXf = MatrixTranslate(b->pos.x, b->pos.y, b->pos.z);
     }
 
@@ -496,20 +503,9 @@ void VC_MetalBlades_Update(float dt)
 
             if (!b->launched) {
                 float bob = sinf(arr->age * 3.6f + b->phaseOffset) * 0.06f;
-                Vector3 radial = Vector3Add(
-                    Vector3Scale(right, sinf(b->slotAngleRad)),
-                    Vector3Scale(fwd, -0.42f - 0.26f * cosf(b->slotAngleRad))
-                );
-                b->pos = (Vector3){
-                    arr->origin.x + radial.x * b->slotRadius,
-                    arr->origin.y + b->slotHeight + bob,
-                    arr->origin.z + radial.z * b->slotRadius
-                };
-                b->forward = Vector3Normalize((Vector3){
-                    fwd.x + right.x * sinf(b->slotAngleRad) * 0.22f,
-                    -0.20f,
-                    fwd.z + right.z * sinf(b->slotAngleRad) * 0.22f
-                });
+                MetalBlade_ComputeHoverPose(arr->origin, fwd, b->slotAngleRad,
+                                            b->slotRadius, b->slotHeight + bob,
+                                            &b->pos, &b->forward);
                 b->rollDeg = b->jitterRollDeg + sinf(arr->age * 2.0f + b->phaseOffset) * 3.5f;
             } else {
                 float stepDist = Vector3Length(b->vel) * dt;

@@ -442,9 +442,10 @@ copy_project_resources: create_temp_project_dirs
 	cd skills && find . -type d -exec mkdir -p ../$(PROJECT_BUILD_PATH)/assets/skills/{} \;
 	cd skills && find . -type f \( -name "*.fs" -o -name "*.png" -o -name "*.vs" -o -name "*.glsl" \) -exec cp -f {} ../$(PROJECT_BUILD_PATH)/assets/skills/{} \;
 
-	@# Copy toàn bộ thư mục assets vào assets/assets để AssetManager đọc được chuỗi "assets/..."
+	@# Copy toàn bộ thư mục assets vào assets/assets để AssetManager đọc được chuỗi "assets/..." (bỏ raw_textures & file pipeline .npz)
+	rm -rf $(PROJECT_BUILD_PATH)/assets/assets
 	mkdir -p $(PROJECT_BUILD_PATH)/assets/assets
-	cp -rf assets/* $(PROJECT_BUILD_PATH)/assets/assets/ 2>/dev/null || true
+	rsync -a --exclude='raw_textures' --exclude='*.npz' --exclude='.DS_Store' assets/ $(PROJECT_BUILD_PATH)/assets/assets/ 2>/dev/null || cp -rf assets/* $(PROJECT_BUILD_PATH)/assets/assets/ 2>/dev/null || true
 
 	@# post_process/shaders
 	mkdir -p $(PROJECT_BUILD_PATH)/assets/post_process/shaders

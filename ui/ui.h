@@ -48,4 +48,31 @@ UILobbyAction UI_LobbyUpdateDraw(const char *joinCode, bool isHost);
 void UI_ToggleLoadout(void);
 bool UI_IsLoadoutOpen(void);
 
+// --- Shared Mobile Touch Combat Controls (used by Skill Sandbox, VFX Tester, Game) ---
+typedef struct {
+    int   skillIndex;
+    char  shortLabel[12];
+    Color color;
+    bool  ready;
+} UITouchSkillSlot;
+
+typedef struct {
+    float joyX;
+    float joyZ;
+    bool  joyActive;
+    bool  attackHeld;
+    bool  attackPressed;
+    bool  khinhCongHeld;
+    bool  khinhCongPressed;
+    bool  skillHeld[5];
+    bool  skillPressed[5];
+    bool  pointerOverUI;
+} UITouchCombatInput;
+
+void UI_SetTouchControlsEnabled(bool enabled);
+bool UI_IsTouchControlsEnabled(void);
+void UI_FormatShortSkillName(const char *fullName, char *outBuf, int bufSize);
+void UI_PollTouchCombat(const UITouchSkillSlot slots[5], UITouchCombatInput *outInput);
+void UI_DrawTouchCombat(const UITouchSkillSlot slots[5], const UITouchCombatInput *input);
+
 #endif // UI_H

@@ -161,12 +161,12 @@ void CastMetalBladeStormSkill(int agentId, Vector3 startPos, Vector3 target, Ski
     // 1. Draw sword / Kiếm Quyết summon stance
     Skill_RequestAnim(agentId, "sword_draw_gather", MBS_SUMMON_TIME);
 
-    // 2. Summon 5 Bát Diện Hán Kiếm in mid-air behind/above caster
+    // 2. Summon 5 Bát Diện Hán Kiếm in a crescent fan in front of caster
     VFX_MetalBladesConfig mcfg = VFX_MetalBlades_DefaultConfig();
     mcfg.bladeCount      = inst->totalBlades;
     mcfg.bladeScale      = 1.25f * scale;
-    mcfg.haloRadius      = 1.55f * scale;
-    mcfg.haloHeight      = 2.05f * scale;
+    mcfg.haloRadius      = 1.15f * scale;
+    mcfg.haloHeight      = 1.15f * scale;
     mcfg.arcDeg          = 140.0f;
     mcfg.emergeDuration  = MBS_SUMMON_TIME * 0.55f;
     mcfg.bladeSpeed      = MBS_BLADE_SPEED;

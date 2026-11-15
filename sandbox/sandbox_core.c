@@ -10,6 +10,7 @@
 #include "maps/map_manager.h"
 #include "character/wardrobe_system.h"
 #include "character/modular_character.h"
+#include "ui/ui.h"
 #include "ui/ui_wardrobe.h"
 #include "raymath.h"
 #include "rlgl.h"
@@ -32,17 +33,36 @@ static const float gravity = 15.0f;
 
 static Vector2 g_joystickKnobOffset = { 0, 0 };
 static bool g_joystickActive = false;
+static UITouchCombatInput s_sandboxTouchInput = { 0 };
 
-static bool g_touchJumpActive = false;
-static bool g_touchDashActive = false;
-static bool g_touchFlyToggleActive = false;
-static bool g_touchFlyUpActive = false;
-static bool g_touchFlyDownActive = false;
-static bool g_touchCamLeftActive = false;
-static bool g_touchCamRightActive = false;
+static int GetSandboxTouchSkillIndex(int slot) {
+    static const char *kTouchSkills[5] = {
+        "GLACIAL_CANNON",
+        "FIRE",
+        "EARTH_DISC_VOLLEY",
+        "METAL_BLADE_STORM",
+        "LEAF_WHIRLWIND"
+    };
+    if (slot < 0 || slot >= 5) return -1;
+    int idx = Skill_GetIndexByName(kTouchSkills[slot]);
+    return (idx >= 0) ? idx : GetSkillAtOrderIndex(slot);
+}
 
-static bool g_touchSkillActive[5] = { false };
-static bool g_touchAttackActive = false;
+static void BuildSandboxTouchSlots(UITouchSkillSlot outSlots[5]) {
+    for (int k = 0; k < 5; k++) {
+        int idx = GetSandboxTouchSkillIndex(k);
+        outSlots[k].skillIndex = idx;
+        if (idx >= 0) {
+            UI_FormatShortSkillName(GetRegisteredSkillName(idx), outSlots[k].shortLabel, sizeof(outSlots[k].shortLabel));
+            outSlots[k].color = GetRegisteredSkillColor(idx);
+            outSlots[k].ready = true;
+        } else {
+            outSlots[k].shortLabel[0] = '\0';
+            outSlots[k].color = GRAY;
+            outSlots[k].ready = false;
+        }
+    }
+}
 
 typedef struct {
     Vector3 position;
@@ -251,222 +271,28 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
     // TAB để bật/tắt phím ảo trên PC (tiện cho việc test chuột)
     if (IsKeyPressed(KEY_TAB)) {
         g_showTouchControls = !g_showTouchControls;
+        UI_SetTouchControlsEnabled(g_showTouchControls);
     }
 
-    // Tải và tính toán phím ảo (Touch HUD)
-    float screenWidth = (float)GetScreenWidth();
-    float screenHeight = (float)GetScreenHeight();
-    float touchScale = screenHeight / 700.0f;
-
-    // Joystick ảo
-    Vector2 joystickCenter = { 150.0f * touchScale, screenHeight - 150.0f * touchScale };
-    float joystickBaseRadius = 65.0f * touchScale;
-
-    // Các phím chức năng theo sơ đồ MMORPG Action mới
-    Vector2 attackBtnCenter = { screenWidth - 120.0f * touchScale, screenHeight - 120.0f * touchScale };
-    float attackBtnRadius = 52.0f * touchScale;
-
-    Vector2 skillBtnsCenter[5];
-    float skillBtnsRadius = 25.0f * touchScale;
-    float arcRadius = 135.0f * touchScale;
-    for (int k = 0; k < 5; k++) {
-        float angle = PI - (k * (PI / 6.0f)); // 180, 150, 120, 90, 60 độ xung quanh nút đánh thường
-        skillBtnsCenter[k].x = attackBtnCenter.x + cosf(angle) * arcRadius;
-        skillBtnsCenter[k].y = attackBtnCenter.y - sinf(angle) * arcRadius;
+    UITouchSkillSlot touchSlots[5];
+    BuildSandboxTouchSlots(touchSlots);
+    UI_PollTouchCombat(touchSlots, &s_sandboxTouchInput);
+    if (s_sandboxTouchInput.pointerOverUI) {
+        uiState->clickedOnUI = true;
     }
 
-    // Nút nhảy (nút nhỏ ở góc trên bên phải nút đánh thường)
-    Vector2 jumpBtnCenter = { screenWidth - 50.0f * touchScale, screenHeight - 230.0f * touchScale };
-    float jumpBtnRadius = 28.0f * touchScale;
-
-    // Nút lướt (Dash) ở góc dưới bên trái nút đánh thường
-    Vector2 dashBtnCenter = { screenWidth - 240.0f * touchScale, screenHeight - 70.0f * touchScale };
-    float dashBtnRadius = 28.0f * touchScale;
-
-    // Nút Bay / Đáp đất (Fly Toggle)
-    Vector2 flyToggleBtnCenter = { screenWidth - 50.0f * touchScale, screenHeight - 330.0f * touchScale };
-    float flyToggleBtnRadius = 28.0f * touchScale;
-
-    // Nút bay lên và bay xuống (chỉ dùng khi bay)
-    Vector2 flyUpBtnCenter = { screenWidth - 120.0f * touchScale, screenHeight - 280.0f * touchScale };
-    float flyUpBtnRadius = 28.0f * touchScale;
-
-    Vector2 flyDownBtnCenter = { screenWidth - 200.0f * touchScale, screenHeight - 240.0f * touchScale };
-    float flyDownBtnRadius = 28.0f * touchScale;
-
-    // Phím xoay camera di chuyển lên góc trên bên phải (để trống góc dưới cho tay di chuyển)
-    Vector2 camLeftCenter = { screenWidth - 120.0f * touchScale, 150.0f * touchScale };
-    float camLeftRadius = 25.0f * touchScale;
-
-    Vector2 camRightCenter = { screenWidth - 50.0f * touchScale, 150.0f * touchScale };
-    float camRightRadius = 25.0f * touchScale;
-
-    // Cập nhật trạng thái kéo Joystick bằng biến static
-    static bool s_joystickDragging = false;
-    static int s_joystickTouchId = -1;
-
-    // Thu thập các điểm chạm/click
-    int inputPointCount = GetTouchPointCount();
-    Vector2 inputPoints[10];
-    for (int i = 0; i < inputPointCount && i < 10; i++) {
-        inputPoints[i] = GetTouchPosition(i);
-    }
-    // Giả lập click chuột thành 1 chạm trên PC khi bật phím ảo
-    if (inputPointCount == 0 && g_showTouchControls && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
-        inputPoints[0] = GetMousePosition();
-        inputPointCount = 1;
-    }
-
-    // Kiểm tra xem ngón tay kéo joystick ở frame trước có còn chạm không
-    if (s_joystickDragging) {
-        if (s_joystickTouchId < 0 || s_joystickTouchId >= inputPointCount) {
-            s_joystickDragging = false;
-            s_joystickTouchId = -1;
-        }
-    }
-
-    // Reset trạng thái joystick ảo hàng frame
-    g_joystickActive = false;
-    g_joystickKnobOffset = (Vector2){ 0, 0 };
-
-    float joyX = 0.0f;
-    float joyZ = 0.0f;
-    bool touchJump = false;
-    bool touchDash = false;
-    bool touchFlyToggle = false;
+    g_joystickActive = s_sandboxTouchInput.joyActive;
+    float joyX = s_sandboxTouchInput.joyX;
+    float joyZ = s_sandboxTouchInput.joyZ;
     bool touchFlyUp = false;
     bool touchFlyDown = false;
     bool touchCamLeft = false;
     bool touchCamRight = false;
-    bool touchSkill[5] = { false };
-    bool touchAttack = false;
 
-    // Xử lý va chạm vùng nút ảo cảm ứng
-    for (int i = 0; i < inputPointCount; i++) {
-        Vector2 pt = inputPoints[i];
-
-        // Chỉ chặn cast chiêu khi chạm vào ĐÚNG vùng joystick (góc dưới trái) thay vì cả nửa
-        // trái màn hình — trước đây chặn 45% bên trái khiến ko bao giờ cast được về phía trái
-        // nhân vật. Joystick chỉ nằm ở góc dưới-trái (bán kính chạm = joystickBaseRadius * 2).
-        if (Vector2Distance(pt, joystickCenter) < joystickBaseRadius * 2.0f) {
-            uiState->clickedOnUI = true;
-        }
-        
-        // 1. Xử lý Joystick kéo giữ khóa mục tiêu
-        if (s_joystickDragging && i == s_joystickTouchId) {
-            g_joystickActive = true;
-            Vector2 joyVec = Vector2Subtract(pt, joystickCenter);
-            float len = Vector2Length(joyVec);
-            if (len > joystickBaseRadius) {
-                joyVec = Vector2Scale(Vector2Normalize(joyVec), joystickBaseRadius);
-            }
-            g_joystickKnobOffset = joyVec;
-            joyX = joyVec.x / joystickBaseRadius;
-            joyZ = joyVec.y / joystickBaseRadius;
-            uiState->clickedOnUI = true;
-            continue;
-        }
-
-        // Nếu chưa kéo, phát hiện xem có chạm vào vùng joystick để bắt đầu kéo không
-        if (!s_joystickDragging) {
-            float distToJoy = Vector2Distance(pt, joystickCenter);
-            if (distToJoy <= joystickBaseRadius * 2.0f) { // Vùng chạm bắt đầu rộng rãi
-                s_joystickDragging = true;
-                s_joystickTouchId = i;
-                g_joystickActive = true;
-                Vector2 joyVec = Vector2Subtract(pt, joystickCenter);
-                float len = Vector2Length(joyVec);
-                if (len > joystickBaseRadius) {
-                    joyVec = Vector2Scale(Vector2Normalize(joyVec), joystickBaseRadius);
-                }
-                g_joystickKnobOffset = joyVec;
-                joyX = joyVec.x / joystickBaseRadius;
-                joyZ = joyVec.y / joystickBaseRadius;
-                uiState->clickedOnUI = true;
-                continue;
-            }
-        }
-
-        // 2. Kiểm tra các phím chức năng với vùng chạm rộng rãi (radius * 1.4f)
-        // Phím Dash
-        if (Vector2Distance(pt, dashBtnCenter) <= dashBtnRadius * 1.4f) {
-            touchDash = true;
-            uiState->clickedOnUI = true;
-            continue;
-        }
-
-        // Phím Jump
-        if (Vector2Distance(pt, jumpBtnCenter) <= jumpBtnRadius * 1.4f) {
-            touchJump = true;
-            uiState->clickedOnUI = true;
-            continue;
-        }
-
-        // Phím Fly Toggle
-        if (Vector2Distance(pt, flyToggleBtnCenter) <= flyToggleBtnRadius * 1.4f) {
-            touchFlyToggle = true;
-            uiState->clickedOnUI = true;
-            continue;
-        }
-
-        // Phím Fly Up
-        if (player->isFlying && Vector2Distance(pt, flyUpBtnCenter) <= flyUpBtnRadius * 1.4f) {
-            touchFlyUp = true;
-            uiState->clickedOnUI = true;
-            continue;
-        }
-
-        // Phím Fly Down
-        if (player->isFlying && Vector2Distance(pt, flyDownBtnCenter) <= flyDownBtnRadius * 1.4f) {
-            touchFlyDown = true;
-            uiState->clickedOnUI = true;
-            continue;
-        }
-
-        // Phím Cam Left
-        if (Vector2Distance(pt, camLeftCenter) <= camLeftRadius * 1.4f) {
-            touchCamLeft = true;
-            uiState->clickedOnUI = true;
-            continue;
-        }
-
-        // Phím Cam Right
-        if (Vector2Distance(pt, camRightCenter) <= camRightRadius * 1.4f) {
-            touchCamRight = true;
-            uiState->clickedOnUI = true;
-            continue;
-        }
-
-        // 3. Phím đánh thường (lớn)
-        if (Vector2Distance(pt, attackBtnCenter) <= attackBtnRadius * 1.3f) {
-            touchAttack = true;
-            uiState->clickedOnUI = true;
-            continue;
-        }
-
-        // 4. 5 phím kỹ năng nhỏ xung quanh nút đánh thường
-        bool hitSkill = false;
-        for (int k = 0; k < 5; k++) {
-            if (GetSkillAtOrderIndex(k) != -1 && Vector2Distance(pt, skillBtnsCenter[k]) <= skillBtnsRadius * 1.4f) {
-                touchSkill[k] = true;
-                uiState->clickedOnUI = true;
-                hitSkill = true;
-                break;
-            }
-        }
-        if (hitSkill) continue;
-    }
-
-    // Theo dõi trạng thái sườn lên để kích hoạt nhấn một lần
-    static bool prevTouchJump = false;
-    static bool prevTouchDash = false;
-    static bool prevTouchFlyToggle = false;
-    static bool prevTouchSkill[5] = { false };
-    static bool prevTouchAttack = false;
-
-    bool jumpPressed = IsKeyPressed(KEY_SPACE) || (touchJump && !prevTouchJump);
-    bool dashPressed = (IsKeyPressed(KEY_X) && player->dashCooldown <= 0.0f) || (touchDash && !prevTouchDash && player->dashCooldown <= 0.0f);
-    bool flyTogglePressed = IsKeyPressed(KEY_G) || (touchFlyToggle && !prevTouchFlyToggle);
+    bool jumpPressed = IsKeyPressed(KEY_SPACE) || s_sandboxTouchInput.khinhCongPressed;
+    bool dashPressed = (IsKeyPressed(KEY_X) && player->dashCooldown <= 0.0f) ||
+                       (s_sandboxTouchInput.khinhCongPressed && player->dashCooldown <= 0.0f);
+    bool flyTogglePressed = IsKeyPressed(KEY_G);
 
     // [U] — force Thái Cực on/off for the sandbox player. A DEBUG AFFORDANCE,
     // not a rule change: Thái Cực-exclusive skills (TAIJI_LOI, TAIJI_PHONG)
@@ -506,23 +332,10 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
         TraceLog(LOG_INFO, "SANDBOX: Switched Map -> %s", MapManager_GetName(next));
     }
 
-    prevTouchJump = touchJump;
-    prevTouchDash = touchDash;
-    prevTouchFlyToggle = touchFlyToggle;
-
-    g_touchJumpActive = touchJump;
-    g_touchDashActive = touchDash;
-    g_touchFlyToggleActive = touchFlyToggle;
-    g_touchFlyUpActive = touchFlyUp;
-    g_touchFlyDownActive = touchFlyDown;
-    g_touchCamLeftActive = touchCamLeft;
-    g_touchCamRightActive = touchCamRight;
-
     // Xuất chiêu khi chạm phím cảm ứng (aim thẳng vào enemy)
     for (int k = 0; k < 5; k++) {
-        bool skillPressed = touchSkill[k] && !prevTouchSkill[k];
-        if (skillPressed) {
-            int skillIdx = GetSkillAtOrderIndex(k);
+        if (s_sandboxTouchInput.skillPressed[k]) {
+            int skillIdx = GetSandboxTouchSkillIndex(k);
             if (skillIdx != -1) {
                 // Animation cast chỉ phát khi CastSkill thật sự đi qua (không
                 // bị chặn bởi mana gate) — CastSkill trả bool cho đúng việc này.
@@ -539,19 +352,9 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
                 }
             }
         }
-        prevTouchSkill[k] = touchSkill[k];
-        g_touchSkillActive[k] = touchSkill[k];
     }
 
-    // Nút cảm ứng "đánh thường" to (attackBtnCenter) — đây là hạ tầng touch
-    // DUY NHẤT hiện có trong toàn bộ engine (game/game_screen.c chưa có touch
-    // control nào). Đổi từ cast chiêu đang chọn sang gọi thẳng
-    // Entity_ExecuteBasicAttack (đấm/đá/chưởng NGẪU NHIÊN cho đến khi có hệ
-    // combo thật). Home THẬT của input PC là game/game_screen.c; Z/C ở đây
-    // chỉ là dev-mirror để test đánh thường ngay trong sandbox (nơi duy nhất
-    // hiện cast được chiêu/có enemy) mà không phải chuyển màn — không phải
-    // production input.
-    bool attackPressed = (touchAttack && !prevTouchAttack) ||
+    bool attackPressed = s_sandboxTouchInput.attackPressed ||
                          IsKeyPressed(KEY_Z) || IsKeyPressed(KEY_C);
     if (attackPressed) {
         CombatStance stance = PlayerWardrobe_GetCombatStance(Wardrobe_GetGlobalPlayer());
@@ -603,8 +406,6 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
             AddFloatingText(targetPos, "Cong Huong Dat!", ELEMENT_COLOR_EARTH, 16.0f, 0.6f);
         }
     }
-    prevTouchAttack = touchAttack;
-    g_touchAttackActive = touchAttack;
 
     if (flyTogglePressed) {
         player->isFlying = !player->isFlying;
@@ -1257,101 +1058,17 @@ void DrawSandboxHUD(void) {
     DrawTextEx(defaultFont, "- U / P / I Keys : Wardrobe Customizer (Toggle Sword, Hat, Scabbard)", (Vector2){ hudX + 25, hudY + 273 }, 10, 1.0f, GOLD);
 }
 
-static void DrawTouchButton(Vector2 center, float radius, const char* label, bool active, Color activeColor) {
-    Color btnColor = active ? activeColor : ColorAlpha(DARKGRAY, 0.4f);
-    Color outlineColor = active ? WHITE : ColorAlpha(WHITE, 0.5f);
-    DrawCircleV(center, radius, btnColor);
-    DrawCircleLines(center.x, center.y, radius, outlineColor);
-    
-    // Vẽ text căn giữa
-    int fontSize = (int)(radius * 0.4f);
-    if (fontSize < 10) fontSize = 10;
-    int textW = MeasureText(label, fontSize);
-    DrawText(label, (int)(center.x - textW / 2.0f), (int)(center.y - fontSize / 2.0f), fontSize, WHITE);
-}
-
 void DrawSandboxTouchControls(const PlayerEntity* player) {
-    if (!g_showTouchControls) return;
+    (void)player;
+    if (!UI_IsTouchControlsEnabled()) return;
 
-    // Thiết lập chế độ vẽ 2D overlay — dùng BeginMode2D() chuẩn của raylib
-    // thay vì tự đẩy rlPushMatrix/rlOrtho: kỹ thuật thủ công từng khiến
-    // joystick/dash/jump vô hình trên GLES di động (nghi ngờ rlgl matrix
-    // stack bị lệch push/pop từ chỗ khác trong frame trên driver Mali).
-    // BeginMode2D là API được raylib test kỹ trên mọi backend kể cả GLES.
-    rlDrawRenderBatchActive();
-    EndShaderMode();
-    BeginBlendMode(BLEND_ALPHA);
+    UITouchSkillSlot touchSlots[5];
+    BuildSandboxTouchSlots(touchSlots);
+    UI_DrawTouchCombat(touchSlots, &s_sandboxTouchInput);
 
-    Camera2D screenOverlayCamera = { 0 };
-    screenOverlayCamera.offset = (Vector2){ 0.0f, 0.0f };
-    screenOverlayCamera.target = (Vector2){ 0.0f, 0.0f };
-    screenOverlayCamera.rotation = 0.0f;
-    screenOverlayCamera.zoom = 1.0f;
-    BeginMode2D(screenOverlayCamera);
-    rlSetTexture(0);
-
-    float screenWidth = (float)GetScreenWidth();
-    float screenHeight = (float)GetScreenHeight();
-    float touchScale = screenHeight / 700.0f;
-
-    // Vị trí/kích thước phím ảo tương ứng với tỷ lệ màn hình
-    Vector2 joystickCenter = { 150.0f * touchScale, screenHeight - 150.0f * touchScale };
-    float joystickBaseRadius = 65.0f * touchScale;
-    float joystickKnobRadius = 30.0f * touchScale;
-
-    Vector2 dashBtnCenter = { screenWidth - 210.0f * touchScale, screenHeight - 100.0f * touchScale };
-    float dashBtnRadius = 35.0f * touchScale;
-
-    Vector2 jumpBtnCenter = { screenWidth - 100.0f * touchScale, screenHeight - 100.0f * touchScale };
-    float jumpBtnRadius = 45.0f * touchScale;
-
-    Vector2 flyToggleBtnCenter = { screenWidth - 100.0f * touchScale, screenHeight - 210.0f * touchScale };
-    float flyToggleBtnRadius = 35.0f * touchScale;
-
-    Vector2 flyUpBtnCenter = { screenWidth - 100.0f * touchScale, screenHeight - 310.0f * touchScale };
-    float flyUpBtnRadius = 30.0f * touchScale;
-
-    Vector2 flyDownBtnCenter = { screenWidth - 210.0f * touchScale, screenHeight - 210.0f * touchScale };
-    float flyDownBtnRadius = 30.0f * touchScale;
-
-    Vector2 camLeftCenter = { screenWidth - 320.0f * touchScale, screenHeight - 100.0f * touchScale };
-    float camLeftRadius = 25.0f * touchScale;
-
-    Vector2 camRightCenter = { screenWidth - 320.0f * touchScale, screenHeight - 170.0f * touchScale };
-    float camRightRadius = 25.0f * touchScale;
-
-    // 1. Vẽ Joystick ảo
-    DrawCircleV(joystickCenter, joystickBaseRadius, ColorAlpha(DARKGRAY, 0.3f));
-    DrawCircleLines(joystickCenter.x, joystickCenter.y, joystickBaseRadius, ColorAlpha(WHITE, 0.4f));
-    
-    Vector2 knobPos = Vector2Add(joystickCenter, g_joystickKnobOffset);
-    Color knobColor = g_joystickActive ? ColorAlpha(SKYBLUE, 0.8f) : ColorAlpha(LIGHTGRAY, 0.6f);
-    DrawCircleV(knobPos, joystickKnobRadius, knobColor);
-    DrawCircleLines(knobPos.x, knobPos.y, joystickKnobRadius, ColorAlpha(WHITE, 0.7f));
-
-    // 2. Vẽ các phím chức năng
-    DrawTouchButton(dashBtnCenter, dashBtnRadius, "DASH", g_touchDashActive, ColorAlpha(ORANGE, 0.8f));
-    DrawTouchButton(jumpBtnCenter, jumpBtnRadius, "JUMP", g_touchJumpActive, ColorAlpha(LIME, 0.8f));
-    
-    if (player->isFlying) {
-        DrawTouchButton(flyToggleBtnCenter, flyToggleBtnRadius, "LAND", g_touchFlyToggleActive, ColorAlpha(RED, 0.8f));
-        DrawTouchButton(flyUpBtnCenter, flyUpBtnRadius, "UP", g_touchFlyUpActive, ColorAlpha(GOLD, 0.8f));
-        DrawTouchButton(flyDownBtnCenter, flyDownBtnRadius, "DOWN", g_touchFlyDownActive, ColorAlpha(PURPLE, 0.8f));
-    } else {
-        DrawTouchButton(flyToggleBtnCenter, flyToggleBtnRadius, "FLY", g_touchFlyToggleActive, ColorAlpha(SKYBLUE, 0.8f));
-    }
-
-    // 3. Vẽ phím xoay camera
-    DrawTouchButton(camLeftCenter, camLeftRadius, "CAM <", g_touchCamLeftActive, ColorAlpha(BLUE, 0.7f));
-    DrawTouchButton(camRightCenter, camRightRadius, "CAM >", g_touchCamRightActive, ColorAlpha(BLUE, 0.7f));
-
-    // Nhãn hướng dẫn bật/tắt phím ảo ở trên PC
 #if !defined(PLATFORM_ANDROID)
     DrawText("Press TAB to toggle Touch UI", 10, 10, 15, ColorAlpha(RAYWHITE, 0.7f));
 #endif
-
-    EndMode2D();
-    EndBlendMode();
 }
 
 PlayerWardrobe* Sandbox_GetPlayerWardrobe(void) {
