@@ -103,7 +103,9 @@ void Entity_Update(float dt) {
             a->position.x += a->dashVelocity.x * step;
             a->position.z += a->dashVelocity.z * step;
             if (a->vState == AGENT_GROUNDED) {
-                a->position.y = MapManager_GetGroundHeightAt(a->position.x, a->position.z);
+                float gY = MapManager_GetGroundHeightAt(a->position.x, a->position.z);
+                MapManager_ResolveCollision(&a->position, 0.35f, 0.45f, &gY);
+                a->position.y = gY;
             }
             a->dashTimer -= dt;
             if (a->dashTimer <= 0.0f) {
@@ -125,7 +127,9 @@ void Entity_Update(float dt) {
                 a->position.z += (dz / dist) * step;
             }
             if (a->vState == AGENT_GROUNDED) {
-                a->position.y = MapManager_GetGroundHeightAt(a->position.x, a->position.z);
+                float gY = MapManager_GetGroundHeightAt(a->position.x, a->position.z);
+                MapManager_ResolveCollision(&a->position, 0.35f, 0.45f, &gY);
+                a->position.y = gY;
             }
             a->pullTimer -= dt;
             if (a->pullTimer < 0.0f) a->pullTimer = 0.0f;
@@ -145,6 +149,7 @@ void Entity_Update(float dt) {
             a->position.y += a->velocity.y * dt;
             a->position.z += a->velocity.z * dt;
             float groundY = MapManager_GetGroundHeightAt(a->position.x, a->position.z);
+            MapManager_ResolveCollision(&a->position, 0.35f, 0.45f, &groundY);
             if (a->position.y <= groundY) {
                 a->position.y = groundY;
                 a->velocity = (Vector3){ 0 };

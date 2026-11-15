@@ -866,6 +866,8 @@ void InitSongQuaoMap(void)
     EnvShadow_SetMapCasterCallback(DrawSongQuaoShadowCasters, NULL);
     CaptureSongQuaoStaticShadows();
     MapManager_SetZones(SONG_QUAO_ZONES, SONG_QUAO_ZONE_COUNT);
+    extern void ResolveCollisionSongQuaoMap(Vector3 *pos, float agentRadius, float stepHeight, float *inOutGroundY);
+    MapManager_RegisterCollisionHooks("SONG_QUAO", ResolveCollisionSongQuaoMap);
 
     s_fluff = MapProp_CreateFluffSystem(64, 0x6a1f29u);
     s_ready = true;
@@ -1062,4 +1064,11 @@ void SetRainSongQuaoMap(float intensity)
 void AddWaterRippleSongQuaoMap(Vector3 position, float radius, float intensity)
 {
     MapDem_AddWaterRipple(&s_river, position, radius, intensity);
+}
+
+void ResolveCollisionSongQuaoMap(Vector3 *pos, float agentRadius, float stepHeight, float *inOutGroundY)
+{
+    if (!s_ready)
+        return;
+    MapProp_ResolveRockSystemCollision(&s_rocks, pos, agentRadius, stepHeight, inOutGroundY);
 }

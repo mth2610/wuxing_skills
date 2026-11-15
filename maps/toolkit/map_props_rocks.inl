@@ -897,6 +897,24 @@ static MapRockSet Rock_CreateTypedSetVariant(int rockType, int variantSeed, cons
     MapRockSet rocks = {0};
     Mesh mesh = Nature_BuildProceduralRockMeshVariant(rockType, variantSeed);
     MapProp_MeshBounds(&mesh, &rocks.boundsCenter, &rocks.boundsRadius);
+    float maxRXZ = 0.0f;
+    float maxY = 0.0f;
+    if (mesh.vertices && mesh.vertexCount > 0)
+    {
+        for (int v = 0; v < mesh.vertexCount; v++)
+        {
+            float vx = mesh.vertices[v * 3 + 0];
+            float vy = mesh.vertices[v * 3 + 1];
+            float vz = mesh.vertices[v * 3 + 2];
+            float rXZ = sqrtf(vx * vx + vz * vz);
+            if (rXZ > maxRXZ)
+                maxRXZ = rXZ;
+            if (vy > maxY)
+                maxY = vy;
+        }
+    }
+    rocks.localRadiusXZ = (maxRXZ > 0.05f) ? maxRXZ : 0.85f;
+    rocks.localMaxY = (maxY > 0.05f) ? maxY : 0.90f;
     // Fold boundsCenter offset length into boundsRadius once at init so per-frame culling needs no sqrtf
     float centerLen = Vector3Length(rocks.boundsCenter);
     rocks.boundsRadius += centerLen;
@@ -1331,16 +1349,19 @@ void MapProp_DrawRockSystemShadowCasters(MapRockSystem *sys, Shader depthShader)
     }
 
     Vector3 focus = EnvShadow_GetFocus();
+    float halfExtent = EnvShadow_GetHalfExtent();
+    float cullBase = (halfExtent > 1.0f) ? halfExtent : 28.0f;
     Vector3 rotAxis = {0.0f, 1.0f, 0.0f};
     for (int i = 0; i < sys->count; i++)
     {
         const MapRockItem *p = &sys->items[i];
-        if (p->archetype == MAP_ROCK_SCREE && p->radiusScale < 0.35f)
+        if (cullBase > 35.0f && p->archetype == MAP_ROCK_SCREE && p->radiusScale < 0.25f)
             continue;
         float dx = p->position.x - focus.x;
         float dz = p->position.z - focus.z;
         float pad = p->radiusScale * 2.0f;
-        if (dx * dx + dz * dz > (28.0f + pad) * (28.0f + pad))
+        float limit = cullBase + pad;
+        if (dx * dx + dz * dz > limit * limit)
             continue;
         int variant = Rock_HashVariant(i, p->position.x, p->position.z);
         const MapRockSet *set = Rock_ResolveArchetypeSet(sys, p->archetype, variant);
@@ -1510,4 +1531,204 @@ float MapProp_EvaluateRockSuppression(float x, float z, const MapRockItem *items
             suppression = fade;
     }
     return suppression;
+}
+
+static Vector2 Rock_ClosestPointOnTriangleXZ(Vector2 p, Vector2 a, Vector2 b, Vector2 c)
+{
+    Vector2 ab = {b.x - a.x, b.y - a.y};
+    Vector2 ac = {c.x - a.x, c.y - a.y};
+    Vector2 ap = {p.x - a.x, p.y - a.y};
+    float d1 = ab.x * ap.x + ab.y * ap.y;
+    float d2 = ac.x * ap.x + ac.y * ap.y;
+    if (d1 <= 0.0f && d2 <= 0.0f)
+        return a;
+
+    Vector2 bp = {p.x - b.x, p.y - b.y};
+    float d3 = ab.x * bp.x + ab.y * bp.y;
+    float d4 = ac.x * bp.x + ac.y * bp.y;
+    if (d3 >= 0.0f && d4 <= d3)
+        return b;
+
+    float vc = d1 * d4 - d3 * d2;
+    if (vc <= 0.0f && d1 >= 0.0f && d3 <= 0.0f)
+    {
+        float v = d1 / (d1 - d3);
+        return (Vector2){a.x + v * ab.x, a.y + v * ab.y};
+    }
+
+    Vector2 cp = {p.x - c.x, p.y - c.y};
+    float d5 = ab.x * cp.x + ab.y * cp.y;
+    float d6 = ac.x * cp.x + ac.y * cp.y;
+    if (d6 >= 0.0f && d5 <= d6)
+        return c;
+
+    float vb = d5 * d2 - d1 * d6;
+    if (vb <= 0.0f && d2 >= 0.0f && d6 <= 0.0f)
+    {
+        float w = d2 / (d2 - d6);
+        return (Vector2){a.x + w * ac.x, a.y + w * ac.y};
+    }
+
+    float va = d3 * d6 - d5 * d4;
+    if (va <= 0.0f && (d4 - d3) >= 0.0f && (d5 - d6) >= 0.0f)
+    {
+        float w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+        return (Vector2){b.x + w * (c.x - b.x), b.y + w * (c.y - b.y)};
+    }
+
+    float denom = 1.0f / (va + vb + vc);
+    float v = vb * denom;
+    float w = vc * denom;
+    return (Vector2){a.x + ab.x * v + ac.x * w, a.y + ab.y * v + ac.y * w};
+}
+
+void MapProp_ResolveRockSystemCollision(const MapRockSystem *sys, Vector3 *pos,
+                                        float agentRadius, float stepHeight,
+                                        float *inOutGroundY)
+{
+    if (!sys || !sys->ready || !sys->items || sys->count <= 0 || !pos)
+        return;
+
+    float supportY = inOutGroundY ? *inOutGroundY : pos->y;
+    for (int i = 0; i < sys->count; i++)
+    {
+        const MapRockItem *p = &sys->items[i];
+        if (p->archetype == MAP_ROCK_SCREE && p->radiusScale < 0.35f)
+            continue;
+        if (p->radiusScale <= 1e-4f || p->heightScale <= 1e-4f)
+            continue;
+
+        int variant = Rock_HashVariant(i, p->position.x, p->position.z);
+        const MapRockSet *set = Rock_ResolveArchetypeSet(sys, p->archetype, variant);
+        if (!set || !set->ready || set->model.meshCount < 1)
+            continue;
+
+        float maxScale = fmaxf(p->radiusScale, p->heightScale);
+        float broadR = set->boundsRadius * maxScale + agentRadius + 0.5f;
+        float dx = pos->x - p->position.x;
+        float dz = pos->z - p->position.z;
+        if (fabsf(dx) > broadR || fabsf(dz) > broadR)
+            continue;
+        if (dx * dx + dz * dz > broadR * broadR)
+            continue;
+
+        const Mesh *m = &set->model.meshes[0];
+        if (!m->vertices || m->triangleCount <= 0)
+            continue;
+
+        float theta = p->rotationDeg * (PI / 180.0f);
+        float cosT = cosf(theta);
+        float sinT = sinf(theta);
+        float invR = 1.0f / p->radiusScale;
+
+        float lx = (dx * cosT - dz * sinT) * invR;
+        float lz = (dx * sinT + dz * cosT) * invR;
+
+        // Pass 1: Exact barycentric walkable surface height on top-facing triangles
+        for (int t = 0; t < m->triangleCount; t++)
+        {
+            unsigned int i0 = m->indices ? m->indices[t * 3 + 0] : (unsigned int)(t * 3 + 0);
+            unsigned int i1 = m->indices ? m->indices[t * 3 + 1] : (unsigned int)(t * 3 + 1);
+            unsigned int i2 = m->indices ? m->indices[t * 3 + 2] : (unsigned int)(t * 3 + 2);
+
+            Vector3 v0 = {m->vertices[i0 * 3 + 0], m->vertices[i0 * 3 + 1], m->vertices[i0 * 3 + 2]};
+            Vector3 v1 = {m->vertices[i1 * 3 + 0], m->vertices[i1 * 3 + 1], m->vertices[i1 * 3 + 2]};
+            Vector3 v2 = {m->vertices[i2 * 3 + 0], m->vertices[i2 * 3 + 1], m->vertices[i2 * 3 + 2]};
+
+            Vector3 e1 = {v1.x - v0.x, v1.y - v0.y, v1.z - v0.z};
+            Vector3 e2 = {v2.x - v0.x, v2.y - v0.y, v2.z - v0.z};
+            float ny = e1.z * e2.x - e1.x * e2.z;
+            if (ny <= 1e-6f)
+                continue;
+
+            float nx = e1.y * e2.z - e1.z * e2.y;
+            float nz = e1.x * e2.y - e1.y * e2.x;
+            float nLen = sqrtf(nx * nx + ny * ny + nz * nz);
+            if (nLen <= 1e-6f || (ny / nLen) < 0.25f)
+                continue;
+
+            float d0x = v1.x - v0.x, d0z = v1.z - v0.z;
+            float d1x = v2.x - v0.x, d1z = v2.z - v0.z;
+            float d2x = lx - v0.x, d2z = lz - v0.z;
+            float denom = d0x * d1z - d1x * d0z;
+            if (fabsf(denom) < 1e-7f)
+                continue;
+            float invDen = 1.0f / denom;
+            float u = (d2x * d1z - d1x * d2z) * invDen;
+            float v = (d0x * d2z - d2x * d0z) * invDen;
+            float w = 1.0f - u - v;
+            if (u >= -0.04f && v >= -0.04f && w >= -0.04f)
+            {
+                float localY = w * v0.y + u * v1.y + v * v2.y;
+                float surfY = p->position.y + localY * p->heightScale;
+                if (pos->y >= surfY - stepHeight && surfY > supportY)
+                    supportY = surfY;
+            }
+        }
+
+        // Pass 2: Exact mesh-triangle horizontal push-out for body overlap above stepHeight
+        float effectiveGround = (supportY > pos->y) ? supportY : pos->y;
+        float bodyMinY = effectiveGround + stepHeight;
+        float bodyMaxY = effectiveGround + 1.65f;
+        for (int t = 0; t < m->triangleCount; t++)
+        {
+            unsigned int i0 = m->indices ? m->indices[t * 3 + 0] : (unsigned int)(t * 3 + 0);
+            unsigned int i1 = m->indices ? m->indices[t * 3 + 1] : (unsigned int)(t * 3 + 1);
+            unsigned int i2 = m->indices ? m->indices[t * 3 + 2] : (unsigned int)(t * 3 + 2);
+
+            Vector3 v0 = {m->vertices[i0 * 3 + 0], m->vertices[i0 * 3 + 1], m->vertices[i0 * 3 + 2]};
+            Vector3 v1 = {m->vertices[i1 * 3 + 0], m->vertices[i1 * 3 + 1], m->vertices[i1 * 3 + 2]};
+            Vector3 v2 = {m->vertices[i2 * 3 + 0], m->vertices[i2 * 3 + 1], m->vertices[i2 * 3 + 2]};
+
+            float triMinY = p->position.y + fminf(v0.y, fminf(v1.y, v2.y)) * p->heightScale;
+            float triMaxY = p->position.y + fmaxf(v0.y, fmaxf(v1.y, v2.y)) * p->heightScale;
+            if (triMaxY <= bodyMinY || triMinY >= bodyMaxY)
+                continue;
+
+            Vector2 cp = Rock_ClosestPointOnTriangleXZ((Vector2){lx, lz},
+                                                       (Vector2){v0.x, v0.z},
+                                                       (Vector2){v1.x, v1.z},
+                                                       (Vector2){v2.x, v2.z});
+            float lPushX = (lx - cp.x) * p->radiusScale;
+            float lPushZ = (lz - cp.y) * p->radiusScale;
+            float distSq = lPushX * lPushX + lPushZ * lPushZ;
+            if (distSq >= agentRadius * agentRadius)
+                continue;
+
+            float wPushX, wPushZ;
+            if (distSq > 1e-6f)
+            {
+                float dist = sqrtf(distSq);
+                float mag = agentRadius - dist;
+                float nLx = lPushX / dist;
+                float nLz = lPushZ / dist;
+                wPushX = (nLx * cosT + nLz * sinT) * mag;
+                wPushZ = (-nLx * sinT + nLz * cosT) * mag;
+            }
+            else
+            {
+                Vector3 e1 = {v1.x - v0.x, v1.y - v0.y, v1.z - v0.z};
+                Vector3 e2 = {v2.x - v0.x, v2.y - v0.y, v2.z - v0.z};
+                float tnx = e1.y * e2.z - e1.z * e2.y;
+                float tnz = e1.x * e2.y - e1.y * e2.x;
+                float tLen = sqrtf(tnx * tnx + tnz * tnz);
+                if (tLen < 1e-5f)
+                    continue;
+                float nLx = tnx / tLen;
+                float nLz = tnz / tLen;
+                wPushX = (nLx * cosT + nLz * sinT) * agentRadius;
+                wPushZ = (-nLx * sinT + nLz * cosT) * agentRadius;
+            }
+
+            pos->x += wPushX;
+            pos->z += wPushZ;
+            dx = pos->x - p->position.x;
+            dz = pos->z - p->position.z;
+            lx = (dx * cosT - dz * sinT) * invR;
+            lz = (dx * sinT + dz * cosT) * invR;
+        }
+    }
+
+    if (inOutGroundY)
+        *inOutGroundY = supportY;
 }

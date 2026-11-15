@@ -1320,6 +1320,7 @@ int main(int argc, char **argv) {
         }
 
         float groundY = MapManager_GetGroundHeightAt(player.position.x, player.position.z);
+        MapManager_ResolveCollision(&player.position, 0.35f, 0.45f, &groundY);
         float waterSurfaceY = 0.0f;
         float waterDepth = 0.0f;
         bool inWater = MapManager_GetWaterInfoAt(player.position.x, player.position.z, &waterSurfaceY, &waterDepth);
@@ -1457,8 +1458,9 @@ int main(int argc, char **argv) {
             }
         }
 
-        // Áp dụng trọng lực & va chạm tiếp đất
+        // Áp dụng trọng lực & va chạm tiếp đất + đá tảng
         groundY = MapManager_GetGroundHeightAt(player.position.x, player.position.z);
+        MapManager_ResolveCollision(&player.position, 0.35f, 0.45f, &groundY);
         inWater = MapManager_GetWaterInfoAt(player.position.x, player.position.z, &waterSurfaceY, &waterDepth);
         if (s_vfxPlayerJumping) {
             float previousY = player.position.y;

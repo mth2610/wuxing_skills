@@ -21,7 +21,7 @@
 #define MAP_DEPTH NINH_THUAN_MAP_DEPTH
 #define CLIFF_DEPTH NINH_THUAN_CLIFF_DEPTH
 #define CLOUD_SEA_Y -5.2f
-#define SHADOW_FOCUS_RADIUS 28.0f
+#define SHADOW_FOCUS_RADIUS 18.0f
 
 static const Vector3 kMapCenter = {MAP_WIDTH * 0.5f, 0.0f, MAP_DEPTH * 0.5f};
 
@@ -64,10 +64,11 @@ static float NinhThuanOasisSurface(float x, float z, void *user)
 
 static void DrawNinhThuanShadowCasters(Shader depthShader, void *user)
 {
-    (void)depthShader;
     (void)user;
     if (!s_ready || (s_skipMask & MAP_SKIP_SHADOWCASTERS))
         return;
+    if (!(s_skipMask & MAP_SKIP_ROCKS))
+        MapProp_DrawRockSystemShadowCasters(&s_rocks, depthShader);
     if (!(s_skipMask & MAP_SKIP_FLORA))
         MapProp_DrawFloraShadowCasters(&s_flora);
 }
@@ -208,11 +209,11 @@ static void BuildNinhThuanFlora(void)
             .grassTipColor = {178, 148, 86, 255},
             .bladesPerClump = 4,
             .bladeSegments = 3,
-            .bladeWidthScale = 0.088f,
+            .bladeWidthScale = 0.115f,
             .lodDistance = 24.0f,
             .midLodDistance = 20.0f,
             .drawDistance = 42.0f,
-            .shadowDistance = 0.0f,
+            .shadowDistance = 14.0f,
             .grassState = MAP_GRASS_STATE_DRY,
             .dryness = 0.88f,
             .reedRootColor = {88, 72, 46, 255},
@@ -474,6 +475,8 @@ void InitNinhThuanMap(void)
     EnvShadow_InvalidateStaticCache();
     CaptureNinhThuanStaticShadows();
     MapManager_SetZones(NINH_THUAN_ZONES, NINH_THUAN_ZONE_COUNT);
+    extern void ResolveCollisionNinhThuanMap(Vector3 *pos, float agentRadius, float stepHeight, float *inOutGroundY);
+    MapManager_RegisterCollisionHooks("NINH_THUAN", ResolveCollisionNinhThuanMap);
 }
 
 void DrawNinhThuanMap(void)
@@ -533,7 +536,7 @@ void UpdateNinhThuanMap(float dt)
 
     float dx = camera.target.x - s_lastShadowFocus.x;
     float dz = camera.target.z - s_lastShadowFocus.z;
-    if (dx * dx + dz * dz > 16.0f)
+    if (dx * dx + dz * dz > 4.0f)
     {
         s_lastShadowFocus = camera.target;
         EnvShadow_SetFocus(s_lastShadowFocus, SHADOW_FOCUS_RADIUS);
@@ -622,3 +625,11 @@ void SetRainNinhThuanMap(float intensity)
 {
     (void)intensity;
 }
+
+void ResolveCollisionNinhThuanMap(Vector3 *pos, float agentRadius, float stepHeight, float *inOutGroundY)
+{
+    if (!s_ready)
+        return;
+    MapProp_ResolveRockSystemCollision(&s_rocks, pos, agentRadius, stepHeight, inOutGroundY);
+}
+

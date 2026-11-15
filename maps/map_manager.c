@@ -119,6 +119,22 @@ void MapManager_AddWaterRipple(Vector3 position, float radius, float intensity) 
     if (fn) fn(position, radius, intensity);
 }
 
+void MapManager_RegisterCollisionHooks(const char *name,
+                                       void (*resolveCollision)(Vector3 *pos, float agentRadius, float stepHeight, float *inOutGroundY)) {
+    for (int i = 0; i < s_mapCount; i++) {
+        if (strcmp(s_maps[i].name, name) == 0) {
+            s_maps[i].ResolveCollision = resolveCollision;
+            return;
+        }
+    }
+}
+
+void MapManager_ResolveCollision(Vector3 *pos, float agentRadius, float stepHeight, float *inOutGroundY) {
+    if (s_mapCount == 0 || !pos) return;
+    void (*fn)(Vector3 *, float, float, float *) = s_maps[s_activeMapIndex].ResolveCollision;
+    if (fn) fn(pos, agentRadius, stepHeight, inOutGroundY);
+}
+
 static MapGroundDisplacementFn s_groundDisplacementHook = NULL;
 static MapGroundWaveParamsFn s_groundWaveParamsHook = NULL;
 

@@ -232,6 +232,9 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     // Screen-space subpixel clamp (>= ~1.06px at 0.72x render scale) to eliminate tip shimmering
     float minPxHalfWidth = distToCam * 0.00085;
     halfWidth = max(halfWidth, minPxHalfWidth);
+#elif defined(NATURE_BLADE_POSITION_ONLY)
+    // Shadow pass: keep blades >= 1 shadow texel wide so sparse grass casts crisp shadows
+    halfWidth = max(halfWidth * 1.40, 0.020);
 #endif
 
     float spineArch = p1.w * 0.105 * sinPiT;

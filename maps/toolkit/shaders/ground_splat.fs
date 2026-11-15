@@ -813,8 +813,8 @@ void main()
     // On submerged/wet creek sand, thin grass shadow casters alias into dark dashes; soften toward sky ambient.
     float wetSandMask = clamp(max(lakeDepthFactor * 4.0, isRiparian * 0.92), 0.0, 1.0);
     float softShadowVis = mix(sqrt(max(rawShadow, 0.0)), 1.0, mix(0.16, 0.62, wetSandMask));
-    float resolvedShadow = mix(rawShadow, softShadowVis, max(wGrass, wetSandMask));
-    float shadowFloor = mix(0.26, 0.48, max(wGrass, wetSandMask));
+    float resolvedShadow = mix(rawShadow, softShadowVis, max(wGrass * (1.0 - u_aridBiomeFactor), wetSandMask));
+    float shadowFloor = mix(0.24, 0.48, max(wGrass * (1.0 - u_aridBiomeFactor), wetSandMask));
     float shadow = mix(shadowFloor, 1.0, resolvedShadow);
     float sunVisibility = (shadow > 0.001) ? shadow * Environment_CloudVisibility(u_cloudNoise, fragWorldPos) * rockContactAO : 0.0;
 

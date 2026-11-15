@@ -170,6 +170,8 @@ typedef struct
     bool ready;
     Vector3 boundsCenter;
     float boundsRadius;
+    float localRadiusXZ;
+    float localMaxY;
 } MapRockSet;
 
 typedef struct
@@ -236,6 +238,9 @@ int MapProp_AddRockCluster(MapRockSystem *sys, Vector3 center, MapRockArchetype 
                            int count, float clusterRadius, float baseScale, unsigned int seed);
 void MapProp_DrawRockSystem(const MapRockSystem *sys, bool drawShadows);
 void MapProp_DrawRockSystemShadowCasters(MapRockSystem *sys, Shader depthShader);
+void MapProp_ResolveRockSystemCollision(const MapRockSystem *sys, Vector3 *pos,
+                                        float agentRadius, float stepHeight,
+                                        float *inOutGroundY);
 void MapProp_UnloadRockSystem(MapRockSystem *sys);
 void MapProp_PopulateRockItems(MapRockSystem *sys, const MapGroundSurface *ground,
                                Vector3 groundCenter, const MapRockItem *items, int itemCount);

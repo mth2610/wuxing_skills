@@ -535,8 +535,9 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
 
     if (player->dashCooldown > 0.0f) player->dashCooldown -= dt;
 
-    // Tính toán chiều cao địa hình bên dưới người chơi (Pillars & Ground)
+    // Tính toán chiều cao địa hình bên dưới người chơi (Pillars, Rocks & Ground)
     float currentGroundY = MapManager_GetGroundHeightAt(player->position.x, player->position.z);
+    MapManager_ResolveCollision(&player->position, player->radius, 0.45f, &currentGroundY);
     for (int i = 0; i < NUM_PILLARS; i++) {
         Vector3 diff = Vector3Subtract(player->position, pillars[i].position);
         diff.y = 0.0f;

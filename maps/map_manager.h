@@ -17,6 +17,7 @@ typedef struct {
     bool (*GetWaterInfo)(float x, float z, float *outSurfaceY, float *outWaterDepth); // optional shallow water info
     void (*SetWaterInteractor)(Vector3 position, Vector3 velocity, float radius);     // optional dynamic wake/ripples
     void (*AddWaterRipple)(Vector3 position, float radius, float intensity);          // optional expanding shockwave ring
+    void (*ResolveCollision)(Vector3 *pos, float agentRadius, float stepHeight, float *inOutGroundY); // optional solid props/rocks
 } MapDefinition;
 
 void MapManager_Init(void);
@@ -31,6 +32,9 @@ void MapManager_RegisterWaterHooks(const char *name,
                                    bool (*getWaterInfo)(float x, float z, float *outSurfaceY, float *outWaterDepth),
                                    void (*setWaterInteractor)(Vector3, Vector3, float),
                                    void (*addWaterRipple)(Vector3, float, float));
+void MapManager_RegisterCollisionHooks(const char *name,
+                                       void (*resolveCollision)(Vector3 *pos, float agentRadius, float stepHeight, float *inOutGroundY));
+void MapManager_ResolveCollision(Vector3 *pos, float agentRadius, float stepHeight, float *inOutGroundY);
 void MapManager_Update(float dt);
 void MapManager_DrawActive(void);
 void MapManager_DrawTransparent(void);

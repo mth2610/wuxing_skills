@@ -238,7 +238,7 @@ float MapDynamicShadowVisibilityCovLS(vec4 lightSpace, float slope, out float co
         return 1.0;
     coverage = edgeFade;
 
-    float compareDepth = projected.z - mix(0.00026, 0.00080, slope);
+    float compareDepth = projected.z - mix(0.00007, 0.00024, slope);
     float visibility = MapShadowFilteredVisibility(
         shadowMap, projected.xy, compareDepth, u_shadowTexel, MAP_DYNAMIC_SHADOW_RADIUS,
         u_shadowThinFeatureBoost);
