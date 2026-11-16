@@ -121,8 +121,8 @@ float MapShadowFilteredVisibilityTier(highp sampler2D mapTexture, vec2 uv,
         if (cSum <= 0.001) return 0.0;
         if (cSum >= 3.999) return 1.0;
         float s0 = mix(mix(sc.w, sc.z, fraction.x), mix(sc.x, sc.y, fraction.x), fraction.y);
-        float s1 = MapShadowGatherBox4(mapTexture, uv + vec2(radiusScale * 0.45 * texelSize), compareDepth);
-        return (s0 * 0.65 + s1 * 0.35);
+        float s1 = MapShadowGatherBox4(mapTexture, uv + vec2(radiusScale * 0.65 * texelSize), compareDepth);
+        return (s0 * 0.55 + s1 * 0.45);
 #else
         return MapShadowCompareBilinearTexel(mapTexture, centerPos, compareDepth, texelSize);
 #endif
@@ -271,7 +271,7 @@ float MapStaticShadowVisibilityLS(vec4 lightSpace, float slope)
     float compareDepth = projected.z - mix(0.0012, 0.0032, slope);
     float staticQuality = min(MAP_SHADOW_QUALITY, float(MAP_STATIC_SHADOW_FILTER_CAP));
     float visibility = MapShadowFilteredVisibilityTier(
-        staticShadowMap, projected.xy, compareDepth, u_staticShadowTexel, 1.10, 0.0,
+        staticShadowMap, projected.xy, compareDepth, u_staticShadowTexel, 1.65, 0.0,
         staticQuality);
     return mix(1.0, visibility, fade);
 }

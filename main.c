@@ -360,7 +360,7 @@ static inline float QualityToRenderScale(GfxQuality q) {
   return (q >= GFX_ULTRA) ? 1.00f :
          (q >= GFX_HIGH)  ? 0.92f :
          (q >= GFX_MED)   ? 0.78f :
-         (q >= GFX_LOW)   ? 0.65f : 0.92f;
+         (q >= GFX_LOW)   ? 0.65f : 0.65f;
 }
 
 int main(int argc, char **argv) {
@@ -1878,7 +1878,7 @@ int main(int argc, char **argv) {
     //      every other frame misses the deadline — judder at a 16 ms average.
     // Both are temporal artifacts, and the ms it saved is available from resolution instead, which
     // is a purely spatial trade. Do not re-introduce it without solving the update rate.
-    if (EnvShadow_IsEnabled()) {
+    if (EnvShadow_IsEnabled() && resolvedQuality != GFX_UNLIT) {
         EnvShadow_BeginCapture();
         PASS_MARK("sh_begin");
         Model charModel = CharacterModel_GetModel();

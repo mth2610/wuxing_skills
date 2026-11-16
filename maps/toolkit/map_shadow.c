@@ -135,10 +135,10 @@ void MapShadow_UpdateShader(Shader shader)
     // A layer is only advertised to the shader when its target texture really exists.
     const Texture2D shadowMap = EnvShadow_GetShadowMap();
     const Texture2D staticMap = EnvShadow_GetStaticShadowMap();
-    const bool dynamicEnabled = EnvShadow_IsEnabled() && shadowMap.id != 0;
-    const bool staticEnabled = EnvShadow_HasStaticCache() && staticMap.id != 0;
-
     const int quality = (int)GfxQuality_Get();
+    const bool unlit = (quality <= (int)GFX_UNLIT);
+    const bool dynamicEnabled = !unlit && EnvShadow_IsEnabled() && shadowMap.id != 0;
+    const bool staticEnabled = !unlit && EnvShadow_HasStaticCache() && staticMap.id != 0;
     const bool high = quality >= (int)GFX_HIGH;
     const bool med = quality >= (int)GFX_MED;
 

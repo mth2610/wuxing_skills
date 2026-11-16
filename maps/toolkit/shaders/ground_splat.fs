@@ -361,8 +361,8 @@ void main()
         }
         fineGrassLuma = dot(colorGrass.rgb, vec3(0.2126, 0.7152, 0.0722));
 
-        // High-frequency botanical moss/fiber micro-grain at close zoom (< 12m)
-        if (highDetailGround && camDistSqXZ < 144.0) {
+        // High-frequency botanical moss/fiber micro-grain at close zoom (< 12m) — lush turf only (arid sand uses smooth wind ripples)
+        if (highDetailGround && camDistSqXZ < 144.0 && u_aridBiomeFactor < 0.5) {
             float closeWeight = (1.0 - camDistSqXZ * (1.0 / 144.0)) * detailResolve;
             float fiberA = sin(fragWorldPos.x * 26.0 + fragWorldPos.z * 19.0)
                          * cos(fragWorldPos.x * -17.0 + fragWorldPos.z * 29.0);
@@ -889,7 +889,7 @@ void main()
     groundLit += drySpec * (0.85 - wGrass * 0.65);
 
     // Quartz / mica grain sparkle on sunlit desert grus & granite
-    if (u_aridBiomeFactor > 0.05 && sunVisibility > 0.01 && camDistSqXZ < 400.0) {
+    if (u_aridBiomeFactor > 0.05 && sunVisibility > 0.01 && camDistSqXZ < 400.0 && NdotH > 0.72) {
         vec2 glintUV = fragWorldPos.xz * 26.0;
         vec2 cell = floor(glintUV);
         vec2 cellFrac = fract(glintUV);

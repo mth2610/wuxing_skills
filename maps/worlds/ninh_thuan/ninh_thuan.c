@@ -1,6 +1,7 @@
 #include "maps/worlds/ninh_thuan/ninh_thuan.h"
 #include "assets/maps/ninh_thuan/ninh_thuan_generated_meta.h"
 #include "maps/worlds/ninh_thuan/ninh_thuan_rocks_generated.h"
+#include "core/gfx_quality.h"
 #include "core/resource_manager.h"
 #include "environment/atmosphere.h"
 #include "environment/env_shadow.h"
@@ -84,13 +85,10 @@ static float NinhThuanCoastalSurface(float x, float z, void *user)
 
 static void DrawNinhThuanShadowCasters(Shader depthShader, void *user)
 {
+    (void)depthShader;
     (void)user;
-    if (!s_ready || (s_skipMask & MAP_SKIP_SHADOWCASTERS))
-        return;
-    if (!(s_skipMask & MAP_SKIP_ROCKS))
-        MapProp_DrawRockSystemShadowCasters(&s_rocks, depthShader);
-    if (!(s_skipMask & MAP_SKIP_FLORA))
-        MapProp_DrawFloraShadowCasters(&s_flora);
+    /* Static granite tors/kopjes are cached in CaptureNinhThuanStaticShadows();
+     * skipping static rock re-submission here avoids burning per-frame shadow pass time. */
 }
 
 static void CaptureNinhThuanStaticShadows(void)
@@ -99,7 +97,7 @@ static void CaptureNinhThuanStaticShadows(void)
         return;
     if ((s_skipMask & MAP_SKIP_SHADOWCASTERS) || (s_skipMask & MAP_SKIP_ROCKS))
         return;
-    EnvShadow_BeginStaticCapture(kMapCenter, 96.0f);
+    EnvShadow_BeginStaticCapture(kMapCenter, 72.0f);
     if (!EnvShadow_IsCapturing())
         return;
     Shader depthShader = EnvShadow_GetDepthShader();
@@ -494,8 +492,8 @@ void InitNinhThuanMap(void)
         820.0f, 820.0f,
         (MapWaterConfig){
             .ecosystem = WATER_ECO_CUSTOM,
-            .segments = 96,
-            .rings = 96,
+            .segments = 64,
+            .rings = 64,
             .waveHeight = 0.16f,
             .waveScale = 0.45f,
             .waveSpeed = 1.20f,
@@ -665,7 +663,7 @@ void DrawNinhThuanMap(void)
     MapProp_ResetNatureRenderStats();
     PropLit_UpdateLighting();
 
-    bool useFakeRockShadows = !EnvShadow_IsEnabled();
+    bool useFakeRockShadows = !EnvShadow_IsEnabled() && GfxQuality_Get() != GFX_UNLIT;
     if (!useFakeRockShadows)
     {
         if (!(s_skipMask & MAP_SKIP_ROCKS))

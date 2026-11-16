@@ -84,15 +84,25 @@ void main() {
     albedo.rgb = mix(albedo.rgb, vec3(dot(albedo.rgb, vec3(0.3333333))), 0.08) * 0.96;
     albedo.rgb *= colDiffuse.rgb;
     if (u_rockAridMode > 0.5) {
-        // World-space procedural granite speckle (biotite + pale pink-grey feldspar), eliminates UV blotches
-        vec3 gPos = worldPosition * 6.5;
-        float gCoarse = fract(sin(dot(floor(gPos), vec3(12.9898, 78.233, 37.719))) * 43758.5453);
-        float gFine   = fract(sin(dot(floor(worldPosition * 22.0), vec3(41.13, 91.7, 17.3))) * 24634.6345);
-        vec3 feldsparBase = mix(vec3(0.58, 0.52, 0.47), vec3(0.74, 0.67, 0.60), gCoarse * 0.65 + 0.20);
-        float biotiteSpeck = smoothstep(0.76, 0.95, gFine);
-        vec3 procGranite = mix(feldsparBase, vec3(0.24, 0.22, 0.21), biotiteSpeck * 0.52);
+        // Smooth world-space procedural granite mineral variation (no grid/row artifacts)
+        vec3 gP1 = worldPosition * 4.2;
+        vec3 i1 = floor(gP1); vec3 f1 = fract(gP1); f1 = f1 * f1 * (3.0 - 2.0 * f1);
+        float c000 = fract(sin(dot(i1 + vec3(0,0,0), vec3(12.9898,78.233,37.719))) * 43758.5453);
+        float c100 = fract(sin(dot(i1 + vec3(1,0,0), vec3(12.9898,78.233,37.719))) * 43758.5453);
+        float c010 = fract(sin(dot(i1 + vec3(0,1,0), vec3(12.9898,78.233,37.719))) * 43758.5453);
+        float c110 = fract(sin(dot(i1 + vec3(1,1,0), vec3(12.9898,78.233,37.719))) * 43758.5453);
+        float c001 = fract(sin(dot(i1 + vec3(0,0,1), vec3(12.9898,78.233,37.719))) * 43758.5453);
+        float c101 = fract(sin(dot(i1 + vec3(1,0,1), vec3(12.9898,78.233,37.719))) * 43758.5453);
+        float c011 = fract(sin(dot(i1 + vec3(0,1,1), vec3(12.9898,78.233,37.719))) * 43758.5453);
+        float c111 = fract(sin(dot(i1 + vec3(1,1,1), vec3(12.9898,78.233,37.719))) * 43758.5453);
+        float gCoarse = mix(mix(mix(c000, c100, f1.x), mix(c010, c110, f1.x), f1.y),
+                            mix(mix(c001, c101, f1.x), mix(c011, c111, f1.x), f1.y), f1.z);
         float texGrain = dot(albedo.rgb, vec3(0.3333333));
-        albedo.rgb = mix(albedo.rgb, procGranite * (0.86 + 0.28 * texGrain), u_rockAridMode * 0.82);
+        vec3 feldsparBase = mix(vec3(0.56, 0.50, 0.45), vec3(0.75, 0.68, 0.61), gCoarse * 0.68 + 0.18);
+        // Darken only natural texture crevices for biotite mineral flecks
+        float biotiteMask = (1.0 - smoothstep(0.24, 0.48, texGrain)) * 0.35;
+        vec3 procGranite = mix(feldsparBase, vec3(0.26, 0.24, 0.22), biotiteMask);
+        albedo.rgb = mix(albedo.rgb, procGranite * (0.84 + 0.32 * texGrain), u_rockAridMode * 0.82);
     }
 
     vec3 normY = textureGrad(texture2, uvY, uvDxY, uvDyY).rgb * 2.0 - 1.0;

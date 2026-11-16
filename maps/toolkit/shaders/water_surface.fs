@@ -291,15 +291,11 @@ void main()
         vec2 g1 = vec2(
             textureGrad(texture0, cUV1 + vec2(0.04, 0.0), xzDx * 0.38, xzDy * 0.38).r - cH1,
             textureGrad(texture0, cUV1 + vec2(0.0, 0.04), xzDx * 0.38, xzDy * 0.38).r - cH1
-        ) * 1.65;
-        vec2 g2 = vec2(
-            textureGrad(texture0, cUV2 + vec2(0.04, 0.0), xzDx * 1.45, xzDy * 1.45).r - cH2,
-            textureGrad(texture0, cUV2 + vec2(0.0, 0.04), xzDx * 1.45, xzDy * 1.45).r - cH2
-        ) * 1.15;
+        ) * 1.85;
         float chopWave = sin(fragWorldXZ.x * 0.58 + fragWorldXZ.y * 0.42 - t * 1.85 + cH0 * 3.8);
         float chopWave2 = cos(fragWorldXZ.x * 1.65 - fragWorldXZ.y * 1.25 + t * 2.45 + cH1 * 3.0);
-        slope += (g1 + g2 + vec2(chopWave * 0.065 + chopWave2 * 0.038,
-                                 chopWave2 * 0.052 - chopWave * 0.032)) * detailDistFade;
+        slope += (g1 + vec2(chopWave * 0.065 + chopWave2 * 0.042 + (cH2 - 0.5) * 0.06,
+                            chopWave2 * 0.052 - chopWave * 0.032 + (cH2 - 0.5) * 0.05)) * detailDistFade;
 
         if (oceanShoreDist < 16.0 && length(oceanShoreDir) > 0.1) {
             float surfZone = 1.0 - smoothstep(3.5, 15.0, oceanShoreDist);
