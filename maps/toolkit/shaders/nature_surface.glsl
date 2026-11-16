@@ -367,12 +367,15 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     float distRootLift = FastRamp(18.0, 40.0, distToCam);
     float rootBlend = (1.0 - FastRamp(0.0, 0.20, h)) * mix(0.12, 0.02, distRootLift);
     baseColor = mix(baseColor, rootSubstrateTone, rootBlend);
-    vec3 distantCanopyTone = mix(vec3(0.22, 0.38, 0.14), vec3(0.36, 0.46, 0.18), warmShift * 0.70);
+    vec3 lushDistantTone = mix(vec3(0.22, 0.38, 0.14), vec3(0.36, 0.46, 0.18), warmShift * 0.70);
+    vec3 dryDistantTone  = mix(vec3(0.36, 0.30, 0.18), vec3(0.50, 0.42, 0.25), warmShift * 0.70);
+    vec3 distantCanopyTone = mix(lushDistantTone, dryDistantTone, dryness);
     baseColor = mix(baseColor, distantCanopyTone, distRootLift * (1.0 - h) * 0.35);
 
     vec3 skyAmbient = clamp(u_ambientColor * vec3(1.20, 1.24, 1.38), 0.0, 1.0);
     vec3 groundBounce = clamp(u_ambientColor * vec3(0.58, 0.50, 0.42), 0.0, 1.0);
-    vec3 greenBounce = baseColor * (u_ambientColor * 1.35 + vec3(0.042, 0.068, 0.032));
+    vec3 bounceOffset = mix(vec3(0.042, 0.068, 0.032), vec3(0.052, 0.042, 0.026), dryness);
+    vec3 greenBounce = baseColor * (u_ambientColor * 1.35 + bounceOffset);
     vec3 ambientGround = mix(groundBounce, greenBounce, 0.62);
     vec3 ambient = mix(ambientGround, skyAmbient, n.y * 0.5 + 0.5);
 
@@ -448,7 +451,9 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
             float edgeThinness = 0.64 + 0.36 * absU;
             float sssWindow = FastRamp(0.14, 0.52, h) * (1.0 - FastRamp(0.88, 1.0, h) * 0.20);
             float transmission = (backLobe * 0.65 + forwardLobe * 0.95 * (0.30 + 0.70 * h)) * sssWindow * edgeThinness * sssScale;
-            vec3 emeraldJadeSSS = baseColor * vec3(1.16, 1.18, 0.62) + vec3(0.026, 0.034, 0.014) * sssScale;
+            vec3 sssTint   = mix(vec3(1.16, 1.18, 0.62), vec3(1.14, 0.98, 0.64), dryness);
+            vec3 sssOffset = mix(vec3(0.026, 0.034, 0.014), vec3(0.024, 0.018, 0.008), dryness);
+            vec3 emeraldJadeSSS = baseColor * sssTint + sssOffset * sssScale;
 
             float diffuseLobe = wrapped * (0.44 + 0.52 * wrapped);
             vec3 directDiffuse = baseColor * (diffuseLobe * 0.86);

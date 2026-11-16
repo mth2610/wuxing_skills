@@ -141,10 +141,10 @@ void main() {
     float combinedStrata = strataMacro * 0.65 + strataFine * 0.35;
     float strataContrast = (strataMacro - 0.5) * 1.35 + (strataFine - 0.5) * 0.65;
 
-    // Authentic mountain slate-granite palette (or warm pink-ochre Ninh Thuan granite in arid mode)
-    vec3 slateBedrock = mix(vec3(0.46, 0.48, 0.51), vec3(0.56, 0.46, 0.37), u_cliffAridMode);
-    vec3 feldsparVein = mix(vec3(0.62, 0.58, 0.52), vec3(0.75, 0.62, 0.48), u_cliffAridMode);
-    vec3 bedrockTint = mix(slateBedrock, feldsparVein, combinedStrata * mix(0.42, 0.68, u_cliffAridMode)) * 1.30;
+    // Authentic mountain slate-granite palette (or pale pink-grey Ninh Thuan granite in arid mode)
+    vec3 slateBedrock = mix(vec3(0.46, 0.48, 0.51), vec3(0.60, 0.54, 0.49), u_cliffAridMode);
+    vec3 feldsparVein = mix(vec3(0.62, 0.58, 0.52), vec3(0.74, 0.67, 0.59), u_cliffAridMode);
+    vec3 bedrockTint = mix(slateBedrock, feldsparVein, combinedStrata * mix(0.42, 0.68, u_cliffAridMode)) * 1.24;
 
     vec3 rockBase = triAlbedo * bedrockTint * colDiffuse.rgb;
 
@@ -159,14 +159,21 @@ void main() {
     float shelfMoss = fragColor.g * ledgeFacing * upperRimBoost * (0.65 + 0.35 * creviceMask);
     float mossMask = clamp(max(shelfMoss, rimSodDrape * 0.94), 0.0, 1.0);
     vec3 lushMossColor = mix(vec3(0.11, 0.19, 0.07), vec3(0.18, 0.29, 0.10), clamp(triAlbedo.g * 0.75 + rimSodDrape * 0.35, 0.0, 1.0));
-    vec3 aridRimColor  = mix(vec3(0.50, 0.39, 0.24), vec3(0.64, 0.50, 0.32), clamp(triAlbedo.g * 0.75 + rimSodDrape * 0.35, 0.0, 1.0));
+    vec3 aridRimColor  = mix(vec3(0.64, 0.56, 0.43), vec3(0.74, 0.65, 0.50), clamp(triAlbedo.g * 0.75 + rimSodDrape * 0.35, 0.0, 1.0));
     vec3 mossColor = mix(lushMossColor, aridRimColor, u_cliffAridMode);
-    vec3 rockAlbedo = mix(rockBase, mossColor, mossMask * mix(0.88, 0.76, u_cliffAridMode));
+    vec3 rockAlbedo = mix(rockBase, mossColor, mossMask * mix(0.88, 0.82, u_cliffAridMode));
 
     // ── 4. Deep Crevice Cavity Occlusion (80.lv RTGI Principle) ──
     // Intense occlusion in deep fissures and under shelf overhangs gives rock weight and depth
     float microCrevice = clamp(normX.z * triWeights.x + normY.z * triWeights.y + normZ.z * triWeights.z, 0.25, 1.0);
-    float cavityAO = clamp(fragColor.r * (0.35 + 0.65 * microCrevice), 0.18, 1.0);
+    float cavityAO = clamp(fragColor.r * (0.35 + 0.65 * microCrevice), mix(0.18, 0.48, u_cliffAridMode), 1.0);
+
+    // Coastal tidal wet-rock splash zone in arid mode (darkens & polishes rock base near sea level)
+    float coastalWet = (u_cliffAridMode > 0.5)
+        ? (1.0 - smoothstep(-1.35, -0.25, worldPosition.y))
+        : 0.0;
+    rockAlbedo *= mix(1.0, 0.56, coastalWet * 0.88);
+    roughness = mix(roughness, 0.16, coastalWet * 0.85);
 
     // ── 5. Physically Grounded Lighting ──
     float lightLenSq = dot(u_lightDir, u_lightDir);

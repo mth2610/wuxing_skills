@@ -1056,20 +1056,25 @@ MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int 
         style.alphaCutoff = 0.42f;
     if (style.alphaCutoff > 0.9f)
         style.alphaCutoff = 0.9f;
-    MapProp_SetGrassState(style.grassState,
-                          (style.grassState == MAP_GRASS_STATE_SCORCHED) ? 0.85f : 0.0f);
-    if (style.dryness > 0.0f || style.scorch > 0.0f)
+    if (style.growthForm == MAP_MEADOW_GROWTH_GRASS ||
+        style.grassState != MAP_GRASS_STATE_LUSH ||
+        style.dryness > 0.0f || style.scorch > 0.0f)
     {
-        MapGrassCondition cond = MapProp_GetGrassCondition();
-        if (style.dryness > 0.0f)
-            cond.dryness = style.dryness;
-        if (style.scorch > 0.0f)
+        MapProp_SetGrassState(style.grassState,
+                              (style.grassState == MAP_GRASS_STATE_SCORCHED) ? 0.85f : 0.0f);
+        if (style.dryness > 0.0f || style.scorch > 0.0f)
         {
-            cond.scorch = style.scorch;
-            if (cond.emberIntensity <= 0.0f)
-                cond.emberIntensity = 0.85f;
+            MapGrassCondition cond = MapProp_GetGrassCondition();
+            if (style.dryness > 0.0f)
+                cond.dryness = style.dryness;
+            if (style.scorch > 0.0f)
+            {
+                cond.scorch = style.scorch;
+                if (cond.emberIntensity <= 0.0f)
+                    cond.emberIntensity = 0.85f;
+            }
+            MapProp_SetGrassCondition(cond);
         }
-        MapProp_SetGrassCondition(cond);
     }
     if (NatureParametric_Create(&meadow, placements, count, style))
         return meadow;

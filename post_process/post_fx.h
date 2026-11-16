@@ -162,5 +162,6 @@ typedef struct {
 
 void PostFX_SetMapProfile(PostFXMapProfile profile);
 void PostFX_ClearMapProfile(void);
+void PostFX_SetHeatHaze(float strength, float bandStartY, float bandEndY);
 
 #endif // POST_PROCESS_POST_FX_H

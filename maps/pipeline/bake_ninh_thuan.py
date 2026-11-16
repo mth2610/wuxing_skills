@@ -147,27 +147,22 @@ def bake_ninh_thuan():
 
     scree_gravel2 = np.clip((slope2 - 6.0) / 12.0, 0.0, 1.0) * (0.45 + 0.55 * rock2)
     scree_gravel2 = np.maximum(scree_gravel2, up2(wadi_band) * 0.75)
-    leaf_litter2 = np.zeros_like(rock2)
-    twigs2 = np.clip(coverage2 * 0.35, 0.0, 1.0)
-    moss2 = np.zeros_like(rock2)
+    # Desert ecology channels:
+    #   R = red laterite wash on eroded mid-slopes & washes
+    #   G = granite grus / scree gravel (enhanced around placed rocks below)
+    #   B = rock contact AO (filled after rock placement)
+    #   A = pale cracked hardpan in flat low basins
+    laterite2 = np.clip((slope2 - 5.5) / 11.0, 0.0, 1.0) * (1.0 - wet_smooth2) * (1.0 - shore2 * 0.8)
+    laterite2 = np.maximum(laterite2, up2(wadi_band) * 0.35) * 0.85
+    hardpan2 = np.clip((-tpi2 - 0.2) / 3.0, 0.0, 1.0) * np.clip(1.0 - slope2 / 7.5, 0.0, 1.0) * (1.0 - wet_smooth2)
     flowers2 = np.clip(coverage2 * 0.25, 0.0, 1.0)
 
     splat2 = np.stack((coverage2, rock2, flowers2, shore2), axis=-1)
     splat2[~valid2] = (0, 1, 0, 0)
     habitat2 = np.stack((coverage2, coverage2, moisture2, habitat_val2), axis=-1)
     habitat2[~valid2] = 0.0
-    debris_map2 = np.stack((leaf_litter2, scree_gravel2, twigs2, moss2), axis=-1)
-    debris_map2[~valid2] = 0.0
     ground_material2 = np.stack((coverage2, soil2, wet_mud2, rock2), axis=-1)
     ground_material2[~valid2] = (0, 0, 0, 1)
-
-    sunny2 = np.clip(tpi2 / 15.0 + 0.5, 0.0, 1.0)
-    tint_map2 = np.stack((
-        np.clip(0.58 + 0.22 * sunny2, 0.0, 1.0),
-        np.clip(0.46 + 0.16 * sunny2, 0.0, 1.0),
-        np.clip(0.32 + 0.12 * rock2, 0.0, 1.0),
-    ), axis=-1)
-    tint_map2[~valid2] = (0.45, 0.38, 0.30)
 
     p = lambda s: os.path.join(out_assets_dir, "ninh_thuan_" + s)
     write_png(p("island_heightmap.png"), encoded)
@@ -175,8 +170,6 @@ def bake_ninh_thuan():
     write_png(p("heightfield.png"), height_rgba, 6)
     write_png(p("ecology_splat.png"), np.rint(splat2 * 255), 6)
     write_png(p("ground_material.png"), np.rint(ground_material2 * 255), 6)
-    write_png(p("debris_map.png"), np.rint(debris_map2 * 255), 6)
-    write_png(p("ground_tint.png"), np.rint(tint_map2 * 255), 2)
     write_png(p("habitat.png"), np.rint(habitat2 * 255), 6)
 
     riparian_b = np.rint(np.clip(gaussian_filter_2d(wet.astype(float), 2.8) * 3.5, 0.0, 1.0) * 255).astype(np.uint8)
@@ -245,14 +238,58 @@ def bake_ninh_thuan():
             occupied.append((x, z, r_scale))
         return True
 
-    # 4A. Monumental Stacked Exfoliation Tors (Nui Chua Corestones)
+    # 4A. 5 Monumental Hero Kopjes (Ninh Thuan Landmark Granite Stacks, 8-16m tall)
+    hero_anchors = [
+        (52.0, 128.0),
+        (136.0, 122.0),
+        (56.0, 186.0),
+        (134.0, 188.0),
+        (96.0, 96.0),
+    ]
+    kopjes_placed = 0
+    for hx, hz in hero_anchors:
+        gy, sl, _, val, is_wet, _ = sample_cell(hx, hz)
+        if not val or is_wet:
+            continue
+        r_base = float(rng.uniform(4.8, 6.6))
+        h_base = r_base * float(rng.uniform(0.82, 1.05))
+        rot_base = float(rng.uniform(0.0, 360.0))
+        if add_rock(hx, hz, r_base, h_base, rot_base, "MAP_ROCK_GRANITE"):
+            kopjes_placed += 1
+            gy_base = placements[-1][1]
+            # Second tier stacked corestone
+            r2 = r_base * float(rng.uniform(0.62, 0.74))
+            h2_s = r2 * float(rng.uniform(0.88, 1.15))
+            a2 = np.radians(rot_base + rng.uniform(-30.0, 30.0))
+            p2x, p2z = hx + np.cos(a2) * r_base * 0.16, hz + np.sin(a2) * r_base * 0.16
+            p2y = gy_base + h_base * 0.50
+            placements.append((p2x, p2y, p2z, r2, h2_s, (rot_base + 52.0) % 360.0, "MAP_ROCK_GRANITE"))
+            # Third tier crowning cap boulder
+            r3 = r2 * float(rng.uniform(0.55, 0.68))
+            h3_s = r3 * float(rng.uniform(0.80, 1.05))
+            p3x, p3z = p2x - np.cos(a2) * r2 * 0.12, p2z - np.sin(a2) * r2 * 0.12
+            p3y = p2y + h2_s * 0.50
+            placements.append((p3x, p3y, p3z, r3, h3_s, (rot_base + 118.0) % 360.0, "MAP_ROCK_GRANITE"))
+            # Flanking apron boulders & scree
+            for k in range(4):
+                ang = np.radians(rot_base + k * 88.0 + rng.uniform(-18.0, 18.0))
+                dist = r_base + float(rng.uniform(0.5, 2.4))
+                cr = float(rng.uniform(1.1, 2.2))
+                add_rock(hx + np.cos(ang) * dist, hz + np.sin(ang) * dist, cr, cr * float(rng.uniform(0.65, 0.90)), float(rng.uniform(0, 360)), "MAP_ROCK_GRANITE")
+            for s in range(6):
+                ang = rng.uniform(0.0, 2.0 * np.pi)
+                dist = r_base + float(rng.uniform(1.2, 4.2))
+                sr = float(rng.uniform(0.32, 0.72))
+                add_rock(hx + np.cos(ang) * dist, hz + np.sin(ang) * dist, sr, sr * 0.50, float(rng.uniform(0, 360)), "MAP_ROCK_SCREE")
+
+    # 4B. Stacked Exfoliation Tors (Nui Chua Corestones)
     tor_candidates = []
-    for r in range(18, h - 18, 5):
-        for c in range(18, w - 18, 5):
+    for r in range(18, h - 18, 6):
+        for c in range(18, w - 18, 6):
             if not valid[r, c] or wet[r, c] or ground[r, c] < 1.2 or slope_s[r, c] > 24.0:
                 continue
             x, z = c * sx, r * sz
-            if np.hypot(x - 94.10, z - 150.0) < 19.0:
+            if np.hypot(x - 94.10, z - 150.0) < 20.0:
                 continue
             score = tpi_m[r, c] * 0.45 + rock[r, c] * 3.5 + rng.uniform(0.0, 1.5)
             tor_candidates.append((score, x, z))
@@ -260,68 +297,115 @@ def bake_ninh_thuan():
 
     tors_placed = 0
     for _, tx, tz in tor_candidates:
-        if tors_placed >= 26:
+        if tors_placed >= 14:
             break
-        r_base = float(rng.uniform(2.1, 3.6))
-        h_base = r_base * float(rng.uniform(0.72, 0.95))
+        r_base = float(rng.uniform(2.3, 3.8))
+        h_base = r_base * float(rng.uniform(0.75, 0.96))
         rot_base = float(rng.uniform(0.0, 360.0))
-        if not can_place(tx, tz, r_base * 1.15, min_sep=1.35):
+        if not can_place(tx, tz, r_base * 1.25, min_sep=1.55):
             continue
         if add_rock(tx, tz, r_base, h_base, rot_base, "MAP_ROCK_GRANITE"):
             tors_placed += 1
-            # Perched balanced upper corestone (stacked tor!)
             gy_base = placements[-1][1]
-            top_r = r_base * float(rng.uniform(0.56, 0.72))
-            top_h = top_r * float(rng.uniform(0.82, 1.12))
+            top_r = r_base * float(rng.uniform(0.58, 0.72))
+            top_h = top_r * float(rng.uniform(0.84, 1.10))
             off_ang = np.radians(rot_base + rng.uniform(-35.0, 35.0))
-            off_d = r_base * 0.18
+            off_d = r_base * 0.16
             px = tx + np.cos(off_ang) * off_d
             pz = tz + np.sin(off_ang) * off_d
-            py = gy_base + h_base * 0.62
+            py = gy_base + h_base * 0.48
             placements.append((px, py, pz, top_r, top_h, (rot_base + 48.0) % 360.0, "MAP_ROCK_GRANITE"))
 
-            # Companion flanking boulders & scree apron around tor
-            for k in range(3):
-                ang = np.radians(rot_base + k * 115.0 + rng.uniform(-22.0, 22.0))
+            for k in range(2):
+                ang = np.radians(rot_base + k * 145.0 + rng.uniform(-22.0, 22.0))
                 dist = r_base + float(rng.uniform(0.6, 1.8))
-                cr = float(rng.uniform(0.65, 1.45))
-                ch = cr * float(rng.uniform(0.55, 0.85))
-                arch = "MAP_ROCK_SANDSTONE" if (k == 1 and rng.random() < 0.40) else "MAP_ROCK_GRANITE"
-                add_rock(tx + np.cos(ang) * dist, tz + np.sin(ang) * dist, cr, ch, float(rng.uniform(0, 360)), arch)
-            for s in range(4):
+                cr = float(rng.uniform(0.70, 1.40))
+                add_rock(tx + np.cos(ang) * dist, tz + np.sin(ang) * dist, cr, cr * float(rng.uniform(0.60, 0.85)), float(rng.uniform(0, 360)), "MAP_ROCK_GRANITE")
+            for s in range(3):
                 ang = rng.uniform(0.0, 2.0 * np.pi)
-                dist = r_base + float(rng.uniform(1.0, 3.2))
-                sr = float(rng.uniform(0.28, 0.62))
+                dist = r_base + float(rng.uniform(1.0, 3.0))
+                sr = float(rng.uniform(0.28, 0.58))
                 add_rock(tx + np.cos(ang) * dist, tz + np.sin(ang) * dist, sr, sr * 0.52, float(rng.uniform(0, 360)), "MAP_ROCK_SCREE")
 
-    # 4B. Joint-Controlled Granite Boulder Alleys & Tafoni Outcrops
+    # 4C. Unified Granite Outcrops & Dry Wadi Cobbles (leaves open sand negative space)
     strike_rad = np.radians(48.0)
-    for _ in range(1800):
-        if len(placements) >= 620:
+    for _ in range(1400):
+        if len(placements) >= 360:
             break
         x = float(rng.uniform(22.0, width - 22.0))
         z = float(rng.uniform(18.0, depth - 18.0))
         gy, sl, tpi_v, val, is_wet, is_wadi = sample_cell(x, z)
         if not val or is_wet or gy < 0.35 or sl > 30.0:
             continue
-        # Higher probability on rocky outcrops & wadi banks
-        prob = 0.25 + 0.55 * float(rock[int(np.clip(z / sz, 0, h - 1)), int(np.clip(x / sx, 0, w - 1))])
+        prob = 0.18 + 0.55 * float(rock[int(np.clip(z / sz, 0, h - 1)), int(np.clip(x / sx, 0, w - 1))])
         if rng.random() > prob:
             continue
-        r_s = float(rng.uniform(0.75, 1.95))
-        h_s = r_s * float(rng.uniform(0.55, 0.90))
+        r_s = float(rng.uniform(0.80, 1.95))
+        h_s = r_s * float(rng.uniform(0.60, 0.90))
         rot = float(np.degrees(strike_rad) + rng.uniform(-18.0, 18.0))
-        arch = "MAP_ROCK_SANDSTONE" if rng.random() < 0.24 else ("MAP_ROCK_BOULDER" if rng.random() < 0.28 else "MAP_ROCK_GRANITE")
+        arch = "MAP_ROCK_GRANITE"
         if is_wadi and rng.random() < 0.55:
             arch = "MAP_ROCK_RIVER_STONE"
             h_s = r_s * 0.48
         if add_rock(x, z, r_s, h_s, rot, arch):
-            # Add 1-2 scree chips nearby
             for _ in range(int(rng.integers(1, 3))):
                 a = rng.uniform(0.0, 2.0 * np.pi)
                 d = r_s + float(rng.uniform(0.4, 1.3))
                 sr = float(rng.uniform(0.22, 0.52))
                 add_rock(x + np.cos(a) * d, z + np.sin(a) * d, sr, sr * 0.48, float(rng.uniform(0, 360)), "MAP_ROCK_SCREE")
+
+    # Bake rock grus aprons (G), rock contact AO (B), laterite (R), hardpan (A) & multi-biome ground_tint
+    rock_apron2 = np.zeros_like(rock2)
+    rock_contact2 = np.zeros_like(rock2)
+    wind_dx, wind_dz = 3.85 / 4.41, 2.15 / 4.41
+    for rx, ry, rz, rr, rh, rrot, rarch in placements:
+        if rarch == "MAP_ROCK_SCREE":
+            continue
+        reach = rr + 4.0
+        c0 = max(0, int((rx - reach) / sx2))
+        c1 = min(w2, int((rx + reach) / sx2) + 1)
+        r0 = max(0, int((rz - reach) / sz2))
+        r1 = min(h2, int((rz + reach) / sz2) + 1)
+        if c1 <= c0 or r1 <= r0:
+            continue
+        xs = np.arange(c0, c1, dtype=np.float64) * sx2 - rx
+        zs = np.arange(r0, r1, dtype=np.float64) * sz2 - rz
+        dx_g, dz_g = np.meshgrid(xs, zs)
+        dist_edge = np.hypot(dx_g, dz_g) - rr * 0.85
+        # Wind-lee drift extends apron slightly downwind
+        lee_proj = np.maximum(0.0, dx_g * wind_dx + dz_g * wind_dz)
+        apron_falloff = 1.6 + 0.85 * np.clip(lee_proj / max(rr, 0.5), 0.0, 1.5)
+        apron = np.exp(-np.maximum(dist_edge, 0.0) / apron_falloff)
+        contact = np.exp(-np.maximum(dist_edge + 0.12, 0.0) / 0.45) * 0.82
+        rock_apron2[r0:r1, c0:c1] = np.maximum(rock_apron2[r0:r1, c0:c1], apron)
+        rock_contact2[r0:r1, c0:c1] = np.maximum(rock_contact2[r0:r1, c0:c1], contact)
+
+    grus2 = np.clip(np.maximum(scree_gravel2, rock_apron2 * 0.90), 0.0, 1.0)
+    debris_map2 = np.stack((laterite2, grus2, rock_contact2, hardpan2), axis=-1)
+    debris_map2[~valid2] = 0.0
+    write_png(p("debris_map.png"), np.rint(debris_map2 * 255), 6)
+
+    sunny2 = np.clip(tpi2 / 15.0 + 0.5, 0.0, 1.0)
+    # Multi-biome desert tint: pale quartz sand -> warm dune buff -> laterite -> pale grus
+    tint_r = 0.78 + 0.08 * sunny2 - 0.10 * laterite2 - 0.12 * rock_apron2
+    tint_g = 0.71 + 0.05 * sunny2 - 0.24 * laterite2 - 0.10 * rock_apron2
+    tint_b = 0.56 + 0.02 * sunny2 - 0.26 * laterite2 - 0.04 * rock_apron2
+    tint_map2 = np.stack((np.clip(tint_r, 0.0, 1.0), np.clip(tint_g, 0.0, 1.0), np.clip(tint_b, 0.0, 1.0)), axis=-1)
+    tint_map2[~valid2] = (0.55, 0.48, 0.40)
+    write_png(p("ground_tint.png"), np.rint(tint_map2 * 255), 2)
+
+    # Dedicated 256x256 desert relief map (sand ripples + grus height + hardpan/laterite classes)
+    rel_sz = 256
+    ry, rx_i = np.mgrid[0:rel_sz, 0:rel_sz].astype(np.float64) / rel_sz
+    sand_h = 0.5 + 0.18 * np.sin(rx_i * 2.0 * np.pi * 6.0 + np.sin(ry * 2.0 * np.pi * 2.0)) + 0.10 * np.cos(ry * 2.0 * np.pi * 11.0)
+    grus_h = 0.45 + 0.25 * np.sin(rx_i * 2.0 * np.pi * 14.0) * np.cos(ry * 2.0 * np.pi * 14.0)
+    rel_rgba = np.stack((
+        np.clip(sand_h, 0.0, 1.0),
+        np.clip(grus_h, 0.0, 1.0),
+        np.clip(0.35 + 0.35 * np.sin((rx_i + ry) * 2.0 * np.pi * 4.0), 0.0, 1.0),
+        np.clip(0.35 + 0.35 * np.cos((rx_i - ry) * 2.0 * np.pi * 5.0), 0.0, 1.0),
+    ), axis=-1)
+    write_png(p("relief.png"), np.rint(rel_rgba * 255), 6)
 
     rock_header = os.path.join(out_world_dir, "ninh_thuan_rocks_generated.h")
     with open(rock_header, "w") as f:

@@ -151,6 +151,7 @@ void main()
     vec2 lakeDy = dFdy(fragLakeCoord) * 0.5;
 
     float t = mod(u_time * u_waveSpeed, 6283.185307);
+    bool isOcean = (u_waterShape == 1 && u_lakeRadii.x > 80.0);
 
     // Local current: the DEM-bound SWE solver supplies the real velocity (eddies behind rocks,
     // slow pools, fast chutes); outside the simulated window the uniform stream flow is used.
@@ -224,12 +225,12 @@ void main()
 
     vec3 viewVec = u_viewPos - fragPosition;
     float distSq = dot(viewVec, viewVec);
-    float detailDistFade = 1.0 / (1.0 + distSq * 0.0038);
-    float dualDetailFade = 1.0 - smoothstep(256.0, 576.0, distSq);
+    float detailDistFade = isOcean ? (1.0 / (1.0 + distSq * 0.00018)) : (1.0 / (1.0 + distSq * 0.0038));
+    float dualDetailFade = isOcean ? (1.0 - smoothstep(1600.0, 6400.0, distSq)) : (1.0 - smoothstep(256.0, 576.0, distSq));
 
     float flowSpeedSq = dot(flowVel, flowVel);
     vec2 detailSlope = vec2(0.0);
-    if (distSq < 2500.0) {
+    if (distSq < (isOcean ? 22500.0 : 2500.0)) {
         // Smooth dual-octave finite difference eliminates texel-level stipple noise
         const vec2 eps = vec2(0.065, 0.0);
         vec2 detDx0 = xzDx * (u_detailScale * 0.72);
@@ -268,6 +269,49 @@ void main()
     }
 
     slope += detailSlope * (u_detailStrength * 0.45 * shoreFade * detailDistFade);
+
+    float oceanShoreDist = 24.0;
+    vec2 oceanShoreDir = vec2(0.0);
+    float oceanSurfCrest = 0.0;
+    if (isOcean) {
+        if (u_flowFieldEnabled > 0) {
+            vec4 shoreData = textureGrad(u_flowFieldTex, fragLakeCoord * 0.5 + 0.5, lakeDx, lakeDy);
+            oceanShoreDist = max(0.0, shoreData.b * 24.0 - 2.4);
+            vec2 rawToShore = shoreData.rg * 2.0 - 1.0;
+            float sLen = length(rawToShore);
+            oceanShoreDir = (sLen > 0.05) ? (rawToShore / sLen) : vec2(0.0);
+        }
+        // Multi-scale open-ocean wind chop + capillary micro-ripples
+        vec2 cUV0 = fragWorldXZ * 0.095 + vec2(t * 0.055, -t * 0.038);
+        vec2 cUV1 = fragWorldXZ * 0.38  + vec2(-t * 0.14,  t * 0.11);
+        vec2 cUV2 = fragWorldXZ * 1.45  + vec2(t * 0.27, -t * 0.23);
+        float cH0 = textureGrad(texture0, cUV0, xzDx * 0.095, xzDy * 0.095).r;
+        float cH1 = textureGrad(texture0, cUV1, xzDx * 0.38,  xzDy * 0.38).r;
+        float cH2 = textureGrad(texture0, cUV2, xzDx * 1.45,  xzDy * 1.45).r;
+        vec2 g1 = vec2(
+            textureGrad(texture0, cUV1 + vec2(0.04, 0.0), xzDx * 0.38, xzDy * 0.38).r - cH1,
+            textureGrad(texture0, cUV1 + vec2(0.0, 0.04), xzDx * 0.38, xzDy * 0.38).r - cH1
+        ) * 1.65;
+        vec2 g2 = vec2(
+            textureGrad(texture0, cUV2 + vec2(0.04, 0.0), xzDx * 1.45, xzDy * 1.45).r - cH2,
+            textureGrad(texture0, cUV2 + vec2(0.0, 0.04), xzDx * 1.45, xzDy * 1.45).r - cH2
+        ) * 1.15;
+        float chopWave = sin(fragWorldXZ.x * 0.58 + fragWorldXZ.y * 0.42 - t * 1.85 + cH0 * 3.8);
+        float chopWave2 = cos(fragWorldXZ.x * 1.65 - fragWorldXZ.y * 1.25 + t * 2.45 + cH1 * 3.0);
+        slope += (g1 + g2 + vec2(chopWave * 0.065 + chopWave2 * 0.038,
+                                 chopWave2 * 0.052 - chopWave * 0.032)) * detailDistFade;
+
+        if (oceanShoreDist < 16.0 && length(oceanShoreDir) > 0.1) {
+            float surfZone = 1.0 - smoothstep(3.5, 15.0, oceanShoreDist);
+            float surfWarp = (cH0 - 0.5) * 3.2 + (cH1 - 0.5) * 1.4
+                           + sin(fragWorldXZ.x * 0.16 + fragWorldXZ.y * 0.13) * 1.2;
+            float surfPhase = oceanShoreDist * 0.88 - t * 1.65 + surfWarp;
+            float rawWave = sin(surfPhase);
+            // Asymmetric shoaling crest (sharp front, gentle trough)
+            oceanSurfCrest = pow(clamp(rawWave * 0.5 + 0.5, 0.0, 1.0), 2.2) * surfZone;
+            slope += oceanShoreDir * (cos(surfPhase) * 0.34 * surfZone);
+        }
+    }
 
     // Conditional wave-field sampling (2D Shallow-Water PDE wave grid)
     vec2 interactSlope = vec2(0.0);
@@ -417,7 +461,10 @@ void main()
     float waterDepth = 0.0;
     bool hasValidDepth = false;
 
-    if (u_waterShape == 3) {
+    if (isOcean) {
+        waterDepth = mix(0.18, u_maxDepth, smoothstep(0.0, 14.0, oceanShoreDist));
+        hasValidDepth = true;
+    } else if (u_waterShape == 3) {
         waterDepth = max(0.0, fragWaterDepth);
         hasValidDepth = true;
     } else if (u_waterShape == 0) {
@@ -429,7 +476,7 @@ void main()
 
 
     // Hardware scene depth buffer refinement (detects submerged stepping stones & exact bank contact)
-    if (u_hasDepthTex > 0 && u_resolution.x > 1.0 && u_resolution.y > 1.0) {
+    if (!isOcean && u_hasDepthTex > 0 && u_resolution.x > 1.0 && u_resolution.y > 1.0) {
         vec2 screenUV = gl_FragCoord.xy / u_resolution;
         float sceneLinear = textureLod(u_cameraDepthTex, screenUV, 0.0).r;
         float ndc = gl_FragCoord.z * 2.0 - 1.0;
@@ -529,9 +576,14 @@ void main()
     vec3 skyZenith  = mix(vec3(0.18, 0.42, 0.70), u_ambientColor * 1.18, 0.45);
     vec3 skyHorizon = mix(u_ambientColor * 1.32 + vec3(0.10, 0.12, 0.14),
                           effectiveLight * 0.68, 0.24 + 0.34 * sunAzimuth * sunAzimuth);
+    if (u_waterShape == 1 && u_lakeRadii.x > 80.0) {
+        skyZenith  = vec3(0.14, 0.44, 0.68);
+        skyHorizon = mix(vec3(0.38, 0.62, 0.72), effectiveLight * 0.62, 0.18 * sunAzimuth);
+    }
     vec3 reflectedSky = mix(skyHorizon, skyZenith, skyAngle);
     // Analytical hillside & riparian bank reflection near low grazing reflection angles
-    float bankSilhouette = (1.0 - smoothstep(0.01, 0.20, max(reflectDir.y, 0.0))) * smoothstep(-0.15, 0.05, reflectDir.y);
+    float bankSilhouette = (u_waterShape == 1 && u_lakeRadii.x > 80.0) ? 0.0
+        : (1.0 - smoothstep(0.01, 0.20, max(reflectDir.y, 0.0))) * smoothstep(-0.15, 0.05, reflectDir.y);
     vec3 bankColor = mix(vec3(0.11, 0.17, 0.09), vec3(0.24, 0.26, 0.13), sunAzimuth) * (0.75 + u_ambientColor * 0.35);
     reflectedSky = mix(reflectedSky, bankColor, bankSilhouette * 0.46);
     if (u_rain > 0.01) {
@@ -625,7 +677,10 @@ void main()
 
     float shoreEdgeFade = radialEdgeFade;
     float meniscusDepth = waterDepth;
-    if (u_waterShape == 3) {
+    if (isOcean) {
+        waterDepth = mix(0.18, u_maxDepth, smoothstep(0.0, 14.0, oceanShoreDist));
+        hasValidDepth = true;
+    } else if (u_waterShape == 3) {
         // Multi-octave world-space domain warp breaks up 1.0m piecewise-linear water mesh triangles
         float edgeMacro = textureGrad(texture0, fragWorldXZ * 0.85 + vec2(1.7, 3.1), xzDx * 0.85, xzDy * 0.85).r;
         float edgeMicro = textureGrad(texture0, fragWorldXZ * 3.10 - vec2(4.2, 0.9), xzDx * 3.10, xzDy * 3.10).r;
@@ -639,14 +694,40 @@ void main()
     }
     float surfaceAlpha = opticalWaterAlpha * shoreEdgeFade;
 
+    if (isOcean) {
+        // Coastal crashing surf waves & cellular lacy cliff-collar foam + open-ocean whitecaps
+        float fMacro = textureGrad(texture0, fragWorldXZ * 0.26 - vec2(t * 0.035, t * 0.025), xzDx * 0.26, xzDy * 0.26).r;
+        float fMed   = textureGrad(texture0, fragWorldXZ * 0.85 + vec2(t * 0.055, -t * 0.045), xzDx * 0.85, xzDy * 0.85).r;
+        float fMicro = textureGrad(texture0, fragWorldXZ * 2.20 - vec2(t * 0.07, t * 0.06), xzDx * 2.20, xzDy * 2.20).r;
+        // Cellular lacy web: sharp bubble filaments rather than uniform stipple
+        float cellWeb = 1.0 - abs(fMed - fMicro) * 2.4;
+        float lacyFoam = clamp(fMacro * 0.45 + cellWeb * 0.55, 0.0, 1.0);
+
+        float surfWarp = (fMacro - 0.5) * 3.2 + sin(fragWorldXZ.x * 0.13 + fragWorldXZ.y * 0.10) * 1.4;
+        float surge = 0.5 + 0.5 * sin(t * 1.75 + surfWarp * 0.45);
+        // 1. Surging white impact foam right against the rocky cliff waterline
+        float cliffCollar = (1.0 - smoothstep(0.2, 2.0 + surge * 1.4, oceanShoreDist))
+                          * smoothstep(0.22, 0.65, lacyFoam + 0.28);
+        // 2. Asymmetric breaking surf wave crest + trailing lacy wash
+        float surfCrestFoam = smoothstep(0.32, 0.78, oceanSurfCrest) * smoothstep(0.26, 0.68, lacyFoam + 0.18);
+        float trailingWash  = smoothstep(0.14, 0.45, oceanSurfCrest) * (1.0 - smoothstep(1.5, 11.0, oceanShoreDist))
+                            * smoothstep(0.54, 0.86, cellWeb) * 0.48;
+        // 3. Open-ocean wind whitecaps on steepest crests
+        float whitecap = smoothstep(0.55, 0.90, waveFacet) * smoothstep(0.50, 0.80, lacyFoam) * 0.30 * detailDistFade;
+        brokenFoam = clamp(max(max(cliffCollar * 0.96, surfCrestFoam * 0.90), max(trailingWash, whitecap)), 0.0, 0.96);
+    }
+
     float alpha = clamp(surfaceAlpha + brokenFoam * 0.45 * smoothstep(0.002, 0.065, meniscusDepth) * shoreEdgeFade, 0.0, 0.92);
+    if (isOcean) {
+        alpha = clamp(0.90 + brokenFoam * 0.08 + fresnel * 0.08, 0.90, 0.98);
+    }
     if (alpha < 0.002) discard;
 
     // ── 9. ENERGY-CONSERVING COMPOSITION ─────────────────────────────────────
-    vec3 shallowTint = mix(u_shallowColor, vec3(0.20, 0.46, 0.40), 0.42);
-    vec3 deepTint    = mix(u_deepColor,    vec3(0.04, 0.18, 0.23), 0.48);
+    vec3 shallowTint = isOcean ? u_shallowColor : mix(u_shallowColor, vec3(0.20, 0.46, 0.40), 0.42);
+    vec3 deepTint    = isOcean ? u_deepColor    : mix(u_deepColor,    vec3(0.04, 0.18, 0.23), 0.48);
 
-    vec3 depthBlend = clamp(mix(vec3(1.0 - smoothstep(0.05, 1.45, waterDepth)), transmittance, 0.72), 0.0, 1.0);
+    vec3 depthBlend = clamp(mix(vec3(1.0 - smoothstep(0.05, isOcean ? 2.4 : 1.45, waterDepth)), transmittance, 0.72), 0.0, 1.0);
     vec3 waterVolumeColor = mix(deepTint, shallowTint, depthBlend);
     float scatterDensity = 0.42 + 0.58 * volumeInScatter;
     waterVolumeColor *= (0.86 + u_ambientColor * 0.36 + effectiveLight * 0.28) * scatterDensity;
@@ -655,8 +736,9 @@ void main()
 
     float reflectWeight = (u_waterShape == 3)
         ? clamp((fresnel * 0.70 + 0.10) * shoreFadeOptical, 0.0, 0.80)
-        : clamp(fresnel * 0.72 + 0.12, 0.0, 0.85);
-    vec3 underwaterTerms = waterVolumeColor + causticLight * 1.42 + sssLight + waveLighting;
+        : clamp(fresnel * 0.76 + (isOcean ? 0.18 : 0.12), 0.0, 0.88);
+    vec3 surfGlow = isOcean ? (vec3(0.08, 0.62, 0.54) * (oceanSurfCrest * 0.55) * effectiveLight) : vec3(0.0);
+    vec3 underwaterTerms = waterVolumeColor + causticLight * 1.42 + sssLight + waveLighting + surfGlow;
     vec3 color = mix(underwaterTerms, reflectedSky, reflectWeight);
 
     color += waveHighlight + sunGlint + waveReflection;

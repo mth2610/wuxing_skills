@@ -144,7 +144,65 @@ def save_png_rgba(filename, width, height, pixels):
     with open(filename, 'wb') as f:
         f.write(header + ihdr + idat + iend)
 
+def grade_desert_pixel(r01, g01, b01):
+    r_lin = srgb_to_linear(r01)
+    g_lin = srgb_to_linear(g01)
+    b_lin = srgb_to_linear(b01)
+
+    luma = 0.2126 * r_lin + 0.7152 * g_lin + 0.0722 * b_lin
+
+    # Gentle filmic S-curve + slight black lift for open granite cavities
+    luma_curved = luma * luma * (3.0 - 2.0 * luma)
+    contrast_factor = luma_curved / max(1e-5, luma)
+    r_lin = clamp01(r_lin * (0.55 + 0.45 * contrast_factor))
+    g_lin = clamp01(g_lin * (0.55 + 0.45 * contrast_factor))
+    b_lin = clamp01(b_lin * (0.55 + 0.45 * contrast_factor))
+
+    black_lift = 0.015 * math.pow(clamp01(1.0 - luma * 2.5), 2.0)
+    r_lin += black_lift * 0.90
+    g_lin += black_lift * 1.00
+    b_lin += black_lift * 1.18
+
+    # Desert split-tone: cool slate-blue shadows, warm cream highlights
+    shadow_weight = math.pow(clamp01(1.0 - luma * 1.8), 1.5)
+    r_lin += shadow_weight * -0.008
+    g_lin += shadow_weight * 0.002
+    b_lin += shadow_weight * 0.018
+
+    highlight_weight = math.pow(clamp01((luma - 0.42) / 0.58), 1.4)
+    r_lin += highlight_weight * 0.010
+    g_lin += highlight_weight * 0.007
+    b_lin += highlight_weight * -0.004
+
+    r_srgb = clamp01(linear_to_srgb(clamp01(r_lin)))
+    g_srgb = clamp01(linear_to_srgb(clamp01(g_lin)))
+    b_srgb = clamp01(linear_to_srgb(clamp01(b_lin)))
+
+    # HSL selective tuning: tame orange/yellow oversaturation (-13%) for pale quartz sand
+    h, s, l = rgb_to_hsl(r_srgb, g_srgb, b_srgb)
+    dist_orange = min(abs(h - 0.09), abs(h - 1.09))
+    is_orange = math.exp(-math.pow(dist_orange / 0.11, 2.0))
+    s = clamp01(s * (1.0 - 0.13 * is_orange))
+
+    # Keep sky/shadow blues clean
+    is_blue = math.exp(-math.pow((h - 0.60) / 0.10, 2.0))
+    s = clamp01(s * (1.0 + 0.08 * is_blue))
+
+    r_out, g_out, b_out = hsl_to_rgb(h, s, l)
+    return (
+        int(clamp01(r_out) * 255.0 + 0.5),
+        int(clamp01(g_out) * 255.0 + 0.5),
+        int(clamp01(b_out) * 255.0 + 0.5),
+        255
+    )
+
+
 def main():
+    import sys
+    desert_mode = "--desert" in sys.argv
+    out_arg = next((a for a in sys.argv[1:] if not a.startswith("--")), None)
+    fn = grade_desert_pixel if desert_mode else grade_pixel
+
     denom = float(LUT_SIZE - 1)
     pixels = [(0, 0, 0, 255)] * (LUT_WIDTH * LUT_HEIGHT)
 
@@ -154,10 +212,20 @@ def main():
                 r01 = float(r) / denom
                 g01 = float(g) / denom
                 b01 = float(slice_b) / denom
-                rgba = grade_pixel(r01, g01, b01)
+                rgba = fn(r01, g01, b01)
                 x = slice_b * LUT_SIZE + r
                 y = g
                 pixels[y * LUT_WIDTH + x] = rgba
+
+    if out_arg:
+        out_path = out_arg
+    else:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(os.path.dirname(script_dir))
+        out_path = os.path.join(project_root, "assets", "luts", "grade.png")
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    save_png_rgba(out_path, LUT_WIDTH, LUT_HEIGHT, pixels)
+    print(f"Generated {'desert' if desert_mode else 'wuxia'} LUT: {out_path} ({LUT_WIDTH}x{LUT_HEIGHT})")
 
     out_path = "assets/maps/song_quao/song_quao_grade.png"
     os.makedirs(os.path.dirname(out_path), exist_ok=True)

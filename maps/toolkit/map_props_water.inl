@@ -1443,6 +1443,8 @@ void MapProp_DrawWaterOverlay(const MapWaterSurface *water, float time)
     }
     if (s_waterLocFlowFieldEnabled >= 0)
         SetShaderValue(shader, s_waterLocFlowFieldEnabled, &flowEnabled, SHADER_UNIFORM_INT);
+    if (flowEnabled && s_waterLocFlowFieldTex >= 0)
+        SetShaderValueTexture(shader, s_waterLocFlowFieldTex, water->flowFieldTex);
     int shapeInt = (int)water->config.shape;
     SetShaderValue(shader, s_waterLocWaterShape, &shapeInt, SHADER_UNIFORM_INT);
 

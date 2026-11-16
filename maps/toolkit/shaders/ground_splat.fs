@@ -465,11 +465,23 @@ void main()
 
     if (hasSoil) {
         float porousDarkening = smoothstep(0.0, 0.45, wWetSoil) * (1.0 - wWetSoil * 0.35);
-        float soilLuma = dot(dirtDetail, vec3(0.299, 0.587, 0.114));
+        vec3 soilDetailTex = dirtDetail;
+        float soilLuma = dot(soilDetailTex, vec3(0.299, 0.587, 0.114));
         pebbleRelief = smoothstep(0.26, 0.72, soilLuma);
-        vec3 loamDark  = mix(vec3(0.10, 0.08, 0.05), u_aridHardpanColor * 0.68, u_aridBiomeFactor);
-        vec3 loamLight = mix(vec3(0.18, 0.14, 0.09), u_aridGrusColor * 0.92, u_aridBiomeFactor);
-        vec3 warmLoamColor = mix(loamDark, loamLight, pebbleRelief) * (0.86 + 0.28 * dirtDetail) * (1.0 - porousDarkening * 0.32);
+        vec3 loamDark  = mix(vec3(0.10, 0.08, 0.05), u_aridHardpanColor * 0.74, u_aridBiomeFactor);
+        vec3 loamLight = mix(vec3(0.18, 0.14, 0.09), u_aridGrusColor * 1.12, u_aridBiomeFactor);
+        vec3 warmLoamColor = mix(loamDark, loamLight, pebbleRelief) * (0.86 + 0.28 * soilDetailTex) * (1.0 - porousDarkening * 0.32);
+        if (u_aridBiomeFactor > 0.05) {
+            // Macro desert sand variation (30m & 12m domain-warped) breaking single-orange monotony
+            vec2 dP = fragWorldPos.xz * 0.055;
+            vec2 dWarp = vec2(sin(dP.y * 1.4 + dP.x * 0.6), cos(dP.x * 1.3 - dP.y * 0.7)) * 0.45;
+            float dMacro = sin((dP.x + dWarp.x) * 1.7 + (dP.y + dWarp.y) * 1.1) * 0.5 + 0.5;
+            float dMeso  = cos(dP.x * 3.8 - dP.y * 3.1 + dWarp.x * 1.5) * 0.5 + 0.5;
+            vec3 paleQuartz = u_aridGrusColor * vec3(1.22, 1.18, 1.06);
+            vec3 warmBuff   = u_aridGrusColor * vec3(1.16, 0.98, 0.76);
+            vec3 desertSand = mix(warmBuff, paleQuartz, dMacro * 0.65 + dMeso * 0.35);
+            warmLoamColor = mix(warmLoamColor, desertSand * (0.88 + 0.24 * soilDetailTex), u_aridBiomeFactor * 0.78);
+        }
 
         vec3 cliffAlbedo = warmLoamColor;
         if (wCliff > 0.01) {
@@ -709,24 +721,30 @@ void main()
 
         float dryWoodlandMask = (1.0 - clamp(shoreFactor + streamWet, 0.0, 1.0)) * debrisDistFade * grassDebrisAtten;
         if (debris.r > 0.04 && dryWoodlandMask > 0.05) {
-            vec3 leafLitterColor = mix(vec3(0.25, 0.18, 0.09), vec3(0.42, 0.29, 0.14), fineGrain);
+            vec3 lushLeafCol = mix(vec3(0.25, 0.18, 0.09), vec3(0.42, 0.29, 0.14), fineGrain);
+            vec3 redLateriteCol = mix(vec3(0.46, 0.22, 0.13), vec3(0.62, 0.32, 0.19), fineGrain);
+            vec3 debrisRCol = mix(lushLeafCol, redLateriteCol, u_aridBiomeFactor);
             float leafMask = smoothstep(0.10, 0.58, debris.r) * (0.40 + 0.60 * fineGrain) * dryWoodlandMask;
-            blendedAlbedo = mix(blendedAlbedo, leafLitterColor, leafMask * 0.36);
+            blendedAlbedo = mix(blendedAlbedo, debrisRCol, leafMask * mix(0.36, 0.52, u_aridBiomeFactor));
         }
 
-        // Gate scree gravel strictly by steep slope on interior hills while preserving outer cliff rim detail
+        // Gate scree gravel by steep slope in lush maps; in arid mode also show rock-apron grus on flats
         float gravelSlopeMin = mix(0.42, 0.24, 1.0 - smoothstep(-1.10, 0.15, fragWorldPos.y));
-        if (debris.g > 0.04 && slope > gravelSlopeMin) {
-            float slopeGate = smoothstep(gravelSlopeMin, gravelSlopeMin + 0.16, slope);
-            vec3 gravelColor = mix(vec3(0.30, 0.28, 0.24), vec3(0.40, 0.38, 0.32), fineGrain);
-            float gravelMask = smoothstep(0.18, 0.70, debris.g) * slopeGate * grassDebrisAtten * debrisDistFade;
-            blendedAlbedo = mix(blendedAlbedo, gravelColor, gravelMask * 0.40);
+        float slopeGate = mix(smoothstep(gravelSlopeMin, gravelSlopeMin + 0.16, slope), 1.0, u_aridBiomeFactor);
+        if (debris.g > 0.04 && slopeGate > 0.01) {
+            vec3 lushGravel = mix(vec3(0.30, 0.28, 0.24), vec3(0.40, 0.38, 0.32), fineGrain);
+            vec3 aridGrus   = u_aridGrusColor * (0.80 + 0.38 * fineGrain);
+            vec3 gravelColor = mix(lushGravel, aridGrus, u_aridBiomeFactor);
+            float gravelMask = smoothstep(0.16, 0.68, debris.g) * slopeGate * grassDebrisAtten * debrisDistFade;
+            blendedAlbedo = mix(blendedAlbedo, gravelColor, gravelMask * mix(0.40, 0.58, u_aridBiomeFactor));
         }
 
         if (debris.a > 0.04) {
-            vec3 mossColor = mix(mix(vec3(0.18, 0.30, 0.10), vec3(0.28, 0.42, 0.14), fineGrain), u_aridLichenColor, u_aridBiomeFactor);
+            vec3 lushMoss = mix(vec3(0.18, 0.30, 0.10), vec3(0.28, 0.42, 0.14), fineGrain);
+            vec3 aridHardpan = u_aridHardpanColor * (1.08 + 0.24 * fineGrain);
+            vec3 mossColor = mix(lushMoss, aridHardpan, u_aridBiomeFactor);
             float mossMask = smoothstep(0.12, 0.60, debris.a) * debrisDistFade * grassDebrisAtten;
-            blendedAlbedo = mix(blendedAlbedo, mossColor, mossMask * 0.28);
+            blendedAlbedo = mix(blendedAlbedo, mossColor, mossMask * mix(0.28, 0.46, u_aridBiomeFactor));
         }
     }
 
@@ -772,6 +790,22 @@ void main()
         if (wCliff > 0.01) {
             float cliffBlend = smoothstep(0.04, 0.40, wCliff);
             nRaw = mix(nRaw, cliffTriNormal, cliffBlend);
+        }
+        // Procedural aeolian sand ripples perpendicular to arid wind (fades on steep slopes & distance)
+        if (u_aridBiomeFactor > 0.05 && camDistSqXZ < 900.0) {
+            vec2 wDir = vec2(0.873, 0.487);
+            vec2 wPerp = vec2(-0.487, 0.873);
+            float along = dot(fragWorldPos.xz, wDir);
+            float across = dot(fragWorldPos.xz, wPerp);
+            float rWarp = sin(across * 0.36 + along * 0.12) * 0.45 + cos(across * 0.82 - along * 0.21) * 0.20;
+            float rPhase = along * 28.0 + rWarp * 4.2;
+            float fwR = fwidth(rPhase);
+            float rippleAA = 1.0 - smoothstep(1.1, 2.6, fwR);
+            float rippleDist = 1.0 - smoothstep(400.0, 900.0, camDistSqXZ);
+            float rippleGate = (1.0 - smoothstep(0.10, 0.32, slope)) * (1.0 - wCliff) * (1.0 - wGrass * 0.75) * (1.0 - isRiparian)
+                             * rippleAA * rippleDist * u_aridBiomeFactor;
+            nRaw += vec3(wDir.x, 0.0, wDir.y) * (cos(rPhase) * 0.16 * rippleGate);
+            blendedAlbedo *= (1.0 - (0.5 - 0.5 * sin(rPhase)) * 0.045 * rippleGate);
         }
         normal = nRaw * inversesqrt(max(dot(nRaw, nRaw), 1e-8));
     }
@@ -855,9 +889,24 @@ void main()
     groundLit += drySpec * (0.85 - wGrass * 0.65);
 
     // Quartz / mica grain sparkle on sunlit desert grus & granite
-    if (u_aridBiomeFactor > 0.05 && sunVisibility > 0.01 && camDistSqXZ < 625.0) {
-        float quartzHash = fract(sin(dot(floor(fragWorldPos.xz * 28.0), vec2(12.9898, 78.233))) * 43758.5453);
-        float quartzGlint = pow(NdotH, 48.0) * smoothstep(0.93, 0.995, quartzHash);
+    if (u_aridBiomeFactor > 0.05 && sunVisibility > 0.01 && camDistSqXZ < 400.0) {
+        vec2 glintUV = fragWorldPos.xz * 26.0;
+        vec2 cell = floor(glintUV);
+        vec2 cellFrac = fract(glintUV);
+        vec2 cellRand = fract(sin(vec2(
+            dot(cell, vec2(127.1, 311.7)),
+            dot(cell, vec2(269.5, 183.3))
+        )) * 43758.5453);
+        vec2 jitterCenter = 0.18 + 0.64 * cellRand;
+        float grainRadius = 0.10 + 0.12 * fract(cellRand.x * 17.3 + cellRand.y * 31.7);
+        float distToGrain = length(cellFrac - jitterCenter);
+        float grainMask = 1.0 - smoothstep(grainRadius * 0.35, grainRadius, distToGrain);
+        float quartzHash = fract(sin(dot(cell, vec2(12.9898, 78.233))) * 43758.5453);
+        vec2 fw = fwidth(glintUV);
+        float pixelFootprint = max(fw.x, fw.y);
+        float aaFade = 1.0 - smoothstep(0.35, 0.85, pixelFootprint);
+        float distFade = 1.0 - smoothstep(100.0, 400.0, camDistSqXZ);
+        float quartzGlint = pow(NdotH, 48.0) * smoothstep(0.92, 0.995, quartzHash) * grainMask * aaFade * distFade;
         groundLit += actualLight * (quartzGlint * sunVisibility * u_aridBiomeFactor * 0.55);
     }
 

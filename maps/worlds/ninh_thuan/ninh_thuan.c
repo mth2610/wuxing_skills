@@ -2,6 +2,7 @@
 #include "assets/maps/ninh_thuan/ninh_thuan_generated_meta.h"
 #include "maps/worlds/ninh_thuan/ninh_thuan_rocks_generated.h"
 #include "core/resource_manager.h"
+#include "environment/atmosphere.h"
 #include "environment/env_shadow.h"
 #include "environment/environment_system.h"
 #include "environment/volumetric/volumetric_fog.h"
@@ -29,13 +30,16 @@ static MapDemIsland s_dem = {0};
 static MapGroundSurface s_ground = {0};
 static MapEcology s_habitat = {0};
 static MapSkyDome s_sky = {0};
-static MapCloudSea s_cloudSea = {0};
+static MapWaterSurface s_coastalSea = {0};
 static MapCliffSkirt s_cliff = {0};
 static MapWaterSurface s_oasis = {0};
 static MapRockSystem s_rocks = {0};
 static MapFloraSystem s_flora = {0};
 
+#define NINH_THUAN_SEA_Y -1.25f
+
 static WindMacroConfig s_prevWindMacro = {0};
+static AtmosphereMode s_prevAtmoMode = ATMO_MODE_MOONLIGHT_DUST;
 static Vector3 s_lastShadowFocus = {0};
 static unsigned int s_skipMask = 0;
 static bool s_shadowWasEnabled = false;
@@ -60,6 +64,22 @@ static float NinhThuanOasisSurface(float x, float z, void *user)
     if (MapDem_GetWaterInfo(&s_dem, &s_ground, x, z, &surfaceY, &depth))
         return surfaceY;
     return NINH_THUAN_LAKE_WATER_Y;
+}
+
+static float NinhThuanCoastalBed(float x, float z, void *user)
+{
+    (void)user;
+    if (x < 0.0f || x > MAP_WIDTH || z < 0.0f || z > MAP_DEPTH)
+        return -4.8f;
+    return MapDem_GetGroundHeight(&s_dem, &s_ground, x, z);
+}
+
+static float NinhThuanCoastalSurface(float x, float z, void *user)
+{
+    (void)x;
+    (void)z;
+    (void)user;
+    return NINH_THUAN_SEA_Y;
 }
 
 static void DrawNinhThuanShadowCasters(Shader depthShader, void *user)
@@ -91,10 +111,10 @@ static void SpawnNinhThuanDustHaze(void)
 {
     FogVolume_ClearAll();
     static const LocalFogVolume kDustVolumes[] = {
-        {.shape = FOG_SHAPE_CYLINDER, .position = {94.1f, 0.35f, 150.0f}, .extents = {14.0f, 0.55f, 12.0f}, .color = {236, 210, 174, 255}, .density = 0.042f, .edgeSoftness = 0.92f, .driftVelocity = {0.03f, 0.0f, 0.015f}, .active = true},
-        {.shape = FOG_SHAPE_CYLINDER, .position = {70.0f, 1.80f, 118.0f}, .extents = {16.0f, 0.60f, 14.0f}, .color = {236, 210, 174, 255}, .density = 0.048f, .edgeSoftness = 0.92f, .driftVelocity = {0.03f, 0.0f, 0.015f}, .active = true},
-        {.shape = FOG_SHAPE_CYLINDER, .position = {122.0f, 2.20f, 185.0f}, .extents = {15.0f, 0.60f, 14.0f}, .color = {236, 210, 174, 255}, .density = 0.045f, .edgeSoftness = 0.92f, .driftVelocity = {0.03f, 0.0f, 0.015f}, .active = true},
-        {.shape = FOG_SHAPE_CYLINDER, .position = {NINH_THUAN_LAKE_CENTER_X, 0.45f, NINH_THUAN_LAKE_CENTER_Z}, .extents = {14.0f, 0.50f, 12.0f}, .color = {238, 218, 186, 255}, .density = 0.052f, .edgeSoftness = 0.92f, .driftVelocity = {0.02f, 0.0f, 0.01f}, .active = true},
+        {.shape = FOG_SHAPE_CYLINDER, .position = {94.1f, 0.35f, 150.0f}, .extents = {14.0f, 0.55f, 12.0f}, .color = {236, 210, 174, 255}, .density = 0.11f, .edgeSoftness = 0.92f, .driftVelocity = {0.06f, 0.0f, 0.03f}, .active = true},
+        {.shape = FOG_SHAPE_CYLINDER, .position = {70.0f, 1.80f, 118.0f}, .extents = {16.0f, 0.60f, 14.0f}, .color = {236, 210, 174, 255}, .density = 0.13f, .edgeSoftness = 0.92f, .driftVelocity = {0.06f, 0.0f, 0.03f}, .active = true},
+        {.shape = FOG_SHAPE_CYLINDER, .position = {122.0f, 2.20f, 185.0f}, .extents = {15.0f, 0.60f, 14.0f}, .color = {236, 210, 174, 255}, .density = 0.12f, .edgeSoftness = 0.92f, .driftVelocity = {0.06f, 0.0f, 0.03f}, .active = true},
+        {.shape = FOG_SHAPE_CYLINDER, .position = {NINH_THUAN_LAKE_CENTER_X, 0.45f, NINH_THUAN_LAKE_CENTER_Z}, .extents = {14.0f, 0.50f, 12.0f}, .color = {238, 218, 186, 255}, .density = 0.14f, .edgeSoftness = 0.92f, .driftVelocity = {0.04f, 0.0f, 0.02f}, .active = true},
     };
     for (int i = 0; i < (int)(sizeof(kDustVolumes) / sizeof(kDustVolumes[0])); i++)
     {
@@ -115,14 +135,34 @@ static float NinhThuanDryGrassDensity(float x, float z, void *user)
     if (MapDem_GetWaterInfo(&s_dem, &s_ground, x, z, &waterY, &waterDepth))
         return 0.0f;
 
-    // Sparse xerophytic grass tufts: ~12-15% coverage in wind-sheltered pockets & oasis fringe
+    // Sparse xerophytic grass tufts: clustered in sheltered rock-lee pockets & oasis fringe, leaving open dunes bare
     float oasisDist = hypotf(x - NINH_THUAN_LAKE_CENTER_X, z - NINH_THUAN_LAKE_CENTER_Z);
-    float oasisFringe = (oasisDist < 24.0f) ? (1.0f - fmaxf(0.0f, (oasisDist - 12.0f) / 12.0f)) * 0.55f : 0.0f;
+    float oasisFringe = (oasisDist < 24.0f) ? (1.0f - fmaxf(0.0f, (oasisDist - 12.0f) / 12.0f)) * 0.65f : 0.0f;
 
-    float patch = sinf(x * 0.16f + z * 0.11f) * cosf(z * 0.19f - x * 0.13f);
-    float fine = sinf(x * 0.52f - z * 0.44f) * 0.5f + 0.5f;
-    float pocket = (patch > 0.36f) ? ((patch - 0.36f) * 1.15f * fine) : 0.0f;
-    return fminf(0.70f, pocket + oasisFringe);
+    float rockShelter = 0.0f;
+    for (int i = 0; i < NINH_THUAN_ROCK_COUNT; i++)
+    {
+        const MapRockItem *rk = &NINH_THUAN_ROCK_ITEMS[i];
+        if (rk->archetype == MAP_ROCK_SCREE)
+            continue;
+        float dx = x - rk->position.x;
+        float dz = z - rk->position.z;
+        float d2 = dx * dx + dz * dz;
+        float maxR = rk->radiusScale + 3.2f;
+        if (d2 < maxR * maxR)
+        {
+            float dist = sqrtf(d2) - rk->radiusScale * 0.90f;
+            if (dist < 0.05f)
+                return 0.0f; // never place inside boulder footprint
+            float w = fmaxf(0.0f, 1.0f - dist / 2.8f);
+            if (w > rockShelter)
+                rockShelter = w;
+        }
+    }
+
+    float patch = sinf(x * 0.14f + z * 0.10f) * cosf(z * 0.17f - x * 0.12f);
+    float pocket = (patch > 0.48f) ? ((patch - 0.48f) * 0.85f) : 0.0f;
+    return fminf(0.75f, rockShelter * 0.65f + oasisFringe + pocket);
 }
 
 static void BuildNinhThuanRocks(void)
@@ -140,10 +180,12 @@ static void BuildNinhThuanRocks(void)
         Vector3 gPos = pos, gNorm = {0.0f, 1.0f, 0.0f};
         if (MapProp_SampleGroundSurface(&s_ground, kMapCenter, pos.x, pos.z, &gPos, &gNorm))
         {
-            // Preserve elevated y for stacked perched corestones (tors), sink grounded rocks slightly
+            // Preserve elevated y for stacked perched corestones (tors), seated into the lower rock's sunk top
             if (pos.y > gPos.y + 0.35f)
             {
-                pos.y = item->position.y;
+                float baseSink = (i > 0) ? (NINH_THUAN_ROCK_ITEMS[i - 1].heightScale * 0.22f) : 0.0f;
+                float contactOverlap = item->heightScale * 0.16f;
+                pos.y = item->position.y - baseSink - contactOverlap;
             }
             else
             {
@@ -167,12 +209,12 @@ static void BuildNinhThuanFlora(void)
     MapMeadowDistribution dist = {
         .minBounds = {12.0f, 12.0f},
         .maxBounds = {MAP_WIDTH - 12.0f, MAP_DEPTH - 12.0f},
-        .spacing = 0.68f,
-        .jitter = 0.25f,
-        .minRadius = 0.12f,
-        .maxRadius = 0.20f,
-        .minHeight = 0.16f,
-        .maxHeight = 0.28f,
+        .spacing = 0.64f,
+        .jitter = 0.26f,
+        .minRadius = 0.14f,
+        .maxRadius = 0.24f,
+        .minHeight = 0.18f,
+        .maxHeight = 0.32f,
         .yOffset = 0.0f,
         .seed = 90421u,
     };
@@ -205,11 +247,11 @@ static void BuildNinhThuanFlora(void)
         s_reedPlacements, s_reedCount,
         NULL, NULL, 0,
         (MapFloraStyle){
-            .grassRootColor = {92, 72, 42, 255},
-            .grassTipColor = {178, 148, 86, 255},
-            .bladesPerClump = 4,
+            .grassRootColor = {96, 80, 56, 255},
+            .grassTipColor = {196, 174, 122, 255},
+            .bladesPerClump = 5,
             .bladeSegments = 3,
-            .bladeWidthScale = 0.115f,
+            .bladeWidthScale = 0.142f,
             .lodDistance = 24.0f,
             .midLodDistance = 20.0f,
             .drawDistance = 42.0f,
@@ -241,56 +283,57 @@ void InitNinhThuanMap(void)
     Wind_SetMacro(&aridWind);
 
     s_skipMask = MapProp_GetSkipMask();
-    ColorGradeLut_UseNeutral();
+    if (!ColorGradeLut_Load("assets/maps/ninh_thuan/ninh_thuan_grade.png"))
+        ColorGradeLut_UseNeutral();
 
     // Sun-Bleached Golden Afternoon (Ninh Thuan Coastal Semi-Arid Stone Park)
     static const EnvLightingPreset kNinhThuanToD[4] = {
         {
-            .ambientColor = {104, 96, 88, 255},
+            .ambientColor = {112, 120, 138, 255},
             .sunColor = {255, 206, 148, 255},
             .sunDirection = {0.82f, -0.30f, -0.49f},
-            .shadowColor = {48, 44, 48, 140},
-            .fog = {.enabled = true, .color = {238, 214, 182, 255}, .start = 24.0f, .end = 185.0f, .density = 0.0085f},
+            .shadowColor = {66, 74, 106, 155},
+            .fog = {.enabled = true, .color = {238, 214, 182, 255}, .start = 42.0f, .end = 240.0f, .density = 0.0042f},
             .atmosphere = {
-                .color = {238, 214, 182, 255}, .start = 24.0f, .end = 185.0f, .enabled = true,
+                .color = {238, 214, 182, 255}, .start = 42.0f, .end = 240.0f, .enabled = true,
                 .optics = {.rayleighLMS = {0.0092f, 0.0148f, 0.0255f}, .mieScattering = 0.0052f, .mieAnisotropy = 0.78f, .multipleScatteringAmp = 2.1f},
-                .density = {.baseDensity = 0.0085f, .heightFalloff = 0.34f, .baseAltitude = -1.2f, .enableSigmoidLayer = false}
+                .density = {.baseDensity = 0.0042f, .heightFalloff = 0.22f, .baseAltitude = -6.0f, .enableSigmoidLayer = false}
             }
         },
         {
-            .ambientColor = {122, 118, 114, 255},
+            .ambientColor = {124, 134, 152, 255},
             .sunColor = {255, 240, 208, 255},
             .sunDirection = {0.34f, -0.88f, -0.33f},
-            .shadowColor = {56, 54, 58, 150},
-            .fog = {.enabled = true, .color = {236, 224, 204, 255}, .start = 28.0f, .end = 210.0f, .density = 0.0068f},
+            .shadowColor = {72, 82, 114, 155},
+            .fog = {.enabled = true, .color = {236, 224, 204, 255}, .start = 48.0f, .end = 260.0f, .density = 0.0034f},
             .atmosphere = {
-                .color = {236, 224, 204, 255}, .start = 28.0f, .end = 210.0f, .enabled = true,
+                .color = {236, 224, 204, 255}, .start = 48.0f, .end = 260.0f, .enabled = true,
                 .optics = {.rayleighLMS = {0.0082f, 0.0138f, 0.0240f}, .mieScattering = 0.0038f, .mieAnisotropy = 0.76f, .multipleScatteringAmp = 1.9f},
-                .density = {.baseDensity = 0.0068f, .heightFalloff = 0.32f, .baseAltitude = -1.2f, .enableSigmoidLayer = false}
+                .density = {.baseDensity = 0.0034f, .heightFalloff = 0.20f, .baseAltitude = -6.0f, .enableSigmoidLayer = false}
             }
         },
         {
-            .ambientColor = {112, 108, 106, 255},
+            .ambientColor = {118, 128, 146, 255},
             .sunColor = {255, 224, 174, 255},
             .sunDirection = {0.62f, -0.56f, -0.55f},
-            .shadowColor = {50, 48, 54, 150},
-            .fog = {.enabled = true, .color = {240, 218, 188, 255}, .start = 26.0f, .end = 195.0f, .density = 0.0078f},
+            .shadowColor = {70, 78, 110, 155},
+            .fog = {.enabled = true, .color = {240, 218, 188, 255}, .start = 44.0f, .end = 250.0f, .density = 0.0038f},
             .atmosphere = {
-                .color = {240, 218, 188, 255}, .start = 26.0f, .end = 195.0f, .enabled = true,
+                .color = {240, 218, 188, 255}, .start = 44.0f, .end = 250.0f, .enabled = true,
                 .optics = {.rayleighLMS = {0.0088f, 0.0145f, 0.0250f}, .mieScattering = 0.0046f, .mieAnisotropy = 0.78f, .multipleScatteringAmp = 2.0f},
-                .density = {.baseDensity = 0.0078f, .heightFalloff = 0.34f, .baseAltitude = -1.2f, .enableSigmoidLayer = false}
+                .density = {.baseDensity = 0.0038f, .heightFalloff = 0.22f, .baseAltitude = -6.0f, .enableSigmoidLayer = false}
             }
         },
         {
-            .ambientColor = {86, 80, 92, 255},
+            .ambientColor = {94, 98, 124, 255},
             .sunColor = {255, 168, 108, 255},
             .sunDirection = {-0.84f, -0.24f, -0.49f},
-            .shadowColor = {42, 38, 52, 145},
-            .fog = {.enabled = true, .color = {242, 198, 166, 255}, .start = 20.0f, .end = 170.0f, .density = 0.010f},
+            .shadowColor = {60, 66, 98, 150},
+            .fog = {.enabled = true, .color = {242, 198, 166, 255}, .start = 36.0f, .end = 220.0f, .density = 0.0048f},
             .atmosphere = {
-                .color = {242, 198, 166, 255}, .start = 20.0f, .end = 170.0f, .enabled = true,
+                .color = {242, 198, 166, 255}, .start = 36.0f, .end = 220.0f, .enabled = true,
                 .optics = {.rayleighLMS = {0.0110f, 0.0168f, 0.0290f}, .mieScattering = 0.0060f, .mieAnisotropy = 0.82f, .multipleScatteringAmp = 2.3f},
-                .density = {.baseDensity = 0.0100f, .heightFalloff = 0.36f, .baseAltitude = -1.2f, .enableSigmoidLayer = false}
+                .density = {.baseDensity = 0.0048f, .heightFalloff = 0.22f, .baseAltitude = -6.0f, .enableSigmoidLayer = false}
             }
         }
     };
@@ -298,20 +341,20 @@ void InitNinhThuanMap(void)
     Environment_SetTimeOfDayPresets(kNinhThuanToD, kNinhThuanTimes, 4);
     Environment_SetTimeOfDay(0.64f);
     Environment_SetTimeOfDaySpeed(0.0f);
-    Environment_SetAmbientColor((Color){112, 108, 106, 255});
+    Environment_SetAmbientColor((Color){118, 128, 146, 255});
     Environment_SetSunColor((Color){255, 224, 174, 255});
-    Environment_SetSunIntensity(2.25f);
+    Environment_SetSunIntensity(1.60f);
     Environment_SetSunDirection(Vector3Normalize((Vector3){0.62f, -0.56f, -0.55f}));
-    Environment_SetShadowColor((Color){50, 48, 54, 150});
+    Environment_SetShadowColor((Color){70, 78, 110, 155});
 
     PostFXMapProfile postProfile = {
         .enabled = true,
-        .exposure = 1.00f,
-        .contrast = 1.10f,
-        .saturation = 1.04f,
+        .exposure = 0.98f,
+        .contrast = 1.06f,
+        .saturation = 0.94f,
         .bloomIntensity = 0.14f,
-        .shadowTint = {0.95f, 0.94f, 0.98f},
-        .highlightTint = {1.06f, 1.01f, 0.92f},
+        .shadowTint = {0.90f, 0.95f, 1.06f},
+        .highlightTint = {1.05f, 1.00f, 0.93f},
         .bloomThreshold = 1.18f,
         .bloomKnee = 0.42f,
         .hueRestore = 0.60f,
@@ -322,10 +365,24 @@ void InitNinhThuanMap(void)
         PostFX_SetMapProfile(postProfile);
 
     AtmosphereProfile atmos = kNinhThuanToD[2].atmosphere;
+    atmos.enabled = false;
     Environment_SetAtmosphereProfile(&atmos);
-    VolumetricFog_SetGodRayIntensity(0.35f);
-    VolumetricFog_SetDistantCoverage(0.45f);
-    Environment_SetCloudShadowConfig(NULL);
+    VolumetricFog_SetGodRayIntensity(0.85f);
+    VolumetricFog_SetDistantCoverage(0.35f);
+    s_prevAtmoMode = Atmosphere_GetMode();
+    Atmosphere_SetMode(ATMO_MODE_DESERT_DUST);
+    Atmosphere_Configure(kMapCenter, (Vector3){32.0f, 3.2f, 32.0f}, 300, (Color){242, 214, 168, 255});
+    PostFX_SetHeatHaze(0.0f, 0.0f, 0.0f);
+    EnvCloudShadowConfig cloudConfig = {
+        .enabled = true,
+        .strength = 0.22f,
+        .worldSize = 160.0f,
+        .planeHeight = 90.0f,
+        .coverage = 0.36f,
+        .softness = 0.34f,
+        .windSpeedScale = 0.85f,
+    };
+    Environment_SetCloudShadowConfig((s_skipMask & MAP_SKIP_CLOUDSHADOW) ? NULL : &cloudConfig);
     if (s_skipMask & MAP_SKIP_FOGVOLUMES)
         FogVolume_ClearAll();
     else
@@ -335,9 +392,9 @@ void InitNinhThuanMap(void)
     MapGroundBiomeProfile earthBiome = {
         .aridFactor = 1.0f,
         .strataStrength = 0.90f,
-        .grusColor = {0.49f, 0.43f, 0.35f},
-        .hardpanColor = {0.36f, 0.30f, 0.23f},
-        .lichenColor = {0.46f, 0.38f, 0.21f},
+        .grusColor = {0.62f, 0.54f, 0.43f},
+        .hardpanColor = {0.48f, 0.40f, 0.31f},
+        .lichenColor = {0.58f, 0.42f, 0.22f},
     };
     MapProp_SetGroundBiomeProfile(&earthBiome);
     MapProp_SetRockAridMode(1.0f);
@@ -418,29 +475,151 @@ void InitNinhThuanMap(void)
     s_habitat.ready = s_habitat.habitatTexture.id > 0 && s_habitat.distanceTexture.id > 0;
     MapProp_SetGroundEcology(&s_ground, &s_habitat);
 
-    MapProp_SetGroundTint(&s_ground, (Color){168, 134, 96, 255});
+    MapProp_SetGroundTint(&s_ground, (Color){204, 186, 154, 255});
     MapProp_SetGroundSurfaceMaps(&s_ground,
                                  "assets/textures/dirt_material.png",
                                  "assets/textures/dirt_material.png");
-    MapProp_SetGroundReliefMap(&s_ground, "assets/textures/verdant_terrain_relief.png");
+    MapProp_SetGroundReliefMap(&s_ground, "assets/maps/ninh_thuan/ninh_thuan_relief.png");
     MapProp_SetGroundDebrisMap(&s_ground, "assets/maps/ninh_thuan/ninh_thuan_debris_map.png");
     MapProp_SetGroundRockMaps(&s_ground,
                               "assets/textures/rock_diffuse.png",
                               "assets/textures/rock_normal.png");
 
     s_sky = MapProp_CreateSkyDome();
-    s_cloudSea = MapProp_CreateCloudSea(1400.0f, 1400.0f, 65.0f);
-    MapProp_SetCloudSeaGroundBoundary(
-        &s_cloudSea, &s_ground, -4.85f,
-        &(MapBoundaryMistStyle){
-            .innerWidth = 1.2f,
-            .outerWidth = 3.6f,
-            .heightOffset = 0.22f,
-            .outerDrop = 0.42f,
-            .opacity = 0.28f,
-        });
     if (!(s_skipMask & MAP_SKIP_CLIFF))
         s_cliff = MapProp_CreateCliffSkirt(&s_ground, kMapCenter, -0.45f, -26.0f);
+
+    s_coastalSea = MapProp_CreateWaterPatch(
+        (Vector3){kMapCenter.x, NINH_THUAN_SEA_Y, kMapCenter.z},
+        820.0f, 820.0f,
+        (MapWaterConfig){
+            .ecosystem = WATER_ECO_CUSTOM,
+            .segments = 96,
+            .rings = 96,
+            .waveHeight = 0.16f,
+            .waveScale = 0.45f,
+            .waveSpeed = 1.20f,
+            .flowVelocity = {0.20f, 0.14f},
+            .detailScale = 0.24f,
+            .detailStrength = 0.42f,
+            .maxDepth = 4.2f,
+            .absorption = {0.58f, 0.15f, 0.06f},
+            .scatterColor = {0.06f, 0.52f, 0.50f},
+            .scatterCoeff = 0.48f,
+            .causticsStrength = 0.42f,
+            .causticsScale = 1.45f,
+            .foamThreshold = 0.28f,
+            .deepColor = {6, 44, 74, 255},
+            .shallowColor = {26, 158, 152, 235},
+            .foamColor = {250, 248, 242, 235},
+        });
+    if (s_coastalSea.ready)
+    {
+        // Bake 512x512 coastal cliff distance & inward-normal map for crashing surf waves & shallow gradient
+        const int res = 512;
+        const float patchSpan = 820.0f;
+        const float cell = patchSpan / (float)(res - 1);
+        const float diag = cell * 1.41421356f;
+        float *distGrid = (float *)malloc((size_t)(res * res) * sizeof(float));
+        unsigned char *rgba = (unsigned char *)malloc((size_t)(res * res * 4));
+        if (distGrid && rgba)
+        {
+            float minX = kMapCenter.x - patchSpan * 0.5f;
+            float minZ = kMapCenter.z - patchSpan * 0.5f;
+            for (int j = 0; j < res; j++)
+            {
+                float wz = minZ + (float)j * cell;
+                for (int i = 0; i < res; i++)
+                {
+                    float wx = minX + (float)i * cell;
+                    bool isLand = false;
+                    if (wx >= 0.0f && wx <= MAP_WIDTH && wz >= 0.0f && wz <= MAP_DEPTH)
+                    {
+                        Vector3 gp = {0}, gn = {0};
+                        if (MapProp_SampleGroundSurface(&s_ground, kMapCenter, wx, wz, &gp, &gn) &&
+                            gp.y > NINH_THUAN_SEA_Y + 0.05f)
+                        {
+                            isLand = true;
+                        }
+                    }
+                    distGrid[j * res + i] = isLand ? 0.0f : 1000.0f;
+                }
+            }
+            for (int j = 1; j < res - 1; j++)
+            {
+                for (int i = 1; i < res - 1; i++)
+                {
+                    int idx = j * res + i;
+                    float d = distGrid[idx];
+                    float dL = distGrid[idx - 1] + cell;
+                    float dU = distGrid[idx - res] + cell;
+                    float dUL = distGrid[idx - res - 1] + diag;
+                    float dUR = distGrid[idx - res + 1] + diag;
+                    if (dL < d) d = dL;
+                    if (dU < d) d = dU;
+                    if (dUL < d) d = dUL;
+                    if (dUR < d) d = dUR;
+                    distGrid[idx] = d;
+                }
+            }
+            for (int j = res - 2; j >= 1; j--)
+            {
+                for (int i = res - 2; i >= 1; i--)
+                {
+                    int idx = j * res + i;
+                    float d = distGrid[idx];
+                    float dR = distGrid[idx + 1] + cell;
+                    float dD = distGrid[idx + res] + cell;
+                    float dDL = distGrid[idx + res - 1] + diag;
+                    float dDR = distGrid[idx + res + 1] + diag;
+                    if (dR < d) d = dR;
+                    if (dD < d) d = dD;
+                    if (dDL < d) d = dDL;
+                    if (dDR < d) d = dDR;
+                    distGrid[idx] = d;
+                }
+            }
+            for (int j = 0; j < res; j++)
+            {
+                int j0 = (j > 0) ? j - 1 : 0;
+                int j1 = (j < res - 1) ? j + 1 : res - 1;
+                for (int i = 0; i < res; i++)
+                {
+                    int i0 = (i > 0) ? i - 1 : 0;
+                    int i1 = (i < res - 1) ? i + 1 : res - 1;
+                    int idx = j * res + i;
+                    float gx = distGrid[j * res + i0] - distGrid[j * res + i1];
+                    float gz = distGrid[j0 * res + i] - distGrid[j1 * res + i];
+                    float len = sqrtf(gx * gx + gz * gz);
+                    float nx = (len > 1e-4f) ? (gx / len) : 0.0f;
+                    float nz = (len > 1e-4f) ? (gz / len) : 0.0f;
+                    float normDist = distGrid[idx] / 24.0f;
+                    if (normDist > 1.0f) normDist = 1.0f;
+                    rgba[idx * 4 + 0] = (unsigned char)((nx * 0.5f + 0.5f) * 255.0f + 0.5f);
+                    rgba[idx * 4 + 1] = (unsigned char)((nz * 0.5f + 0.5f) * 255.0f + 0.5f);
+                    rgba[idx * 4 + 2] = (unsigned char)(normDist * 255.0f + 0.5f);
+                    rgba[idx * 4 + 3] = 255;
+                }
+            }
+            Image shoreImg = {
+                .data = rgba,
+                .width = res,
+                .height = res,
+                .mipmaps = 1,
+                .format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8,
+            };
+            s_coastalSea.flowFieldTex = LoadTextureFromImage(shoreImg);
+            if (s_coastalSea.flowFieldTex.id > 0)
+            {
+                SetTextureFilter(s_coastalSea.flowFieldTex, TEXTURE_FILTER_BILINEAR);
+                SetTextureWrap(s_coastalSea.flowFieldTex, TEXTURE_WRAP_CLAMP);
+                s_coastalSea.hydrologyReady = true;
+            }
+        }
+        free(distGrid);
+        free(rgba);
+    }
+    MapProp_SetWaterTerrainSource(&s_coastalSea, NinhThuanCoastalBed, NinhThuanCoastalSurface, NULL);
 
     s_oasis = MapProp_CreateTerrainWater("assets/maps/ninh_thuan/ninh_thuan_water.obj",
                                          (MapWaterConfig){
@@ -510,8 +689,8 @@ void DrawNinhThuanMap(void)
             MapProp_DrawFloraSystem(&s_flora);
     }
 
-    if (!(s_skipMask & MAP_SKIP_CLOUDSEA))
-        MapProp_DrawCloudSea(&s_cloudSea, kMapCenter, CLOUD_SEA_Y);
+    if (!(s_skipMask & MAP_SKIP_WATER))
+        MapProp_DrawWaterBed(&s_coastalSea, (float)fmod(GetTime(), 3600.0));
     if (!(s_skipMask & MAP_SKIP_SKY))
         MapProp_DrawSkyDome(&s_sky);
 }
@@ -520,10 +699,12 @@ void DrawTransparentNinhThuanMap(void)
 {
     if (!s_ready)
         return;
-    if (!(s_skipMask & MAP_SKIP_CLOUDSEA))
-        MapProp_DrawIslandMist(&s_cloudSea, kMapCenter);
     if (!(s_skipMask & MAP_SKIP_WATER))
-        MapProp_DrawWaterOverlay(&s_oasis, (float)fmod(GetTime(), 3600.0));
+    {
+        float t = (float)fmod(GetTime(), 3600.0);
+        MapProp_DrawWaterOverlay(&s_coastalSea, t);
+        MapProp_DrawWaterOverlay(&s_oasis, t);
+    }
 }
 
 void UpdateNinhThuanMap(float dt)
@@ -532,6 +713,7 @@ void UpdateNinhThuanMap(float dt)
         return;
 
     MapProp_UpdateFloraSystem(&s_flora, camera.target, dt);
+    MapProp_UpdateWaterSurface(&s_coastalSea, dt);
     MapProp_UpdateWaterSurface(&s_oasis, dt);
 
     float dx = camera.target.x - s_lastShadowFocus.x;
@@ -547,8 +729,10 @@ void UpdateNinhThuanMap(float dt)
 void UnloadNinhThuanMap(void)
 {
     Wind_SetMacro(&s_prevWindMacro);
+    Atmosphere_SetMode(s_prevAtmoMode);
     ColorGradeLut_UseNeutral();
     PostFX_ClearMapProfile();
+    PostFX_SetHeatHaze(0.0f, 0.0f, 0.0f);
     Environment_SetSunIntensity(1.0f);
     MapProp_SetGroundBiomeProfile(NULL);
     MapProp_SetRockAridMode(0.0f);
@@ -559,7 +743,16 @@ void UnloadNinhThuanMap(void)
 
     EnvShadow_SetMapCasterCallback(NULL, NULL);
     EnvShadow_InvalidateStaticCache();
-    Environment_SetCloudShadowConfig(NULL);
+    EnvCloudShadowConfig cloudConfig = {
+        .enabled = true,
+        .strength = 0.22f,
+        .worldSize = 160.0f,
+        .planeHeight = 90.0f,
+        .coverage = 0.36f,
+        .softness = 0.34f,
+        .windSpeedScale = 0.85f,
+    };
+    Environment_SetCloudShadowConfig((s_skipMask & MAP_SKIP_CLOUDSHADOW) ? NULL : &cloudConfig);
     VolumetricFog_SetDistantCoverage(1.0f);
     FogVolume_ClearAll();
 
@@ -567,11 +760,11 @@ void UnloadNinhThuanMap(void)
     MapProp_SetGroundEcology(&s_ground, NULL);
 
     MapProp_UnloadWaterSurface(&s_oasis);
+    MapProp_UnloadWaterSurface(&s_coastalSea);
     MapProp_UnloadFloraSystem(&s_flora);
     MapProp_UnloadRockSystem(&s_rocks);
     if (s_cliff.ready)
         MapProp_UnloadCliffSkirt(&s_cliff);
-    MapProp_UnloadCloudSea(&s_cloudSea);
     MapProp_UnloadSkyDome(&s_sky);
     MapProp_UnloadGround(&s_ground);
 

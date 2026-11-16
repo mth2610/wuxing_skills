@@ -90,6 +90,13 @@ static void SeedMote(Mote *m) {
         m->swaySpd = RandRange(0.4f, 1.2f);
         m->size    = RandRange(0.03f, 0.08f);
         m->bright  = RandRange(0.6f, 1.4f);
+    } else if (s_mode == ATMO_MODE_DESERT_DUST) {
+        // Hạt cát & bụi vàng sa mạc bay thấp theo gió
+        m->drift   = (Vector3){ RandRange(0.18f, 0.45f), RandRange(-0.03f, 0.04f), RandRange(0.10f, 0.28f) };
+        m->phase   = RandRange(0.0f, 6.2831853f);
+        m->swaySpd = RandRange(0.6f, 1.4f);
+        m->size    = RandRange(0.022f, 0.055f);
+        m->bright  = RandRange(0.45f, 0.95f);
     } else {
         // Bụi trôi ánh trăng (mặc định)
         m->drift   = (Vector3){ 0.0f, RandRange(-0.045f, -0.015f), 0.0f };
@@ -140,6 +147,8 @@ void Atmosphere_SetMode(AtmosphereMode mode) {
         s_tint = (Color){ 255, 120, 24, 255 }; // Sắc cam than hồng rực lửa
     } else if (mode == ATMO_MODE_SPIRIT_SPARKS) {
         s_tint = (Color){ 160, 255, 210, 255 }; // Sắc ngọc bích / tiên khí
+    } else if (mode == ATMO_MODE_DESERT_DUST) {
+        s_tint = (Color){ 242, 214, 168, 255 }; // Sắc cát vàng nắng chiều
     } else {
         s_tint = (Color){ 160, 190, 235, 255 }; // Sắc trăng lạnh
     }

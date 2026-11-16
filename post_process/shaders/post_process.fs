@@ -44,6 +44,7 @@ uniform float u_radialBlurEnabled;
 uniform vec2  u_radialBlurCenter;   // screen UV [0..1] of the focal point
 uniform float u_radialBlurStrength; // sample offset scale (~0.15 = strong)
 uniform float u_radialBlurFalloff;  // UV radius where the blur reaches full strength
+uniform vec4  u_heatHazeParams;     // .x = strength (0 = off), .y = time, .z = bandStartY, .w = bandEndY
 
 uniform float u_hueRestore;    // shipping default 0.6 (§12.1); 0 = the old per-channel curve
 uniform float u_shoulderView;  // diagnostic, 0 = off
@@ -97,6 +98,21 @@ void main() {
     // Jimenez sin-free Interleaved Gradient Noise (dùng chung cho cả Radial Blur jitter và Output Dither)
     float d0 = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
     float d1 = fract(52.9829189 * fract(dot(gl_FragCoord.xy + 17.0, vec2(0.06711056, 0.00583715))));
+
+    // 0b. Subtle distant desert heat-haze shimmer (zero cost when strength <= 0)
+    if (u_heatHazeParams.x > 0.0001) {
+        float hBand = smoothstep(u_heatHazeParams.z, u_heatHazeParams.z + 0.14, uv.y)
+                    * (1.0 - smoothstep(u_heatHazeParams.w - 0.10, u_heatHazeParams.w, uv.y));
+        if (hBand > 0.001) {
+            float t = u_heatHazeParams.y;
+            float waveX = sin(uv.y * 95.0 - t * 4.2 + uv.x * 18.0) * 0.65
+                        + cos(uv.y * 165.0 + t * 6.5 - uv.x * 27.0) * 0.35;
+            float waveY = cos(uv.x * 78.0 - t * 3.4 + uv.y * 42.0) * 0.5;
+            uv = clamp(uv + vec2(waveX, waveY) * (u_heatHazeParams.x * hBand), vec2(0.001), vec2(0.999));
+            toCenter = uv - vec2(0.5);
+            distSq = dot(toCenter, toCenter);
+        }
+    }
 
     // 1. Fetch gốc + Chromatic Aberration
     vec4 sceneCol = texture(texture0, uv);

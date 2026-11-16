@@ -719,6 +719,9 @@ MapFloraSystem MapProp_CreateFloraSystem(
                                                     .texturePath = NULL,
                                                     .hasPlumes = false,
                                                     .growthForm = MAP_MEADOW_GROWTH_REED,
+                                                    .grassState = style.grassState,
+                                                    .dryness = style.dryness,
+                                                    .scorch = style.scorch,
                                                 });
         flora.reedCount = reedCount;
     }

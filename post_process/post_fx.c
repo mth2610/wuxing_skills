@@ -72,9 +72,14 @@ static float s_lutStrengthOverride = 0.0f;
 static float s_contrastOverride = 0.0f;
 static float s_saturationOverride = 0.0f;
 static PostFXMapProfile s_mapProfile = {0};
+static Vector3 s_heatHazeConfig = {0.0f, 0.48f, 0.92f};
+static int heatHazeParamsLoc = -1;
 
 void PostFX_SetMapProfile(PostFXMapProfile profile) { s_mapProfile = profile; }
 void PostFX_ClearMapProfile(void) { s_mapProfile = (PostFXMapProfile){0}; }
+void PostFX_SetHeatHaze(float strength, float bandStartY, float bandEndY) {
+  s_heatHazeConfig = (Vector3){strength > 0.0f ? strength : 0.0f, bandStartY, bandEndY};
+}
 
 // Uniform locations — radial blur (E1a, lives in the composite shader)
 static int radialBlurEnabledLoc;
@@ -314,6 +319,7 @@ void PostFX_Init(int width, int height)
   radialBlurCenterLoc = GetShaderLocation(compositeShader, "u_radialBlurCenter");
   radialBlurStrengthLoc = GetShaderLocation(compositeShader, "u_radialBlurStrength");
   radialBlurFalloffLoc = GetShaderLocation(compositeShader, "u_radialBlurFalloff");
+  heatHazeParamsLoc = GetShaderLocation(compositeShader, "u_heatHazeParams");
   streakEnabledLoc = GetShaderLocation(dsShader, "u_streakEnabled");
   streakStrengthLoc = GetShaderLocation(dsShader, "u_streakStrength");
   streakAngleLoc = GetShaderLocation(dsShader, "u_streakAngle");
@@ -884,6 +890,10 @@ void PostFX_Draw(const PostFXConfig *config)
     SetShaderValue(compositeShader, radialBlurCenterLoc, &radialCenter, SHADER_UNIFORM_VEC2);
     SetShaderValue(compositeShader, radialBlurStrengthLoc, &radialStrength, SHADER_UNIFORM_FLOAT);
     SetShaderValue(compositeShader, radialBlurFalloffLoc, &radialFalloff, SHADER_UNIFORM_FLOAT);
+  }
+  if (heatHazeParamsLoc >= 0) {
+    Vector4 hh = {s_heatHazeConfig.x, (float)GetTime(), s_heatHazeConfig.y, s_heatHazeConfig.z};
+    SetShaderValue(compositeShader, heatHazeParamsLoc, &hh, SHADER_UNIFORM_VEC4);
   }
 
   const float outW = useFxaa ? (float)ldrTex.texture.width : (float)GetRenderWidth();

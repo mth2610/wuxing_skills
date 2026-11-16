@@ -493,76 +493,79 @@ static Mesh Nature_BuildProceduralRockMeshVariant(int rockType, int variantSeed)
         }
         else
         {
-            // Granite boulder / Ninh Thuan exfoliated corestone tor:
-            // GPU Gems 3 Ch. 1 pre-warped cleavage planes + spheroidal onion-skin exfoliation shells + tafoni cavities
-            float warpAngle = angle + 0.35f * sinf(y * 3.1f + vPhase) + vPhase;
-            float c1 = cosf(3.0f * warpAngle + 0.35f);
-            float c2 = sinf(4.0f * warpAngle - 0.65f);
-            float c3 = cosf(6.0f * warpAngle + 1.2f);
-            float cleavage = 0.24f * c1 + 0.15f * c2 - 0.11f * fabsf(c3);
+            // Ninh Thuan Exfoliated Granite Corestone:
+            // Smooth spheroidal superellipsoid + 1-2 gentle sheet joints + shallow lower-flank tafoni
+            float warpAngle = angle + 0.22f * sinf(y * 2.4f + vPhase) + vPhase;
+            float c1 = cosf(2.0f * warpAngle + 0.35f);
+            float c2 = sinf(3.0f * warpAngle - 0.65f);
+            float lobe = 0.14f * c1 + 0.09f * c2;
 
-            vx = cosA * horizR * (1.0f + cleavage) * 1.22f * vAsymX;
-            vy = y * 0.82f;
-            vz = sinA * horizR * (1.0f + cleavage) * 0.88f * vAsymZ;
+            // Superellipsoid-like spheroidal rounding (fuller shoulders, natural corestone mass)
+            float rSph = sqrtf(x * x + y * y + z * z + 1e-6f);
+            float sxN = x / rSph, syN = y / rSph, szN = z / rSph;
+            float superMix = 0.22f * (powf(fabsf(sxN), 2.4f) + powf(fabsf(syN), 2.4f) + powf(fabsf(szN), 2.4f));
+            float rCore = 1.0f + lobe + superMix * 0.35f;
+
+            vx = cosA * horizR * rCore * 1.18f * vAsymX;
+            vy = y * 0.86f * (1.0f + 0.08f * c1);
+            vz = sinA * horizR * rCore * 0.92f * vAsymZ;
 
             // Variant 2: Pedestal / neck-pinch wind-scoured corestone (Nui Chua balanced boulder)
             if (variantSeed == 2)
             {
                 float neckBand = expf(-((y + 0.28f) * (y + 0.28f)) * 7.5f);
-                float pinch = 1.0f - 0.24f * neckBand;
+                float pinch = 1.0f - 0.22f * neckBand;
                 vx *= pinch;
                 vz *= pinch;
             }
-            // Variant 3: Split-joint granite block with tectonic fracture groove
+            // Variant 3: Split-joint granite block with single tectonic fracture groove
             else if (variantSeed == 3)
             {
-                float jointDist = fabsf(vx * 0.86f + vz * 0.50f - 0.06f * sinf(vy * 3.0f));
-                if (jointDist < 0.22f && vy > -0.25f)
+                float jointDist = fabsf(vx * 0.86f + vz * 0.50f - 0.05f * sinf(vy * 2.6f));
+                if (jointDist < 0.20f && vy > -0.25f)
                 {
-                    float groove = (1.0f - jointDist / 0.22f) * (vy + 0.25f) * 0.38f;
+                    float groove = (1.0f - jointDist / 0.20f) * (vy + 0.25f) * 0.32f;
                     vy -= groove;
                 }
             }
 
-            for (int p = 0; p < 9; p++)
+            // 2 gentle exfoliation sheet-joint planes (replaces 9 harsh polyhedral cleavage planes)
+            static const float kSheetJoints[2][4] = {
+                {0.24f, 0.92f, 0.30f, 0.68f},
+                {-0.62f, 0.42f, -0.66f, 0.72f},
+            };
+            for (int p = 0; p < 2; p++)
             {
-                float nx = kBoulderPlanes[p][0];
-                float ny = kBoulderPlanes[p][1];
-                float nz = kBoulderPlanes[p][2];
-                float d = kBoulderPlanes[p][3];
+                float nx = kSheetJoints[p][0], ny = kSheetJoints[p][1], nz = kSheetJoints[p][2];
+                float d = kSheetJoints[p][3];
                 float dist = vx * nx + vy * ny + vz * nz - d;
-                if (dist > -0.06f)
+                if (dist > -0.08f)
                 {
-                    float u = dist + 0.06f;
-                    float softDist = 0.5f * (u + sqrtf(u * u + 0.008f));
-                    const float clipStrength = (variantSeed == 1) ? 0.80f : 0.90f;
-                    vx -= nx * softDist * clipStrength;
-                    vy -= ny * softDist * clipStrength;
-                    vz -= nz * softDist * clipStrength;
+                    float u = dist + 0.08f;
+                    float softDist = 0.5f * (u + sqrtf(u * u + 0.025f));
+                    vx -= nx * softDist * 0.58f;
+                    vy -= ny * softDist * 0.58f;
+                    vz -= nz * softDist * 0.58f;
                 }
             }
 
-            // Spheroidal exfoliation onion-skin shell steps (Ninh Thuan granite weathering)
-            float shellCoord = (vy + 0.85f) * 4.2f + 0.45f * sinf(vx * 2.8f + vz * 2.3f + vPhase);
+            // Subtle spheroidal exfoliation onion-skin shell step
+            float shellCoord = (vy + 0.85f) * 3.4f + 0.35f * sinf(vx * 2.4f + vz * 2.1f + vPhase);
             float shellIdx = floorf(shellCoord);
             float shellFrac = shellCoord - shellIdx;
-            float exfoliationStep = 0.038f * (Rock_Smoothstep(0.08f, 0.28f, shellFrac) - 0.5f);
+            float exfoliationStep = 0.024f * (Rock_Smoothstep(0.10f, 0.32f, shellFrac) - 0.5f);
             float rLen = sqrtf(vx * vx + vz * vz + 1e-6f);
             vx += (vx / rLen) * exfoliationStep;
             vz += (vz / rLen) * exfoliationStep;
 
             // Subtle wind-eroded tafoni pocket on lower windward flank
-            float tafoniWave = sinf(vx * 5.2f + vPhase) * cosf(vz * 4.8f - vPhase) * sinf(vy * 6.0f);
-            if (tafoniWave > 0.45f && vy < 0.35f && vy > -0.45f)
+            float tafoniWave = sinf(vx * 4.6f + vPhase) * cosf(vz * 4.4f - vPhase) * sinf(vy * 5.2f);
+            if (tafoniWave > 0.48f && vy < 0.25f && vy > -0.45f)
             {
-                float scoop = (tafoniWave - 0.45f) * 0.16f;
+                float scoop = (tafoniWave - 0.48f) * 0.14f;
                 vx *= (1.0f - scoop);
                 vz *= (1.0f - scoop);
             }
-
-            float strata = vy * 7.5f + angle * 0.9f + vPhase;
-            float terrace = 0.045f * (sinf(strata) + 0.35f * sinf(strata * 2.0f));
-            vy += terrace;
 
             if (vy < -0.22f)
             {
@@ -629,8 +632,12 @@ static Mesh Nature_BuildProceduralRockMeshVariant(int rockType, int variantSeed)
     bool flatFaceted = (rockType == MAP_ROCK_BASALT || rockType == MAP_ROCK_SANDSTONE ||
                         rockType == MAP_ROCK_OBSIDIAN || rockType == MAP_ROCK_SLATE);
 
-    float cosCreaseThreshold = 0.819f; // ~35 deg for chiseled granite/boulders
-    if (rockType == MAP_ROCK_RIVER_STONE)
+    float cosCreaseThreshold = 0.819f; // ~35 deg for chiseled boulders
+    if (rockType == MAP_ROCK_GRANITE)
+    {
+        cosCreaseThreshold = 0.422f; // ~65 deg for smooth spheroidal granite corestones
+    }
+    else if (rockType == MAP_ROCK_RIVER_STONE)
     {
         cosCreaseThreshold = 0.500f; // ~60 deg for water-smoothed river stones
     }
