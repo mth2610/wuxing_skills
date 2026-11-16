@@ -127,6 +127,7 @@ static void WaterFx_InitShared(void)
     s_waterFxInit = true;
 }
 
+#include "vc_freeze_patch.inl"
 #include "ice_crystal.inl"
 #include "vc_guided_liquid.inl"
 #include "vc_water_dragon.inl"

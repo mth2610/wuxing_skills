@@ -417,6 +417,8 @@ configure_file(core/shaders/water_splash.fs ${CMAKE_CURRENT_BINARY_DIR}/core/sha
 configure_file(core/shaders/water_splash.vs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/water_splash.vs COPYONLY)
 configure_file(core/shaders/tsunami_swe.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/tsunami_swe.fs COPYONLY)
 configure_file(core/shaders/tsunami_swe.vs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/tsunami_swe.vs COPYONLY)
+configure_file(core/shaders/freeze_patch.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/freeze_patch.fs COPYONLY)
+configure_file(core/shaders/freeze_patch.vs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/freeze_patch.vs COPYONLY)
 configure_file(core/shaders/ground_wave.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/ground_wave.fs COPYONLY)
 configure_file(core/shaders/ground_wave.vs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/ground_wave.vs COPYONLY)
 configure_file(core/shaders/shock_ring.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/shock_ring.fs COPYONLY)

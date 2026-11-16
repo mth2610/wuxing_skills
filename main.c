@@ -1906,6 +1906,9 @@ int main(int argc, char **argv) {
             VC_EarthSpike_DrawShadowPass();
             VC_MetalBlades_DrawShadowPass();
             LiquidFlow_DrawShadowPass();
+            VC_Tsunami_DrawShadowPass();
+            VC_Crystal_DrawShadowPass();
+            VC_IceCrystal_DrawShadowPass();
             EndShaderMode();
         }
         if (CharacterModel_IsLoaded()) {
@@ -2075,6 +2078,7 @@ int main(int argc, char **argv) {
     SceneTargets_BeginWorldRefraction();
     VFX_ShieldShell_DrawRefraction(camera);
     VFX_FlowShield_DrawRefraction(camera);
+    VFX_Compose_DrawRefraction(camera);
     VFXTest_DrawRefraction(camera);
     if (LiquidMetaball3D_HasBlobs()) {
         LiquidMetaball3D_Draw(camera, NULL, 0.0f);

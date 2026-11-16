@@ -803,6 +803,14 @@ static void VFXTest_RefreshInspectorParams(bool force)
     {
         s_inspectorParamCount = VFX_Tsunami_GetParams(VFX_Tsunami_GetLiveConfig(), s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
     }
+    else if (VFXTest_IsNewFxNamed("MIST VEIL"))
+    {
+        s_inspectorParamCount = VFX_MistVeil_GetParams(VFX_MistVeil_GetLiveConfig(), s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
+    }
+    else if (VFXTest_IsNewFxNamed("ICE CRYSTAL"))
+    {
+        s_inspectorParamCount = VFX_IceCrystal_GetParams(VFX_IceCrystal_GetLiveConfig(), s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
+    }
     else if (VFXTest_IsNewFxNamed("SEISMIC WAVE"))
     {
         s_inspectorParamCount = VFX_SeismicWave_GetParams(VFX_SeismicWave_GetLiveConfig(), s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
@@ -1415,7 +1423,12 @@ static bool VFXTest_FireNewFx(int newfxIndex, Vector3 pos)
         if (s_vfxFixtureHandle[19] >= 0) VFX_KillMeshParticleEmitter(s_vfxFixtureHandle[19]);
         s_vfxFixtureHandle[19] = VFX_ComposeMeshParticleEmitter(&(VFX_MeshParticleEmitterDesc){.model=&s_meshParticleFixtureModel, .transform=MatrixMultiply(MatrixRotateY(s_currentPlayerYaw), MatrixTranslate(s_currentPlayerPos.x, s_currentPlayerPos.y, s_currentPlayerPos.z)), .variant=s_meshParticleFixtureVariant, .material=VC_MAT_LIGHTNING, .intensity=1.0f, .seed=0x4d455348u});
         return false;
-    case 21: VFX_ComposeMistVeil(pos, 5.5f, 4.5f); return true;
+    case 21: {
+        Vector3 target = Vector3Add(pos, (Vector3){5.5f, 0.0f, 1.5f});
+        target.y = MapManager_GetGroundHeightAt(target.x, target.z);
+        VFX_ComposeMistVeilConfig(pos, target, VFX_MistVeil_GetLiveConfig());
+        return true;
+    }
     case 28:
         if (s_vfxFixtureHandle[28] >= 0) VFX_KillShieldShell(s_vfxFixtureHandle[28]);
         s_vfxFixtureHandle[28] = VFX_ShieldShell_Spawn(pos, VC_MAT_WATER, 1.5f, 1.0f);
@@ -1440,7 +1453,24 @@ static bool VFXTest_FireNewFx(int newfxIndex, Vector3 pos)
         return true;
     }
     case 43: VFX_ComposeFireballBurst(pos, VC_MAT_FIRE, 1.5f, 1.0f); return true;
-    case 45: VFX_ComposeIceCrystal(pos, posSeed); return true;
+    case 45: {
+        VFX_IceCrystalConfig *icfg = VFX_IceCrystal_GetLiveConfig();
+        bool isDirectional = (icfg->preset == VFX_ICE_PRESET_FROST_SPIKE_WAVE ||
+                              icfg->preset == VFX_ICE_PRESET_ICE_LANCE_VOLLEY ||
+                              icfg->preset == VFX_ICE_PRESET_SNOW_AVALANCHE);
+        Vector3 src = pos;
+        if (isDirectional) {
+            float d2 = Vector3DistanceSqr(s_currentPlayerPos, pos);
+            if (d2 > 0.25f) {
+                src = s_currentPlayerPos;
+            } else {
+                src = Vector3Add(pos, (Vector3){-5.0f, 0.0f, -1.5f});
+                src.y = MapManager_GetGroundHeightAt(src.x, src.z);
+            }
+        }
+        VFX_ComposeIceCrystalEx(src, pos, icfg);
+        return true;
+    }
     case 51: {
         Vector3 target = Vector3Add(pos, (Vector3){5.5f, 0.0f, 2.5f});
         target.y = MapManager_GetGroundHeightAt(target.x, target.z);
@@ -2168,6 +2198,8 @@ static const char *VFXTest_UIActiveVariant(void)
     if (VFXTest_IsNewFxNamed("GUIDED EARTH")) return VFX_GuidedEarthPreset_Name(VFX_GuidedEarth_GetLiveConfig()->preset);
     if (VFXTest_IsNewFxNamed("GUIDED LIQUID")) return VFX_GuidedLiquidPreset_Name(VFX_GuidedLiquid_GetLiveConfig()->preset);
     if (VFXTest_IsNewFxNamed("TSUNAMI SWE")) return VFX_TsunamiPreset_Name(VFX_Tsunami_GetLiveConfig()->preset);
+    if (VFXTest_IsNewFxNamed("MIST VEIL")) return VFX_MistVeilPreset_Name(VFX_MistVeil_GetLiveConfig()->preset);
+    if (VFXTest_IsNewFxNamed("ICE CRYSTAL")) return VFX_IceCrystalPreset_Name(VFX_IceCrystal_GetLiveConfig()->preset);
     if (VFXTest_IsNewFxNamed("SEISMIC WAVE")) return VFX_SeismicWavePreset_Name(VFX_SeismicWave_GetLiveConfig()->preset);
     if (VFXTest_IsNewFxNamed("STONE PILLAR")) return VFX_EarthSpikePreset_Name(VFX_EarthSpike_GetLiveConfig()->preset);
     if (VFXTest_IsNewFxNamed("FISSURE STREAK")) return VFX_EarthCrackPreset_Name(VFX_EarthCrack_GetLiveConfig()->preset);
@@ -3225,6 +3257,36 @@ void VFXTest_Draw3D(void)
                 }
             }
         }
+        else if (VFXTest_IsNewFxNamed("MIST VEIL"))
+        {
+            if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))
+            {
+                int direction = IsKeyPressed(KEY_PERIOD) ? 1 : (IsKeyPressed(KEY_COMMA) ? -1 : 0);
+                if (direction != 0)
+                {
+                    VFX_MistVeilConfig *mcfg = VFX_MistVeil_GetLiveConfig();
+                    VFX_MistVeilPreset nextPreset = (VFX_MistVeilPreset)(((int)mcfg->preset + direction + VFX_MIST_PRESET_COUNT) % VFX_MIST_PRESET_COUNT);
+                    VFX_MistVeil_ApplyPreset(mcfg, nextPreset);
+                    VFXTest_RefreshInspectorParams(true);
+                    TraceLog(LOG_INFO, "MIST VEIL preset: %s (Shift+> next; Shift+< previous)", VFX_MistVeilPreset_Name(mcfg->preset));
+                }
+            }
+        }
+        else if (VFXTest_IsNewFxNamed("ICE CRYSTAL"))
+        {
+            if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))
+            {
+                int direction = IsKeyPressed(KEY_PERIOD) ? 1 : (IsKeyPressed(KEY_COMMA) ? -1 : 0);
+                if (direction != 0)
+                {
+                    VFX_IceCrystalConfig *icfg = VFX_IceCrystal_GetLiveConfig();
+                    VFX_IceCrystalPreset nextPreset = (VFX_IceCrystalPreset)(((int)icfg->preset + direction + VFX_ICE_PRESET_COUNT) % VFX_ICE_PRESET_COUNT);
+                    VFX_IceCrystal_ApplyPreset(icfg, nextPreset);
+                    VFXTest_RefreshInspectorParams(true);
+                    TraceLog(LOG_INFO, "ICE CRYSTAL preset: %s (Shift+> next; Shift+< previous)", VFX_IceCrystalPreset_Name(icfg->preset));
+                }
+            }
+        }
         else if (VFXTest_IsNewFxNamed("STONE PILLAR"))
         {
             if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))
@@ -3616,6 +3678,8 @@ void VFXTest_DrawShadowPass(void)
     VFX_FoliageSystem_DrawShadowPass();
     VC_GuidedLiquid_DrawShadowPass();
     VC_Tsunami_DrawShadowPass();
+    VC_Crystal_DrawShadowPass();
+    VC_IceCrystal_DrawShadowPass();
     LiquidFlow_DrawShadowPass();
     VC_GuidedEarth_DrawShadowPass();
     VC_SeismicWave_DrawShadowPass();

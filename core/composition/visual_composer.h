@@ -883,6 +883,8 @@ typedef enum {
     VFX_TSUNAMI_ATLA_TRIPLE_DISCS,    // Skill 6: Lien Hoan Thuy Luan (3 razor water discs)
     VFX_TSUNAMI_ATLA_TWIN_WHIPS,      // Skill 7: Song Tien Toan Phong (Twin horizontal spinning whips)
     VFX_TSUNAMI_ATLA_AVATAR_STATE,    // Skill 8: Thai Cuc Avatar State (Orb + Ring + Whip)
+    VFX_TSUNAMI_ATLA_GLACIAL_SURGE,   // Cryo 1: Surging wave flash-freezes into glacial wall
+    VFX_TSUNAMI_ATLA_FROZEN_OCTOPUS,  // Cryo 2: 8 water tentacles freeze into icy cage
     VFX_TSUNAMI_PATTERN_COUNT
 } VFX_TsunamiPattern;
 
@@ -901,6 +903,8 @@ typedef enum {
     VFX_TSUNAMI_PRESET_TRIPLE_DISCS,    // ATLA Skill 6: Lien Hoan Thuy Luan
     VFX_TSUNAMI_PRESET_TWIN_WHIPS,      // ATLA Skill 7: Song Tien Toan Phong
     VFX_TSUNAMI_PRESET_AVATAR_STATE,    // ATLA Skill 8: Thai Cuc Avatar State
+    VFX_TSUNAMI_PRESET_GLACIAL_SURGE,   // ATLA Cryo 1: Han Bang Thuy Trieu
+    VFX_TSUNAMI_PRESET_FROZEN_OCTOPUS,  // ATLA Cryo 2: Bang Xuc Han Nguc
     VFX_TSUNAMI_PRESET_COUNT
 } VFX_TsunamiPreset;
 
@@ -925,6 +929,7 @@ typedef struct VFX_TsunamiConfig {
     float obstacleScale;    // Target obstacle bathymetry radius scale (0 = off, 0.5..1.8)
     float skillPower;       // Hydro-force emitter multiplier (0.6 to 2.0)
     int renderMode;         // 0: AAA Hydro-Combat, 1: Velocity & Foam, 2: Heightfield
+    float cryoMode;         // 0.0: pure liquid, 1.0: flash-freeze into glacial ice & hoarfrost
 } VFX_TsunamiConfig;
 
 VFX_TsunamiConfig  VFX_Tsunami_DefaultConfig(void);
@@ -942,6 +947,133 @@ void               VC_Tsunami_Update(float dt);
 void               VC_Tsunami_Draw3D(Camera3D cam);
 void               VC_Tsunami_SubmitSurface(void);
 void               VC_Tsunami_DrawShadowPass(void);
+
+// ── Mist, Steam, Cold Frost Vapor & Blizzard System (Vụ Khí / Hàn Khí) ──────
+typedef enum {
+    VFX_MIST_PRESET_RIVER_SHROUD = 0,  // Sương Ẩn Giang Hồ: silky ground mist + god-rays + dew motes
+    VFX_MIST_PRESET_STEAM_GEYSER,      // Nhiệt Thủy Hơi Nước: buoyant rising hot steam plume
+    VFX_MIST_PRESET_FROST_BREATH,      // Hàn Khí Xung Kích: directional sub-zero frost cone jet
+    VFX_MIST_PRESET_CRYO_AURA,         // Hàn Băng Hộ Thể: heavy katabatic ground-hugging cold mist
+    VFX_MIST_PRESET_BLIZZARD_VORTEX,   // Tuyết Vũ Hàn Phong: swirling snow & freezing fog cyclone
+    VFX_MIST_PRESET_PHASE_STEAM_BURST, // Thủy Hỏa Hóa Vụ: explosive flash-evaporation steam ring
+    VFX_MIST_PRESET_COUNT
+} VFX_MistVeilPreset;
+
+typedef struct VFX_MistVeilConfig {
+    VFX_MistVeilPreset preset;
+    VC_MaterialId matId;
+    float radius;
+    float duration;
+    float density;          // 0.3 to 2.0
+    float buoyancy;         // -0.5 (katabatic sink) to +2.5 (hot steam rise) m/s
+    float swirlSpeed;       // Tangential vortex speed (rad/s)
+    float jetSpeed;         // Forward directional speed for Frost Breath (m/s)
+    float snowDensity;      // Ice/snow mote ratio (0.0 to 1.0)
+    bool  volumetricFog;    // Spawn 3D FogVolume_SpawnTransient for god-rays
+} VFX_MistVeilConfig;
+
+VFX_MistVeilConfig  VFX_MistVeil_DefaultConfig(void);
+VFX_MistVeilConfig *VFX_MistVeil_GetLiveConfig(void);
+void                VFX_MistVeil_ApplyPreset(VFX_MistVeilConfig *cfg, VFX_MistVeilPreset preset);
+int                 VFX_MistVeil_GetParams(VFX_MistVeilConfig *cfg, VFX_ParamDef *outParams, int maxParams);
+const char         *VFX_MistVeilPreset_Name(VFX_MistVeilPreset preset);
+void                VFX_ComposeMistVeilConfig(Vector3 source, Vector3 target, const VFX_MistVeilConfig *cfg);
+
+// ── Generalized Primary Crystal & Faceted Shatter (Ice, Gems, Metals) ────────
+typedef enum {
+    VFX_CRYSTAL_STYLE_ICE = 0,
+    VFX_CRYSTAL_STYLE_JADE,
+    VFX_CRYSTAL_STYLE_RUBY,
+    VFX_CRYSTAL_STYLE_AMETHYST,
+    VFX_CRYSTAL_STYLE_GOLD,
+    VFX_CRYSTAL_STYLE_STEEL,
+    VFX_CRYSTAL_STYLE_OBSIDIAN,
+    VFX_CRYSTAL_STYLE_COUNT
+} VFX_CrystalStyle;
+
+typedef struct VFX_CrystalDesc {
+    Vector3 pos;
+    Vector3 dir;        // growth/axis direction (default {0, 1, 0})
+    float height;       // meters
+    float radius;       // meters
+    float eruptTime;    // seconds to emerge
+    float holdTime;     // seconds to hold
+    float fadeTime;     // seconds to dissolve/shatter
+    float delay;        // seconds before emerging
+    float rollDeg;      // spin around growth axis
+    VFX_CrystalStyle style;
+    bool castShadow;
+    bool shatterOnEnd;
+} VFX_CrystalDesc;
+
+VFX_CrystalDesc VFX_Crystal_DefaultDesc(VFX_CrystalStyle style);
+const char     *VFX_CrystalStyle_Name(VFX_CrystalStyle style);
+int             VFX_Crystal_Spawn(const VFX_CrystalDesc *desc);
+void            VFX_Crystal_Kill(int handle);
+void            VC_Crystal_ClearAll(void);
+int             VC_Crystal_GetActiveCount(void);
+void            VC_Crystal_Update(float dt);
+void            VC_Crystal_Draw3D(Camera3D cam);
+void            VC_Crystal_DrawRefraction(Camera3D cam);
+void            VC_Crystal_DrawShadowPass(void);
+void            VFX_Compose_DrawRefraction(Camera3D cam);
+
+void            VFX_CrystalShatter_Spawn(Vector3 center, Vector3 impulseDir,
+                                         float spreadSpeed, int count,
+                                         float shardScale, VFX_CrystalStyle style);
+int             VC_CrystalShatter_GetActiveCount(void);
+void            VC_CrystalShatter_ClearAll(void);
+
+// ── Conformal Ground & Water Freeze Patch Primary ────────────────────────────
+int             VFX_FreezePatch_Spawn(Vector3 center, float maxRadius,
+                                      float spreadTime, float holdTime, float fadeTime,
+                                      Color iceColor, Color frostColor);
+void            VC_FreezePatch_ClearAll(void);
+int             VC_FreezePatch_GetActiveCount(void);
+void            VC_FreezePatch_Update(float dt);
+void            VC_FreezePatch_Draw3D(Camera3D cam);
+
+// ── Glacial Ice Spikes, Prison Ring, Ice Lance Volley & Snow (Hàn Băng) ──────
+typedef enum {
+    VFX_ICE_PRESET_GLACIAL_SPIRE = 0,  // Hàn Băng Trụ: towering central ice spire + cluster
+    VFX_ICE_PRESET_FROST_SPIKE_WAVE,   // Băng Tiễn Phá Địa: progressive line of spikes source -> target
+    VFX_ICE_PRESET_ICE_PRISON_RING,    // Hàn Băng Tuyệt Trận: 360-deg ring of tilted ice pillars
+    VFX_ICE_PRESET_ICE_LANCE_VOLLEY,   // Băng Châm Liên Kích: hovering halo of lances firing at target
+    VFX_ICE_PRESET_LOTUS_FROST_NOVA,   // Băng Liên Hoa Nở: multi-tiered blooming crystal lotus
+    VFX_ICE_PRESET_GLACIAL_WALL,       // Băng Thành Hộ Thuẫn: crescent ice barrier wall
+    VFX_ICE_PRESET_SNOW_AVALANCHE,     // Tuyết Lở Hàn Băng: rolling snow surge + erupting ice shards
+    VFX_ICE_PRESET_COUNT
+} VFX_IceCrystalPreset;
+
+typedef struct VFX_IceCrystalConfig {
+    VFX_IceCrystalPreset preset;
+    VFX_CrystalStyle style;
+    Vector3 source;
+    Vector3 target;
+    int   crystalCount;     // 3 to 24
+    float height;           // Peak crystal height in meters (0.6 to 3.6m)
+    float radius;           // Base crystal radius in meters (0.08 to 0.45m)
+    float formationRadius;  // Ring/cluster/wall spread radius in meters (0.6 to 5.5m)
+    float eruptDuration;    // Emergence / charge time (s)
+    float holdDuration;     // Active hold time (s)
+    float shatterDuration;  // Shatter / melt duration (s)
+    float travelSpeed;      // Lance/wave speed (m/s)
+    bool  emitFrostMist;    // Spawn cold vapor puffs on eruption
+    bool  emitSnowMotes;    // Spawn glittering snow/frost motes
+    bool  emitShatterChips; // Spawn bouncing ice shard chips on shatter
+} VFX_IceCrystalConfig;
+
+VFX_IceCrystalConfig  VFX_IceCrystal_DefaultConfig(void);
+VFX_IceCrystalConfig *VFX_IceCrystal_GetLiveConfig(void);
+void                  VFX_IceCrystal_ApplyPreset(VFX_IceCrystalConfig *cfg, VFX_IceCrystalPreset preset);
+int                   VFX_IceCrystal_GetParams(VFX_IceCrystalConfig *cfg, VFX_ParamDef *outParams, int maxParams);
+const char           *VFX_IceCrystalPreset_Name(VFX_IceCrystalPreset preset);
+int                   VFX_ComposeIceCrystalEx(Vector3 source, Vector3 target, const VFX_IceCrystalConfig *cfg);
+void                  VFX_KillIceCrystal(int handle);
+bool                  VFX_IceCrystal_IsAnyActive(void);
+void                  VC_IceCrystal_Update(float dt);
+void                  VC_IceCrystal_Draw3D(Camera3D cam);
+void                  VC_IceCrystal_DrawShadowPass(void);
 
 // Unified / Generalized API
 void VFX_ComposeFlame(Vector3 pos, VC_MaterialId matId, float scale, float intensity);

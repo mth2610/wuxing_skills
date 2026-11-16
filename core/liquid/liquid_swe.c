@@ -65,6 +65,55 @@ typedef struct {
 static LiquidSWEInstance s_sweInstances[LIQUID_SWE_MAX_INSTANCES];
 static int s_sweNextHandle = 1;
 
+#define SWE_MAX_DROPLETS 256
+typedef struct {
+    bool active;
+    int instIdx;
+    Vector3 pos;
+    Vector3 vel;
+    float radius;
+    float age;
+    float maxAge;
+} SWEDroplet;
+
+static SWEDroplet s_sweDroplets[SWE_MAX_DROPLETS];
+static unsigned int s_sweRngState = 0x9E3779B9u;
+
+static float SWE_Rand01(void)
+{
+    s_sweRngState = s_sweRngState * 1664525u + 1013904223u;
+    return (float)((s_sweRngState >> 8) & 0x00FFFFFFu) / 16777216.0f;
+}
+
+static void SWE_SpawnDroplet(int instIdx, Vector3 pos, Vector3 vel, float radius, float maxAge)
+{
+    int slot = -1;
+    float oldestRatio = -1.0f;
+    int oldestSlot = 0;
+    for (int i = 0; i < SWE_MAX_DROPLETS; ++i) {
+        if (!s_sweDroplets[i].active) {
+            slot = i;
+            break;
+        }
+        float r = s_sweDroplets[i].age / fmaxf(s_sweDroplets[i].maxAge, 0.05f);
+        if (r > oldestRatio) {
+            oldestRatio = r;
+            oldestSlot = i;
+        }
+    }
+    if (slot < 0) slot = oldestSlot;
+
+    s_sweDroplets[slot] = (SWEDroplet){
+        .active = true,
+        .instIdx = instIdx,
+        .pos = pos,
+        .vel = vel,
+        .radius = radius,
+        .age = 0.0f,
+        .maxAge = maxAge
+    };
+}
+
 #ifndef LIQUID_SWE_HEADLESS
 static Shader s_sweShader = {0};
 static int s_sweFadeLoc = -1;
@@ -72,6 +121,7 @@ static int s_sweDeepColorLoc = -1;
 static int s_sweCrestColorLoc = -1;
 static int s_sweFoamColorLoc = -1;
 static int s_sweRenderModeLoc = -1;
+static int s_sweCryoAmountLoc = -1;
 
 static void SWE_InitShaderIfNeeded(void)
 {
@@ -84,6 +134,7 @@ static void SWE_InitShaderIfNeeded(void)
             s_sweCrestColorLoc = GetShaderLocation(s_sweShader, "u_crestColor");
             s_sweFoamColorLoc = GetShaderLocation(s_sweShader, "u_foamColor");
             s_sweRenderModeLoc = GetShaderLocation(s_sweShader, "u_renderMode");
+            s_sweCryoAmountLoc = GetShaderLocation(s_sweShader, "u_cryoAmount");
         }
     }
 }
@@ -137,7 +188,15 @@ static Vector3 SWE_V3Norm(Vector3 v)
 
 static bool SWE_IsATLAPattern(LiquidSWEPattern p)
 {
-    return p >= LIQUID_SWE_PATTERN_TAI_CHI_WHIP && p < LIQUID_SWE_PATTERN_COUNT;
+    return (p >= LIQUID_SWE_PATTERN_TAI_CHI_WHIP && p <= LIQUID_SWE_PATTERN_AVATAR_STATE) ||
+           p == LIQUID_SWE_PATTERN_FROZEN_OCTOPUS;
+}
+
+static float SWE_ComputeCryoProgress(const LiquidSWEInstance *inst)
+{
+    if (!inst || inst->desc.cryoMode <= 0.01f) return 0.0f;
+    float tNorm = inst->age / fmaxf(inst->desc.duration, 0.5f);
+    return SWE_SmoothStep(0.18f, 0.52f, tNorm) * SWE_Clamp(inst->desc.cryoMode, 0.0f, 1.0f);
 }
 
 static float SWE_SampleGroundY(bool sampleTerrain, float x, float z, float fallbackY)
@@ -352,34 +411,46 @@ LiquidSWESample LiquidSWE_EvalManifoldPoint(const LiquidSWEManifold *m,
         float sCenter = SWE_Clamp(tau, 0.0f, 1.02f);
         Vector3 center3D = LiquidSWE_EvalHydroTrajectory3D(sCenter, origXZ, targetXZ, archH, latCurve * 0.65f, swaySign, phase);
 
-        float closeArc = SWE_Lerp(0.75f, 1.05f, SWE_SmoothStep(0.0f, 0.28f, tau));
-        float ringPhi = uLong * PI * closeArc + phase * 2.2f * swaySign;
+        /* Full 370-deg closed circular ring with smooth overlap */
+        float closeArc = SWE_Lerp(0.88f, 1.04f, SWE_SmoothStep(0.0f, 0.24f, tau));
+        float ringPhi = uLong * PI * closeArc + phase * 2.6f * swaySign;
         float tubeTheta = uCross * PI;
 
-        float tiltPitch = 0.36f * swaySign * cosf(tau * PI) + latCurve * 0.22f;
-        float tiltRoll = 0.32f * sinf(tau * PI) + latCurve * 0.28f;
+        /* True orthonormal tilted disc frame */
+        float tiltPitch = 0.34f * swaySign * cosf(tau * PI) + latCurve * 0.18f;
+        float tiltRoll = 0.28f * sinf(tau * PI) + latCurve * 0.22f;
+        Vector3 baseRight = {perpDir.x, 0.0f, perpDir.y};
+        Vector3 baseFwd = {moveDir.x, 0.0f, moveDir.y};
+        Vector3 baseUp = {0.0f, 1.0f, 0.0f};
 
-        Vector3 ringRight = SWE_V3Norm((Vector3){perpDir.x * cosf(tiltRoll), sinf(tiltRoll), perpDir.y * cosf(tiltRoll)});
-        Vector3 ringFwd = SWE_V3Norm((Vector3){moveDir.x * cosf(tiltPitch), sinf(tiltPitch), moveDir.y * cosf(tiltPitch)});
-        Vector3 ringUp = SWE_V3Norm(SWE_V3Cross(ringFwd, ringRight));
-        ringRight = SWE_V3Norm(SWE_V3Cross(ringUp, ringFwd));
+        /* Rotate baseRight/baseUp by tiltRoll around baseFwd */
+        Vector3 r1 = SWE_V3Add(SWE_V3Scale(baseRight, cosf(tiltRoll)), SWE_V3Scale(baseUp, sinf(tiltRoll)));
+        Vector3 u1 = SWE_V3Sub(SWE_V3Scale(baseUp, cosf(tiltRoll)), SWE_V3Scale(baseRight, sinf(tiltRoll)));
+        /* Rotate baseFwd/u1 by tiltPitch around r1 */
+        Vector3 ringFwd = SWE_V3Norm(SWE_V3Add(SWE_V3Scale(baseFwd, cosf(tiltPitch)), SWE_V3Scale(u1, sinf(tiltPitch))));
+        Vector3 ringUp = SWE_V3Norm(SWE_V3Sub(SWE_V3Scale(u1, cosf(tiltPitch)), SWE_V3Scale(baseFwd, sinf(tiltPitch))));
+        Vector3 ringRight = SWE_V3Norm(SWE_V3Cross(ringUp, ringFwd));
 
-        float seamTaper = SWE_SmoothStep(1.02f, 0.82f, fabsf(uLong));
-        float majorR = orbR * 1.06f;
+        float seamTaper = SWE_SmoothStep(1.02f, 0.85f, fabsf(uLong));
+        float majorR = orbR * 1.18f;
 
+        /* Sleek Razor Water Chakram cross-section: rounded inner collar, knife-sharp outer hydro-blade */
         float outerFactor = fmaxf(0.0f, cosf(tubeTheta));
-        float bladeSharpness = 1.0f - 0.68f * powf(outerFactor, 1.5f);
-        float spiralFlute = 0.14f * orbR * outerFactor * sinf(ringPhi * 4.0f - phase * 3.2f * swaySign);
+        float innerFactor = fmaxf(0.0f, -cosf(tubeTheta));
+        float bladeSharpness = 1.0f - 0.86f * powf(outerFactor, 1.15f);
+        /* Subtle 6-fold swept spiral micro-fins so the disc stays perfectly circular */
+        float spiralFin = 0.042f * orbR * outerFactor * sinf(ringPhi * 6.0f - phase * 4.2f * swaySign);
+        float innerRipple = 1.0f + 0.06f * sinf(ringPhi * 3.0f + phase * 2.0f);
 
-        float minorR_rad = (orbR * 0.42f + fminf(localH, 0.35f) * 0.10f) * (0.75f + 0.25f * seamTaper) + spiralFlute;
-        float minorR_up = (orbR * 0.22f) * bladeSharpness * (0.70f + 0.30f * seamTaper);
+        float minorR_rad = (orbR * 0.24f + fminf(localH, 0.35f) * 0.06f) * (0.82f + 0.18f * seamTaper) * innerRipple + spiralFin;
+        float minorR_up = (orbR * 0.095f) * bladeSharpness * (1.0f - 0.20f * innerFactor) * (0.80f + 0.20f * seamTaper);
 
         Vector3 radialRingDir = SWE_V3Add(SWE_V3Scale(ringRight, cosf(ringPhi)),
                                           SWE_V3Scale(ringFwd, sinf(ringPhi)));
         pos = SWE_V3Add(center3D,
                         SWE_V3Add(SWE_V3Scale(radialRingDir, majorR + cosf(tubeTheta) * minorR_rad),
                                   SWE_V3Scale(ringUp, sinf(tubeTheta) * minorR_up)));
-        nrm = SWE_V3Norm(SWE_V3Add(SWE_V3Scale(radialRingDir, cosf(tubeTheta) * bladeSharpness),
+        nrm = SWE_V3Norm(SWE_V3Add(SWE_V3Scale(radialRingDir, cosf(tubeTheta) * bladeSharpness * 0.75f),
                                    SWE_V3Scale(ringUp, sinf(tubeTheta))));
         break;
     }
@@ -545,9 +616,11 @@ static float SWE_ComputeObstacleBathymetry(Vector2 worldXZ, Vector2 targetXZ, fl
 static void SWE_StepVirtualPipe(LiquidSWEInstance *inst, float dt)
 {
     float gravity = fmaxf(inst->desc.gravity, 1.0f);
-    float pipeAccel = dt * gravity * 1.68f;
-    float dragFactor = expf(-fmaxf(inst->desc.drag, 0.05f) * dt * 0.25f) * 0.993f;
-    float evap = fmaxf(inst->desc.evaporation, 0.0f);
+    float freezeF = SWE_ComputeCryoProgress(inst);
+    float fluxFreezeScale = 0.04f + 0.96f * (1.0f - freezeF) * (1.0f - freezeF);
+    float pipeAccel = dt * gravity * 1.68f * fluxFreezeScale;
+    float dragFactor = expf(-fmaxf(inst->desc.drag, 0.05f) * dt * 0.25f) * 0.993f * (1.0f - 0.75f * freezeF);
+    float evap = fmaxf(inst->desc.evaporation, 0.0f) * (1.0f - 0.85f * freezeF);
     bool isATLA = SWE_IsATLAPattern(inst->desc.pattern);
 
     /* PASS 1: Virtual-Pipe Flux Update + Emitter Force Injection */
@@ -715,8 +788,8 @@ static void SWE_StepVirtualPipe(LiquidSWEInstance *inst, float dt)
                 h = fmaxf(0.0f, h - drain);
                 if (h < 0.0011f) h = 0.0f;
             }
-            if (!isATLA && h < 0.35f) {
-                h *= expf(-1.2f * dt);
+            if (!isATLA && h < 0.35f && freezeF < 0.5f) {
+                h *= expf(-1.2f * (1.0f - freezeF) * dt);
             }
 
             float vx = (fInL - inst->fL[iz][ix] + inst->fR[iz][ix] - fInR) * 0.5f;
@@ -1006,9 +1079,14 @@ static void SWE_ScheduleATLAEmitters(LiquidSWEInstance *inst)
                            LIQUID_SWE_SHAPE_WATER_SPOUT, 1.0f, 0.0f, pwr * 1.05f);
         break;
 
-    case LIQUID_SWE_PATTERN_OCTOPUS_FORM: {
+    case LIQUID_SWE_PATTERN_OCTOPUS_FORM:
+    case LIQUID_SWE_PATTERN_FROZEN_OCTOPUS: {
         Vector2 octoOrigin = {dst.x - dir.x * 0.35f, dst.y - dir.y * 0.35f};
-        SWE_RunATLARoutine(inst, 0, t, octoOrigin, dst, 2.85f, 1.42f, scaleH * 1.20f,
+        float freezeF = SWE_ComputeCryoProgress(inst);
+        float effT = (inst->desc.pattern == LIQUID_SWE_PATTERN_FROZEN_OCTOPUS && freezeF > 0.01f)
+                         ? SWE_Lerp(t, fminf(t, 1.85f), freezeF)
+                         : t;
+        SWE_RunATLARoutine(inst, 0, effT, octoOrigin, dst, 2.85f, 1.42f, scaleH * 1.20f,
                            LIQUID_SWE_SHAPE_OCTOPUS_FORM, 1.0f, 0.0f, pwr * 1.10f);
         break;
     }
@@ -1083,12 +1161,14 @@ static void SWE_ScheduleATLAEmitters(LiquidSWEInstance *inst)
 void LiquidSWE_Init(void)
 {
     memset(s_sweInstances, 0, sizeof(s_sweInstances));
+    memset(s_sweDroplets, 0, sizeof(s_sweDroplets));
     s_sweNextHandle = 1;
 }
 
 void LiquidSWE_Unload(void)
 {
     memset(s_sweInstances, 0, sizeof(s_sweInstances));
+    memset(s_sweDroplets, 0, sizeof(s_sweDroplets));
 }
 
 LiquidSWEDesc LiquidSWE_DefaultDesc(void)
@@ -1291,6 +1371,52 @@ void LiquidSWE_Update(float dt)
         SWE_StepVirtualPipe(inst, stepDt);
         SWE_RebuildMeshCache(inst);
 
+        /* Spawn ballistic spray & falling water droplets */
+        if (inst->desc.emitCrestSpray) {
+            float fadeOut = 1.0f - SWE_SmoothStep(inst->desc.duration * 0.72f, inst->desc.duration, inst->age);
+            if (fadeOut > 0.1f) {
+                /* 1. Shed droplets from active 3D ATLA manifolds */
+                for (int m = 0; m < LIQUID_SWE_MAX_MANIFOLDS; ++m) {
+                    const LiquidSWEManifold *mf = &inst->manifolds[m];
+                    if (!mf->active || mf->detachAlpha < 0.25f) continue;
+                    float gBase = SWE_SampleGroundY(inst->desc.sampleTerrain, mf->center.x, mf->center.z, inst->origin.y);
+                    int emitN = (mf->shape == LIQUID_SWE_SHAPE_TWIN_WHIP || mf->shape == LIQUID_SWE_SHAPE_OCTOPUS_FORM) ? 3 : 2;
+                    for (int k = 0; k < emitN; ++k) {
+                        float uL = SWE_Rand01() * 2.0f - 1.0f;
+                        float uC = SWE_Rand01() * 2.0f - 1.0f;
+                        LiquidSWESample sp = LiquidSWE_EvalManifoldPoint(mf, uL, uC, 0.2f);
+                        sp.position.y += gBase;
+                        float spd = 2.2f + SWE_Rand01() * 3.4f;
+                        Vector3 v = {
+                            sp.normal.x * spd + (SWE_Rand01() - 0.5f) * 1.8f,
+                            sp.normal.y * spd * 0.6f + 1.4f + SWE_Rand01() * 2.4f,
+                            sp.normal.z * spd + (SWE_Rand01() - 0.5f) * 1.8f
+                        };
+                        SWE_SpawnDroplet(i, sp.position, v, 0.028f + SWE_Rand01() * 0.036f, 0.55f + SWE_Rand01() * 0.45f);
+                    }
+                }
+
+                /* 2. Breaking SWE wave crest spray */
+                int crestEmitted = 0;
+                for (int attempt = 0; attempt < 18 && crestEmitted < 3; ++attempt) {
+                    int ix = 2 + (int)(SWE_Rand01() * (float)(SWE_NX - 4));
+                    int iz = 2 + (int)(SWE_Rand01() * (float)(SWE_NZ - 4));
+                    if (inst->h[iz][ix] > 0.18f && (inst->foam[iz][ix] > 0.28f || inst->speedGrid[iz][ix] > 0.18f)) {
+                        Vector3 p = inst->posGrid[iz][ix];
+                        float vx = (inst->fR[iz][ix] - inst->fL[iz][ix]) * 9.0f;
+                        float vz = (inst->fT[iz][ix] - inst->fB[iz][ix]) * 9.0f;
+                        Vector3 v = {
+                            vx + (SWE_Rand01() - 0.5f) * 2.4f,
+                            2.2f + SWE_Rand01() * 3.2f,
+                            vz + (SWE_Rand01() - 0.5f) * 2.4f
+                        };
+                        SWE_SpawnDroplet(i, p, v, 0.026f + SWE_Rand01() * 0.034f, 0.50f + SWE_Rand01() * 0.45f);
+                        crestEmitted++;
+                    }
+                }
+            }
+        }
+
 #ifndef LIQUID_SWE_HEADLESS
         if (inst->peakH > 0.12f) {
             float wy = 0.0f, wd = 0.0f;
@@ -1327,6 +1453,51 @@ void LiquidSWE_Update(float dt)
         }
 #endif
     }
+
+    /* Update shared ballistic droplet pool (gravity + air drag + ground wetting on landing) */
+    float drag = expf(-1.2f * dt);
+    for (int d = 0; d < SWE_MAX_DROPLETS; ++d) {
+        SWEDroplet *dr = &s_sweDroplets[d];
+        if (!dr->active) continue;
+        dr->age += dt;
+        if (dr->age >= dr->maxAge) {
+            dr->active = false;
+            continue;
+        }
+        dr->vel.y -= 9.81f * dt;
+        dr->vel.x *= drag;
+        dr->vel.z *= drag;
+        dr->pos.x += dr->vel.x * dt;
+        dr->pos.y += dr->vel.y * dt;
+        dr->pos.z += dr->vel.z * dt;
+
+        bool sampleTerr = (dr->instIdx >= 0 && dr->instIdx < LIQUID_SWE_MAX_INSTANCES)
+                              ? s_sweInstances[dr->instIdx].desc.sampleTerrain
+                              : false;
+        float fallbackY = (dr->instIdx >= 0 && dr->instIdx < LIQUID_SWE_MAX_INSTANCES)
+                              ? s_sweInstances[dr->instIdx].origin.y
+                              : 0.0f;
+        float cryoF = (dr->instIdx >= 0 && dr->instIdx < LIQUID_SWE_MAX_INSTANCES && s_sweInstances[dr->instIdx].active)
+                          ? SWE_ComputeCryoProgress(&s_sweInstances[dr->instIdx])
+                          : 0.0f;
+        dr->vel.y += 9.81f * 0.78f * cryoF * dt; /* Snow/ice motes float gently as water freezes */
+        float gy = SWE_SampleGroundY(sampleTerr, dr->pos.x, dr->pos.z, fallbackY);
+        if (dr->pos.y <= gy + 0.02f && dr->vel.y < 0.0f) {
+            /* Stamp micro-wetness where droplet hits the ground */
+            if (dr->instIdx >= 0 && dr->instIdx < LIQUID_SWE_MAX_INSTANCES && s_sweInstances[dr->instIdx].active) {
+                LiquidSWEInstance *inst = &s_sweInstances[dr->instIdx];
+                Vector3 rel = {dr->pos.x - inst->origin.x, 0.0f, dr->pos.z - inst->origin.z};
+                float lx = rel.x * inst->right.x + rel.z * inst->right.z;
+                float lz = rel.x * inst->fwd.x + rel.z * inst->fwd.z;
+                int ix = (int)((lx / fmaxf(inst->desc.width, 0.5f) + 0.5f) * (SWE_NX - 1));
+                int iz = (int)((lz / fmaxf(inst->desc.length, 0.5f)) * (SWE_NZ - 1));
+                if (ix >= 1 && ix < SWE_NX - 1 && iz >= 1 && iz < SWE_NZ - 1) {
+                    inst->wet[iz][ix] = fminf(1.0f, inst->wet[iz][ix] + 0.45f);
+                }
+            }
+            dr->active = false;
+        }
+    }
 }
 
 bool LiquidSWE_GetStats(int handle, float *outMaxH, float *outTotalVolume, float *outMaxFoam)
@@ -1360,6 +1531,12 @@ bool LiquidSWE_GetCell(int handle, int ix, int iz, float *outH, float *outB, flo
     return true;
 }
 
+float LiquidSWE_GetCryoProgress(int handle)
+{
+    const LiquidSWEInstance *inst = SWE_FindInstance(handle);
+    return SWE_ComputeCryoProgress(inst);
+}
+
 #ifndef LIQUID_SWE_HEADLESS
 
 static float SWE_SampleLocalH(const LiquidSWEInstance *inst, float worldX, float worldZ)
@@ -1378,7 +1555,7 @@ static float SWE_SampleLocalH(const LiquidSWEInstance *inst, float worldX, float
 static void SWE_DrawManifoldStrip(const LiquidSWEInstance *inst, const LiquidSWEManifold *mf,
                                   float fade, float uMin, float uMax)
 {
-    const int nu = LIQUID_SWE_MANIFOLD_U_STEPS;
+    const int nu = (mf->shape == LIQUID_SWE_SHAPE_TORUS_CHAKRAM) ? 72 : LIQUID_SWE_MANIFOLD_U_STEPS;
     const int nv = LIQUID_SWE_MANIFOLD_V_STEPS;
     unsigned char orbByte = (unsigned char)SWE_Clamp(mf->detachAlpha * 255.0f, 0.0f, 255.0f);
     unsigned char fadeByte = (unsigned char)SWE_Clamp(fade * 255.0f, 0.0f, 255.0f);
@@ -1419,7 +1596,6 @@ static void SWE_DrawManifoldStrip(const LiquidSWEInstance *inst, const LiquidSWE
 
 void LiquidSWE_Draw3D(Camera3D cam)
 {
-    (void)cam;
     SWE_InitShaderIfNeeded();
     if (s_sweShader.id == 0) return;
 
@@ -1452,6 +1628,8 @@ void LiquidSWE_Draw3D(Camera3D cam)
         if (s_sweCrestColorLoc >= 0) SetShaderValue(s_sweShader, s_sweCrestColorLoc, crestV, SHADER_UNIFORM_VEC4);
         if (s_sweFoamColorLoc >= 0) SetShaderValue(s_sweShader, s_sweFoamColorLoc, foamV, SHADER_UNIFORM_VEC4);
         if (s_sweRenderModeLoc >= 0) SetShaderValue(s_sweShader, s_sweRenderModeLoc, &inst->desc.renderMode, SHADER_UNIFORM_INT);
+        float cryoAmt = SWE_ComputeCryoProgress(inst);
+        if (s_sweCryoAmountLoc >= 0) SetShaderValue(s_sweShader, s_sweCryoAmountLoc, &cryoAmt, SHADER_UNIFORM_FLOAT);
 
         /* 1. Draw Terrain-Conforming Ground Wetness Pass */
         if (inst->desc.emitWetGround) {
@@ -1579,11 +1757,113 @@ void LiquidSWE_Draw3D(Camera3D cam)
         rlEnableBackfaceCulling();
         VFXRender_EndDraw(&renderScope);
     }
+
+    /* 4. Draw Velocity-Stretched Ballistic Spray Droplets (1 shared batch) */
+    bool anyDroplets = false;
+    for (int d = 0; d < SWE_MAX_DROPLETS; ++d) {
+        if (s_sweDroplets[d].active) { anyDroplets = true; break; }
+    }
+    if (anyDroplets) {
+        const LiquidSWEInstance *refInst = NULL;
+        for (int i = 0; i < LIQUID_SWE_MAX_INSTANCES; ++i) {
+            if (s_sweInstances[i].active) { refInst = &s_sweInstances[i]; break; }
+        }
+        Color deepC = refInst ? refInst->desc.deepColor : (Color){18, 118, 124, 240};
+        Color crestC = refInst ? refInst->desc.crestColor : (Color){36, 189, 173, 232};
+        Color foamC = refInst ? refInst->desc.foamColor : (Color){216, 248, 246, 245};
+        float deepV[4] = {deepC.r / 255.0f, deepC.g / 255.0f, deepC.b / 255.0f, 1.0f};
+        float crestV[4] = {crestC.r / 255.0f, crestC.g / 255.0f, crestC.b / 255.0f, 1.0f};
+        float foamV[4] = {foamC.r / 255.0f, foamC.g / 255.0f, foamC.b / 255.0f, 1.0f};
+        float oneFade = 1.0f;
+        int rMode = refInst ? refInst->desc.renderMode : 0;
+
+        VFXRenderScope dropScope = VFXRender_BeginDraw(VFX_RENDER_PASS_BODY, VFX_SURFACE_ALPHA, false);
+        rlDisableBackfaceCulling();
+        BeginShaderMode(s_sweShader);
+        SkillManager_BeginShader(s_sweShader);
+
+        if (s_sweFadeLoc >= 0) SetShaderValue(s_sweShader, s_sweFadeLoc, &oneFade, SHADER_UNIFORM_FLOAT);
+        if (s_sweDeepColorLoc >= 0) SetShaderValue(s_sweShader, s_sweDeepColorLoc, deepV, SHADER_UNIFORM_VEC4);
+        if (s_sweCrestColorLoc >= 0) SetShaderValue(s_sweShader, s_sweCrestColorLoc, crestV, SHADER_UNIFORM_VEC4);
+        if (s_sweFoamColorLoc >= 0) SetShaderValue(s_sweShader, s_sweFoamColorLoc, foamV, SHADER_UNIFORM_VEC4);
+        if (s_sweRenderModeLoc >= 0) SetShaderValue(s_sweShader, s_sweRenderModeLoc, &rMode, SHADER_UNIFORM_INT);
+        float refCryo = refInst ? SWE_ComputeCryoProgress(refInst) : 0.0f;
+        if (s_sweCryoAmountLoc >= 0) SetShaderValue(s_sweShader, s_sweCryoAmountLoc, &refCryo, SHADER_UNIFORM_FLOAT);
+
+        rlBegin(RL_TRIANGLES);
+        for (int d = 0; d < SWE_MAX_DROPLETS; ++d) {
+            const SWEDroplet *dr = &s_sweDroplets[d];
+            if (!dr->active) continue;
+
+            float life01 = dr->age / fmaxf(dr->maxAge, 0.05f);
+            float alpha = (1.0f - SWE_SmoothStep(0.65f, 1.0f, life01)) * SWE_SmoothStep(0.0f, 0.08f, life01);
+            if (alpha <= 0.02f) continue;
+
+            Vector3 toCam = SWE_V3Norm(SWE_V3Sub(cam.position, dr->pos));
+            float spd = SWE_V3Len(dr->vel);
+            Vector3 upAxis = (spd > 0.25f) ? SWE_V3Scale(dr->vel, 1.0f / spd) : (Vector3){0.0f, 1.0f, 0.0f};
+            Vector3 sideAxis = SWE_V3Norm(SWE_V3Cross(toCam, upAxis));
+
+            float halfW = dr->radius * (1.0f - 0.35f * life01);
+            float halfH = halfW * (1.15f + fminf(spd * 0.22f, 2.2f));
+
+            Vector3 p0 = SWE_V3Add(SWE_V3Sub(dr->pos, SWE_V3Scale(sideAxis, halfW)), SWE_V3Scale(upAxis, -halfH));
+            Vector3 p1 = SWE_V3Add(SWE_V3Add(dr->pos, SWE_V3Scale(sideAxis, halfW)), SWE_V3Scale(upAxis, -halfH));
+            Vector3 p2 = SWE_V3Add(SWE_V3Sub(dr->pos, SWE_V3Scale(sideAxis, halfW)), SWE_V3Scale(upAxis,  halfH));
+            Vector3 p3 = SWE_V3Add(SWE_V3Add(dr->pos, SWE_V3Scale(sideAxis, halfW)), SWE_V3Scale(upAxis,  halfH));
+
+            const Vector3 pts[4] = {p0, p1, p2, p3};
+            const float uvs[4][2] = {{0.0f, 0.0f}, {1.0f, 0.0f}, {0.0f, 1.0f}, {1.0f, 1.0f}};
+            const int idx[6] = {0, 1, 2, 1, 3, 2};
+            unsigned char aByte = (unsigned char)SWE_Clamp(alpha * 255.0f, 0.0f, 255.0f);
+
+            for (int t = 0; t < 6; ++t) {
+                int id = idx[t];
+                rlColor4ub(0, 0, 128, aByte);
+                rlTexCoord2f(uvs[id][0], uvs[id][1]);
+                rlNormal3f(toCam.x, toCam.y, toCam.z);
+                rlVertex3f(pts[id].x, pts[id].y, pts[id].z);
+            }
+        }
+        rlEnd();
+
+        rlDrawRenderBatchActive();
+        SkillManager_EndShader();
+        EndShaderMode();
+        rlEnableBackfaceCulling();
+        VFXRender_EndDraw(&dropScope);
+    }
 }
 
 void LiquidSWE_DrawShadowPass(void)
 {
-    /* Translucent water should not cast pitch-black opaque depth-map silhouettes. */
+    /* Cast real directional sun shadows ONLY for airborne 3D ATLA Manifolds
+     * (never for ground SWE waves, which absorb light via Beer-Lambert). */
+    rlDisableBackfaceCulling();
+    for (int i = 0; i < LIQUID_SWE_MAX_INSTANCES; ++i) {
+        const LiquidSWEInstance *inst = &s_sweInstances[i];
+        if (!inst->active) continue;
+
+        float fade = 1.0f - SWE_Clamp((inst->age - inst->desc.duration * 0.72f) / (inst->desc.duration * 0.28f), 0.0f, 1.0f);
+        if (fade <= 0.05f) continue;
+
+        for (int m = 0; m < LIQUID_SWE_MAX_MANIFOLDS; ++m) {
+            const LiquidSWEManifold *mf = &inst->manifolds[m];
+            if (!mf->active || mf->detachAlpha <= 0.15f) continue;
+
+            if (mf->shape == LIQUID_SWE_SHAPE_OCTOPUS_FORM) {
+                for (int arm = 0; arm < 8; ++arm) {
+                    float u0 = -1.0f + 2.0f * ((float)arm + 0.02f) / 8.0f;
+                    float u1 = -1.0f + 2.0f * ((float)arm + 0.98f) / 8.0f;
+                    SWE_DrawManifoldStrip(inst, mf, fade, u0, u1);
+                }
+            } else {
+                SWE_DrawManifoldStrip(inst, mf, fade, -1.0f, 1.0f);
+            }
+        }
+    }
+    rlDrawRenderBatchActive();
+    rlEnableBackfaceCulling();
 }
 
 #else

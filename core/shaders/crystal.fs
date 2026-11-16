@@ -17,7 +17,13 @@ uniform float     u_crack;
 uniform float     u_emission;
 uniform float     u_thickness;
 uniform float     u_dissolve;
+uniform float     u_metallic;
+uniform float     u_facetSharpness;
 uniform sampler2D texture1;
+
+uniform sampler2D u_sceneTex;
+uniform int u_hasScene;
+uniform float u_isBackFace;
 
 // Hàm Value Noise 3D dùng chung cho hiệu ứng nứt và tan biến
 float vnoise3D(vec3 p) {
@@ -43,79 +49,152 @@ float vnoise3D(vec3 p) {
 
 void main()
 {
-    vec3 normal = normalize(fragNormal);
+    vec3 smoothN = normalize(fragNormal);
+    vec3 dpdx = dFdx(fragPosition);
+    vec3 dpdy = dFdy(fragPosition);
+    vec3 rawFlatN = cross(dpdx, dpdy);
+    float flatLen2 = dot(rawFlatN, rawFlatN);
+    vec3 flatN = (flatLen2 > 0.000001) ? (rawFlatN * inversesqrt(flatLen2)) : smoothN;
+    if (dot(flatN, smoothN) < 0.0) flatN = -flatN;
+
+    float facetBlend = clamp(u_facetSharpness, 0.0, 1.0);
+    vec3 normal = normalize(mix(smoothN, flatN, facetBlend));
+
     vec3 viewDir = normalize(viewPos - fragPosition);
     vec3 lightDir = normalize(u_lightDir);
 
-    // 1. Height Gradient & Base
-    vec3 crystalBase = mix(u_baseColor.rgb, u_edgeColor.rgb, clamp(fragTexCoord.y, 0.0, 1.0));
+    float uvY = clamp(fragTexCoord.y, 0.0, 1.0);
+    float edgeDist = min(fragTexCoord.x, 1.0 - fragTexCoord.x) * 2.0;
 
-    // 2. Diffuse & Fresnel [FIX: ĐỘ TRONG]
-    // Dùng kỹ thuật Wrap Lighting: nâng mức sáng tối thiểu lên 0.4. 
-    // Ánh sáng sẽ "xuyên" qua mặt tối, loại bỏ bóng đen đặc ruột.
-    float diffuse = mix(0.4, 1.0, calcDiffuse(normal, lightDir, 0.25));
-    float fresnel = calcFresnel(normal, viewDir, u_fresnelPower);
-    
-    vec3 litBase = crystalBase * diffuse;
-    vec3 rimGlow = u_edgeColor.rgb * (fresnel * u_rimStrength * 0.6);
+    // Longitudinal Glacial Striations (stretched vertical growth fibers)
+    float striation = vnoise3D(vec3(fragTexCoord.x * 24.0, uvY * 2.2, fragPosition.x * 2.5 + fragPosition.z * 2.5));
+    float fineGrain = vnoise3D(fragPosition * 18.0);
+    vec3 tangentU = normalize(cross(vec3(0.0, 1.0, 0.001), normal));
+    normal = normalize(normal + tangentU * ((striation - 0.5) * 0.22 * (1.0 - clamp(u_metallic, 0.0, 1.0))));
 
-    // 3. Fake Refraction
+    vec3 halfDir = normalize(lightDir + viewDir);
+    float ndotl = dot(normal, lightDir);
+    float ndotv = clamp(dot(normal, viewDir), 0.001, 1.0);
+    float ndoth = max(dot(normal, halfDir), 0.0);
+    float metalness = clamp(u_metallic, 0.0, 1.0);
+
+    // 1. Height Gradient & Base (deep body -> translucent frost-white chiseled apex)
+    vec3 crystalBase = mix(u_baseColor.rgb, u_edgeColor.rgb, smoothstep(0.58, 1.0, uvY));
+
+    // 2. Crisp Faceted Shading + Backlit Subsurface + Schlick Fresnel
+    float directDiff = max(ndotl, 0.0);
+    float skyBounce = 0.14 + 0.08 * clamp(normal.y, -1.0, 1.0);
+    float backlit = pow(max(dot(-lightDir, viewDir), 0.0), 3.0) * 0.38 + max(-ndotl, 0.0) * 0.14;
+    float fresnel = pow(1.0 - ndotv, clamp(u_fresnelPower, 1.0, 8.0));
+
+    // Dielectric path: crisp facets + Beer-Lambert internal absorption
+    vec3 lightClamped = vec3(1.0, 0.98, 0.94);
+    vec3 dielectricLit = crystalBase * (skyBounce + directDiff * lightClamped * 0.78 + backlit * lightClamped);
+    float pathLen = mix(0.32, 1.48, 1.0 - ndotv) * max(u_thickness, 0.1);
+    vec3 absorbCoeff = max(vec3(1.0) - u_baseColor.rgb, vec3(0.08));
+    vec3 beerLambert = exp(-absorbCoeff * pathLen * 1.35);
+    dielectricLit = mix(dielectricLit * beerLambert, dielectricLit, 0.42);
+
+    // 3. Fake Refraction (Dielectric caustics sheet)
     vec2 refractUV = fragPosition.xz * 1.5 + normal.xy * u_refraction;
     vec3 refractedColor = texture(texture1, refractUV).rgb;
-    vec3 finalColorRGB = mix(litBase, refractedColor * litBase, u_refraction * 0.5);
+    dielectricLit = mix(dielectricLit, refractedColor * dielectricLit * 1.15, u_refraction * (1.0 - metalness) * 0.42);
 
-    // 4. Thickness Absorption
-    float thicknessFactor = mix(0.3, 1.0, fresnel);
-    float absorption = 1.0 - exp2(-1.442695 * thicknessFactor * u_thickness);
-    finalColorRGB = mix(finalColorRGB * 0.25, finalColorRGB, absorption);
+    // Metallic path (Gold / Steel): Schlick F0 + horizon sky reflection
+    vec3 reflDir = reflect(-viewDir, normal);
+    vec3 envSky = mix(vec3(0.14, 0.16, 0.20), vec3(0.95, 0.98, 1.0), smoothstep(-0.25, 0.75, reflDir.y));
+    vec3 F0 = mix(vec3(0.04), u_baseColor.rgb, metalness);
+    vec3 schlickF = F0 + (vec3(1.0) - F0) * pow(1.0 - ndotv, 5.0);
+    vec3 metallicLit = crystalBase * (0.12 + 0.24 * directDiff) * lightClamped + envSky * schlickF * 0.95;
 
-    // 5. Internal Crack Noise
-   // 5 & 8. Gộp chung tính toán Noise (TỐI ƯU CỰC MẠNH FILL RATE)
-    // Thay vì gọi vnoise3D 2 lần cho crack và dissolve, ta chỉ gọi 1 lần và biến đổi toán học
-    float baseNoise = 0.0;
-    if (u_crack > 0.001 || u_dissolve > 0.001)
-    {
-        // Chỉ tính noise 3D một lần duy nhất
-        baseNoise = vnoise3D(fragPosition * 8.0); 
-    }
+    vec3 finalColorRGB = mix(dielectricLit, metallicLit, metalness);
 
-    // 5. Internal Crack Noise
+    // 4. Dual Mirror Speculars + Striated Ice Glints
+    float roughNorm = clamp(1.0 - (u_fresnelPower - 1.0) / 7.0, 0.0, 1.0);
+    float tightPow = mix(128.0, 28.0, roughNorm);
+    float specTight = pow(ndoth, tightPow);
+    float specBroad = pow(ndoth, 16.0) * 0.14;
+    vec3 specTint = mix(vec3(1.0), u_baseColor.rgb, metalness * 0.72) * lightClamped;
+    finalColorRGB += specTint * (specTight * 1.30 + specBroad) * (0.40 + 0.60 * u_rimStrength);
+    finalColorRGB += u_edgeColor.rgb * (pow(striation, 4.0) * (0.28 + 0.55 * directDiff) * (1.0 - metalness));
+
+    vec3 rimGlow = u_edgeColor.rgb * (fresnel * u_rimStrength * mix(0.48, 0.28, metalness));
+
+    // 5. 2-Layer Parallax Internal Ice Veins, Frost Clouds & Frosted Facet Bevels
+    float baseNoise = fineGrain;
+    float veinIntensity = 0.0;
     if (u_crack > 0.001)
     {
-        float crackLine = smoothstep(0.3, 0.32, baseNoise) * (1.0 - smoothstep(0.34, 0.36, baseNoise));
-        finalColorRGB += u_edgeColor.rgb * (crackLine * u_crack * 0.4);
+        vec3 p1 = (fragPosition - viewDir * 0.09) * vec3(5.2, 2.8, 5.2);
+        vec3 p2 = (fragPosition - viewDir * 0.21) * vec3(3.4, 2.0, 3.4) + vec3(4.1, -1.7, 2.9);
+        float n1 = vnoise3D(p1);
+        float n2 = vnoise3D(p2);
+        float ridge1 = 1.0 - abs(n1 * 2.0 - 1.0);
+        ridge1 *= ridge1; ridge1 *= ridge1;
+        float ridge2 = 1.0 - abs(n2 * 2.0 - 1.0);
+        ridge2 *= ridge2; ridge2 *= ridge2;
+        float frostCloud = smoothstep(0.48, 0.85, n2) * 0.35;
+        veinIntensity = (ridge1 * 0.65 + ridge2 * 0.45 + frostCloud) * u_crack;
+        finalColorRGB += mix(u_edgeColor.rgb, vec3(0.92, 0.98, 1.0), 0.45) * veinIntensity * (1.0 - metalness);
     }
 
-    // 6. Sparkling Highlights 
+    // Crisp Frosted Facet Bevels along side ridges and y=0.68 chisel shoulder
+    float sideBevel = 1.0 - smoothstep(0.0, 0.14 + fineGrain * 0.06, edgeDist);
+    float shoulderBevel = 1.0 - smoothstep(0.0, 0.055 + fineGrain * 0.025, abs(uvY - 0.68));
+    float bevelFrost = clamp(sideBevel + shoulderBevel * 0.85, 0.0, 1.0) * (1.0 - metalness);
+    finalColorRGB = mix(finalColorRGB, mix(u_edgeColor.rgb, vec3(0.95, 0.99, 1.0), 0.5), bevelFrost * 0.62);
+
+    // 6. Facet-Caught Sparkling Highlights
     if (u_sparkle > 0.001)
     {
         vec3 p = fragPosition * 22.0;
         float sparkVal = sin(p.x + u_time) * cos(p.y - u_time) * sin(p.z + u_time * 0.8);
-        
-        // TỐI ƯU ALU: Thay thế pow(abs(x), 16.0) bằng phép nhân chập. 
-        // GPU thực thi phép nhân nhanh hơn gấp nhiều lần so với hàm pow()
         sparkVal = abs(sparkVal);
-        sparkVal *= sparkVal; // ^2
-        sparkVal *= sparkVal; // ^4
-        sparkVal *= sparkVal; // ^8
-        sparkVal *= sparkVal; // ^16
-        
-        finalColorRGB += vec3(2.0) * sparkVal * u_sparkle;
+        sparkVal *= sparkVal;
+        sparkVal *= sparkVal;
+        sparkVal *= sparkVal;
+        sparkVal *= sparkVal;
+        finalColorRGB += vec3(2.0) * sparkVal * (0.45 + 0.55 * specTight) * u_sparkle;
     }
 
-    // 7. Additive Rim and Emission Glow
-    finalColorRGB += rimGlow + (crystalBase * (u_emission * 0.4));
+    // 7. Subsurface Marrow Core Glow (Han Tam Phat Sang) + Rim
+    float marrowGlow = (1.0 - smoothstep(0.04, 0.46, uvY)) * (0.45 + 0.55 * ndotv);
+    finalColorRGB += rimGlow + (u_edgeColor.rgb * (marrowGlow * u_emission * 3.2 * (1.0 - metalness)))
+                   + (crystalBase * (u_emission * 0.35));
 
-    // 8. Dissolve Effect & Alpha
-    float alpha = clamp(u_baseColor.a + (fresnel * u_rimStrength * 0.35), 0.0, 1.0);
-    
+    // 7b. Screen-space refractive transparency (u_sceneTex) on front dielectric pass
+    if (u_hasScene != 0 && u_isBackFace < 0.5 && metalness < 0.5)
+    {
+        vec2 sceneUV = gl_FragCoord.xy / max(u_resolution, vec2(1.0));
+        vec2 refractOffset = normal.xy * (0.018 + u_refraction * 0.045);
+        vec3 refractedScene = vec3(
+            texture(u_sceneTex, clamp(sceneUV + refractOffset + vec2(0.0008, 0.0), 0.002, 0.998)).r,
+            texture(u_sceneTex, clamp(sceneUV + refractOffset, 0.002, 0.998)).g,
+            texture(u_sceneTex, clamp(sceneUV + refractOffset - vec2(0.0008, 0.0), 0.002, 0.998)).b
+        );
+        float clearWindow = 1.0 - clamp(bevelFrost * 0.65 + veinIntensity * 0.35 + fresnel * 0.40, 0.0, 0.90);
+        vec3 transmitted = refractedScene * mix(vec3(1.0), beerLambert, 0.58);
+        finalColorRGB = mix(finalColorRGB, transmitted + u_edgeColor.rgb * (marrowGlow * u_emission * 1.1), clearWindow * 0.86);
+    }
+
+    // 8. Dissolve Effect & Alpha (translucent glassy interior, opaque frosted ridges)
+    float alpha = clamp(u_baseColor.a + (fresnel * u_rimStrength * 0.25) + bevelFrost * 0.35 + clamp(veinIntensity, 0.0, 1.0) * 0.20, 0.0, 1.0);
+    if (u_isBackFace > 0.5)
+    {
+        finalColorRGB *= 0.72;
+        alpha = clamp(u_baseColor.a * 0.55 + bevelFrost * 0.30, 0.0, 0.65);
+    }
+    else if (u_hasScene != 0 && metalness < 0.5)
+    {
+        alpha = mix(0.88, 0.98, clamp(bevelFrost + fresnel, 0.0, 1.0));
+    }
+    alpha = mix(alpha, 1.0, metalness);
+
     if (u_dissolve > 0.001)
     {
-        // Fake high-frequency noise từ baseNoise bằng hàm fract() cực nhẹ
-        // Thay vì phải gọi vnoise3D(fragPosition * 12.0) như cũ
-        float dNoise = fract(baseNoise * 1.5 + 0.1); 
+        float dNoise = fract(baseNoise * 1.5 + 0.1);
         if (dNoise < u_dissolve) discard;
-        
+
         float edge = smoothstep(u_dissolve, u_dissolve + 0.06, dNoise);
         finalColorRGB = mix(u_edgeColor.rgb * 2.5, finalColorRGB, edge);
     }

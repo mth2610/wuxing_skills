@@ -22,7 +22,9 @@ static const char *const s_tsunamiPatternNames[VFX_TSUNAMI_PATTERN_COUNT] = {
     "ATLA: Curling Wave",
     "ATLA: Triple Discs",
     "ATLA: Twin Whips",
-    "ATLA: Avatar State"
+    "ATLA: Avatar State",
+    "Cryo: Glacial Surge",
+    "Cryo: Frozen Octopus"
 };
 
 static const char *const s_tsunamiPresetNames[VFX_TSUNAMI_PRESET_COUNT] = {
@@ -39,7 +41,9 @@ static const char *const s_tsunamiPresetNames[VFX_TSUNAMI_PRESET_COUNT] = {
     "ATLA Curling Wave",
     "ATLA Triple Discs",
     "ATLA Twin Whips",
-    "ATLA Avatar State"
+    "ATLA Avatar State",
+    "ATLA Glacial Surge",
+    "ATLA Frozen Octopus"
 };
 
 static const char *const s_tsunamiRenderModeNames[3] = {
@@ -74,7 +78,7 @@ VFX_TsunamiConfig VFX_Tsunami_DefaultConfig(void)
     cfg.duration = 3.2f;
     cfg.curlIntensity = 0.90f;
     cfg.drag = 0.42f;
-    cfg.emitCrestSpray = false;
+    cfg.emitCrestSpray = true;
     cfg.emitWetGround = true;
     cfg.deepColor = (Color){18, 118, 124, 240};
     cfg.crestColor = (Color){36, 189, 173, 232};
@@ -83,6 +87,7 @@ VFX_TsunamiConfig VFX_Tsunami_DefaultConfig(void)
     cfg.obstacleScale = 0.0f;
     cfg.skillPower = 1.25f;
     cfg.renderMode = 0;
+    cfg.cryoMode = 0.0f;
     return cfg;
 }
 
@@ -224,6 +229,32 @@ void VFX_Tsunami_ApplyPreset(VFX_TsunamiConfig *cfg, VFX_TsunamiPreset preset)
         cfg->deepColor = (Color){14, 96, 138, 242};
         cfg->crestColor = (Color){44, 206, 224, 236};
         break;
+    case VFX_TSUNAMI_PRESET_GLACIAL_SURGE:
+        cfg->pattern = VFX_TSUNAMI_ATLA_GLACIAL_SURGE;
+        cfg->waveHeight = 2.40f;
+        cfg->waveSpeed = 8.4f;
+        cfg->width = 12.5f;
+        cfg->length = 14.5f;
+        cfg->duration = 4.20f;
+        cfg->curlIntensity = 1.05f;
+        cfg->cryoMode = 1.0f;
+        cfg->deepColor = (Color){24, 118, 178, 245};
+        cfg->crestColor = (Color){140, 226, 255, 245};
+        cfg->foamColor = (Color){236, 248, 255, 255};
+        break;
+    case VFX_TSUNAMI_PRESET_FROZEN_OCTOPUS:
+        cfg->pattern = VFX_TSUNAMI_ATLA_FROZEN_OCTOPUS;
+        cfg->waveHeight = 2.65f;
+        cfg->waveSpeed = 9.5f;
+        cfg->width = 15.0f;
+        cfg->length = 15.0f;
+        cfg->duration = 4.20f;
+        cfg->skillPower = 1.35f;
+        cfg->cryoMode = 1.0f;
+        cfg->deepColor = (Color){22, 112, 172, 245};
+        cfg->crestColor = (Color){145, 228, 255, 245};
+        cfg->foamColor = (Color){236, 248, 255, 255};
+        break;
     case VFX_TSUNAMI_PRESET_TIDAL_SURGE:
     case VFX_TSUNAMI_PRESET_CUSTOM:
     default:
@@ -265,6 +296,7 @@ int VFX_Tsunami_GetParams(VFX_TsunamiConfig *cfg, VFX_ParamDef *outParams, int m
     T_FLOAT("Evaporation", "SWE", &cfg->evaporation, 0.02f, 0.65f, 0.04f);
     T_FLOAT("Obstacle Scale", "SWE", &cfg->obstacleScale, 0.0f, 1.8f, 0.1f);
     T_FLOAT("Curl Intensity", "Optics", &cfg->curlIntensity, 0.0f, 1.5f, 0.1f);
+    T_FLOAT("Cryo Freeze", "Optics", &cfg->cryoMode, 0.0f, 1.0f, 0.1f);
     T_FLOAT("Bed Drag", "SWE", &cfg->drag, 0.1f, 2.5f, 0.1f);
     T_BOOL("Crest Spray", "Optics", &cfg->emitCrestSpray);
     T_BOOL("Wet Ground", "Impact", &cfg->emitWetGround);
@@ -311,6 +343,7 @@ int VFX_ComposeTsunamiEx(Vector3 source, Vector3 target, const VFX_TsunamiConfig
     desc.deepColor = c.deepColor;
     desc.crestColor = c.crestColor;
     desc.foamColor = c.foamColor;
+    desc.cryoMode = c.cryoMode;
     return LiquidSWE_Spawn(&desc);
 }
 

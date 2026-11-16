@@ -220,9 +220,11 @@ typedef struct
     float sparkle;      // mapped to u_sparkle (specular sparkle)
     float crack;        // mapped to u_crack (internal noise cracks)
     float emission;     // mapped to u_emission (glow boost)
-    float thickness;    // mapped to u_thickness (light absorption)
-    float dissolve;     // mapped to u_dissolve (dissolve progress)
-    Texture2D texture1; // detail caustics texture for fake refraction
+    float thickness;      // mapped to u_thickness (light absorption)
+    float dissolve;       // mapped to u_dissolve (dissolve progress)
+    float metallic;       // mapped to u_metallic (0 = dielectric ice/gem, 1 = metal)
+    float facetSharpness; // mapped to u_facetSharpness (0 = smooth, 1 = flat-faceted dFdx/dFdy)
+    Texture2D texture1;   // detail caustics texture for fake refraction
 } CrystalMaterialParams;
 
 typedef struct

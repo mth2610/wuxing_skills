@@ -39,6 +39,8 @@ typedef enum {
     LIQUID_SWE_PATTERN_TRIPLE_DISCS = 8,    /* Skill 6: Lien Hoan Thuy Luan */
     LIQUID_SWE_PATTERN_TWIN_WHIPS = 9,      /* Skill 7: Song Tien Toan Phong */
     LIQUID_SWE_PATTERN_AVATAR_STATE = 10,   /* Skill 8: Thai Cuc Avatar State */
+    LIQUID_SWE_PATTERN_GLACIAL_SURGE = 11,  /* Cryo 1: Surging wave flash-freezes into glacial wall */
+    LIQUID_SWE_PATTERN_FROZEN_OCTOPUS = 12, /* Cryo 2: 8 water tentacles freeze into icy cage */
     LIQUID_SWE_PATTERN_COUNT
 } LiquidSWEPattern;
 
@@ -89,6 +91,7 @@ typedef struct {
     Color deepColor;
     Color crestColor;
     Color foamColor;
+    float cryoMode;      /* 0.0 = pure liquid, 1.0 = progressive flash-freeze to glacial ice */
 } LiquidSWEDesc;
 
 typedef struct {
@@ -114,6 +117,7 @@ void LiquidSWE_DrawShadowPass(void);
 
 bool LiquidSWE_GetStats(int handle, float *outMaxH, float *outTotalVolume, float *outMaxFoam);
 bool LiquidSWE_GetCell(int handle, int ix, int iz, float *outH, float *outB, float *outFoam, float *outWetness);
+float LiquidSWE_GetCryoProgress(int handle);
 
 /* Deterministic 3D differential-geometry manifold evaluators (safe for headless tests) */
 Vector3 LiquidSWE_EvalWhipSpine3D(float s, float tau, Vector2 origXZ, Vector2 targetXZ,

@@ -141,6 +141,9 @@ void VFX_Compose_Update(float dt)
     VC_GuidedLiquid_Update(dt);
     VC_WaterDragon_Update(dt);
     VC_Tsunami_Update(dt);
+    VC_FreezePatch_Update(dt);
+    VC_Crystal_Update(dt);
+    VC_IceCrystal_Update(dt);
     VC_MetalBlades_Update(dt);
     /* Five-body liquid stress lab (WUXING_LIQUID_BENCH=1). The heartbeat keeps
      * the fixture alive; simulation and surface submission stay in the engine's
@@ -192,7 +195,15 @@ void VFX_Compose_Draw3D(Camera3D cam)
     VC_GuidedLiquid_Draw3D(cam);
     VC_WaterDragon_Draw3D(cam);
     VC_Tsunami_Draw3D(cam);
+    VC_FreezePatch_Draw3D(cam);
+    VC_Crystal_Draw3D(cam);
+    VC_IceCrystal_Draw3D(cam);
     VC_MetalBlades_Draw3D(cam);
+}
+
+void VFX_Compose_DrawRefraction(Camera3D cam)
+{
+    VC_Crystal_DrawRefraction(cam);
 }
 
 /* Screen-space VFX producers that must submit their particle streams before the

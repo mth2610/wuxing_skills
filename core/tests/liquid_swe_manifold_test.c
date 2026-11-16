@@ -209,7 +209,37 @@ int main(void)
         }
     }
 
-    /* 5. Shader Contract Check */
+    /* 5. Cryo-Freeze Phase Transition (GLACIAL_SURGE & FROZEN_OCTOPUS) */
+    {
+        LiquidSWE_Init();
+        LiquidSWEDesc desc = LiquidSWE_DefaultDesc();
+        desc.pattern = LIQUID_SWE_PATTERN_GLACIAL_SURGE;
+        desc.sampleTerrain = false;
+        desc.cryoMode = 1.0f;
+        desc.duration = 4.0f;
+        int hnd = LiquidSWE_Spawn(&desc);
+        CHECK(hnd > 0, "Spawn GLACIAL_SURGE succeeds");
+
+        for (int s = 0; s < 140; ++s) {
+            LiquidSWE_Update(0.02f); /* age = 2.8s / 4.0s = 0.70 */
+        }
+        float cryoP = LiquidSWE_GetCryoProgress(hnd);
+        float maxH = 0.0f, vol = 0.0f, foam = 0.0f;
+        LiquidSWE_GetStats(hnd, &maxH, &vol, &foam);
+        CHECK(cryoP > 0.90f, "Glacial surge reaches full cryo freeze state");
+        CHECK(isfinite(maxH) && maxH > 0.05f, "Frozen glacial wave preserves sculpted height");
+
+        LiquidSWE_Init();
+        desc.pattern = LIQUID_SWE_PATTERN_FROZEN_OCTOPUS;
+        int hnd2 = LiquidSWE_Spawn(&desc);
+        CHECK(hnd2 > 0, "Spawn FROZEN_OCTOPUS succeeds");
+        for (int s = 0; s < 130; ++s) {
+            LiquidSWE_Update(0.02f);
+        }
+        CHECK(LiquidSWE_GetCryoProgress(hnd2) > 0.85f, "Frozen octopus reaches cryo freeze state");
+    }
+
+    /* 6. Shader Contract Check */
     {
         FILE *f = fopen("core/shaders/tsunami_swe.fs", "rb");
         CHECK(f != NULL, "core/shaders/tsunami_swe.fs exists");
@@ -223,6 +253,7 @@ int main(void)
                 buf[got] = '\0';
                 CHECK(strstr(buf, "VFX_ResolveBody") != NULL, "tsunami_swe.fs resolves via VFX_ResolveBody");
                 CHECK(strstr(buf, "u_renderMode") != NULL, "tsunami_swe.fs exposes u_renderMode");
+                CHECK(strstr(buf, "u_cryoAmount") != NULL, "tsunami_swe.fs exposes u_cryoAmount");
                 free(buf);
             }
             fclose(f);
