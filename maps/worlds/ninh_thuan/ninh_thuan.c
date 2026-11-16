@@ -489,12 +489,12 @@ void InitNinhThuanMap(void)
 
     s_coastalSea = MapProp_CreateWaterPatch(
         (Vector3){kMapCenter.x, NINH_THUAN_SEA_Y, kMapCenter.z},
-        820.0f, 820.0f,
+        560.0f, 560.0f,
         (MapWaterConfig){
             .ecosystem = WATER_ECO_CUSTOM,
-            .segments = 64,
-            .rings = 64,
-            .waveHeight = 0.16f,
+            .segments = 84,
+            .rings = 84,
+            .waveHeight = 0.28f,
             .waveScale = 0.45f,
             .waveSpeed = 1.20f,
             .flowVelocity = {0.20f, 0.14f},
@@ -687,8 +687,7 @@ void DrawNinhThuanMap(void)
             MapProp_DrawFloraSystem(&s_flora);
     }
 
-    if (!(s_skipMask & MAP_SKIP_WATER))
-        MapProp_DrawWaterBed(&s_coastalSea, (float)fmod(GetTime(), 3600.0));
+    /* s_coastalSea sits over s_cliff / deep abyss, so DrawWaterBed is redundant here */
     if (!(s_skipMask & MAP_SKIP_SKY))
         MapProp_DrawSkyDome(&s_sky);
 }

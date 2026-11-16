@@ -17,6 +17,7 @@ uniform vec3 u_waterVelocity;
 uniform float u_waterRadius;
 uniform sampler2D u_waveFieldTex;
 uniform int u_waveFieldEnabled;
+uniform int u_flowFieldEnabled;
 uniform float u_rainRise;    // storm swell (m) applied to deep terrain-water vertices
 
 out vec3 fragPosition;
@@ -24,6 +25,24 @@ out vec2 fragLakeCoord;
 out vec2 fragWorldXZ;
 out float fragShoreFade;
 out float fragWaterDepth;
+out float fragOceanCrest;
+out vec3 fragOceanNormal;
+
+vec3 addOceanGerstner(vec2 xz, vec2 dir, float steepness, float wavelength, float speedMul, float tVal,
+                      inout vec3 tangent, inout vec3 binormal, inout float crestAccum)
+{
+    float k = 6.2831853 / wavelength;
+    float c = sqrt(9.81 / k) * speedMul;
+    vec2 d = normalize(dir);
+    float f = k * (dot(d, xz) - c * tVal);
+    float a = steepness / k;
+    float s = sin(f);
+    float co = cos(f);
+    tangent  += vec3(-d.x * d.x * steepness * s, d.x * steepness * co, -d.x * d.y * steepness * s);
+    binormal += vec3(-d.x * d.y * steepness * s, d.y * steepness * co, -d.y * d.y * steepness * s);
+    crestAccum += steepness * pow(max(0.0, s), 1.4);
+    return vec3(d.x * a * co, a * s, d.y * a * co);
+}
 
 void main()
 {
@@ -53,7 +72,27 @@ void main()
     }
 
     // Gentle 3D vertical wave undulation damped to 0.0 at the shoreline so edges never detach from terrain
-    if (shoreFade > 0.001 && u_waveHeight > 0.0001) {
+    float oceanCrestOut = 0.0;
+    vec3 oceanNormalOut = vec3(0.0, 1.0, 0.0);
+    if (u_waterShape == 1 && u_flowFieldEnabled > 0) {
+        float t = mod(u_time * u_waveSpeed, 6283.185307);
+        float amp = u_waveHeight * 1.45 * shoreFade;
+        vec3 tangent = vec3(1.0, 0.0, 0.0);
+        vec3 binormal = vec3(0.0, 0.0, 1.0);
+        float crest = 0.0;
+        vec3 disp = vec3(0.0);
+        // 4 Golden-Ratio Gerstner Swells for crisp 3D wave peaks & analytical normals
+        disp += addOceanGerstner(world.xz, vec2(-0.96,  0.28), 0.24 * amp, 54.0, 1.15, t, tangent, binormal, crest);
+        disp += addOceanGerstner(world.xz, vec2(-0.91, -0.41), 0.20 * amp, 34.0, 1.08, t, tangent, binormal, crest);
+        disp += addOceanGerstner(world.xz, vec2(-0.98,  0.16), 0.16 * amp, 22.0, 1.02, t, tangent, binormal, crest);
+        disp += addOceanGerstner(world.xz, vec2(-0.84,  0.54), 0.13 * amp, 14.0, 0.96, t, tangent, binormal, crest);
+        local += disp;
+        world += disp;
+        vec3 nAnalytic = normalize(cross(binormal, tangent));
+        if (nAnalytic.y < 0.0) nAnalytic = -nAnalytic;
+        oceanNormalOut = nAnalytic;
+        oceanCrestOut = clamp(crest * 1.05, 0.0, 1.6);
+    } else if (shoreFade > 0.001 && u_waveHeight > 0.0001) {
         // Đồng bộ mod() thời gian với water_surface.fs để tránh trôi pha float32 khi game chạy lâu
         float t = mod(u_time * u_waveSpeed, 6283.185307);
         vec2 effectiveFlow = u_flowVelocity;
@@ -87,8 +126,10 @@ void main()
     fragPosition   = world;
     fragLakeCoord  = coord;
     fragWorldXZ    = world.xz;
-    fragShoreFade  = shoreFade;
-    fragWaterDepth = max(0.0, vertexTexCoord.x);
+    fragShoreFade   = shoreFade;
+    fragWaterDepth  = max(0.0, vertexTexCoord.x);
+    fragOceanCrest  = oceanCrestOut;
+    fragOceanNormal = oceanNormalOut;
 
     gl_Position = mvp * vec4(local, 1.0);
 }

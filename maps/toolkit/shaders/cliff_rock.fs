@@ -168,12 +168,21 @@ void main() {
     float microCrevice = clamp(normX.z * triWeights.x + normY.z * triWeights.y + normZ.z * triWeights.z, 0.25, 1.0);
     float cavityAO = clamp(fragColor.r * (0.35 + 0.65 * microCrevice), mix(0.18, 0.48, u_cliffAridMode), 1.0);
 
-    // Coastal tidal wet-rock splash zone in arid mode (darkens & polishes rock base near sea level)
+    // Coastal tidal wet-rock splash zone + clinging white surf foam + turquoise ocean bounce in arid mode
     float coastalWet = (u_cliffAridMode > 0.5)
-        ? (1.0 - smoothstep(-1.35, -0.25, worldPosition.y))
+        ? (1.0 - smoothstep(-1.30, 0.55, worldPosition.y))
         : 0.0;
-    rockAlbedo *= mix(1.0, 0.56, coastalWet * 0.88);
-    roughness = mix(roughness, 0.16, coastalWet * 0.85);
+    rockAlbedo *= mix(1.0, 0.42, coastalWet * 0.88);
+    roughness = mix(roughness, 0.14, coastalWet * 0.88);
+    if (u_cliffAridMode > 0.5) {
+        // Clinging sea-foam collar in wet rock crevices right at the splash band (-1.30..+0.10m)
+        float splashBand = 1.0 - smoothstep(0.0, 0.95, abs(worldPosition.y - (-0.80)));
+        float rockFoam = splashBand * smoothstep(0.42, 0.78, triAlbedo.r * 0.65 + (1.0 - microCrevice) * 0.45);
+        rockAlbedo = mix(rockAlbedo, vec3(0.95, 0.98, 1.0), clamp(rockFoam * 0.85, 0.0, 0.88));
+        // Subtle turquoise ocean bounce light on lower cliff face
+        float oceanBounceMask = exp(-max(0.0, worldPosition.y + 1.25) * 0.18);
+        rockAlbedo += vec3(0.04, 0.18, 0.20) * oceanBounceMask * (0.4 + 0.6 * max(0.0, worldNormal.y + 0.3));
+    }
 
     // ── 5. Physically Grounded Lighting ──
     float lightLenSq = dot(u_lightDir, u_lightDir);
