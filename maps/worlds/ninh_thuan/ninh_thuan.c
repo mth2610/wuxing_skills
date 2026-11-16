@@ -15,6 +15,7 @@
 #include "post_process/color_grade_lut.h"
 #include "post_process/post_fx.h"
 #include "raymath.h"
+#include "rlgl.h"
 #include <math.h>
 #include <stddef.h>
 #include <stdlib.h>
@@ -85,10 +86,40 @@ static float NinhThuanCoastalSurface(float x, float z, void *user)
 
 static void DrawNinhThuanShadowCasters(Shader depthShader, void *user)
 {
-    (void)depthShader;
     (void)user;
-    /* Static granite tors/kopjes are cached in CaptureNinhThuanStaticShadows();
-     * skipping static rock re-submission here avoids burning per-frame shadow pass time. */
+    if ((s_skipMask & MAP_SKIP_SHADOWCASTERS) || (s_skipMask & MAP_SKIP_ROCKS))
+        return;
+    if (!s_rocks.ready || !s_rocks.items || s_rocks.count <= 0)
+        return;
+
+    /* Submit nearby large boulders to the dynamic shadow pass for crisp high-res
+     * shadows around the player, while distant tors use the static shadow cache. */
+    Vector3 focus = EnvShadow_GetFocus();
+    float maxDist = EnvShadow_GetHalfExtent() + 4.0f;
+    float maxDistSq = maxDist * maxDist;
+    Vector3 rotAxis = {0.0f, 1.0f, 0.0f};
+    for (int i = 0; i < s_rocks.count; i++)
+    {
+        const MapRockItem *p = &s_rocks.items[i];
+        if (p->archetype == MAP_ROCK_SCREE || p->radiusScale < 1.20f)
+            continue;
+        float dx = p->position.x - focus.x;
+        float dz = p->position.z - focus.z;
+        if (dx * dx + dz * dz > maxDistSq)
+            continue;
+        int arch = (int)p->archetype;
+        if (arch < 0 || arch >= MAP_ROCK_ARCHETYPE_COUNT)
+            arch = MAP_ROCK_GRANITE;
+        const MapRockSet *set = &s_rocks.models[arch];
+        if (!set->ready || set->model.materialCount < 1)
+            continue;
+        Shader prev = set->model.materials[0].shader;
+        set->model.materials[0].shader = depthShader;
+        DrawModelEx(set->model, p->position, rotAxis, p->rotationDeg,
+                    (Vector3){p->radiusScale, p->heightScale, p->radiusScale}, WHITE);
+        set->model.materials[0].shader = prev;
+    }
+    rlDrawRenderBatchActive();
 }
 
 static void CaptureNinhThuanStaticShadows(void)
@@ -97,7 +128,7 @@ static void CaptureNinhThuanStaticShadows(void)
         return;
     if ((s_skipMask & MAP_SKIP_SHADOWCASTERS) || (s_skipMask & MAP_SKIP_ROCKS))
         return;
-    EnvShadow_BeginStaticCapture(kMapCenter, 72.0f);
+    EnvShadow_BeginStaticCapture(kMapCenter, 155.0f);
     if (!EnvShadow_IsCapturing())
         return;
     Shader depthShader = EnvShadow_GetDepthShader();
@@ -109,10 +140,8 @@ static void SpawnNinhThuanDustHaze(void)
 {
     FogVolume_ClearAll();
     static const LocalFogVolume kDustVolumes[] = {
-        {.shape = FOG_SHAPE_CYLINDER, .position = {94.1f, 0.35f, 150.0f}, .extents = {14.0f, 0.55f, 12.0f}, .color = {236, 210, 174, 255}, .density = 0.11f, .edgeSoftness = 0.92f, .driftVelocity = {0.06f, 0.0f, 0.03f}, .active = true},
-        {.shape = FOG_SHAPE_CYLINDER, .position = {70.0f, 1.80f, 118.0f}, .extents = {16.0f, 0.60f, 14.0f}, .color = {236, 210, 174, 255}, .density = 0.13f, .edgeSoftness = 0.92f, .driftVelocity = {0.06f, 0.0f, 0.03f}, .active = true},
-        {.shape = FOG_SHAPE_CYLINDER, .position = {122.0f, 2.20f, 185.0f}, .extents = {15.0f, 0.60f, 14.0f}, .color = {236, 210, 174, 255}, .density = 0.12f, .edgeSoftness = 0.92f, .driftVelocity = {0.06f, 0.0f, 0.03f}, .active = true},
-        {.shape = FOG_SHAPE_CYLINDER, .position = {NINH_THUAN_LAKE_CENTER_X, 0.45f, NINH_THUAN_LAKE_CENTER_Z}, .extents = {14.0f, 0.50f, 12.0f}, .color = {238, 218, 186, 255}, .density = 0.14f, .edgeSoftness = 0.92f, .driftVelocity = {0.04f, 0.0f, 0.02f}, .active = true},
+        {.shape = FOG_SHAPE_CYLINDER, .position = {94.1f, 0.35f, 150.0f}, .extents = {18.0f, 0.65f, 16.0f}, .color = {240, 214, 176, 255}, .density = 0.14f, .edgeSoftness = 0.92f, .driftVelocity = {0.85f, 0.0f, 0.48f}, .active = true},
+        {.shape = FOG_SHAPE_CYLINDER, .position = {NINH_THUAN_LAKE_CENTER_X, 0.45f, NINH_THUAN_LAKE_CENTER_Z}, .extents = {16.0f, 0.55f, 14.0f}, .color = {242, 222, 190, 255}, .density = 0.15f, .edgeSoftness = 0.92f, .driftVelocity = {0.60f, 0.0f, 0.35f}, .active = true},
     };
     for (int i = 0; i < (int)(sizeof(kDustVolumes) / sizeof(kDustVolumes[0])); i++)
     {
@@ -245,11 +274,11 @@ static void BuildNinhThuanFlora(void)
         s_reedPlacements, s_reedCount,
         NULL, NULL, 0,
         (MapFloraStyle){
-            .grassRootColor = {96, 80, 56, 255},
-            .grassTipColor = {196, 174, 122, 255},
-            .bladesPerClump = 5,
+            .grassRootColor = {72, 54, 36, 255},
+            .grassTipColor = {214, 188, 128, 255},
+            .bladesPerClump = 6,
             .bladeSegments = 3,
-            .bladeWidthScale = 0.142f,
+            .bladeWidthScale = 0.128f,
             .lodDistance = 24.0f,
             .midLodDistance = 20.0f,
             .drawDistance = 42.0f,
@@ -311,15 +340,15 @@ void InitNinhThuanMap(void)
             }
         },
         {
-            .ambientColor = {118, 128, 146, 255},
-            .sunColor = {255, 224, 174, 255},
-            .sunDirection = {0.62f, -0.56f, -0.55f},
-            .shadowColor = {70, 78, 110, 155},
-            .fog = {.enabled = true, .color = {240, 218, 188, 255}, .start = 44.0f, .end = 250.0f, .density = 0.0038f},
+            .ambientColor = {114, 124, 144, 255},
+            .sunColor = {255, 218, 166, 255},
+            .sunDirection = {0.74f, -0.42f, -0.52f},
+            .shadowColor = {64, 74, 108, 165},
+            .fog = {.enabled = true, .color = {240, 216, 184, 255}, .start = 42.0f, .end = 235.0f, .density = 0.0028f},
             .atmosphere = {
-                .color = {240, 218, 188, 255}, .start = 44.0f, .end = 250.0f, .enabled = true,
-                .optics = {.rayleighLMS = {0.0088f, 0.0145f, 0.0250f}, .mieScattering = 0.0046f, .mieAnisotropy = 0.78f, .multipleScatteringAmp = 2.0f},
-                .density = {.baseDensity = 0.0038f, .heightFalloff = 0.22f, .baseAltitude = -6.0f, .enableSigmoidLayer = false}
+                .color = {240, 216, 184, 255}, .start = 42.0f, .end = 235.0f, .enabled = true,
+                .optics = {.rayleighLMS = {0.0088f, 0.0145f, 0.0250f}, .mieScattering = 0.0052f, .mieAnisotropy = 0.80f, .multipleScatteringAmp = 2.0f},
+                .density = {.baseDensity = 0.0028f, .heightFalloff = 0.45f, .baseAltitude = -2.0f, .enableSigmoidLayer = false}
             }
         },
         {
@@ -339,21 +368,21 @@ void InitNinhThuanMap(void)
     Environment_SetTimeOfDayPresets(kNinhThuanToD, kNinhThuanTimes, 4);
     Environment_SetTimeOfDay(0.64f);
     Environment_SetTimeOfDaySpeed(0.0f);
-    Environment_SetAmbientColor((Color){118, 128, 146, 255});
-    Environment_SetSunColor((Color){255, 224, 174, 255});
-    Environment_SetSunIntensity(1.60f);
-    Environment_SetSunDirection(Vector3Normalize((Vector3){0.62f, -0.56f, -0.55f}));
-    Environment_SetShadowColor((Color){70, 78, 110, 155});
+    Environment_SetAmbientColor((Color){114, 124, 144, 255});
+    Environment_SetSunColor((Color){255, 218, 166, 255});
+    Environment_SetSunIntensity(1.72f);
+    Environment_SetSunDirection(Vector3Normalize((Vector3){0.74f, -0.42f, -0.52f}));
+    Environment_SetShadowColor((Color){64, 74, 108, 165});
 
     PostFXMapProfile postProfile = {
         .enabled = true,
-        .exposure = 0.98f,
-        .contrast = 1.06f,
-        .saturation = 0.94f,
-        .bloomIntensity = 0.14f,
-        .shadowTint = {0.90f, 0.95f, 1.06f},
-        .highlightTint = {1.05f, 1.00f, 0.93f},
-        .bloomThreshold = 1.18f,
+        .exposure = 1.02f,
+        .contrast = 1.10f,
+        .saturation = 1.02f,
+        .bloomIntensity = 0.18f,
+        .shadowTint = {0.88f, 0.93f, 1.08f},
+        .highlightTint = {1.07f, 0.99f, 0.90f},
+        .bloomThreshold = 1.12f,
         .bloomKnee = 0.42f,
         .hueRestore = 0.60f,
     };
@@ -365,11 +394,11 @@ void InitNinhThuanMap(void)
     AtmosphereProfile atmos = kNinhThuanToD[2].atmosphere;
     atmos.enabled = false;
     Environment_SetAtmosphereProfile(&atmos);
-    VolumetricFog_SetGodRayIntensity(0.85f);
-    VolumetricFog_SetDistantCoverage(0.35f);
+    VolumetricFog_SetGodRayIntensity(0.95f);
+    VolumetricFog_SetDistantCoverage(0.40f);
     s_prevAtmoMode = Atmosphere_GetMode();
     Atmosphere_SetMode(ATMO_MODE_DESERT_DUST);
-    Atmosphere_Configure(kMapCenter, (Vector3){32.0f, 3.2f, 32.0f}, 300, (Color){242, 214, 168, 255});
+    Atmosphere_Configure(kMapCenter, (Vector3){28.0f, 1.8f, 28.0f}, 360, (Color){248, 220, 174, 255});
     PostFX_SetHeatHaze(0.0f, 0.0f, 0.0f);
     EnvCloudShadowConfig cloudConfig = {
         .enabled = true,
@@ -492,8 +521,8 @@ void InitNinhThuanMap(void)
         560.0f, 560.0f,
         (MapWaterConfig){
             .ecosystem = WATER_ECO_CUSTOM,
-            .segments = 84,
-            .rings = 84,
+            .segments = 56,
+            .rings = 56,
             .waveHeight = 0.28f,
             .waveScale = 0.45f,
             .waveSpeed = 1.20f,

@@ -529,23 +529,28 @@ static Mesh Nature_BuildProceduralRockMeshVariant(int rockType, int variantSeed)
                 }
             }
 
-            // 2 gentle exfoliation sheet-joint planes (replaces 9 harsh polyhedral cleavage planes)
-            static const float kSheetJoints[2][4] = {
-                {0.24f, 0.92f, 0.30f, 0.68f},
-                {-0.62f, 0.42f, -0.66f, 0.72f},
+            // 3 structural tectonic joint planes + 2 exfoliation sheet-joint planes
+            // (replaces pure potato-sphere rounding with authentic Ninh Thuan granite facets)
+            static const float kGraniteJoints[5][4] = {
+                { 0.24f,  0.92f,  0.30f, 0.70f},
+                {-0.62f,  0.42f, -0.66f, 0.72f},
+                { 0.78f,  0.22f, -0.58f, 0.76f},
+                {-0.45f, -0.18f,  0.87f, 0.75f},
+                { 0.14f,  0.55f, -0.82f, 0.74f},
             };
-            for (int p = 0; p < 2; p++)
+            for (int p = 0; p < 5; p++)
             {
-                float nx = kSheetJoints[p][0], ny = kSheetJoints[p][1], nz = kSheetJoints[p][2];
-                float d = kSheetJoints[p][3];
+                float nx = kGraniteJoints[p][0], ny = kGraniteJoints[p][1], nz = kGraniteJoints[p][2];
+                float d = kGraniteJoints[p][3];
                 float dist = vx * nx + vy * ny + vz * nz - d;
-                if (dist > -0.08f)
+                if (dist > -0.06f)
                 {
-                    float u = dist + 0.08f;
-                    float softDist = 0.5f * (u + sqrtf(u * u + 0.025f));
-                    vx -= nx * softDist * 0.58f;
-                    vy -= ny * softDist * 0.58f;
-                    vz -= nz * softDist * 0.58f;
+                    float u = dist + 0.06f;
+                    float softDist = 0.5f * (u + sqrtf(u * u + (p < 2 ? 0.018f : 0.008f)));
+                    float strength = (p < 2) ? 0.56f : 0.44f;
+                    vx -= nx * softDist * strength;
+                    vy -= ny * softDist * strength;
+                    vz -= nz * softDist * strength;
                 }
             }
 
@@ -553,16 +558,16 @@ static Mesh Nature_BuildProceduralRockMeshVariant(int rockType, int variantSeed)
             float shellCoord = (vy + 0.85f) * 3.4f + 0.35f * sinf(vx * 2.4f + vz * 2.1f + vPhase);
             float shellIdx = floorf(shellCoord);
             float shellFrac = shellCoord - shellIdx;
-            float exfoliationStep = 0.024f * (Rock_Smoothstep(0.10f, 0.32f, shellFrac) - 0.5f);
+            float exfoliationStep = 0.028f * (Rock_Smoothstep(0.10f, 0.32f, shellFrac) - 0.5f);
             float rLen = sqrtf(vx * vx + vz * vz + 1e-6f);
             vx += (vx / rLen) * exfoliationStep;
             vz += (vz / rLen) * exfoliationStep;
 
-            // Subtle wind-eroded tafoni pocket on lower windward flank
-            float tafoniWave = sinf(vx * 4.6f + vPhase) * cosf(vz * 4.4f - vPhase) * sinf(vy * 5.2f);
-            if (tafoniWave > 0.48f && vy < 0.25f && vy > -0.45f)
+            // Wind-eroded alveolar tafoni pockets on lower windward flank
+            float tafoniWave = sinf(vx * 4.2f + vPhase) * cosf(vz * 4.0f - vPhase) * sinf(vy * 4.8f);
+            if (tafoniWave > 0.36f && vy < 0.25f && vy > -0.45f)
             {
-                float scoop = (tafoniWave - 0.48f) * 0.14f;
+                float scoop = (tafoniWave - 0.36f) * 0.24f;
                 vx *= (1.0f - scoop);
                 vz *= (1.0f - scoop);
             }
@@ -570,8 +575,8 @@ static Mesh Nature_BuildProceduralRockMeshVariant(int rockType, int variantSeed)
             if (vy < -0.22f)
             {
                 float tuck = (-0.22f - vy);
-                vx *= (1.0f - tuck * 0.14f);
-                vz *= (1.0f - tuck * 0.14f);
+                vx *= (1.0f - tuck * 0.12f);
+                vz *= (1.0f - tuck * 0.12f);
             }
         }
 
@@ -635,7 +640,7 @@ static Mesh Nature_BuildProceduralRockMeshVariant(int rockType, int variantSeed)
     float cosCreaseThreshold = 0.819f; // ~35 deg for chiseled boulders
     if (rockType == MAP_ROCK_GRANITE)
     {
-        cosCreaseThreshold = 0.422f; // ~65 deg for smooth spheroidal granite corestones
+        cosCreaseThreshold = 0.743f; // ~42 deg: keeps structural joint facets crisp while rounding shoulders
     }
     else if (rockType == MAP_ROCK_RIVER_STONE)
     {
@@ -1355,8 +1360,9 @@ void MapProp_DrawRockSystemShadowCasters(MapRockSystem *sys, Shader depthShader)
         }
     }
 
-    Vector3 focus = EnvShadow_GetFocus();
-    float halfExtent = EnvShadow_GetHalfExtent();
+    Vector3 focus = {0};
+    float halfExtent = 0.0f;
+    EnvShadow_GetActiveCaptureBounds(&focus, &halfExtent);
     float cullBase = (halfExtent > 1.0f) ? halfExtent : 28.0f;
     Vector3 rotAxis = {0.0f, 1.0f, 0.0f};
     for (int i = 0; i < sys->count; i++)

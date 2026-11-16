@@ -64,6 +64,8 @@ static unsigned int s_staticDepthTexId = 0;
 static unsigned int s_staticColorTexId = 0;
 static int s_staticResolution = 0;
 static Matrix s_staticLightView, s_staticLightProj, s_staticLightVP;
+static Vector3 s_staticFocus = ARENA_CENTER;
+static float s_staticHalfExtent = ARENA_RADIUS + 2.0f;
 static float s_staticCaptureDistance = 0.0f;
 static Texture2D s_staticShadowMapTex;
 static Vector3 s_staticSunDir = {0};
@@ -439,6 +441,19 @@ void EnvShadow_SetFocus(Vector3 center, float halfExtent)
 
 Vector3 EnvShadow_GetFocus(void) { return s_shadowFocus; }
 float EnvShadow_GetHalfExtent(void) { return s_shadowHalfExtent; }
+void EnvShadow_GetActiveCaptureBounds(Vector3 *outCenter, float *outHalfExtent)
+{
+    if (s_staticCaptureOpen)
+    {
+        if (outCenter) *outCenter = s_staticFocus;
+        if (outHalfExtent) *outHalfExtent = s_staticHalfExtent;
+    }
+    else
+    {
+        if (outCenter) *outCenter = s_shadowFocus;
+        if (outHalfExtent) *outHalfExtent = s_shadowHalfExtent;
+    }
+}
 
 static Matrix ComputeLightVP(void)
 {
@@ -478,8 +493,8 @@ static Matrix ComputeStaticLightVP(Vector3 center, float halfExtent)
 {
     if (halfExtent < 8.0f)
         halfExtent = 8.0f;
-    if (halfExtent > 128.0f)
-        halfExtent = 128.0f;
+    if (halfExtent > 160.0f)
+        halfExtent = 160.0f;
     // The static map is world-fixed and captured on demand, so it uses the
     // live sun at capture time (HasStaticCache validates against that).
     ShadowLightBasis basis = MakeLightBasis(Vector3Normalize(Environment_GetSunDirection()));
@@ -693,9 +708,11 @@ void EnvShadow_BeginStaticCapture(Vector3 center, float halfExtent)
         return;
     if (halfExtent < 8.0f)
         halfExtent = 8.0f;
-    if (halfExtent > 128.0f)
-        halfExtent = 128.0f;
+    if (halfExtent > 160.0f)
+        halfExtent = 160.0f;
     s_staticCacheValid = false;
+    s_staticFocus = center;
+    s_staticHalfExtent = halfExtent;
     s_staticLightVP = ComputeStaticLightVP(center, halfExtent);
     s_staticCaptureOpen = true;
     BeginCaptureTarget(s_staticFboId, s_staticResolution, s_staticLightView,

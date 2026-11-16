@@ -45,6 +45,7 @@ int        EnvShadow_GetQuality(void);
 void       EnvShadow_SetFocus(Vector3 center, float halfExtent);
 Vector3    EnvShadow_GetFocus(void);
 float      EnvShadow_GetHalfExtent(void);
+void       EnvShadow_GetActiveCaptureBounds(Vector3 *outCenter, float *outHalfExtent);
 
 void       EnvShadow_BeginCapture(void); // begins the light-space depth pass
 void       EnvShadow_EndCapture(void);   // ends it, restores default framebuffer/viewport

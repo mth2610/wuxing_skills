@@ -205,6 +205,7 @@ add_executable(wuxing
     core/liquid/liquid_surface.c
     core/liquid/liquid_metaball3d.c
     core/liquid/liquid_flow.c
+    core/liquid/liquid_swe.c
     core/gas/gas_sim.c
     core/gas/gas_system.c
     core/path_spline.c
@@ -414,6 +415,8 @@ configure_file(core/trails/shaders/trail_volume.vs ${CMAKE_CURRENT_BINARY_DIR}/c
 configure_file(core/trails/shaders/trail_volume.fs ${CMAKE_CURRENT_BINARY_DIR}/core/trails/shaders/trail_volume.fs COPYONLY)
 configure_file(core/shaders/water_splash.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/water_splash.fs COPYONLY)
 configure_file(core/shaders/water_splash.vs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/water_splash.vs COPYONLY)
+configure_file(core/shaders/tsunami_swe.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/tsunami_swe.fs COPYONLY)
+configure_file(core/shaders/tsunami_swe.vs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/tsunami_swe.vs COPYONLY)
 configure_file(core/shaders/ground_wave.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/ground_wave.fs COPYONLY)
 configure_file(core/shaders/ground_wave.vs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/ground_wave.vs COPYONLY)
 configure_file(core/shaders/shock_ring.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/shock_ring.fs COPYONLY)

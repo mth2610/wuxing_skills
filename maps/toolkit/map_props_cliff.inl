@@ -581,13 +581,16 @@ static int Cliff_BuildCoastLoop(const MapGroundSurface *ground, Vector3 mapCente
     return bestCount;
 }
 
-// Find the turfy lip above a low coast contour by stepping slightly inward.
+// Find the true plateau lip above a low coast contour by stepping inward
+// until we reach walkable terrain (normal.y >= 0.65) or the highest crest.
 static Vector3 Cliff_FindLip(const MapGroundSurface *ground, Vector3 mapCenter,
                              Vector3 contourPoint, Vector2 inward, float contourY)
 {
     (void)contourY;
-    const float step = 0.15f;
-    for (int k = 1; k <= 8; k++)
+    const float step = 0.18f;
+    Vector3 best = contourPoint;
+    float bestY = -1e9f;
+    for (int k = 1; k <= 16; k++)
     {
         float d = (float)k * step;
         Vector3 p, n;
@@ -595,11 +598,16 @@ static Vector3 Cliff_FindLip(const MapGroundSurface *ground, Vector3 mapCenter,
                                         contourPoint.x + inward.x * d,
                                         contourPoint.z + inward.y * d, &p, &n))
         {
-            if (p.y > 0.0f)
+            if (p.y > bestY)
+            {
+                bestY = p.y;
+                best = p;
+            }
+            if (p.y > 0.0f && n.y >= 0.68f)
                 return p;
         }
     }
-    return contourPoint;
+    return (bestY > -1e8f) ? best : contourPoint;
 }
 
 // Snaps heightfield ground boundary vertices directly to the smooth closed polyline rimPos.
@@ -743,8 +751,8 @@ static void Cliff_ConformGroundBoundary(MapGroundSurface *ground, Vector3 mapCen
             }
         }
 
-        // Only snap if within 4.0m
-        if (bestDistSq <= 16.0f)
+        // Snap boundary vertices to the smoothed rim curve (up to 8.0m reach so steep bluffs never dangle)
+        if (bestDistSq <= 64.0f)
         {
             mesh->vertices[v * 3 + 0] = bestP.x - originX;
             mesh->vertices[v * 3 + 1] = bestP.y - originY;
@@ -849,6 +857,16 @@ static void Cliff_ConformGroundBoundary(MapGroundSurface *ground, Vector3 mapCen
         UpdateMeshBuffer(*mesh, 2, mesh->normals, (int)(mesh->vertexCount * 3 * sizeof(float)), 0);
 
     GroundLookup_Build(&ground->lookup, mesh);
+
+    // Rebuild ground chunks so the rendered chunk VBOs match the conformed boundary
+    if (ground->chunkCount > 0)
+    {
+        for (int c = 0; c < ground->chunkCount; c++)
+            UnloadMesh(ground->chunks[c].mesh);
+        ground->chunkCount = 0;
+        if (width > 1.0f && depth > 1.0f)
+            Ground_BuildChunks(ground, width, depth);
+    }
 }
 
 MapCliffSkirt MapProp_CreateCliffSkirt(const MapGroundSurface *ground, Vector3 mapCenter, float sliceHeight, float bottomY)
@@ -1161,18 +1179,27 @@ MapCliffSkirt MapProp_CreateCliffSkirt(const MapGroundSurface *ground, Vector3 m
             float sharpFacet = (facetFold - 0.5f) * 1.8f;
 
             // Stepped tectonic shelves + cantilevered overhang ledges on mid cliff rows (GPU Gems 3 §1.3.4)
-            float shelfStep = floorf((depth + warpY * 0.35f) * 0.55f) * 0.36f;
-            float shelfEdge = sinf((depth + warpY * 0.45f) * 3.2f + pillar * 0.65f) * 0.48f;
+            float shelfStep = fminf(floorf((depth + warpY * 0.35f) * 0.55f) * 0.14f, 0.85f);
+            float shelfEdge = sinf((depth + warpY * 0.45f) * 3.2f + pillar * 0.65f) * 0.36f;
             float overhangMask = (r >= 2 && r <= 6) ? sinf(((float)(r - 2) / 4.0f) * PI) : 0.0f;
-            float overhangMod = overhangMask * Cliff_Fbm3(wx * 0.08f, wy * 0.18f, wz * 0.08f, 113, 2) * 2.1f;
+            float overhangMod = overhangMask * Cliff_Fbm3(wx * 0.08f, wy * 0.18f, wz * 0.08f, 113, 2) * 1.45f;
 
-            float relief = (pillar + crevice + fissureCut + sharpFacet * 1.35f + shelfStep + shelfEdge + overhangMod) * rp->noise;
+            // Dampen outward relief in concave bays/coves to prevent opposite cliff walls from self-intersecting
+            int prevC = (i - 5 + M) % M;
+            int nextC = (i + 5) % M;
+            float midX = 0.5f * (rimPos[prevC].x + rimPos[nextC].x) - rimPos[i].x;
+            float midZ = 0.5f * (rimPos[prevC].z + rimPos[nextC].z) - rimPos[i].z;
+            float bayConcavity = midX * rimNorm[i].x + midZ * rimNorm[i].y;
+            float bayDamp = (bayConcavity > 0.0f) ? (1.0f / (1.0f + bayConcavity * 0.65f)) : 1.0f;
+            if (bayDamp < 0.32f) bayDamp = 0.32f;
 
-            // Lateral shear displacement along rim tangent (breaks cylindrical symmetry)
+            float relief = (pillar * 0.68f + crevice * 0.72f + fissureCut * 0.75f + sharpFacet * 0.90f + shelfStep + shelfEdge + overhangMod) * rp->noise * bayDamp;
+
+            // Lateral shear displacement along rim tangent (kept <= 0.28m so 0.48m columns never fold/cross)
             Vector2 rimTan = {-rimNorm[i].y, rimNorm[i].x};
-            float lateralShear = (Cliff_Noise1(s * 0.10f + (float)r * 0.75f, 137) - 0.5f) * 2.2f * rp->noise;
+            float lateralShear = (Cliff_Noise1(s * 0.10f + (float)r * 0.75f, 137) - 0.5f) * 0.56f * rp->noise * bayDamp;
 
-            float outTotal = d + relief + rp->out;
+            float outTotal = d + relief + rp->out * bayDamp;
 
             Vector3 vPos = {
                 rimPos[i].x + rimNorm[i].x * outTotal + rimTan.x * lateralShear,

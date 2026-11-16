@@ -49,6 +49,10 @@ uniform vec4 u_pathSegs[MAX_PATH_SEGS];
 uniform int u_pathSegCount;
 uniform vec4 u_lakeParams;
 
+uniform float u_aridBiomeFactor;
+uniform vec3 u_aridGrusColor;
+uniform vec3 u_aridHardpanColor;
+
 out vec4 finalColor;
 
 #define LAYER_EPS 0.005
@@ -142,7 +146,8 @@ void main()
                      || (smoothSignedShore < 1.45 && fragWorldPos.y >= -0.45)
                      || slope > 0.35
                      || outerCliffElev > 0.05
-                     || fragWorldPos.y < -0.15;
+                     || fragWorldPos.y < -0.15
+                     || u_aridBiomeFactor > 0.05;
 
     float wPath = 0.0;
     float wWetSoil = 0.0;
@@ -176,6 +181,11 @@ void main()
 
         wDrySoil = clamp(max(wPathMargin * 0.78, wCliff), 0.0, 1.0)
                        * (1.0 - wWetSoil * 0.85) * (1.0 - wPath * 0.85);
+        if (u_aridBiomeFactor > 0.05) {
+            float aridCover = (u_ecologyEnabled != 0) ? smoothstep(0.32, 0.78, ecology.r) : 0.12;
+            float desertDry = mix(0.95, 0.42, aridCover) * u_aridBiomeFactor;
+            wDrySoil = max(wDrySoil, desertDry * (1.0 - wWetSoil * 0.90) * (1.0 - wPath * 0.90));
+        }
         wDrySoil = max(wDrySoil, wCliff);
         wGrass = clamp(wGrass - wPath - wDrySoil, 0.0, 1.0);
         wWetSoil = clamp(1.0 - wGrass - wPath - wDrySoil, 0.0, 1.0);
@@ -210,6 +220,12 @@ void main()
 
     if (wDrySoil + wWetSoil + wPath > LAYER_EPS) {
         vec3 loamColor = mix(vec3(0.10, 0.08, 0.05), vec3(0.18, 0.14, 0.09), smoothstep(0.26, 0.72, dirtDetail.r)) * (0.86 + 0.28 * dirtDetail);
+        if (u_aridBiomeFactor > 0.05) {
+            vec2 dP = fragWorldPos.xz * 0.06;
+            float dMacro = sin(dP.x * 1.7 + dP.y * 1.1) * 0.5 + 0.5;
+            vec3 desertSand = mix(u_aridHardpanColor * 1.06, u_aridGrusColor * 1.18, dMacro) * (0.88 + 0.24 * dirtDetail);
+            loamColor = mix(loamColor, desertSand, u_aridBiomeFactor);
+        }
         if (wCliff > 0.01) {
             vec3 rockCol = (u_groundRockEnabled != 0)
                 ? textureLod(u_groundRock, fragWorldPos.xz * 0.35, mipTiled).rgb * vec3(0.55, 0.54, 0.50)
@@ -221,18 +237,30 @@ void main()
         blendedAlbedo += loamColor * wDrySoil + sandColor * wWetSoil + pathColor * wPath;
     }
 
-    // Lighting & 1-tap Shadow
-    float rawNdotL = dot(geomNormal, light);
+    // Lighting & 1-tap Shadow (with smooth domain-warped sand ripples in arid mode)
+    vec3 surfNormal = geomNormal;
+    if (u_aridBiomeFactor > 0.05 && camDistSqXZ < 484.0) {
+        vec2 wDir = vec2(0.873, 0.487);
+        float along = dot(fragWorldPos.xz, wDir);
+        float across = dot(fragWorldPos.xz, vec2(-0.487, 0.873));
+        float warp = sin(fragWorldPos.x * 0.21 + fragWorldPos.z * 0.17) * 1.15 + sin(across * 0.72) * 0.38;
+        float rPhase = along * 17.5 + warp * 1.8;
+        float windPatch = 0.25 + 0.75 * smoothstep(-0.20, 0.45, sin(fragWorldPos.x * 0.16 - fragWorldPos.z * 0.13));
+        float rGate = (1.0 - smoothstep(0.24, 0.50, slope)) * (1.0 - wCliff * 0.80) * (1.0 - smoothstep(196.0, 484.0, camDistSqXZ)) * windPatch * u_aridBiomeFactor;
+        surfNormal = normalize(geomNormal + vec3(wDir.x, 0.0, wDir.y) * (cos(rPhase) * 0.13 * rGate));
+        blendedAlbedo *= (1.0 - (0.5 - 0.5 * sin(rPhase)) * 0.045 * rGate);
+    }
+    float rawNdotL = dot(surfNormal, light);
     float wrapNdotL = max((rawNdotL + 0.38) * 0.7246, 0.0);
     float horizonEnv = smoothstep(0.02, 0.38, max(light.y, 0.0)) * 0.66 + 0.34;
     float effectiveNdotL = wrapNdotL * horizonEnv;
 
     float dynShadowCov;
-    float rawShadow = MapShadowVisibilityCovLS(v_lightSpace, v_staticLightSpace, geomNormal, light, dynShadowCov);
+    float rawShadow = MapShadowVisibilityCovLS(v_lightSpace, v_staticLightSpace, surfNormal, light, dynShadowCov);
     float shadow = mix(mix(0.24, 0.32, wGrass), 1.0, rawShadow);
     float sunVisibility = (shadow > 0.001) ? shadow * Environment_CloudVisibility(u_cloudNoise, fragWorldPos) : 0.0;
 
-    vec3 ambient = Environment_HemisphereIrradiance(geomNormal, actualAmbient) * mix(0.92, 1.0, rawShadow);
+    vec3 ambient = Environment_HemisphereIrradiance(surfNormal, actualAmbient) * mix(0.92, 1.0, rawShadow);
     vec3 groundLit = blendedAlbedo * (ambient + actualLight * effectiveNdotL * sunVisibility);
 
     groundLit += VFXLights_AccumulateFlat(fragPosition, blendedAlbedo);

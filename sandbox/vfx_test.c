@@ -2167,6 +2167,7 @@ static const char *VFXTest_UIActiveVariant(void)
     if (VFXTest_IsNewFxNamed("GUIDED FIRE")) return VFX_FirePreset_Name(VFX_Fire_GetLiveConfig()->preset);
     if (VFXTest_IsNewFxNamed("GUIDED EARTH")) return VFX_GuidedEarthPreset_Name(VFX_GuidedEarth_GetLiveConfig()->preset);
     if (VFXTest_IsNewFxNamed("GUIDED LIQUID")) return VFX_GuidedLiquidPreset_Name(VFX_GuidedLiquid_GetLiveConfig()->preset);
+    if (VFXTest_IsNewFxNamed("TSUNAMI SWE")) return VFX_TsunamiPreset_Name(VFX_Tsunami_GetLiveConfig()->preset);
     if (VFXTest_IsNewFxNamed("SEISMIC WAVE")) return VFX_SeismicWavePreset_Name(VFX_SeismicWave_GetLiveConfig()->preset);
     if (VFXTest_IsNewFxNamed("STONE PILLAR")) return VFX_EarthSpikePreset_Name(VFX_EarthSpike_GetLiveConfig()->preset);
     if (VFXTest_IsNewFxNamed("FISSURE STREAK")) return VFX_EarthCrackPreset_Name(VFX_EarthCrack_GetLiveConfig()->preset);
@@ -3206,6 +3207,21 @@ void VFXTest_Draw3D(void)
                     VFX_GuidedLiquid_ApplyPreset(lcfg, nextPreset);
                     VFXTest_RefreshInspectorParams(true);
                     TraceLog(LOG_INFO, "GUIDED LIQUID preset: %s (Shift+> next; Shift+< previous)", VFX_GuidedLiquidPreset_Name(lcfg->preset));
+                }
+            }
+        }
+        else if (VFXTest_IsNewFxNamed("TSUNAMI SWE"))
+        {
+            if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))
+            {
+                int direction = IsKeyPressed(KEY_PERIOD) ? 1 : (IsKeyPressed(KEY_COMMA) ? -1 : 0);
+                if (direction != 0)
+                {
+                    VFX_TsunamiConfig *tcfg = VFX_Tsunami_GetLiveConfig();
+                    VFX_TsunamiPreset nextPreset = (VFX_TsunamiPreset)(((int)tcfg->preset + direction + VFX_TSUNAMI_PRESET_COUNT) % VFX_TSUNAMI_PRESET_COUNT);
+                    VFX_Tsunami_ApplyPreset(tcfg, nextPreset);
+                    VFXTest_RefreshInspectorParams(true);
+                    TraceLog(LOG_INFO, "TSUNAMI SWE preset: %s (Shift+> next; Shift+< previous)", VFX_TsunamiPreset_Name(tcfg->preset));
                 }
             }
         }

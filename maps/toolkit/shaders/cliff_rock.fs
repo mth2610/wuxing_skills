@@ -166,22 +166,19 @@ void main() {
     // ── 4. Deep Crevice Cavity Occlusion (80.lv RTGI Principle) ──
     // Intense occlusion in deep fissures and under shelf overhangs gives rock weight and depth
     float microCrevice = clamp(normX.z * triWeights.x + normY.z * triWeights.y + normZ.z * triWeights.z, 0.25, 1.0);
-    float cavityAO = clamp(fragColor.r * (0.35 + 0.65 * microCrevice), mix(0.18, 0.48, u_cliffAridMode), 1.0);
+    float cavityAO = clamp(fragColor.r * (0.35 + 0.65 * microCrevice), mix(0.18, 0.66, u_cliffAridMode), 1.0);
 
-    // Coastal tidal wet-rock splash zone + clinging white surf foam + turquoise ocean bounce in arid mode
+    // Coastal tidal wet-rock splash zone + clinging white surf foam + subtle sea bounce in arid mode
     float coastalWet = (u_cliffAridMode > 0.5)
-        ? (1.0 - smoothstep(-1.30, 0.55, worldPosition.y))
+        ? (1.0 - smoothstep(-1.35, 0.35, worldPosition.y))
         : 0.0;
-    rockAlbedo *= mix(1.0, 0.42, coastalWet * 0.88);
-    roughness = mix(roughness, 0.14, coastalWet * 0.88);
+    rockAlbedo *= mix(1.0, 0.48, coastalWet * 0.85);
+    roughness = mix(roughness, 0.18, coastalWet * 0.85);
     if (u_cliffAridMode > 0.5) {
-        // Clinging sea-foam collar in wet rock crevices right at the splash band (-1.30..+0.10m)
-        float splashBand = 1.0 - smoothstep(0.0, 0.95, abs(worldPosition.y - (-0.80)));
-        float rockFoam = splashBand * smoothstep(0.42, 0.78, triAlbedo.r * 0.65 + (1.0 - microCrevice) * 0.45);
-        rockAlbedo = mix(rockAlbedo, vec3(0.95, 0.98, 1.0), clamp(rockFoam * 0.85, 0.0, 0.88));
-        // Subtle turquoise ocean bounce light on lower cliff face
-        float oceanBounceMask = exp(-max(0.0, worldPosition.y + 1.25) * 0.18);
-        rockAlbedo += vec3(0.04, 0.18, 0.20) * oceanBounceMask * (0.4 + 0.6 * max(0.0, worldNormal.y + 0.3));
+        // Clinging sea-foam & pale salt-crust collar in wet rock crevices right at the splash band (-1.35..-0.55m)
+        float splashBand = 1.0 - smoothstep(0.0, 0.55, abs(worldPosition.y - (-1.05)));
+        float rockFoam = splashBand * smoothstep(0.48, 0.82, triAlbedo.r * 0.65 + (1.0 - microCrevice) * 0.45);
+        rockAlbedo = mix(rockAlbedo, vec3(0.92, 0.94, 0.96), clamp(rockFoam * 0.72, 0.0, 0.78));
     }
 
     // ── 5. Physically Grounded Lighting ──
@@ -216,9 +213,9 @@ void main() {
         spec = min(ggx * 0.18, 1.6) * (1.0 - roughness) * 0.28 * (1.0 - mossMask * 0.85);
     }
 
-    // ── 6. Cloud Sea Up-Bounce ──
-    // Warm luminous bounce light radiating upwards from the sunlit cloud sea below onto undercuts
-    float upwardCloudBounceFactor = max(-worldNormal.y * 0.65 + 0.20, 0.0);
+    // ── 6. Cloud Sea Up-Bounce (disabled for coastal sea mode) ──
+    float cloudSeaGate = 1.0 - step(0.5, u_cliffAridMode);
+    float upwardCloudBounceFactor = max(-worldNormal.y * 0.65 + 0.20, 0.0) * cloudSeaGate;
     vec3 cloudLitColor = actualLight * vec3(0.50, 0.44, 0.36) + actualAmbient * vec3(0.85, 0.88, 0.92);
     vec3 cloudBounceLight = cloudLitColor * (upwardCloudBounceFactor * 1.45);
 
@@ -230,8 +227,8 @@ void main() {
     // Dynamic VFX point lights if active
     finalRgb += VFXLights_Accumulate(fragPosition, normal, rockAlbedo);
 
-    // ── 7. Base Dissolving Cloud Haze ──
-    float baseHaze = clamp(fragColor.b, 0.0, 1.0);
+    // ── 7. Base Dissolving Cloud Haze (cloud-sea islands only) ──
+    float baseHaze = clamp(fragColor.b, 0.0, 1.0) * cloudSeaGate;
     vec3 hazeTarget = (dot(u_hazeColor, u_hazeColor) > 0.001) ? u_hazeColor : vec3(0.82, 0.86, 0.92);
     finalRgb = mix(finalRgb, hazeTarget, baseHaze * 0.90);
 

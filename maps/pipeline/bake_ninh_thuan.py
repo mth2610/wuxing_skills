@@ -354,6 +354,28 @@ def bake_ninh_thuan():
                 sr = float(rng.uniform(0.22, 0.52))
                 add_rock(x + np.cos(a) * d, z + np.sin(a) * d, sr, sr * 0.48, float(rng.uniform(0, 360)), "MAP_ROCK_SCREE")
 
+    # 4D. Coastal Headland & Surf Boulders (Hang Rai / Mui Dinh sea-cliff anchors)
+    coast_mask = valid & (perimeter >= 0.4) & (perimeter <= 4.5) & (ground > -0.2) & (ground < 4.5)
+    c_rows, c_cols = np.where(coast_mask)
+    if len(c_rows) > 0:
+        order = rng.permutation(len(c_rows))
+        coast_placed = 0
+        for idx in order:
+            if coast_placed >= 22 or len(placements) >= 400:
+                break
+            r, c = int(c_rows[idx]), int(c_cols[idx])
+            cx_r, cz_r = float(c * sx), float(r * sz)
+            if np.hypot(cx_r - 94.10, cz_r - 150.0) < 22.0:
+                continue
+            r_c = float(rng.uniform(1.4, 3.2))
+            if not can_place(cx_r, cz_r, r_c, min_sep=1.35):
+                continue
+            h_c = r_c * float(rng.uniform(0.65, 1.05))
+            gy_c = float(ground[r, c])
+            placements.append((cx_r, gy_c, cz_r, r_c, h_c, float(rng.uniform(0, 360)), "MAP_ROCK_GRANITE"))
+            occupied.append((cx_r, cz_r, r_c))
+            coast_placed += 1
+
     # Bake rock grus aprons (G), rock contact AO (B), laterite (R), hardpan (A) & multi-biome ground_tint
     rock_apron2 = np.zeros_like(rock2)
     rock_contact2 = np.zeros_like(rock2)

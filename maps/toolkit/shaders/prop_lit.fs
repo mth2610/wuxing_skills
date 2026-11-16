@@ -65,16 +65,22 @@ void main() {
     vec3 worldSmoothN = worldRot * smoothN;
     float isRiverStone = (colDiffuse.a < 0.985) ? 1.0 : smoothstep(0.01, 0.05, colDiffuse.b - colDiffuse.r);
 
-    // Biplanar texture projection (Quilez): 2 taps instead of 3, eliminates UV stretching across polyhedral facets
+    // Biplanar texture projection (Quilez): 2 taps instead of 3, with continuous world-space derivatives
     vec3 absWorldN = abs(worldSmoothN);
     float biplanarTiling = (isRiverStone > 0.5) ? 0.82 : 0.68;
     vec2 uvY = worldPosition.xz * biplanarTiling;
-    vec2 uvH = (absWorldN.x > absWorldN.z) ? worldPosition.zy * biplanarTiling : worldPosition.xy * biplanarTiling;
+    bool useXPlane = (absWorldN.x > absWorldN.z);
+    vec2 uvH = (useXPlane ? worldPosition.zy : worldPosition.xy) * biplanarTiling;
     float wY = clamp((absWorldN.y - 0.35) * (1.0 / 0.50), 0.0, 1.0);
     float wH = 1.0 - wY;
 
     vec2 uvDxY = dFdx(uvY), uvDyY = dFdy(uvY);
-    vec2 uvDxH = dFdx(uvH), uvDyH = dFdy(uvH);
+    vec2 dxX = dFdx(worldPosition.zy) * biplanarTiling;
+    vec2 dyX = dFdy(worldPosition.zy) * biplanarTiling;
+    vec2 dxZ = dFdx(worldPosition.xy) * biplanarTiling;
+    vec2 dyZ = dFdy(worldPosition.xy) * biplanarTiling;
+    vec2 uvDxH = useXPlane ? dxX : dxZ;
+    vec2 uvDyH = useXPlane ? dyX : dyZ;
 
     vec4 texY = textureGrad(texture0, uvY, uvDxY, uvDyY);
     vec4 texH = textureGrad(texture0, uvH, uvDxH, uvDyH);
@@ -158,36 +164,37 @@ void main() {
     actualLight *= 1.0 / (1.0 + max(worldLightDir.y - 0.36, 0.0) * 0.82);
     vec3 actualAmbient = (dot(u_ambientColor, u_ambientColor) > 0.001) ? u_ambientColor : vec3(0.36, 0.42, 0.50);
 
-    // Coherent world-space geological strata & fracture cavity variation
-    float strataNoise = sin(worldPosition.y * 4.2 + sin(worldPosition.x * 0.32 + worldPosition.z * 0.26) * 1.45) * 0.5 + 0.5;
-    float fineStrata = sin(worldPosition.y * 14.0 + normalSample.x * 2.1) * 0.5 + 0.5;
-    float fractureWave = abs(sin(worldPosition.x * 2.9 + worldPosition.y * 1.7 + sin(worldPosition.z * 2.4) * 1.1 + detailLuma * 1.2));
-    float fractureCavity = smoothstep(0.0, mix(0.22, 0.10, u_rockAridMode), fractureWave);
-    vec3 rockAlbedo = albedo.rgb * mix(vec3(0.84, 0.82, 0.80), vec3(1.12, 1.07, 1.00), strataNoise * 0.65 + fineStrata * 0.35);
-    rockAlbedo *= mix(mix(0.68, 0.88, u_rockAridMode), 1.04, fractureCavity);
+    // Coherent world-space geological strata & fracture cavity variation (no high-freq dotted contours)
+    float strataNoise = sin(worldPosition.y * 3.4 + sin(worldPosition.x * 0.32 + worldPosition.z * 0.26) * 1.45) * 0.5 + 0.5;
+    float fineStrata = sin(worldPosition.y * 10.5 + sin(worldPosition.x * 0.85 - worldPosition.z * 0.72) * 0.65) * 0.5 + 0.5;
+    float fractureWave = abs(sin(worldPosition.x * 1.35 + worldPosition.y * 0.95 + sin(worldPosition.z * 1.15) * 1.25));
+    float fractureCavity = smoothstep(0.0, mix(0.28, 0.36, u_rockAridMode), fractureWave);
+    vec3 rockAlbedo = albedo.rgb * mix(vec3(0.86, 0.83, 0.80), vec3(1.10, 1.06, 1.00), strataNoise * 0.65 + fineStrata * 0.35);
+    rockAlbedo *= mix(mix(0.72, 0.92, u_rockAridMode), 1.03, fractureCavity);
 
-    // Top-surface moss & lichen colonization (or sun-bleached desert varnish & crustose lichen in arid mode)
-    float mossPatch = sin(worldPosition.x * 2.7 + cos(worldPosition.z * 2.3) * 1.4) * 0.5 + 0.5;
+    // Top-surface moss & lichen colonization (or subtle desert varnish & sand dusting in arid mode)
+    float warpP = sin(worldPosition.x * 0.55 - worldPosition.z * 0.48) * 1.35;
+    float mossPatch = sin(worldPosition.x * 1.35 + cos(worldPosition.z * 1.15 + warpP) * 1.4) * 0.5 + 0.5;
     float altitudeMoss = (1.0 - smoothstep(9.5, 13.5, worldPosition.y)) * 0.40 + 0.60;
-    float crevicePocket = (1.0 - fractureCavity) * 0.38 + (1.0 - macroNorm.z) * 0.28;
-    float topMossMask = smoothstep(0.62, 0.88, worldNormal.y + crevicePocket * 0.16)
+    float crevicePocket = (1.0 - fractureCavity) * 0.28 + (1.0 - macroNorm.z) * 0.24;
+    float topMossMask = smoothstep(0.62, 0.88, worldNormal.y + crevicePocket * 0.14)
                       * smoothstep(0.08, 0.38, fragLocalY)
-                      * smoothstep(0.28, 0.74, mossPatch * 0.55 + albedo.g * 0.45)
+                      * smoothstep(0.32, 0.78, mossPatch * 0.55 + albedo.g * 0.45)
                       * mix(altitudeMoss, 1.0, u_rockAridMode);
     topMossMask *= (1.0 - isRiverStone * 0.92);
     vec3 lushCrownMoss = mix(vec3(0.13, 0.22, 0.08), vec3(0.20, 0.32, 0.11), mossPatch * 0.7 + detailLuma * 0.3);
     vec3 lichenTone = vec3(0.46, 0.45, 0.24);
     lushCrownMoss = mix(lushCrownMoss, lichenTone, smoothstep(0.56, 0.88, albedo.r) * 0.50);
-    vec3 aridCrownVarnish = mix(vec3(0.46, 0.35, 0.22), vec3(0.76, 0.44, 0.14), smoothstep(0.42, 0.78, mossPatch * 0.65 + detailLuma * 0.35));
+    vec3 aridCrownVarnish = mix(vec3(0.54, 0.44, 0.33), vec3(0.65, 0.53, 0.38), smoothstep(0.40, 0.80, mossPatch * 0.65 + detailLuma * 0.35));
     vec3 crownMossAlbedo = mix(lushCrownMoss, aridCrownVarnish, u_rockAridMode);
-    rockAlbedo = mix(rockAlbedo, crownMossAlbedo, topMossMask * mix(0.64, 0.58, u_rockAridMode));
+    rockAlbedo = mix(rockAlbedo, crownMossAlbedo, topMossMask * mix(0.64, 0.38, u_rockAridMode));
     if (u_rockAridMode > 0.5) {
-        // Vertical desert-varnish streaks on flanks + pale sand dusting on upward ledges
-        float streak = sin(worldPosition.x * 3.4 + worldPosition.z * 2.9 + sin(worldPosition.y * 0.8) * 0.5) * 0.5 + 0.5;
+        // Subtle vertical desert-varnish streaks on flanks + pale windblown sand dusting on ledges
+        float streak = sin(worldPosition.x * 2.2 + worldPosition.z * 1.9 + sin(worldPosition.y * 0.7) * 0.8) * 0.5 + 0.5;
         float flankMask = (1.0 - abs(worldNormal.y)) * smoothstep(-0.1, 0.4, fragLocalY);
-        rockAlbedo = mix(rockAlbedo, rockAlbedo * vec3(0.74, 0.68, 0.62), streak * flankMask * 0.28 * u_rockAridMode);
+        rockAlbedo = mix(rockAlbedo, rockAlbedo * vec3(0.80, 0.74, 0.68), streak * flankMask * 0.22 * u_rockAridMode);
         float sandDustMask = smoothstep(0.68, 0.92, worldNormal.y) * smoothstep(0.05, 0.35, fragLocalY);
-        rockAlbedo = mix(rockAlbedo, vec3(0.68, 0.58, 0.44), sandDustMask * 0.42 * u_rockAridMode);
+        rockAlbedo = mix(rockAlbedo, vec3(0.72, 0.62, 0.48), sandDustMask * 0.45 * u_rockAridMode);
     }
 
     // Tight basal soil & root-humus collar grounding (or windblown ochre grus sand skirt in arid mode)
@@ -262,7 +269,7 @@ void main() {
     }
     float groundAO = clamp(worldPosition.y * 0.35 + mix(0.75, 0.88, u_rockAridMode), mix(0.40, 0.72, u_rockAridMode), 1.0);
     float skirtAO = clamp(mix(0.54, 0.76, u_rockAridMode) + mix(0.46, 0.24, u_rockAridMode) * smoothstep(-0.50, 0.12, fragLocalY), 0.54, 1.0);
-    float creviceAO = clamp((normalSample.z * 1.30 - 0.22) * mix(0.62, 1.0, fractureCavity), mix(0.42, 0.68, u_rockAridMode), 1.0);
+    float creviceAO = clamp((normalSample.z * 1.30 - 0.22) * mix(mix(0.62, 0.88, u_rockAridMode), 1.0, fractureCavity), mix(0.42, 0.70, u_rockAridMode), 1.0);
     float mossSSS = pow(max(dot(viewDir, -modelLightDir), 0.0), 3.0) * topMossMask * shadow * 0.22 * (1.0 - u_rockAridMode);
     vec3 lit = rockAlbedo * (ambient * groundAO * skirtAO * creviceAO + diff * actualLight * shadow)
              + crownMossAlbedo * actualLight * mossSSS

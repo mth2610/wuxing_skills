@@ -870,21 +870,37 @@ bool                   VFX_WaterDragon_IsAnyActive(void);
 void                   VC_WaterDragon_Update(float dt);
 void                   VC_WaterDragon_Draw3D(Camera3D cam);
 
-// ── Tsunami SWE (Thủy Triều Sóng Nông - Shallow Water Equations) ─────────────
+// ── Tsunami SWE & ATLA Hydro-Manifold (Thủy Triều & Thủy Pháp Sóng Nông) ─────
 typedef enum {
-    VFX_TSUNAMI_TIDAL_WAVE = 0,   // Surging curling wall advancing along source -> target
-    VFX_TSUNAMI_RADIAL_DELUGE,    // 360-degree expanding flood ring from source
-    VFX_TSUNAMI_TWIN_TIDAL,       // Twin converging side waves clashing at target
+    VFX_TSUNAMI_TIDAL_WAVE = 0,       // Surging curling wall advancing along source -> target
+    VFX_TSUNAMI_RADIAL_DELUGE,        // 360-degree expanding flood ring from source
+    VFX_TSUNAMI_TWIN_TIDAL,           // Twin converging side waves clashing at target
+    VFX_TSUNAMI_ATLA_TAI_CHI_WHIP,    // Skill 1: Thai Cuc Thuy Tien (Coiling & snapping water whip)
+    VFX_TSUNAMI_ATLA_ORBITAL_CHAKRAM, // Skill 2: Thien Khong Thuy Hoan (Tilted 3D torus chakram)
+    VFX_TSUNAMI_ATLA_WATER_SPOUT,     // Skill 3: Ton Su Thuy Long Quyen (Helical water cyclone)
+    VFX_TSUNAMI_ATLA_OCTOPUS_FORM,    // Skill 4: Bat Xuc Thuy Hinh (8-tentacle octopus form)
+    VFX_TSUNAMI_ATLA_CURLING_WAVE,    // Skill 5: Cuong Dao Quyen Vu (Overhanging curling wave)
+    VFX_TSUNAMI_ATLA_TRIPLE_DISCS,    // Skill 6: Lien Hoan Thuy Luan (3 razor water discs)
+    VFX_TSUNAMI_ATLA_TWIN_WHIPS,      // Skill 7: Song Tien Toan Phong (Twin horizontal spinning whips)
+    VFX_TSUNAMI_ATLA_AVATAR_STATE,    // Skill 8: Thai Cuc Avatar State (Orb + Ring + Whip)
     VFX_TSUNAMI_PATTERN_COUNT
 } VFX_TsunamiPattern;
 
 typedef enum {
     VFX_TSUNAMI_PRESET_CUSTOM = 0,
-    VFX_TSUNAMI_PRESET_TIDAL_SURGE,   // Classic curling crescent tsunami wave
-    VFX_TSUNAMI_PRESET_TWIN_PINCER,   // Twin converging side waves clashing at target
-    VFX_TSUNAMI_PRESET_RADIAL_FLOOD,  // 360-degree expanding flood ring
-    VFX_TSUNAMI_PRESET_SWIFT_FLASH,   // Fast low-profile river dash wave
-    VFX_TSUNAMI_PRESET_ABYSSAL_WALL,  // Towering deep-jade tidal wall
+    VFX_TSUNAMI_PRESET_TIDAL_SURGE,     // Classic curling crescent tsunami wave
+    VFX_TSUNAMI_PRESET_TWIN_PINCER,     // Twin converging side waves clashing at target
+    VFX_TSUNAMI_PRESET_RADIAL_FLOOD,    // 360-degree expanding flood ring
+    VFX_TSUNAMI_PRESET_SWIFT_FLASH,     // Fast low-profile river dash wave
+    VFX_TSUNAMI_PRESET_ABYSSAL_WALL,    // Towering deep-jade tidal wall
+    VFX_TSUNAMI_PRESET_TAI_CHI_WHIP,    // ATLA Skill 1: Thai Cuc Thuy Tien
+    VFX_TSUNAMI_PRESET_ORBITAL_CHAKRAM, // ATLA Skill 2: Thien Khong Thuy Hoan
+    VFX_TSUNAMI_PRESET_WATER_SPOUT,     // ATLA Skill 3: Ton Su Thuy Long Quyen
+    VFX_TSUNAMI_PRESET_OCTOPUS_FORM,    // ATLA Skill 4: Bat Xuc Thuy Hinh
+    VFX_TSUNAMI_PRESET_CURLING_WAVE,    // ATLA Skill 5: Cuong Dao Quyen Vu
+    VFX_TSUNAMI_PRESET_TRIPLE_DISCS,    // ATLA Skill 6: Lien Hoan Thuy Luan
+    VFX_TSUNAMI_PRESET_TWIN_WHIPS,      // ATLA Skill 7: Song Tien Toan Phong
+    VFX_TSUNAMI_PRESET_AVATAR_STATE,    // ATLA Skill 8: Thai Cuc Avatar State
     VFX_TSUNAMI_PRESET_COUNT
 } VFX_TsunamiPreset;
 
@@ -905,6 +921,10 @@ typedef struct VFX_TsunamiConfig {
     Color deepColor;        // Deep water Beer-Lambert body color
     Color crestColor;       // Translucent sunlit crest jade-cyan
     Color foamColor;        // Breaking foam whitecap color
+    float evaporation;      // Ground drainage/evaporation rate (0.02 to 0.65)
+    float obstacleScale;    // Target obstacle bathymetry radius scale (0 = off, 0.5..1.8)
+    float skillPower;       // Hydro-force emitter multiplier (0.6 to 2.0)
+    int renderMode;         // 0: AAA Hydro-Combat, 1: Velocity & Foam, 2: Heightfield
 } VFX_TsunamiConfig;
 
 VFX_TsunamiConfig  VFX_Tsunami_DefaultConfig(void);

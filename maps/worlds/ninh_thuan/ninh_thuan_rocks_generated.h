@@ -367,8 +367,30 @@ static const MapRockItem NINH_THUAN_ROCK_ITEMS[] = {
     {{108.14f, 6.67f, 107.48f}, 0.28f, 0.13f, 146.7f, MAP_ROCK_SCREE},
     {{85.96f, 0.75f, 199.27f}, 1.26f, 0.92f, 45.2f, MAP_ROCK_GRANITE},
     {{86.64f, 1.24f, 201.01f}, 0.26f, 0.12f, 170.5f, MAP_ROCK_SCREE},
+    {{101.12f, 2.26f, 228.00f}, 2.68f, 2.47f, 350.2f, MAP_ROCK_GRANITE},
+    {{48.05f, 4.39f, 155.00f}, 3.12f, 2.97f, 76.5f, MAP_ROCK_GRANITE},
+    {{162.19f, 2.17f, 175.00f}, 1.60f, 1.46f, 327.4f, MAP_ROCK_GRANITE},
+    {{44.05f, 4.01f, 181.00f}, 2.17f, 2.25f, 146.0f, MAP_ROCK_GRANITE},
+    {{46.05f, 4.43f, 162.00f}, 1.48f, 0.97f, 101.6f, MAP_ROCK_GRANITE},
+    {{85.10f, 4.40f, 242.00f}, 2.73f, 2.44f, 108.5f, MAP_ROCK_GRANITE},
+    {{161.18f, 0.97f, 211.00f}, 2.46f, 1.83f, 80.4f, MAP_ROCK_GRANITE},
+    {{134.15f, 0.47f, 224.00f}, 2.85f, 1.86f, 122.1f, MAP_ROCK_GRANITE},
+    {{116.13f, 2.12f, 224.00f}, 3.03f, 1.97f, 219.3f, MAP_ROCK_GRANITE},
+    {{150.17f, 0.01f, 236.00f}, 2.05f, 1.56f, 58.4f, MAP_ROCK_GRANITE},
+    {{99.11f, 3.01f, 235.00f}, 2.08f, 1.43f, 32.8f, MAP_ROCK_GRANITE},
+    {{36.04f, 4.31f, 232.00f}, 1.61f, 1.61f, 307.3f, MAP_ROCK_GRANITE},
+    {{164.19f, 1.19f, 244.00f}, 2.22f, 2.10f, 84.0f, MAP_ROCK_GRANITE},
+    {{40.05f, 4.31f, 209.00f}, 3.16f, 2.29f, 308.7f, MAP_ROCK_GRANITE},
+    {{108.12f, 1.89f, 225.00f}, 1.65f, 1.35f, 313.7f, MAP_ROCK_GRANITE},
+    {{38.04f, 4.23f, 200.00f}, 1.64f, 1.48f, 154.6f, MAP_ROCK_GRANITE},
+    {{138.16f, 4.18f, 152.00f}, 2.64f, 1.73f, 125.4f, MAP_ROCK_GRANITE},
+    {{43.05f, 3.66f, 188.00f}, 1.78f, 1.41f, 83.2f, MAP_ROCK_GRANITE},
+    {{156.18f, 0.73f, 244.00f}, 1.80f, 1.40f, 150.4f, MAP_ROCK_GRANITE},
+    {{40.05f, 4.37f, 218.00f}, 2.41f, 1.68f, 285.3f, MAP_ROCK_GRANITE},
+    {{144.16f, 0.22f, 229.00f}, 2.84f, 2.93f, 141.2f, MAP_ROCK_GRANITE},
+    {{36.04f, 4.34f, 225.00f}, 1.72f, 1.23f, 249.2f, MAP_ROCK_GRANITE},
 };
 
-#define NINH_THUAN_ROCK_COUNT 361
+#define NINH_THUAN_ROCK_COUNT 383
 
 #endif // NINH_THUAN_ROCKS_GENERATED_H
