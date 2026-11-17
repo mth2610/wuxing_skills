@@ -25,6 +25,7 @@ bool CharacterModel_TriggerByIndex(CharacterAnimState *state, int animIndex, flo
 void CharacterModel_Draw(const CharacterAnimState *state, Vector3 position, float yawRadians, float scale, Color tint);
 void CharacterModel_DrawCustom(Model customModel, const CharacterAnimState *state, Vector3 position, float yawRadians, float scale, Color tint);
 void CharacterModel_DrawCustomEx(Model customModel, const CharacterAnimState *state, Vector3 position, float yawRadians, float scale, Color tint, bool deflateTorso, bool deflateLegs);
+void CharacterModel_DrawCustomCloth(Model customModel, const CharacterAnimState *state, Vector3 position, float yawRadians, float scale, Color tint, const struct SpringBoneSystem *spring);
 
 bool CharacterModel_GetBoneTransform(const char *boneName, const CharacterAnimState *state, Matrix *outTransform);
 bool CharacterModel_SampleSurfacePoint(const CharacterAnimState *state, Vector3 *outPos, Vector3 *outNormal);
@@ -36,11 +37,13 @@ void ModularSystem_Init(void);
 void ModularSystem_Shutdown(void);
 int  ModularSystem_RegisterItem(const char *id, ModularSlot slot, bool isSkinned, const char *boneSocket, Vector3 offsetPos, Vector3 offsetRotEuler, const char *modelGlbPath);
 int  ModularSystem_FindItem(const char *id);
+const ModularItemDef* ModularSystem_GetItem(int index);
 
 void ModularInstance_Init(ModularInstance *inst, ModularTier tier);
 bool ModularInstance_Equip(ModularInstance *inst, ModularSlot slot, const char *itemId);
 bool ModularInstance_EquipIndex(ModularInstance *inst, ModularSlot slot, int itemIndex);
 void ModularInstance_Update(ModularInstance *inst, float dt, bool isMoving);
+void ModularInstance_RebuildCloth(ModularInstance *inst);
 void ModularInstance_Draw(ModularInstance *inst);
 
 bool ModularSystem_GetSocketMatrix(Vector3 charPos, float charYaw, float charScale, ModularSlot slot, Matrix localOffset, Matrix *outMatrix);
@@ -51,12 +54,19 @@ void ModularSystem_DrawMinionBatch(int baseBodyItemIndex, int weaponItemIndex, c
 
 ### Spring Bone Physics (`character/spring_bone.h`)
 ```c
+typedef Vector3 (*SpringWindFn)(Vector3 worldPos, void *userData);
+
 void SpringBone_Init(SpringBoneSystem *sys);
 void SpringBone_SetupWuxiaDefaults(SpringBoneSystem *sys);
+int  SpringBone_RegisterModelCloth(SpringBoneSystem *sys, const struct Model *model);
 int  SpringBone_Add(SpringBoneSystem *sys, const char *name, const char *parentBone, Vector3 localRestDir, float length, float stiffness, float damping, float gravityFactor);
+void SpringBone_AddDefaultColliders(SpringBoneSystem *sys);
 int  SpringBone_AddCollider(SpringBoneSystem *sys, const char *boneName, Vector3 offset, float radius);
 void SpringBone_Update(SpringBoneSystem *sys, const struct CharacterAnimState *animState, Vector3 charPos, float charYaw, float charScale, float dt, Vector3 windVelocity);
+void SpringBone_UpdateWithWind(SpringBoneSystem *sys, const struct CharacterAnimState *animState, Vector3 charPos, float charYaw, float charScale, float dt, SpringWindFn windFn, void *userData);
 bool SpringBone_GetBoneWorldPos(const SpringBoneSystem *sys, const char *boneName, Vector3 *outHead, Vector3 *outTip);
+bool SpringBone_GetBoneModelPose(const SpringBoneSystem *sys, const char *boneName, Vector3 *outHead, Vector3 *outDir);
+bool SpringBone_GetBindPose(const SpringBoneSystem *sys, const char *boneName, Vector3 *outHead, Vector3 *outDir);
 bool SpringBone_GetBoneMatrix(const SpringBoneSystem *sys, const char *boneName, Matrix *outMatrix);
 void SpringBone_Reset(SpringBoneSystem *sys);
 void SpringBone_DrawDebug(const SpringBoneSystem *sys);
@@ -75,9 +85,14 @@ void WeaponTrail_Draw(const WeaponTrail *trail);
 ### Player Wardrobe & Catalog (`character/wardrobe_system.h`)
 ```c
 void             Wardrobe_InitCatalog(void);
+void             Wardrobe_ShutdownCatalog(void);
+bool             Wardrobe_RegisterItem(const WardrobeCatalogItem *item);
+const WardrobeCatalogItem* Wardrobe_GetCatalogItem(const char *id);
+const WardrobeCatalogItem* Wardrobe_GetCatalogItemByIndex(int index);
 int              Wardrobe_GetCatalogCount(void);
-const WardrobeItemDef* Wardrobe_GetCatalogItem(int index);
-const WardrobeItemDef* Wardrobe_FindCatalogItem(const char *id);
+bool             Wardrobe_LoadCatalogFromFile(const char *jsonPath);
+int              Wardrobe_ScanEquipmentFolders(const char *equipmentRoot);
+bool             Wardrobe_HasModelPath(const char *modelPath);
 
 void             PlayerWardrobe_Init(PlayerWardrobe *pw, const char *playerId);
 bool             PlayerWardrobe_UnlockItem(PlayerWardrobe *pw, const char *itemId);
@@ -90,11 +105,13 @@ CombatStance     PlayerWardrobe_GetCombatStance(const PlayerWardrobe *pw);
 bool             PlayerWardrobe_SaveToFile(const PlayerWardrobe *pw, const char *filePath);
 bool             PlayerWardrobe_LoadFromFile(PlayerWardrobe *pw, const char *filePath);
 
-void             Wardrobe_InitGlobal(void);
+void             Wardrobe_InitGlobal(const char *savePath);
 PlayerWardrobe*  Wardrobe_GetGlobalPlayer(void);
 ModularInstance* Wardrobe_GetGlobalModularInstance(void);
-void             Wardrobe_UpdateGlobal(float dt, bool isMoving);
-void             Wardrobe_DrawGlobal(void);
+bool             Wardrobe_SaveGlobal(void);
+bool             Wardrobe_ApplyGlobal(void);
+bool             Wardrobe_EquipGlobal(const char *itemId);
+bool             Wardrobe_UnequipGlobal(ModularSlot slot);
 ```
 
 ---
@@ -105,8 +122,8 @@ The `character/` module is the visual and rendering counterpart to `entities/` p
 1. **Skeletal Animation Playback**: Multi-variant animation slots driven by Mixamo humanoid rigs.
 2. **Modular Wardrobe & Equipping**: Independent modular clothing, rigid socket attachments, and full outfits.
 3. **Engine-Level Selective Body Deflation**: Dynamic mesh retraction during CPU skinning to prevent clothing clipping.
-4. **Verlet Spring Bone Physics**: Secondary procedural cloth simulation for robe skirts, bell sleeves, and silk ribbons.
-5. **Persistent Wardrobe Collection**: Declarative JSON catalog, save/load progression, and combat stance evaluation.
+4. **Rig-Driven Verlet Cloth**: Secondary motion solved per garment from the asset's own `cloth_*` bones (chains, rest directions and lengths measured from bind pose + skinned mesh — no per-asset table), then exported back into that garment's bone matrices before CPU skinning.
+5. **Persistent Wardrobe Collection**: Declarative JSON catalog plus runtime auto-discovery of `assets/characters/equipment/<slot>/*.glb`, save/load progression, and combat stance evaluation.
 
 ---
 
@@ -167,7 +184,10 @@ typedef struct CharacterAnimState {
 ## 4. Invariants & Calling Contracts
 
 1. **Scale Standard**: `1 unit = 1 meter`. Human base height is strictly **$1.78m$** (skull crown $1.76m$, bun $1.81m$).
-2. **Skeleton Invariant**: Base bodies must have exactly **20 Mixamo humanoid bones** matching the engine's animation bank. Extra cloth spring bones are supported only on outer garments (28 bones) and evaluated via CPU skinning.
-3. **Memory Ownership**: Models and animation clips are managed by `core/resource_manager.h`. Never call `UnloadModel()` or `UnloadModelAnimations()` directly within character state machines.
-4. **Graceful Degradation**: Every function safely no-ops if `CharacterModel_IsLoaded()` is false or if an item file is missing. The engine will never crash due to a missing asset.
-5. **No Direct `entities.h` Inclusion**: `character/` never includes `entities/entities.h`. The gameplay/sandbox layer maps entity combat intents to character animation slots.
+2. **Skeleton Invariant**: Base bodies must have exactly **20 Mixamo humanoid bones** matching the engine's animation bank. Garments may carry any number of extra `cloth_*` joints (1..N per chain, at most `SPRING_BONE_MAX` = 48 simulated segments per instance); they are discovered from the loaded rig by `ModularInstance_RebuildCloth()`. Joint arrays are **not** guaranteed to be topologically sorted, so registration resolves parents by name and sorts chains before simulating.
+3. **Cloth Override Space**: `skeleton.bindPose` and `keyframePoses` are both **model-space (global)** in raylib, so a bone's skinning matrix is `inv(bindGlobal) * poseGlobal`. Cloth segments are simulated in world space, exported in model space, and re-inserted with the same convention — never swap the multiplication order (see `character/docs/LANDMINES.md` §8).
+4. **One Solver Per Instance**: a `SpringBoneSystem` is shared by every equipped garment on that instance, but each segment stores the **bone index of the model it came from**; override matrices are looked up by bone *name*, because two garments on the same rig may index the same joint differently.
+5. **Wardrobe Auto-Discovery**: every `.glb` under `assets/characters/equipment/<slot>/` becomes a catalog item with no code or table edit. The subfolder picks the slot; curated `assets/characters/item_catalog.json` entries win by id or model path, and re-scanning is idempotent.
+6. **Memory Ownership**: Models and animation clips are managed by `core/resource_manager.h`. Never call `UnloadModel()` or `UnloadModelAnimations()` directly within character state machines.
+7. **Graceful Degradation**: Every function safely no-ops if `CharacterModel_IsLoaded()` is false or if an item file is missing. The engine will never crash due to a missing asset.
+8. **No Direct `entities.h` Inclusion**: `character/` never includes `entities/entities.h`. The gameplay/sandbox layer maps entity combat intents to character animation slots.

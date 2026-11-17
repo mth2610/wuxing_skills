@@ -130,6 +130,14 @@ const WardrobeCatalogItem* Wardrobe_GetCatalogItemByIndex(int index);
 int  Wardrobe_GetCatalogCount(void);
 bool Wardrobe_LoadCatalogFromFile(const char *jsonPath);
 
+// Scans <equipmentRoot>/<slot>/*.glb and registers a catalog entry for every
+// GLB that a curated item does not already cover, so a new garment dropped into
+// the folder shows up in the wardrobe with no code or JSON edit.
+// The slot is taken from the subfolder name; curated JSON entries win over
+// auto-generated ones (same id or same model path). Returns items added.
+int  Wardrobe_ScanEquipmentFolders(const char *equipmentRoot);
+bool Wardrobe_HasModelPath(const char *modelPath);
+
 // -----------------------------------------------------------------------------
 // Player Wardrobe & Customization Operations
 // -----------------------------------------------------------------------------

@@ -59,3 +59,48 @@
 - **Symptom:** Arms bend forward $90^\circ$ like artillery barrels or legs twist inwards by $180^\circ$ when applying Mixamo animation clips.
 - **Cause:** Mixamo arm and leg chains use non-identity rotational coordinate frames (`LeftShoulder` uses quaternion `(-0.5, -0.5, -0.5, 0.5)` so child bone local $+Y$ points along World $+X$). Using identity quaternion `(0, 0, 0, 1)` breaks the coordinate alignment.
 - **Rule:** Mixamo arm bones must use shoulder quaternion `(-0.5, ±0.5, ±0.5, 0.5)` and thigh bones must use upleg quaternion `(-1.0, 0.0, 0.0, 0.0)`. Never reset shoulder or upleg quaternions to identity.
+
+---
+
+### 8. `bindPose` / `keyframePoses` are MODEL-SPACE — the skin matrix order is `inv(bind) * pose`
+
+- **Symptom:** Garments (or bodies) shear and explode the moment a cloth bone is overridden, while the same matrices look right for unmodified bones. Reversing the multiplication "fixes" one rig and breaks the next.
+- **Cause:** Raylib accumulates node transforms in `BuildPoseFromParentJoints()`, so both `skeleton.bindPose[i]` and `anim.keyframePoses[f][i]` are **global (model-space)** transforms, not parent-relative. Numerically verified on `ao_giao_linh_2.glb`: `max |globalRest − inv(IBM)| = 4e-6`. Therefore `boneMatrices[i] = inv(bindGlobal) * poseGlobal`.
+- **Rule:** When overriding a bone outside raylib (cloth, IK, procedural sway), build the global pose and post-multiply by `MatrixInvert(bindPose[i])` last. Never use `pose * inv(bind)`, and never treat those arrays as local transforms. Cloth segments are solved in world space but exported in **model** space (`SpringBone_GetBoneModelPose`) so the override is independent of character position/yaw/scale.
+
+---
+
+### 9. glTF joint arrays are NOT topologically sorted — a child can precede its parent
+
+- **Symptom:** One sleeve simulates correctly while the mirrored sleeve dangles from the wrist out of its rest pose; the difference is only the order of joints in the file (`cloth_sleeve_l_02` listed before `cloth_sleeve_l_01`, `cloth_sleeve_r_01` before `_02`).
+- **Cause:** `skin.joints[]` is an index list, not a hierarchy order; raylib's `BuildPoseFromParentJoints()` requires `parent index < child index` and silently mis-builds the pose when that fails, so any pass that resolves chains in list order inherits a wrong parent/child relation.
+- **Rule:** Resolve chain topology by bone **name** and run `SpringBone_TopologicalSort()` after registration, so a segment is always simulated after its parent. Register-then-resolve (register all, then resolve parents and measure rest data), never assume list order matches hierarchy.
+
+---
+
+### 10. One `SpringBoneSystem` per instance, but two garments index the same joint differently
+
+- **Symptom:** After equipping a second skinned garment, the first one's skirt snaps to the body or follows the wrong bone.
+- **Cause:** Every garment GLB carries its own `skin.joints[]` order; `cloth_skirt_f_c_02` may be joint 23 on one robe and joint 17 on the trousers. A shared solver that stores only a joint index therefore writes the wrong bone on the other model.
+- **Rule:** Store the joint index per segment for **that** model's skeleton, but look the bone up by **name** in the model actually being skinned (`CharacterModel_UpdateSkinnedMeshWithCloth` → `ApplyClothBonePose`). Never reuse a joint index across models, and never assume a garment's bone count matches the base body's 20.
+
+---
+
+### 11. Heavy AI-generated garments: cloth invalidates the skin cache every frame
+
+- **Symptom:** Frame time jumps by several milliseconds whenever a detailed robe is worn, and it does not go away when the character stands still.
+- **Cause:** Two separate costs stack up. (a) The CPU-skin cache key includes `spring->stamp`, which the solver bumps every update, so a cloth garment re-skins **all** its vertices every frame. (b) Each re-skin then issues `UpdateMeshBuffer` for positions and normals of every mesh primitive, and rlvk's `rlvkUploadBuffer()` takes the mid-frame arena path for device-local VBOs — it ends the render pass, copies, barriers, and re-begins it (**≈1.4 ms per call, independent of payload size**; a 0.4 MB and a 1.3 MB update cost the same).
+- **Measured** (`ao_giao_linh_2.glb`, robe alone, with `WUXING_SKIN_PROFILE=1`):
+  - 203,256 tris / 106,650 verts: **7.6 ms/frame** (vertex loop 3.5, upload 4.1 in 3 calls)
+  - 60,000 tris (decimated): **6.3 ms/frame** (loop 2.1, upload 4.1)
+  - 14,191-vertex base body for comparison: **0.7 ms/frame**
+- **Rule:** Budget a garment by vertex count *and* by mesh-primitive count — every extra material slot is another pair of render-pass-splitting uploads per frame. Measure with `WUXING_SKIN_PROFILE=1` (logs `cloth` vs `rigid` ms/frame, loop vs upload, vertex count). Decimation only buys back the loop half; the upload half needs the renderer (host-visible/dynamic VBOs for CPU-skinned meshes). `scripts/decimate_glb.py` decimates a rigged GLB headlessly through Blender and preserves the armature, cloth bones and skin weights — but do not go below ~1/3 of the original triangle count on this asset family: it is built from two nearly-coincident shells (outer teal + ivory lining), and collapsing below that pushes the outer shell through the lining (white speckles).
+
+
+---
+
+### 12. Auto-discovery silently finds nothing (`LoadDirectoryFilesEx` filter)
+
+- **Symptom:** A GLB dropped into `assets/characters/equipment/<slot>/` never reaches the wardrobe; the scan log says "Catalog initialized with N items" and nothing else.
+- **Cause:** The scan passed `"*.glb"` as the filter, which is a glob, not what raylib 6 expects — the call returns 0 files with no error.
+- **Rule:** The full trap (measured filter behaviour) is in `ENGINE_LANDMINES.md` §29. Here: enumerate with `NULL` and filter with `IsFileExtension()`; `sandbox/auto_test_cases.c`'s `player_wardrobe_system` case now drops a probe GLB into a throwaway tree and fails if it is not discovered.

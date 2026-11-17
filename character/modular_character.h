@@ -87,6 +87,7 @@ typedef struct {
     uint32_t           occupiedSlotsMask; // Bitmask of slots suppressed by Full Outfit
     bool               hideBaseBody;      // Suppress base naked body to eliminate clipping
     SpringBoneSystem   springBones;       // Secondary bone-driven motion for cloth/robes/sleeves
+    double             lastClothStepTime; // Guards against stepping the same instance twice a frame
     WeaponTrail        weaponTrail;       // Real-time blade ribbon trail (Sweep slash aesthetic)
 } ModularInstance;
 
@@ -113,6 +114,10 @@ int  ModularSystem_RegisterItem(const char *id, ModularSlot slot, bool isSkinned
 // Lookup item by ID
 int  ModularSystem_FindItem(const char *id);
 
+// Read-only access to a registered item's definition (NULL when the index is
+// out of range). Used by tests/tools that need the loaded Model's buffers.
+const ModularItemDef* ModularSystem_GetItem(int index);
+
 // -----------------------------------------------------------------------------
 // Instance Management
 // -----------------------------------------------------------------------------
@@ -126,6 +131,17 @@ bool ModularInstance_EquipIndex(ModularInstance *inst, ModularSlot slot, int ite
 
 // Advances animation playback for an instance
 void ModularInstance_Update(ModularInstance *inst, float dt, bool isMoving);
+
+// Advances ONLY the secondary-motion solver, against the animation pose the
+// instance currently holds. Split out of ModularInstance_Update because the
+// world owns the animation clock (it steps the shared CharacterAnimState itself
+// and then draws through CharacterModel_Draw), yet the cloth still has to be
+// simulated against that exact pose. Calling it twice in one frame is a no-op.
+void ModularInstance_UpdateCloth(ModularInstance *inst, float dt);
+
+// Rebuilds secondary-motion (spring bone) chains from the equipped skinned
+// garments' own `cloth_*` bones. Called automatically when the loadout changes.
+void ModularInstance_RebuildCloth(ModularInstance *inst);
 
 // Draws a Hero or Boss instance with all equipped clothing and socketed attachments
 void ModularInstance_Draw(ModularInstance *inst);

@@ -36,12 +36,52 @@
 | 26 | `TEXTURE_FILTER_ANISOTROPIC_*X` is a silent no-op under rlvk — every texture is trilinear | Anyone measuring or "optimising" anisotropic filtering cost |
 | 27 | `textureGather` compiles but is silently WRONG on the R32F shadow maps (MoltenVK/Intel) | Any shader taking the `MAP_SHADOW_USE_GATHER` fast path |
 | 28 | `rlGetMatrixModelview()` is IDENTITY inside `BeginMode3D` (rlvk bakes the camera into `State.transform`) | Anyone doing CPU frustum culling or camera-space math with rlgl matrix getters |
+| 29 | `LoadDirectoryFilesEx()`'s filter is NOT a shell glob — `"*.glb"` matches nothing | Any module auto-discovering assets in a folder |
+| 30 | Mid-frame `UpdateMeshBuffer()` on a device-local VBO costs ~1.4 ms (render pass split) | Any per-frame CPU mesh update: skinning, terrain, dynamic geometry |
 
 ---
 
 | 25 | Per-element uniform-array query (`"u_x[0]"`) never resolves under rlvk — the whole array reads zero | Anyone uploading a `uniform vecN name[K]` (colour ramps, volume shapes) |
 
 ---
+
+## 30. Mid-frame `UpdateMeshBuffer()` costs ~1.4 ms per call, independent of payload (17/11/2026)
+
+**Symptom.** A 106k-vertex CPU-skinned robe adds 4 ms/frame of *upload* time
+while a 14k-vertex body adds ~0.3 ms — and decimating the robe 3× does not move
+that 4 ms. The cost does not track bytes; it tracks **calls**.
+
+**Cause.** `rlUpdateVertexBuffer()` is a `memcpy` only when the buffer slot is
+host-mapped. glTF meshes are uploaded as `dynamic = false`
+(`rlvkCreateVBO(..., dynamic=false)` → `DEVICE_LOCAL`), so every update goes
+through `rlvkUploadBuffer()`, whose in-frame path *ends the active render pass*,
+records a copy + full buffer barrier, then re-begins the pass and re-binds the
+framebuffer. That is ~1.4 ms per call on this machine, for 0.4 MB or 1.3 MB
+alike, and a skinned mesh costs two calls (positions + normals) per primitive.
+
+**Rule.** Treat `UpdateMeshBuffer` as expensive-by-call, not by size: batch
+updates, keep frequently-updated meshes host-visible/dynamic (they then hit the
+`b->mapped` memcpy path), and count *material primitives* when budgeting a
+per-frame deformed asset — each primitive is another pair of render-pass splits.
+Measured on `ao_giao_linh_2.glb`: 3 upload calls/frame ≈ 4.1 ms of a 6.3 ms
+re-skin. See `character/docs/LANDMINES.md` §11 for the asset-side numbers.
+
+## 29. `LoadDirectoryFilesEx()`'s filter is NOT a shell glob — `"*.glb"` matches nothing (17/11/2026)
+
+**Symptom.** A garment dropped into `assets/characters/equipment/torso/` never
+appears in the wardrobe. The scan reports success and 0 files, so nothing looks
+broken — the asset simply is not there, and only a hand-run `ls` disagrees.
+
+**Cause.** raylib 6's `LoadDirectoryFilesEx(basePath, filter, scanSubdirs)` treats
+`filter` as an extension list, not a glob. Measured on the same directory, same
+binary: `"*.glb"` → 0 files, `"*.{glb,GLB}"` → 0 files, `".glb"` → 7 files,
+`"glb"` → 7 files, `NULL` → 8 files (the 7 GLBs plus `.DS_Store`). A `*` anywhere
+in the filter makes the match fail silently.
+
+**Rule.** Enumerate with `NULL` and filter in the loop with
+`IsFileExtension(path, ".glb")` (case-insensitive, version-independent), or pass
+`".glb"` with no `*.` prefix. Never write a glob into that argument, and assert
+the count you expect — an empty file list is the only symptom you will get.
 
 ## 28. `rlGetMatrixModelview()` is IDENTITY inside `BeginMode3D` — CPU frustum culling culls the whole world (22/10/2026)
 

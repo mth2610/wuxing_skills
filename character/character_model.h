@@ -138,6 +138,15 @@ void CharacterModel_DrawCustom(Model customModel, const CharacterAnimState *stat
 // Draws a humanoid Model with optional selective body deflation to eliminate clipping through outerwear (robes, pants).
 void CharacterModel_DrawCustomEx(Model customModel, const CharacterAnimState *state, Vector3 position, float yawRadians, float scale, Color tint, bool deflateTorso, bool deflateLegs);
 
+// Draws a skinned garment whose secondary `cloth_*` bones are driven by the
+// given spring-bone solver instead of the (absent) animation channels, so tà áo,
+// tay áo thụng and dải lụa follow both the animation and the wind.
+// Pass NULL to fall back to rigid parent-follow.
+struct SpringBoneSystem;
+void CharacterModel_DrawCustomCloth(Model customModel, const CharacterAnimState *state, Vector3 position,
+                                    float yawRadians, float scale, Color tint,
+                                    const struct SpringBoneSystem *spring);
+
 // Getters for integration with visual composer / skill effects
 struct MeshAdjacency;
 Model CharacterModel_GetModel(void);

@@ -14,7 +14,12 @@
       "rarity": "common",
       "is_skinned": true,
       "model_path": "assets/characters/bodies/human_body.glb",
-      "ui_color": [235, 196, 166, 255],
+      "ui_color": [
+        235,
+        196,
+        166,
+        255
+      ],
       "stats": {
         "bonus_health": 100.0,
         "bonus_mana": 50.0,
@@ -38,7 +43,12 @@
       "rarity": "uncommon",
       "is_skinned": true,
       "model_path": "assets/characters/bodies/human_male_base.glb",
-      "ui_color": [220, 200, 180, 255],
+      "ui_color": [
+        220,
+        200,
+        180,
+        255
+      ],
       "stats": {
         "bonus_health": 160.0,
         "bonus_mana": 60.0,
@@ -62,7 +72,12 @@
       "rarity": "uncommon",
       "is_skinned": true,
       "model_path": "assets/characters/equipment/torso/ao_giao_linh.glb",
-      "ui_color": [45, 90, 140, 255],
+      "ui_color": [
+        45,
+        90,
+        140,
+        255
+      ],
       "stats": {
         "bonus_health": 40.0,
         "bonus_mana": 30.0,
@@ -86,7 +101,12 @@
       "rarity": "rare",
       "is_skinned": true,
       "model_path": "assets/characters/equipment/torso/ao_tien_hiep.glb",
-      "ui_color": [232, 230, 224, 255],
+      "ui_color": [
+        232,
+        230,
+        224,
+        255
+      ],
       "stats": {
         "bonus_health": 55.0,
         "bonus_mana": 45.0,
@@ -95,6 +115,93 @@
         "elemental_resist": 0.08,
         "mana_regen_bonus": 0.12,
         "special_perk": "Bạch Vân Phiêu Diêu: Tăng 12% tốc độ hồi phục chân khí"
+      }
+    },
+    {
+      "id": "ao_giao_linh_2",
+      "name": "Áo Giao Lĩnh Thanh Vân Điệp",
+      "description": "Áo giao lĩnh lụa lam ngọc thêu vân mây, viền lụa ngà chạy dọc cổ áo và tay thụng, điểm kim tuyến vàng ở đai lưng. Tà áo hai lớp mềm rủ, tay áo thụng buông dài, dải lụa thắt lưng bay theo gió.",
+      "source": "Di vật tại Tiên Vân Đỉnh",
+      "unlock_type": "exploration",
+      "unlock_hint": "Khám phá thạch thất trên Tiên Vân Đỉnh",
+      "slot": "torso",
+      "item_type": "modular",
+      "element": "water",
+      "rarity": "epic",
+      "is_skinned": true,
+      "model_path": "assets/characters/equipment/torso/ao_giao_linh_2.glb",
+      "ui_color": [
+        58,
+        132,
+        148,
+        255
+      ],
+      "stats": {
+        "bonus_health": 70.0,
+        "bonus_mana": 60.0,
+        "speed_multiplier": 1.04,
+        "elemental_bonus": 0.12,
+        "elemental_resist": 0.10,
+        "mana_regen_bonus": 0.16,
+        "special_perk": "Thanh Vân Điệp Vũ: Tăng 16% tốc độ hồi phục chân khí, tà áo điểm một tầng linh khí hộ thân"
+      }
+    },
+    {
+      "id": "ao_giao_linh_3",
+      "name": "Áo Giao Lĩnh Thanh Vân Điệp 3",
+      "description": "Áo giao lĩnh lụa lam ngọc thêu vân mây, viền lụa ngà chạy dọc cổ áo và tay thụng, điểm kim tuyến vàng ở đai lưng. Tà áo hai lớp mềm rủ, tay áo thụng buông dài, dải lụa thắt lưng bay theo gió.",
+      "source": "Di vật tại Tiên Vân Đỉnh",
+      "unlock_type": "exploration",
+      "unlock_hint": "Khám phá thạch thất trên Tiên Vân Đỉnh",
+      "slot": "torso",
+      "item_type": "modular",
+      "element": "water",
+      "rarity": "epic",
+      "is_skinned": true,
+      "model_path": "assets/characters/equipment/torso/ao_giao_linh_3.glb",
+      "ui_color": [
+        58,
+        132,
+        148,
+        255
+      ],
+      "stats": {
+        "bonus_health": 70.0,
+        "bonus_mana": 60.0,
+        "speed_multiplier": 1.04,
+        "elemental_bonus": 0.12,
+        "elemental_resist": 0.10,
+        "mana_regen_bonus": 0.16,
+        "special_perk": "Thanh Vân Điệp Vũ: Tăng 16% tốc độ hồi phục chân khí, tà áo điểm một tầng linh khí hộ thân"
+      }
+    },
+    {
+      "id": "ao_giao_linh_4",
+      "name": "Áo Giao Lĩnh Thanh Vân Điệp 4",
+      "description": "Áo giao lĩnh lụa lam ngọc thêu vân mây, viền lụa ngà chạy dọc cổ áo và tay thụng, điểm kim tuyến vàng ở đai lưng. Tà áo hai lớp mềm rủ, tay áo thụng buông dài, dải lụa thắt lưng bay theo gió.",
+      "source": "Di vật tại Tiên Vân Đỉnh",
+      "unlock_type": "exploration",
+      "unlock_hint": "Khám phá thạch thất trên Tiên Vân Đỉnh",
+      "slot": "torso",
+      "item_type": "modular",
+      "element": "water",
+      "rarity": "epic",
+      "is_skinned": true,
+      "model_path": "assets/characters/equipment/torso/ao_giao_linh_4.glb",
+      "ui_color": [
+        58,
+        132,
+        148,
+        255
+      ],
+      "stats": {
+        "bonus_health": 70.0,
+        "bonus_mana": 60.0,
+        "speed_multiplier": 1.04,
+        "elemental_bonus": 0.12,
+        "elemental_resist": 0.10,
+        "mana_regen_bonus": 0.16,
+        "special_perk": "Thanh Vân Điệp Vũ: Tăng 16% tốc độ hồi phục chân khí, tà áo điểm một tầng linh khí hộ thân"
       }
     },
     {
@@ -110,7 +217,12 @@
       "rarity": "common",
       "is_skinned": true,
       "model_path": "assets/characters/equipment/legs/quan_wuxia.glb",
-      "ui_color": [30, 32, 40, 255],
+      "ui_color": [
+        30,
+        32,
+        40,
+        255
+      ],
       "stats": {
         "bonus_health": 25.0,
         "bonus_mana": 10.0,
@@ -134,7 +246,12 @@
       "rarity": "uncommon",
       "is_skinned": true,
       "model_path": "",
-      "ui_color": [90, 70, 50, 255],
+      "ui_color": [
+        90,
+        70,
+        50,
+        255
+      ],
       "stats": {
         "bonus_health": 20.0,
         "bonus_mana": 15.0,
@@ -158,7 +275,12 @@
       "rarity": "uncommon",
       "is_skinned": true,
       "model_path": "",
-      "ui_color": [80, 85, 95, 255],
+      "ui_color": [
+        80,
+        85,
+        95,
+        255
+      ],
       "stats": {
         "bonus_health": 30.0,
         "bonus_mana": 10.0,
@@ -182,10 +304,23 @@
       "rarity": "uncommon",
       "is_skinned": false,
       "bone_socket": "mixamorig:Head",
-      "socket_offset_pos": [0.0, 0.04, 0.0],
-      "socket_offset_rot": [-4.0, 0.0, 0.0],
+      "socket_offset_pos": [
+        0.0,
+        0.04,
+        0.0
+      ],
+      "socket_offset_rot": [
+        -4.0,
+        0.0,
+        0.0
+      ],
       "model_path": "assets/characters/equipment/headgear/non_la_hiep_khach.glb",
-      "ui_color": [210, 180, 120, 255],
+      "ui_color": [
+        210,
+        180,
+        120,
+        255
+      ],
       "stats": {
         "bonus_health": 20.0,
         "bonus_mana": 20.0,
@@ -209,10 +344,23 @@
       "rarity": "rare",
       "is_skinned": false,
       "bone_socket": "mixamorig:Head",
-      "socket_offset_pos": [0.0, -0.02, 0.08],
-      "socket_offset_rot": [0.0, 0.0, 0.0],
+      "socket_offset_pos": [
+        0.0,
+        -0.02,
+        0.08
+      ],
+      "socket_offset_rot": [
+        0.0,
+        0.0,
+        0.0
+      ],
       "model_path": "",
-      "ui_color": [35, 40, 52, 255],
+      "ui_color": [
+        35,
+        40,
+        52,
+        255
+      ],
       "stats": {
         "bonus_health": 25.0,
         "bonus_mana": 35.0,
@@ -236,10 +384,23 @@
       "rarity": "rare",
       "is_skinned": false,
       "bone_socket": "mixamorig:Spine",
-      "socket_offset_pos": [0.14, 0.02, 0.08],
-      "socket_offset_rot": [0.0, 0.0, 0.0],
+      "socket_offset_pos": [
+        0.14,
+        0.02,
+        0.08
+      ],
+      "socket_offset_rot": [
+        0.0,
+        0.0,
+        0.0
+      ],
       "model_path": "",
-      "ui_color": [60, 180, 110, 255],
+      "ui_color": [
+        60,
+        180,
+        110,
+        255
+      ],
       "stats": {
         "bonus_health": 40.0,
         "bonus_mana": 60.0,
@@ -263,10 +424,23 @@
       "rarity": "legendary",
       "is_skinned": false,
       "bone_socket": "mixamorig:RightHand",
-      "socket_offset_pos": [0.030, -0.070, -0.010],
-      "socket_offset_rot": [-4.0, 4.0, 0.0],
+      "socket_offset_pos": [
+        0.030,
+        -0.070,
+        -0.010
+      ],
+      "socket_offset_rot": [
+        -4.0,
+        4.0,
+        0.0
+      ],
       "model_path": "assets/characters/equipment/weapons/kiem_thuan_thien.glb",
-      "ui_color": [255, 215, 0, 255],
+      "ui_color": [
+        255,
+        215,
+        0,
+        255
+      ],
       "stats": {
         "bonus_health": 80.0,
         "bonus_mana": 50.0,
@@ -290,10 +464,23 @@
       "rarity": "rare",
       "is_skinned": false,
       "bone_socket": "mixamorig:Spine2",
-      "socket_offset_pos": [0.02, 0.02, -0.19],
-      "socket_offset_rot": [-6.0, 8.0, -36.0],
+      "socket_offset_pos": [
+        0.02,
+        0.02,
+        -0.19
+      ],
+      "socket_offset_rot": [
+        -6.0,
+        8.0,
+        -36.0
+      ],
       "model_path": "assets/characters/equipment/back/vo_kiem_son_mai.glb",
-      "ui_color": [180, 40, 30, 255],
+      "ui_color": [
+        180,
+        40,
+        30,
+        255
+      ],
       "stats": {
         "bonus_health": 45.0,
         "bonus_mana": 35.0,
@@ -313,13 +500,21 @@
       "unlock_hint": "Hạ gục Boss Hắc Diện Ma Quân tại Ma Thần Đàn",
       "slot": "full_outfit",
       "item_type": "full_outfit",
-      "occupied_slots": ["torso", "legs"],
+      "occupied_slots": [
+        "torso",
+        "legs"
+      ],
       "hide_base_body": false,
       "element": "metal",
       "rarity": "epic",
       "is_skinned": true,
       "model_path": "assets/characters/equipment/torso/ao_giao_linh.glb",
-      "ui_color": [225, 230, 245, 255],
+      "ui_color": [
+        225,
+        230,
+        245,
+        255
+      ],
       "stats": {
         "bonus_health": 150.0,
         "bonus_mana": 90.0,
@@ -339,13 +534,21 @@
       "unlock_hint": "Đột phá Cảnh Giới Thái Cực và thông suốt kỳ kinh bát mạch",
       "slot": "full_outfit",
       "item_type": "full_outfit",
-      "occupied_slots": ["torso", "legs"],
+      "occupied_slots": [
+        "torso",
+        "legs"
+      ],
       "hide_base_body": false,
       "element": "taiji",
       "rarity": "legendary",
       "is_skinned": true,
       "model_path": "assets/characters/equipment/torso/ao_giao_linh.glb",
-      "ui_color": [245, 245, 255, 255],
+      "ui_color": [
+        245,
+        245,
+        255,
+        255
+      ],
       "stats": {
         "bonus_health": 220.0,
         "bonus_mana": 160.0,

@@ -24,6 +24,7 @@
 #include "sandbox/sandbox_core.h"
 #include "raymath.h"
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 
 static PlayerEntity *s_player;
@@ -1071,6 +1072,44 @@ static AutoTestResult AutoTest_PlayerWardrobeSystemStep(int frameInCase, char *o
   Wardrobe_InitCatalog();
   ok &= AutoTest_ExpectTrue(Wardrobe_GetCatalogCount() >= 10, "Wardrobe catalog has items", outReason, outReasonSize);
 
+  // Auto-discovery regression guard: dropping a .glb into <root>/equipment/<slot>/
+  // must surface it in the wardrobe with no code or table edit. This broke once
+  // because LoadDirectoryFilesEx's filter is not a shell glob ("*.glb" matched
+  // nothing), and the failure is silent — an empty wardrobe, not an error.
+  {
+    const char *probeRoot = "/tmp/wuxing_equip_probe";
+    MakeDirectory(probeRoot);
+    MakeDirectory("/tmp/wuxing_equip_probe/equipment");
+    MakeDirectory("/tmp/wuxing_equip_probe/equipment/torso");
+
+    int probeSize = 0;
+    unsigned char *probeBytes = LoadFileData("assets/characters/equipment/torso/ao_giao_linh.glb", &probeSize);
+    bool wroteProbe = (probeBytes != NULL &&
+                       SaveFileData("/tmp/wuxing_equip_probe/equipment/torso/probe_robe.glb", probeBytes, probeSize));
+    if (probeBytes) UnloadFileData(probeBytes);
+
+    int before = Wardrobe_GetCatalogCount();
+    int discovered = Wardrobe_ScanEquipmentFolders("/tmp/wuxing_equip_probe/equipment");
+    const WardrobeCatalogItem *probe = Wardrobe_GetCatalogItem("probe_robe");
+    ok &= AutoTest_ExpectTrue(wroteProbe && discovered == 1,
+                              "dropped .glb is auto-discovered from its equipment folder", outReason, outReasonSize);
+    ok &= AutoTest_ExpectTrue(probe != NULL && probe->slot == MODULAR_SLOT_TORSO && probe->isSkinned,
+                              "auto-discovered garment uses its folder's slot and skins", outReason, outReasonSize);
+    ok &= AutoTest_ExpectTrue(Wardrobe_GetCatalogCount() == before + 1,
+                              "auto-discovery adds exactly one catalog entry", outReason, outReasonSize);
+
+    // Drop the probe again: it must not be registered twice (the scan reruns every boot).
+    int rescanned = Wardrobe_ScanEquipmentFolders("/tmp/wuxing_equip_probe/equipment");
+    ok &= AutoTest_ExpectTrue(rescanned == 0 && Wardrobe_GetCatalogCount() == before + 1,
+                              "re-scanning is idempotent", outReason, outReasonSize);
+
+    remove("/tmp/wuxing_equip_probe/equipment/torso/probe_robe.glb");
+    Wardrobe_ShutdownCatalog();
+    Wardrobe_InitCatalog();
+    ok &= AutoTest_ExpectTrue(Wardrobe_GetCatalogItem("probe_robe") == NULL,
+                              "catalog rebuild drops the test probe", outReason, outReasonSize);
+  }
+
   // Initialize player wardrobe (starts with online starter set: body, torso, legs, boots)
   PlayerWardrobe pw;
   PlayerWardrobe_Init(&pw, "Hero_Customizer");
@@ -1147,7 +1186,15 @@ static AutoTestResult AutoTest_UIWardrobeStep(int frameInCase, char *outReason, 
     return AutoTest_ExpectTrue(false, "Sandbox player wardrobe initialized", outReason, outReasonSize) ? AUTOTEST_PASS : AUTOTEST_FAIL;
   }
 
+  // UI_Wardrobe_Close() persists the loadout to assets/saves/player_wardrobe.json.
+  // A test must not rewrite the player's real save, so the file is snapshotted on
+  // the first frame and restored after the panel closes.
+  static unsigned char *s_saveBackup = NULL;
+  static int s_saveBackupSize = 0;
+  static const char *kSavePath = "assets/saves/player_wardrobe.json";
+
   if (frameInCase == 0) {
+    if (!s_saveBackup) s_saveBackup = LoadFileData(kSavePath, &s_saveBackupSize);
     PlayerWardrobe_UnlockItem(pw, "human_body");
     PlayerWardrobe_UnlockItem(pw, "ao_giao_linh");
     PlayerWardrobe_UnlockItem(pw, "quan_wuxia");
@@ -1178,11 +1225,266 @@ static AutoTestResult AutoTest_UIWardrobeStep(int frameInCase, char *outReason, 
 
   if (frameInCase == 2) {
     AutoTest_SaveScreenshot("preview_wardrobe_back");
+
+    // Show the auto-discovered / rig-driven cloth garment: its tà áo, tay áo
+    // thụng and dải lụa are simulated by the spring-bone solver.
+    PlayerWardrobe_UnlockItem(pw, "ao_giao_linh_2");
+    PlayerWardrobe_Equip(pw, "ao_giao_linh_2");
+    PlayerWardrobe_ApplyToInstance(pw, inst);
+    UI_Wardrobe_SetPreviewYaw(0.0f);
+    return AUTOTEST_RUNNING;
+  }
+
+  if (frameInCase == 3) {
+    AutoTest_SaveScreenshot("preview_wardrobe_cloth");
+
+    // Gameplay draws the hero through CharacterModel_Draw() and never calls
+    // ModularInstance_Update() for it, so that draw path has to step the cloth
+    // solver itself. Without it the chains stay uninitialised in-game and every
+    // cloth bone takes the rigid fallback — the robe splayed out like a cape.
+    bool worldDrew = true;
+    {
+      SpringBone_Reset(&inst->springBones);
+      CharacterModel_Draw(&inst->animState, inst->position, inst->yaw, inst->scale, WHITE);
+      int liveSkirt = 0;
+      for (int i = 0; i < inst->springBones.boneCount; i++) {
+        if (inst->springBones.bones[i].initialized &&
+            strstr(inst->springBones.bones[i].name, "skirt")) liveSkirt++;
+      }
+      worldDrew = AutoTest_ExpectTrue(liveSkirt > 0,
+                                      "world draw path (CharacterModel_Draw) steps the cloth solver",
+                                      outReason, outReasonSize);
+    }
+
     UI_Wardrobe_Close();
-    return AUTOTEST_PASS;
+    // main.c persists the global wardrobe again on exit, so the in-memory copy has
+    // to go back to the player's own loadout too — restoring only the file would be
+    // overwritten by the shutdown save.
+    bool saveRestored = true;
+    if (s_saveBackup && s_saveBackupSize > 0) {
+      saveRestored = SaveFileData(kSavePath, s_saveBackup, s_saveBackupSize);
+      PlayerWardrobe *globalPw = Wardrobe_GetGlobalPlayer();
+      if (globalPw) saveRestored = PlayerWardrobe_LoadFromFile(globalPw, kSavePath) && saveRestored;
+      UnloadFileData(s_saveBackup);
+      s_saveBackup = NULL;
+      s_saveBackupSize = 0;
+    }
+    return (worldDrew && saveRestored) ? AUTOTEST_PASS : AUTOTEST_FAIL;
   }
 
   return AUTOTEST_PASS;
+}
+
+// -----------------------------------------------------------------------------
+// Cloth secondary motion (tà áo / tay áo thụng / dải lụa)
+//
+// Regression guard for the whole chain: `cloth_*` bones discovered from the
+// garment rig -> spring-bone solve -> per-bone pose override -> re-skinned
+// vertices. Each assertion fails if a link is broken, which is what "the robe
+// is stiff / does not follow the animation / ignores wind" looks like.
+// -----------------------------------------------------------------------------
+
+static ModularInstance s_clothInst;
+static unsigned int   s_clothVertexHash = 0;
+static Vector3        s_clothTipStart = { 0 };
+static bool           s_clothPrepared = false;
+
+static unsigned int ClothTest_HashAllMeshes(const Model *model) {
+    unsigned int h = 2166136261u;
+    if (!model) return h;
+    for (int m = 0; m < model->meshCount; m++) {
+        const Mesh *mesh = &model->meshes[m];
+        if (!mesh->animVertices) continue;
+        int count = mesh->vertexCount * 3;
+        for (int i = 0; i < count; i++) {
+            float v = mesh->animVertices[i];
+            unsigned int bits = 0;
+            memcpy(&bits, &v, sizeof(bits));
+            h = (h ^ bits) * 16777619u;
+        }
+    }
+    return h;
+}
+
+// Bounds of the last CPU-skinned garment. Used to catch a garment that collapsed
+// onto its parent bone (hem at the hips) or exploded sideways (sleeves splayed).
+static void ClothTest_SkinnedBounds(const Model *model, float *outMinY, float *outMaxAbsX) {
+    float minY = 1.0e9f, maxAbsX = 0.0f;
+    if (model) {
+        for (int m = 0; m < model->meshCount; m++) {
+            const Mesh *mesh = &model->meshes[m];
+            if (!mesh->animVertices) continue;
+            for (int v = 0; v < mesh->vertexCount; v++) {
+                float x = mesh->animVertices[v * 3 + 0];
+                float y = mesh->animVertices[v * 3 + 1];
+                if (y < minY) minY = y;
+                if (fabsf(x) > maxAbsX) maxAbsX = fabsf(x);
+            }
+        }
+    }
+    if (outMinY) *outMinY = minY;
+    if (outMaxAbsX) *outMaxAbsX = maxAbsX;
+}
+
+static Vector3 ClothTest_ZeroWind(Vector3 worldPos, void *userData) {
+    (void)worldPos; (void)userData;
+    return (Vector3){ 0.0f, 0.0f, 0.0f };
+}
+
+static Vector3 ClothTest_GaleWind(Vector3 worldPos, void *userData) {
+    (void)worldPos; (void)userData;
+    return (Vector3){ 7.0f, 0.0f, 0.0f };
+}
+
+static AutoTestResult AutoTest_ClothSecondaryMotionStep(int frameInCase, char *outReason, int outReasonSize) {
+  if (frameInCase == 0) {
+    bool ok = true;
+    ModularSystem_Init();
+
+    int bodyIdx = ModularSystem_RegisterItem("human_body", MODULAR_SLOT_BASE_BODY, true, NULL,
+                                             (Vector3){ 0 }, (Vector3){ 0 },
+                                             "assets/characters/bodies/human_body.glb");
+    int robeIdx = ModularSystem_RegisterItem("ao_giao_linh_2", MODULAR_SLOT_TORSO, true, NULL,
+                                             (Vector3){ 0 }, (Vector3){ 0 },
+                                             "assets/characters/equipment/torso/ao_giao_linh_2.glb");
+    const ModularItemDef *robe = ModularSystem_GetItem(robeIdx);
+    ok &= AutoTest_ExpectTrue(bodyIdx >= 0 && robeIdx >= 0, "base body + ao_giao_linh_2 registered",
+                              outReason, outReasonSize);
+    ok &= AutoTest_ExpectTrue(robe && robe->loaded && robe->model.meshCount > 0,
+                              "ao_giao_linh_2 GLB loads with skinned meshes", outReason, outReasonSize);
+
+    ModularInstance_Init(&s_clothInst, MODULAR_TIER_HERO);
+    ModularInstance_EquipIndex(&s_clothInst, MODULAR_SLOT_BASE_BODY, bodyIdx);
+    ModularInstance_EquipIndex(&s_clothInst, MODULAR_SLOT_TORSO, robeIdx);
+    s_clothInst.position = (Vector3){ 6.0f, 0.0f, 4.4f };
+    s_clothInst.yaw = 0.0f;
+    s_clothInst.scale = 1.0f;
+
+    // 1. Chains come from the rig, not from a table.
+    ok &= AutoTest_ExpectTrue(s_clothInst.springBones.boneCount >= 16,
+                              "cloth chains discovered from the garment rig", outReason, outReasonSize);
+
+    bool hasSleeve = false, hasSkirt = false, hasRibbon = false;
+    for (int i = 0; i < s_clothInst.springBones.boneCount; i++) {
+      const char *n = s_clothInst.springBones.bones[i].name;
+      if (strstr(n, "sleeve")) hasSleeve = true;
+      if (strstr(n, "skirt"))  hasSkirt = true;
+      if (strstr(n, "ribbon")) hasRibbon = true;
+    }
+    ok &= AutoTest_ExpectTrue(hasSleeve, "ống tay áo (sleeve) chains present", outReason, outReasonSize);
+    ok &= AutoTest_ExpectTrue(hasSkirt, "tà áo trước/sau (skirt) chains present", outReason, outReasonSize);
+    ok &= AutoTest_ExpectTrue(hasRibbon, "dải lụa thắt lưng (ribbon) chains present", outReason, outReasonSize);
+
+    // 2. Chains are parented: a 2-segment hem must reference its root.
+    int chained = 0;
+    for (int i = 0; i < s_clothInst.springBones.boneCount; i++) {
+      if (s_clothInst.springBones.bones[i].parentSpring >= 0) chained++;
+    }
+    ok &= AutoTest_ExpectTrue(chained >= 8, "multi-segment cloth chains linked (incl. left sleeve)",
+                              outReason, outReasonSize);
+
+    // 3. Wind response: identical solvers, identical pose, different air.
+    Vector3 noWindTip = { 0 }, galeTip = { 0 };
+    bool gotNoWind = false, gotGale = false;
+    {
+      SpringBoneSystem calm, gale;
+      calm = s_clothInst.springBones;
+      gale = s_clothInst.springBones;
+      SpringBone_Reset(&calm);
+      SpringBone_Reset(&gale);
+      for (int f = 0; f < 90; f++) {
+        SpringBone_UpdateWithWind(&calm, &s_clothInst.animState, s_clothInst.position, 0.0f, 1.0f,
+                                  1.0f / 60.0f, ClothTest_ZeroWind, NULL);
+        SpringBone_UpdateWithWind(&gale, &s_clothInst.animState, s_clothInst.position, 0.0f, 1.0f,
+                                  1.0f / 60.0f, ClothTest_GaleWind, NULL);
+      }
+      gotNoWind = SpringBone_GetBoneWorldPos(&calm, "cloth_skirt_f_c_02", NULL, &noWindTip);
+      gotGale = SpringBone_GetBoneWorldPos(&gale, "cloth_skirt_f_c_02", NULL, &galeTip);
+    }
+    ok &= AutoTest_ExpectTrue(gotNoWind && gotGale, "front hem tip is queryable", outReason, outReasonSize);
+    float windDeltaX = galeTip.x - noWindTip.x;
+    ok &= AutoTest_ExpectTrue(fabsf(windDeltaX) > 0.02f,
+                              "hem trails downwind (wind actually drives the cloth)", outReason, outReasonSize);
+
+    // 4. The cloth frame is anchored to the skeleton: the same pose at a
+    //    different character yaw must give the same MODEL-space head.
+    Vector3 headYaw0 = { 0 }, headYaw90 = { 0 }, dirYaw0 = { 0 }, dirYaw90 = { 0 };
+    {
+      SpringBoneSystem a, b;
+      a = s_clothInst.springBones;
+      b = s_clothInst.springBones;
+      SpringBone_Reset(&a);
+      SpringBone_Reset(&b);
+      for (int f = 0; f < 45; f++) {
+        SpringBone_UpdateWithWind(&a, &s_clothInst.animState, s_clothInst.position, 0.0f, 1.0f,
+                                  1.0f / 60.0f, ClothTest_ZeroWind, NULL);
+        SpringBone_UpdateWithWind(&b, &s_clothInst.animState, s_clothInst.position, PI * 0.5f, 1.0f,
+                                  1.0f / 60.0f, ClothTest_ZeroWind, NULL);
+      }
+      SpringBone_GetBoneModelPose(&a, "cloth_skirt_f_c_02", &headYaw0, &dirYaw0);
+      SpringBone_GetBoneModelPose(&b, "cloth_skirt_f_c_02", &headYaw90, &dirYaw90);
+      SpringBone_GetBoneWorldPos(&a, "cloth_skirt_f_c_02", NULL, &s_clothTipStart);
+    }
+    ok &= AutoTest_ExpectTrue(Vector3Distance(headYaw0, headYaw90) < 0.02f,
+                              "cloth heads stay in model space across character yaw",
+                              outReason, outReasonSize);
+    ok &= AutoTest_ExpectTrue(Vector3DotProduct(dirYaw0, dirYaw90) > 0.98f,
+                              "cloth rest direction follows the hips, not the world",
+                              outReason, outReasonSize);
+
+    // 5. Skin the garment once so the animVertices buffer is populated.
+    CharacterModel_DrawCustomCloth(robe->model, &s_clothInst.animState,
+                                   s_clothInst.position, s_clothInst.yaw, s_clothInst.scale,
+                                   WHITE, &s_clothInst.springBones);
+    s_clothVertexHash = ClothTest_HashAllMeshes(&robe->model);
+    s_clothPrepared = true;
+
+    // 6. Rigid fallback (no solver attached): every cloth bone must ride its
+    //    parent at its authored local offset. Dropping that conjugation used to
+    //    collapse the robe onto the hips — a floor-length tà áo became a band at
+    //    the waist with the legs exposed (character/docs/LANDMINES.md §13).
+    {
+      CharacterModel_DrawCustomCloth(robe->model, &s_clothInst.animState,
+                                     s_clothInst.position, s_clothInst.yaw, s_clothInst.scale,
+                                     WHITE, NULL);
+      float minY = 0.0f, maxAbsX = 0.0f;
+      ClothTest_SkinnedBounds(&robe->model, &minY, &maxAbsX);
+      char detail[160];
+      snprintf(detail, sizeof(detail), "hem y=%.2f (want <0.45), half-width x=%.2f (want <1.0)",
+               minY, maxAbsX);
+      ok &= AutoTest_ExpectTrue(minY < 0.45f && maxAbsX < 1.0f,
+                                detail, outReason, outReasonSize);
+    }
+
+    return ok ? AUTOTEST_RUNNING : AUTOTEST_FAIL;
+  }
+
+  if (!s_clothPrepared) return AUTOTEST_FAIL;
+
+  // Let the solver settle while the idle animation plays, re-skinning each frame.
+  ModularInstance_Update(&s_clothInst, 1.0f / 60.0f, false);
+  const ModularItemDef *robe = ModularSystem_GetItem(s_clothInst.loadout.itemIndices[MODULAR_SLOT_TORSO]);
+  if (robe && robe->loaded) {
+    CharacterModel_DrawCustomCloth(robe->model, &s_clothInst.animState,
+                                   s_clothInst.position, s_clothInst.yaw, s_clothInst.scale,
+                                   WHITE, &s_clothInst.springBones);
+  }
+
+  if (frameInCase < 124) return AUTOTEST_RUNNING;
+
+  bool ok = true;
+  Vector3 tipNow = { 0 };
+  bool gotTip = SpringBone_GetBoneWorldPos(&s_clothInst.springBones, "cloth_skirt_f_c_02", NULL, &tipNow);
+  ok &= AutoTest_ExpectTrue(gotTip, "hem tip still alive after simulation", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(Vector3Distance(tipNow, s_clothTipStart) > 0.005f,
+                            "hem moves while the animation plays", outReason, outReasonSize);
+
+  unsigned int hashNow = ClothTest_HashAllMeshes(robe ? &robe->model : NULL);
+  ok &= AutoTest_ExpectTrue(hashNow != s_clothVertexHash,
+                            "garment vertices are re-skinned from the cloth pose",
+                            outReason, outReasonSize);
+
+  return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
 }
 
 void AutoTestCases_Register(PlayerEntity *player)
@@ -1209,5 +1511,6 @@ void AutoTestCases_Register(PlayerEntity *player)
   AutoTest_Register("modular_character_system", AutoTest_ModularCharacterSystemStep, 5);
   AutoTest_Register("player_wardrobe_system", AutoTest_PlayerWardrobeSystemStep, 5);
   AutoTest_Register("ui_wardrobe_system", AutoTest_UIWardrobeStep, 5);
+  AutoTest_Register("cloth_secondary_motion", AutoTest_ClothSecondaryMotionStep, 130);
 }
 
