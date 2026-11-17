@@ -14,6 +14,7 @@
 #include "skills/taiji/qi_convergence_skill/qi_convergence_skill.h"
 #include "skills/taiji/taiji_loi/taiji_loi_skill.h"
 #include "skills/earth/earth_disc_volley_skill/earth_disc_volley_skill.h"
+#include "skills/earth/sand_storm_skill/sand_storm_skill.h"
 #include "skills/earth/stone_prison_skill/stone_prison_skill.h"
 
 static inline void RegisterGeneratedSkills(void) {
@@ -27,6 +28,7 @@ static inline void RegisterGeneratedSkills(void) {
     RegisterSkill("QI_CONVERGENCE", ELEMENT_COLOR_TAIJI, InitQiConvergenceSkill, CastQiConvergenceSkill, UpdateQiConvergenceSkill, DrawQiConvergenceSkill, UnloadQiConvergenceSkill);
     RegisterSkill("TAIJI_LOI", ELEMENT_COLOR_TAIJI, InitTaijiLoiSkill, CastTaijiLoiSkill, UpdateTaijiLoiSkill, DrawTaijiLoiSkill, UnloadTaijiLoiSkill);
     RegisterSkill("EARTH_DISC_VOLLEY", ELEMENT_COLOR_EARTH, InitEarthDiscVolleySkill, CastEarthDiscVolleySkill, UpdateEarthDiscVolleySkill, DrawEarthDiscVolleySkill, UnloadEarthDiscVolleySkill);
+    RegisterSkill("SAND_STORM", ELEMENT_COLOR_EARTH, InitSandStormSkill, CastSandStormSkill, UpdateSandStormSkill, DrawSandStormSkill, UnloadSandStormSkill);
     RegisterSkill("STONE_PRISON", ELEMENT_COLOR_EARTH, InitStonePrisonSkill, CastStonePrisonSkill, UpdateStonePrisonSkill, DrawStonePrisonSkill, UnloadStonePrisonSkill);
 }
 

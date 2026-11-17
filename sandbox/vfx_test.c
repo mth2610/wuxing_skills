@@ -791,6 +791,10 @@ static void VFXTest_RefreshInspectorParams(bool force)
     {
         s_inspectorParamCount = VFX_GuidedEarth_GetParams(VFX_GuidedEarth_GetLiveConfig(), s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
     }
+    else if (VFXTest_IsNewFxNamed("GRANULAR SAND"))
+    {
+        s_inspectorParamCount = VFX_GranularSand_GetParams(VFX_GranularSand_GetLiveConfig(), s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
+    }
     else if (VFXTest_IsNewFxNamed("GUIDED LIQUID"))
     {
         s_inspectorParamCount = VFX_GuidedLiquid_GetParams(VFX_GuidedLiquid_GetLiveConfig(), s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
@@ -1505,6 +1509,12 @@ static bool VFXTest_FireNewFx(int newfxIndex, Vector3 pos)
         VFX_ComposeTsunamiEx(pos, target, VFX_Tsunami_GetLiveConfig());
         return true;
     }
+    case 57: {
+        Vector3 target = Vector3Add(pos, (Vector3){5.0f, 0.0f, 1.8f});
+        target.y = MapManager_GetGroundHeightAt(target.x, target.z);
+        VFX_ComposeGranularSandEx(pos, target, VFX_GranularSand_GetLiveConfig());
+        return false;
+    }
     default: return false;
     }
 // @gen:newfx_fire end
@@ -1531,7 +1541,7 @@ static const char* s_newFxNames[] = {
     "MOTION RIBBON TRAIL", "VACUUM CONVERGE", "VACUUM RING", "[TRAIL/FLOW] VOLUME TRAIL", "FISSURE STREAK", "STONE PILLAR",
     "GUIDED FIRE", "FIREBALL BURST", "BLACK HOLE", "ICE CRYSTAL", "WATER STREAM",
     "WOOD FLOWER", "WOOD LEAVES", "WOOD PETALS", "WOOD VINE", "GUIDED EARTH", "SEISMIC WAVE",
-    "GUIDED LIQUID", "WATER DRAGON", "TSUNAMI SWE", "METAL BLADES",
+    "GUIDED LIQUID", "WATER DRAGON", "TSUNAMI SWE", "METAL BLADES", "GRANULAR SAND",
 };
 // @gen:newfx_names end
 
@@ -1556,7 +1566,7 @@ static const int s_newFxCategories[] = {
     6, 1, 6, 6, 6, 6, 6, 6, 6, 6,
     6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
     4, 4, 0, 0, 5, 1, 1, 2, 2, 2,
-    2, 4, 4, 1, 1, 1, 3,
+    2, 4, 4, 1, 1, 1, 3, 4,
 };
 // @gen:newfx_categories end
 
@@ -1938,6 +1948,10 @@ static void VFXTest_UIEditParameter(int index, int direction)
             VFX_GuidedEarthConfig *ecfg = VFX_GuidedEarth_GetLiveConfig();
             VFX_GuidedEarth_ApplyPreset(ecfg, ecfg->preset);
             VFXTest_RefreshInspectorParams(true);
+        } else if (VFXTest_IsNewFxNamed("GRANULAR SAND")) {
+            VFX_GranularSandConfig *gcfg = VFX_GranularSand_GetLiveConfig();
+            VFX_GranularSand_ApplyPreset(gcfg, gcfg->preset);
+            VFXTest_RefreshInspectorParams(true);
         } else if (VFXTest_IsNewFxNamed("GUIDED LIQUID")) {
             VFX_GuidedLiquidConfig *lcfg = VFX_GuidedLiquid_GetLiveConfig();
             VFX_GuidedLiquid_ApplyPreset(lcfg, lcfg->preset);
@@ -2196,6 +2210,7 @@ static const char *VFXTest_UIActiveVariant(void)
     if (VFXTest_IsNewFxNamed("IMPACT DUST")) return VFX_ImpactDustVariant_Name(s_impactDustFixtureVariant);
     if (VFXTest_IsNewFxNamed("GUIDED FIRE")) return VFX_FirePreset_Name(VFX_Fire_GetLiveConfig()->preset);
     if (VFXTest_IsNewFxNamed("GUIDED EARTH")) return VFX_GuidedEarthPreset_Name(VFX_GuidedEarth_GetLiveConfig()->preset);
+    if (VFXTest_IsNewFxNamed("GRANULAR SAND")) return VFX_GranularSandPreset_Name(VFX_GranularSand_GetLiveConfig()->preset);
     if (VFXTest_IsNewFxNamed("GUIDED LIQUID")) return VFX_GuidedLiquidPreset_Name(VFX_GuidedLiquid_GetLiveConfig()->preset);
     if (VFXTest_IsNewFxNamed("TSUNAMI SWE")) return VFX_TsunamiPreset_Name(VFX_Tsunami_GetLiveConfig()->preset);
     if (VFXTest_IsNewFxNamed("MIST VEIL")) return VFX_MistVeilPreset_Name(VFX_MistVeil_GetLiveConfig()->preset);
@@ -3210,6 +3225,19 @@ void VFXTest_Draw3D(void)
                     VFXTest_RefreshInspectorParams(true);
                     TraceLog(LOG_INFO, "GUIDED EARTH preset: %s (Shift+> next; Shift+< previous)", VFX_GuidedEarthPreset_Name(ecfg->preset));
                 }
+            }
+        }
+        else if (VFXTest_IsNewFxNamed("GRANULAR SAND"))
+        {
+            int direction = IsKeyPressed(KEY_PERIOD) ? 1 : (IsKeyPressed(KEY_COMMA) ? -1 : 0);
+            if (direction != 0)
+            {
+                VFX_GranularSandConfig *gcfg = VFX_GranularSand_GetLiveConfig();
+                VFX_GranularPreset nextPreset = (VFX_GranularPreset)(((int)gcfg->preset + direction + VFX_GRANULAR_PRESET_COUNT) % VFX_GRANULAR_PRESET_COUNT);
+                VFX_GranularSand_ApplyPreset(gcfg, nextPreset);
+                VFXTest_RefreshInspectorParams(true);
+                VFX_ComposeGranularSand(s_prefabStartPos, gcfg->preset);
+                TraceLog(LOG_INFO, "GRANULAR SAND preset: %s (> next; , previous)", VFX_GranularSandPreset_Name(gcfg->preset));
             }
         }
         else if (VFXTest_IsNewFxNamed("SEISMIC WAVE"))

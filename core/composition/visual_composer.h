@@ -681,6 +681,40 @@ const char           *VFX_EarthCrackMode_Name(VFX_EarthCrackMode mode);
 void                  VC_EarthCrack_Update(float dt);
 void                  VC_EarthCrack_Draw3D(Camera3D cam);
 
+// ── Granular Materials: Sand, Gravel, Loam & Coupled Dust (GPU Gems 3 DEM) ──
+typedef enum {
+    VFX_GRANULAR_PRESET_SAND_GEYSER = 0,       // Sa Trụ Xung Thiên: erupting sand column -> 3D dune cone
+    VFX_GRANULAR_PRESET_DUNE_AVALANCHE,        // Lưu Sa Cuồng Triều: advancing saltating sand wave
+    VFX_GRANULAR_PRESET_QUICKSAND_VORTEX,      // Lưu Sa Hắc Động: swirling funnel sinkhole
+    VFX_GRANULAR_PRESET_SAND_BLAST_JET,        // Cuồng Sa Phá Kích: directional scouring sand jet -> talus
+    VFX_GRANULAR_PRESET_BOULDER_CRUSH_TALUS,   // Thạch Phá Thiên Kinh: collapsing gravel/loam talus heap
+    VFX_GRANULAR_PRESET_HOURGLASS_PILLAR,      // Kim Sa Trụ: levitating gold-iron sand -> avalanching cone
+    VFX_GRANULAR_PRESET_COUNT
+} VFX_GranularPreset;
+
+typedef struct VFX_GranularSandConfig {
+    VFX_GranularPreset preset;
+    int     materialId;        // GranularMaterialId (0=Sand, 1=Gravel, 2=Soil, 3=GoldIron, 4=Ash)
+    int     grainCount;        // 128..4096 (clamped by quality tier)
+    float   grainRadius;       // Physical grain radius in meters (0.025..0.09)
+    float   spreadRadius;      // Initial cluster / nozzle radius in meters
+    float   launchSpeed;       // Initial ejection speed (m/s)
+    float   swirlSpeed;        // Vortex angular impulse (rad/s)
+    float   lifetime;          // Settled mound persistence (s)
+    float   dustIntensity;     // Coupled fine dust cloud intensity [0..1.5]
+    Vector3 source;
+    Vector3 target;
+} VFX_GranularSandConfig;
+
+VFX_GranularSandConfig  VFX_GranularSand_DefaultConfig(void);
+VFX_GranularSandConfig *VFX_GranularSand_GetLiveConfig(void);
+void                    VFX_GranularSand_ApplyPreset(VFX_GranularSandConfig *cfg, VFX_GranularPreset preset);
+int                     VFX_GranularSand_GetParams(VFX_GranularSandConfig *cfg, VFX_ParamDef *outParams, int maxParams);
+const char             *VFX_GranularSandPreset_Name(VFX_GranularPreset preset);
+int                     VFX_ComposeGranularSand(Vector3 pos, VFX_GranularPreset preset);
+int                     VFX_ComposeGranularSandEx(Vector3 source, Vector3 target, const VFX_GranularSandConfig *cfg);
+void                    VFX_KillGranularSand(int handle);
+
 // ── GENERALIZED GUIDED LIQUID SYSTEM (HỆ THỦY: DẪN LỰC THỦY QUÁI) ───────────
 typedef enum {
     VFX_LIQUID_PRESET_CUSTOM = 0,

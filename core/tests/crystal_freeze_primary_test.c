@@ -87,6 +87,8 @@ static void VFXRender_EndDraw(VFXRenderScope *sc) { (void)sc; }
 static Shader ResourceManager_LoadShader(const char *vs, const char *fs) {
     (void)vs; (void)fs; return (Shader){0};
 }
+static void BeginShaderMode(Shader s) { (void)s; }
+static void EndShaderMode(void) {}
 static void SkillManager_BeginShader(Shader s) { (void)s; }
 static void SkillManager_EndShader(void) {}
 
@@ -141,6 +143,7 @@ static void rlEnd(void) {}
 static void rlColor4ub(unsigned char r, unsigned char g, unsigned char b, unsigned char a) {
     (void)r; (void)g; (void)b; (void)a;
 }
+static void rlTexCoord2f(float u, float v) { (void)u; (void)v; }
 static void rlNormal3f(float x, float y, float z) { (void)x; (void)y; (void)z; }
 static void rlVertex3f(float x, float y, float z) { (void)x; (void)y; (void)z; }
 #define RL_TRIANGLES 4
@@ -232,7 +235,8 @@ int main(void) {
 
     CHECK(ReadWholeFile("core/shaders/freeze_patch.fs", buf, sizeof(buf)),
           "freeze_patch.fs readable");
-    CHECK(strstr(buf, "voronoiEdgeDist") != NULL, "freeze_patch.fs has voronoiEdgeDist");
+    CHECK(strstr(buf, "radialCracks") != NULL && strstr(buf, "dendrite") != NULL,
+          "freeze_patch.fs uses organic radial cracks and dendritic frost");
     CHECK(strstr(buf, "VFX_ResolveBody") != NULL, "freeze_patch.fs uses VFX_ResolveBody");
     CHECK(!HasGlslFloatSuffix(buf), "freeze_patch.fs has no GLSL 'f' float suffixes");
 

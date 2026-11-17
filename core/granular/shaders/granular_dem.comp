@@ -1,0 +1,273 @@
+#version 430 core
+// GPU Gems 3 Chapter 29 Discrete Element Method (DEM) Granular Simulation
+// coupled with MotionFields (core/motion/shaders/motion_fields.glsl).
+// Phases:
+//   0: Clear grid heads (once at spawn or stamp wrap)
+//   1: MotionFields + gravity/drag integration, collide receiver, insert into 32^3 grid
+//   2: DEM 27-cell neighbor solve (normal spring-dashpot + Coulomb shear friction + repose lock)
+layout(local_size_x = 256) in;
+
+#include "core/motion/shaders/motion_fields.glsl"
+
+struct GranularGrain {
+    vec4 position_radius; // xyz = pos, w = radius (m)
+    vec4 velocity_life;   // xyz = vel, w = remaining life (s)
+    vec4 meta_ao;         // x = seed, y = materialId, z = contactAO, w = flags
+    vec4 aux_pad;         // x = shearWork, yzw = reserved
+};
+
+layout(std430, binding = 0) readonly buffer SourceState { GranularGrain source[]; };
+layout(std430, binding = 1) writeonly buffer DestState { GranularGrain dest[]; };
+layout(std430, binding = 2) buffer GridHeads { int heads[]; };
+layout(std430, binding = 3) buffer GridNext { int next[]; };
+
+uniform int u_phase;
+uniform int u_grainCount;
+uniform int u_gridCellCount;
+uniform int u_gridStamp;
+uniform float u_dt;
+uniform float u_time;
+uniform float u_cellSize;
+uniform vec3 u_receiverPoint;
+uniform vec3 u_receiverNormal;
+uniform vec3 u_gridOrigin;
+
+// Material DEM parameters
+uniform float u_springStiffness;
+uniform float u_dashpotDamping;
+uniform float u_shearFrictionMu;
+uniform float u_rollingResistance;
+uniform float u_cohesion;
+uniform float u_airDrag;
+uniform float u_saltationSplash;
+
+// Optional active impulse/vortex field
+uniform vec3 u_impulseCenter;
+uniform float u_impulseRadius;
+uniform vec3 u_impulseAccel;
+uniform float u_impulseSwirl;
+
+// Analytical Burgers-Rott conical tornado funnel
+uniform int u_funnelActive;
+uniform vec3 u_funnelBase;
+uniform float u_funnelBaseRadius;
+uniform float u_funnelTopRadius;
+uniform float u_funnelHeight;
+uniform float u_funnelSwirlSpeed;
+uniform float u_funnelUpdraftSpeed;
+
+#define GRANULAR_HEAD_STRIDE 4096
+
+int encodeHead(uint id) {
+    return u_gridStamp * GRANULAR_HEAD_STRIDE + int(id) + 1;
+}
+
+int decodeHead(int stored) {
+    return (stored / GRANULAR_HEAD_STRIDE == u_gridStamp) ? (stored % GRANULAR_HEAD_STRIDE - 1) : -1;
+}
+
+int cellIndex(vec3 p) {
+    ivec3 c = ivec3(floor((p - u_gridOrigin) / u_cellSize)) + ivec3(16);
+    c = clamp(c, ivec3(0), ivec3(31));
+    return (c.z * 32 + c.y) * 32 + c.x;
+}
+
+void collideReceiver(inout GranularGrain g, out bool onGround) {
+    onGround = false;
+    float dist = dot(g.position_radius.xyz - u_receiverPoint, u_receiverNormal);
+    float pen = g.position_radius.w - dist;
+    if (pen <= 0.0) return;
+
+    onGround = true;
+    g.position_radius.xyz += u_receiverNormal * pen;
+
+    float vn = dot(g.velocity_life.xyz, u_receiverNormal);
+    vec3 vt = g.velocity_life.xyz - u_receiverNormal * vn;
+
+    if (vn < 0.0) {
+        float impactSpeed = -vn;
+        float restitution = impactSpeed > 1.2 ? u_saltationSplash * 0.45 : 0.06;
+        vn = impactSpeed * restitution;
+
+        float vtLen = length(vt);
+        if (vtLen > 1e-4) {
+            float frictionLoss = min(1.0, u_shearFrictionMu * 0.72);
+            vt *= (1.0 - frictionLoss);
+            g.aux_pad.x += frictionLoss * vtLen * impactSpeed * 0.1;
+        }
+    } else {
+        float damp = exp(-(6.0 + 14.0 * u_shearFrictionMu) * u_dt);
+        vt *= damp;
+    }
+    g.velocity_life.xyz = vt + u_receiverNormal * vn;
+}
+
+void main() {
+    uint id = gl_GlobalInvocationID.x;
+    if (u_phase == 0) {
+        if (id < uint(u_gridCellCount)) heads[id] = 0;
+        return;
+    }
+    if (id >= uint(u_grainCount)) return;
+
+    GranularGrain g = source[id];
+    if (g.velocity_life.w <= 0.0) {
+        dest[id] = g;
+        return;
+    }
+
+    if (u_phase == 1) {
+        vec3 extAcc = vec3(0.0);
+        if (u_impulseRadius > 0.001) {
+            vec3 rel = g.position_radius.xyz - u_impulseCenter;
+            float d = length(rel);
+            if (d < u_impulseRadius) {
+                float w = 1.0 - d / u_impulseRadius;
+                w = w * w;
+                extAcc += u_impulseAccel * w;
+                if (abs(u_impulseSwirl) > 0.001) {
+                    vec3 tang = vec3(-rel.z, 0.0, rel.x);
+                    float tl = length(tang);
+                    if (tl > 1e-4) extAcc += (tang / tl) * u_impulseSwirl * w * 4.0;
+                }
+            }
+        }
+
+        MotionGpuBody mBody = motionBodies[id];
+        vec3 pos = g.position_radius.xyz;
+        vec3 vel = g.velocity_life.xyz;
+
+        if (u_funnelActive != 0) {
+            float h = pos.y - u_funnelBase.y;
+            if (h > u_funnelHeight) {
+                float aWrap = fract(g.meta_ao.x * 13.7 + u_time * 3.1) * 6.28318;
+                float rWrap = u_funnelBaseRadius * (0.35 + 0.65 * fract(g.meta_ao.x * 29.3));
+                pos.x = u_funnelBase.x + cos(aWrap) * rWrap;
+                pos.z = u_funnelBase.z + sin(aWrap) * rWrap;
+                pos.y = u_funnelBase.y + 0.04 + 0.28 * fract(g.meta_ao.x * 7.1);
+                vel = vec3(-sin(aWrap) * u_funnelSwirlSpeed, u_funnelUpdraftSpeed * 0.85, cos(aWrap) * u_funnelSwirlSpeed);
+                h = pos.y - u_funnelBase.y;
+            }
+
+            float hn = clamp(h / max(u_funnelHeight, 0.25), 0.0, 1.0);
+            float coneR = mix(u_funnelBaseRadius, u_funnelTopRadius, pow(hn, 1.35));
+            float rBias = mix(0.18, 1.05, fract(g.meta_ao.x * 11.37));
+            float targetR = coneR * rBias;
+
+            // S-curve sinuous tornado spine sway
+            vec2 spineOffset = vec2(
+                sin(hn * 4.5 - u_time * 6.0) * 0.24 * hn,
+                cos(hn * 3.8 - u_time * 5.2) * 0.24 * hn
+            );
+            vec3 radVec = vec3(pos.x - (u_funnelBase.x + spineOffset.x), 0.0,
+                               pos.z - (u_funnelBase.z + spineOffset.y));
+            float r = length(radVec);
+            vec3 radDir = r > 1e-4 ? radVec / r : vec3(cos(g.meta_ao.x * 6.28318), 0.0, sin(g.meta_ao.x * 6.28318));
+            vec3 tangDir = vec3(-radDir.z, 0.0, radDir.x);
+
+            float targetTangSpeed = u_funnelSwirlSpeed * clamp(r / max(coneR, 0.15), 0.25, 1.0);
+            float vTang = dot(vel, tangDir);
+            extAcc += tangDir * ((targetTangSpeed - vTang) * 10.5);
+
+            float radialErr = targetR - r;
+            float vRad = dot(vel, radDir);
+            float centripetalAcc = -(vTang * vTang) / max(r, 0.08);
+            extAcc += radDir * (centripetalAcc + radialErr * 55.0 - vRad * 11.0);
+
+            float targetVy = u_funnelUpdraftSpeed * (0.75 + 0.50 * fract(g.meta_ao.x * 5.3));
+            extAcc.y += 9.81 + (targetVy - vel.y) * 7.0;
+        }
+
+        motionAdvanceStep(pos, vel, mBody, vec3(0.0), extAcc, 0.0, u_time, u_dt, 0.0);
+        g.position_radius.xyz = pos;
+        g.velocity_life.xyz = vel;
+        motionBodies[id] = mBody;
+
+        bool onGround = false;
+        collideReceiver(g, onGround);
+        g.velocity_life.w -= u_dt;
+
+        int cell = cellIndex(g.position_radius.xyz);
+        next[id] = decodeHead(atomicExchange(heads[cell], encodeHead(id)));
+        dest[id] = g;
+        return;
+    }
+
+    // Phase 2: DEM 27-cell neighbor contact solve
+    vec3 posI = g.position_radius.xyz;
+    vec3 velI = g.velocity_life.xyz;
+    float radI = g.position_radius.w;
+    vec3 acc = vec3(0.0);
+    int contacts = 0;
+
+    int cell = cellIndex(posI);
+    ivec3 base = ivec3(cell % 32, (cell / 32) % 32, cell / (32 * 32));
+
+    for (int z = -1; z <= 1; z++) {
+        for (int y = -1; y <= 1; y++) {
+            for (int x = -1; x <= 1; x++) {
+                ivec3 c = base + ivec3(x, y, z);
+                if (any(lessThan(c, ivec3(0))) || any(greaterThan(c, ivec3(31)))) continue;
+                int n = decodeHead(heads[(c.z * 32 + c.y) * 32 + c.x]);
+                while (n >= 0) {
+                    if (n != int(id) && source[n].velocity_life.w > 0.0) {
+                        vec3 r = source[n].position_radius.xyz - posI;
+                        float distSq = dot(r, r);
+                        float sumR = radI + source[n].position_radius.w;
+                        float interactR = sumR * (u_cohesion > 0.0 ? 1.15 : 1.0);
+                        if (distSq > 1e-8 && distSq < interactR * interactR) {
+                            float dist = sqrt(distSq);
+                            vec3 nDir = r / dist;
+                            float overlap = sumR - dist;
+                            if (overlap > 0.0) {
+                                contacts++;
+                                vec3 vr = source[n].velocity_life.xyz - velI;
+                                float vn = dot(vr, nDir);
+                                float normOverlap = min(overlap / max(sumR, 0.01), 0.65);
+                                float fSpring = u_springStiffness * normOverlap * sqrt(normOverlap);
+                                float fDamp = -u_dashpotDamping * vn;
+                                float maxDamp = 0.80 / max(u_dt, 1e-4);
+                                if (fDamp > maxDamp * abs(vn)) fDamp = maxDamp * abs(vn);
+                                float fn = max(fSpring + fDamp, 0.0);
+                                acc -= nDir * fn;
+
+                                vec3 vt = vr - vn * nDir;
+                                float vtLen = length(vt);
+                                if (vtLen > 1e-4) {
+                                    float ftMag = min((0.45 * vtLen) / max(u_dt, 1e-4), u_shearFrictionMu * fn);
+                                    acc += (vt / vtLen) * ftMag;
+                                    g.aux_pad.x += ftMag * vtLen * u_dt;
+                                }
+                            } else if (u_cohesion > 0.0) {
+                                float gap = -overlap / max(sumR * 0.15, 0.005);
+                                float pull = u_cohesion * (1.0 - min(gap, 1.0));
+                                acc += nDir * pull;
+                            }
+                        }
+                    }
+                    n = next[n];
+                }
+            }
+        }
+    }
+
+    g.velocity_life.xyz += acc * u_dt;
+    g.position_radius.xyz += acc * (u_dt * u_dt * 0.5);
+
+    bool onGround = false;
+    collideReceiver(g, onGround);
+
+    int totalContacts = contacts + (onGround ? 1 : 0);
+    float speedSq = dot(g.velocity_life.xyz, g.velocity_life.xyz);
+    float lockThresh = 0.08 + 0.18 * u_shearFrictionMu;
+    if (totalContacts >= 2 && speedSq < lockThresh * lockThresh) {
+        float lockDamp = exp(-(18.0 + 22.0 * u_rollingResistance) * u_dt);
+        g.velocity_life.xyz *= lockDamp;
+        g.meta_ao.w = 1.0; // resting
+    } else {
+        g.meta_ao.w = onGround ? 2.0 : 0.0; // saltating / airborne
+    }
+
+    g.meta_ao.z = clamp(float(totalContacts) / 7.0, 0.0, 1.0);
+    dest[id] = g;
+}

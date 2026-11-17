@@ -138,6 +138,7 @@ void VFX_Compose_Update(float dt)
     VC_SeismicWave_Update(dt);
     VC_EarthSpike_Update(dt);
     VC_EarthCrack_Update(dt);
+    VC_GranularSand_Update(dt);
     VC_GuidedLiquid_Update(dt);
     VC_WaterDragon_Update(dt);
     VC_Tsunami_Update(dt);
@@ -192,6 +193,7 @@ void VFX_Compose_Draw3D(Camera3D cam)
     VC_SeismicWave_Draw3D(cam);
     VC_EarthSpike_Draw3D(cam);
     VC_EarthCrack_Draw3D(cam);
+    VC_GranularSand_Draw3D(cam);
     VC_GuidedLiquid_Draw3D(cam);
     VC_WaterDragon_Draw3D(cam);
     VC_Tsunami_Draw3D(cam);

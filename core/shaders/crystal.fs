@@ -139,10 +139,10 @@ void main()
     }
 
     // Crisp Frosted Facet Bevels along side ridges and y=0.68 chisel shoulder
-    float sideBevel = 1.0 - smoothstep(0.0, 0.14 + fineGrain * 0.06, edgeDist);
-    float shoulderBevel = 1.0 - smoothstep(0.0, 0.055 + fineGrain * 0.025, abs(uvY - 0.68));
+    float sideBevel = 1.0 - smoothstep(0.0, 0.13 + fineGrain * 0.05, edgeDist);
+    float shoulderBevel = 1.0 - smoothstep(0.0, 0.050 + fineGrain * 0.022, abs(uvY - 0.68));
     float bevelFrost = clamp(sideBevel + shoulderBevel * 0.85, 0.0, 1.0) * (1.0 - metalness);
-    finalColorRGB = mix(finalColorRGB, mix(u_edgeColor.rgb, vec3(0.95, 0.99, 1.0), 0.5), bevelFrost * 0.62);
+    finalColorRGB = mix(finalColorRGB, mix(u_edgeColor.rgb, vec3(0.95, 0.99, 1.0), 0.55), bevelFrost * 0.82);
 
     // 6. Facet-Caught Sparkling Highlights
     if (u_sparkle > 0.001)
@@ -172,9 +172,9 @@ void main()
             texture(u_sceneTex, clamp(sceneUV + refractOffset, 0.002, 0.998)).g,
             texture(u_sceneTex, clamp(sceneUV + refractOffset - vec2(0.0008, 0.0), 0.002, 0.998)).b
         );
-        float clearWindow = 1.0 - clamp(bevelFrost * 0.65 + veinIntensity * 0.35 + fresnel * 0.40, 0.0, 0.90);
-        vec3 transmitted = refractedScene * mix(vec3(1.0), beerLambert, 0.58);
-        finalColorRGB = mix(finalColorRGB, transmitted + u_edgeColor.rgb * (marrowGlow * u_emission * 1.1), clearWindow * 0.86);
+        float clearWindow = 1.0 - clamp(bevelFrost * 0.72 + veinIntensity * 0.42 + fresnel * 0.45, 0.0, 0.92);
+        vec3 transmitted = refractedScene * mix(vec3(1.0), beerLambert, 0.84);
+        finalColorRGB = mix(finalColorRGB, transmitted + u_edgeColor.rgb * (marrowGlow * u_emission * 1.2), clearWindow * 0.62);
     }
 
     // 8. Dissolve Effect & Alpha (translucent glassy interior, opaque frosted ridges)

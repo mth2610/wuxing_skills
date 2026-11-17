@@ -311,8 +311,8 @@ int VFX_ComposeIceCrystalEx(Vector3 source, Vector3 target, const VFX_IceCrystal
         VFX_FreezePatch_Spawn(freezeCenter, freezeR, 0.28f,
                               cfg.eruptDuration + cfg.holdDuration,
                               cfg.shatterDuration + 0.45f,
-                              (Color){42, 138, 218, 240},
-                              (Color){185, 232, 255, 255});
+                              (Color){28, 118, 205, 245},
+                              (Color){225, 248, 255, 255});
     }
 
     float maxDelay = 0.0f;
@@ -459,7 +459,8 @@ int VFX_ComposeIceCrystalEx(Vector3 source, Vector3 target, const VFX_IceCrystal
             (cfg.preset == VFX_ICE_PRESET_SNOW_AVALANCHE) ? VFX_MIST_PRESET_FROST_BREATH : VFX_MIST_PRESET_CRYO_AURA);
         mCfg.radius = fmaxf(cfg.formationRadius * 1.15f, 2.0f);
         mCfg.duration = inst->totalDuration * 0.65f;
-        mCfg.density *= 0.35f;
+        mCfg.density *= 0.42f;
+        mCfg.snowDensity = 0.25f;
         mCfg.volumetricFog = false;
         Vector3 emitCenter = (cfg.preset == VFX_ICE_PRESET_LOTUS_FROST_NOVA || cfg.preset == VFX_ICE_PRESET_ICE_LANCE_VOLLEY)
                                  ? source : target;

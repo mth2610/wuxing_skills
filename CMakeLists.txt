@@ -208,6 +208,8 @@ add_executable(wuxing
     core/liquid/liquid_swe.c
     core/gas/gas_sim.c
     core/gas/gas_system.c
+    core/granular/granular_sim.c
+    core/granular/granular_gpu.c
     core/path_spline.c
     # --- Post Process ---
     post_process/post_fx.c

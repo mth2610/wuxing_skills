@@ -314,10 +314,18 @@ void VFX_ComposeMistVeilConfig(Vector3 source, Vector3 target, const VFX_MistVei
             p = (Vector3){source.x + cosf(ang) * rDist, source.y + 0.12f + Random01() * 0.35f, source.z + sinf(ang) * rDist};
             vel = (Vector3){cosf(ang) * cfg.jetSpeed * 0.65f, cfg.buoyancy * Math_Mix(0.6f, 1.3f, Random01()), sinf(ang) * cfg.jetSpeed * 0.65f};
             pRadius = Math_Mix(1.8f, 3.0f, Random01());
+        } else if (cfg.preset == VFX_MIST_PRESET_CRYO_AURA) {
+            /* Ground-hugging katabatic cold vapor ring around base; never blurs upper crystals */
+            rDist = Math_Mix(0.45f, 0.95f, sqrtf(Random01())) * radius;
+            p = (Vector3){source.x + cosf(ang) * rDist, source.y + 0.04f + Random01() * 0.12f, source.z + sinf(ang) * rDist};
+            Vector3 tang = {-sinf(ang), 0.0f, cosf(ang)};
+            vel = Vector3Add((Vector3){cosf(ang) * 0.42f, -0.35f, sinf(ang) * 0.42f},
+                             Vector3Scale(tang, cfg.swirlSpeed * 0.22f));
+            pRadius = Math_Mix(0.38f, 0.68f, Random01());
         } else {
-            /* RIVER_SHROUD & CRYO_AURA */
+            /* RIVER_SHROUD */
             p = (Vector3){source.x + cosf(ang) * rDist, source.y + 0.06f + Random01() * 0.28f, source.z + sinf(ang) * rDist};
-            float driftSpeed = (cfg.preset == VFX_MIST_PRESET_CRYO_AURA) ? 0.32f : Math_Mix(0.06f, 0.18f, Random01());
+            float driftSpeed = Math_Mix(0.06f, 0.18f, Random01());
             Vector3 tang = {-sinf(ang), 0.0f, cosf(ang)};
             vel = Vector3Add((Vector3){cosf(ang) * driftSpeed, cfg.buoyancy, sinf(ang) * driftSpeed},
                              Vector3Scale(tang, cfg.swirlSpeed * 0.25f));

@@ -66,9 +66,9 @@ static float FreezePatch_SampleSurfaceY(float wx, float wz, float fallbackY, boo
     bool hasWater = MapManager_GetWaterInfoAt(wx, wz, &waterY, &waterDepth);
     if (outHasWater) *outHasWater = (hasWater && waterDepth > 0.02f);
     if (hasWater && waterDepth > 0.02f && waterY > groundY) {
-        return waterY + 0.024f;
+        return waterY + 0.032f;
     }
-    return groundY + 0.024f;
+    return groundY + 0.032f;
 }
 
 static void FreezePatch_BakeTerrainGrid(FreezePatchSlot *slot) {
@@ -203,6 +203,7 @@ void VC_FreezePatch_Draw3D(Camera3D camera) {
     float viewPosArr[3] = { camera.position.x, camera.position.y, camera.position.z };
 
     VFXRenderScope scope = VFXRender_BeginDraw(VFX_RENDER_PASS_BODY, VFX_SURFACE_ALPHA, false);
+    BeginShaderMode(s_freezePatchShader);
     SkillManager_BeginShader(s_freezePatchShader);
     rlDisableBackfaceCulling();
 
@@ -249,11 +250,15 @@ void VC_FreezePatch_Draw3D(Camera3D camera) {
         rlCheckRenderBatchLimit(FREEZE_PATCH_GRID_N * FREEZE_PATCH_GRID_N * 6);
         rlBegin(RL_TRIANGLES);
         for (int iz = 0; iz < FREEZE_PATCH_GRID_N; ++iz) {
-            float wz0 = slot->center.z - extent + (float)iz * step;
-            float wz1 = wz0 + step;
+            float lz0 = -extent + (float)iz * step;
+            float lz1 = lz0 + step;
+            float wz0 = slot->center.z + lz0;
+            float wz1 = slot->center.z + lz1;
             for (int ix = 0; ix < FREEZE_PATCH_GRID_N; ++ix) {
-                float wx0 = slot->center.x - extent + (float)ix * step;
-                float wx1 = wx0 + step;
+                float lx0 = -extent + (float)ix * step;
+                float lx1 = lx0 + step;
+                float wx0 = slot->center.x + lx0;
+                float wx1 = slot->center.x + lx1;
 
                 int i00 = iz * FREEZE_PATCH_VERTS_N + ix;
                 int i10 = i00 + 1;
@@ -262,27 +267,33 @@ void VC_FreezePatch_Draw3D(Camera3D camera) {
 
                 // Triangle 1: (00, 01, 11)
                 rlColor4ub(255, 255, 255, slot->gridAlpha[i00]);
+                rlTexCoord2f(lx0, lz0);
                 rlNormal3f(slot->gridNorm[i00].x, slot->gridNorm[i00].y, slot->gridNorm[i00].z);
                 rlVertex3f(wx0, slot->gridY[i00], wz0);
 
                 rlColor4ub(255, 255, 255, slot->gridAlpha[i01]);
+                rlTexCoord2f(lx0, lz1);
                 rlNormal3f(slot->gridNorm[i01].x, slot->gridNorm[i01].y, slot->gridNorm[i01].z);
                 rlVertex3f(wx0, slot->gridY[i01], wz1);
 
                 rlColor4ub(255, 255, 255, slot->gridAlpha[i11]);
+                rlTexCoord2f(lx1, lz1);
                 rlNormal3f(slot->gridNorm[i11].x, slot->gridNorm[i11].y, slot->gridNorm[i11].z);
                 rlVertex3f(wx1, slot->gridY[i11], wz1);
 
                 // Triangle 2: (00, 11, 10)
                 rlColor4ub(255, 255, 255, slot->gridAlpha[i00]);
+                rlTexCoord2f(lx0, lz0);
                 rlNormal3f(slot->gridNorm[i00].x, slot->gridNorm[i00].y, slot->gridNorm[i00].z);
                 rlVertex3f(wx0, slot->gridY[i00], wz0);
 
                 rlColor4ub(255, 255, 255, slot->gridAlpha[i11]);
+                rlTexCoord2f(lx1, lz1);
                 rlNormal3f(slot->gridNorm[i11].x, slot->gridNorm[i11].y, slot->gridNorm[i11].z);
                 rlVertex3f(wx1, slot->gridY[i11], wz1);
 
                 rlColor4ub(255, 255, 255, slot->gridAlpha[i10]);
+                rlTexCoord2f(lx1, lz0);
                 rlNormal3f(slot->gridNorm[i10].x, slot->gridNorm[i10].y, slot->gridNorm[i10].z);
                 rlVertex3f(wx1, slot->gridY[i10], wz0);
             }
@@ -292,5 +303,6 @@ void VC_FreezePatch_Draw3D(Camera3D camera) {
 
     rlEnableBackfaceCulling();
     SkillManager_EndShader();
+    EndShaderMode();
     VFXRender_EndDraw(&scope);
 }
