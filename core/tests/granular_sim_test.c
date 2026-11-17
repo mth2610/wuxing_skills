@@ -156,11 +156,284 @@ static void test_tornado_centripetal_equilibrium(void)
     printf("[PASS] test_tornado_centripetal_equilibrium (meanR=%.3f m, maxR=%.3f m)\n", meanR, maxR);
 }
 
+static void test_toroidal_grid_far_travel_collision(void)
+{
+    GranularGrainState grains[2] = {0};
+    const GranularMaterialProfile *sand = GranularSim_GetMaterialProfile(GRANULAR_MAT_DESERT_SAND);
+
+    grains[0].position = (Vector3){11.94f, 1.0f, 8.0f};
+    grains[0].velocity = (Vector3){ 2.0f,  0.0f, 0.0f};
+    grains[0].radius   = 0.04f;
+    grains[0].lifetime = 5.0f;
+
+    grains[1].position = (Vector3){12.06f, 1.0f, 8.0f};
+    grains[1].velocity = (Vector3){-2.0f,  0.0f, 0.0f};
+    grains[1].radius   = 0.04f;
+    grains[1].lifetime = 5.0f;
+
+    for (int step = 0; step < 30; step++) {
+        GranularSim_StepCpuDeterministic(grains, 2, sand, 1.0f / 60.0f,
+                                         (Vector3){0.0f, 0.0f, 0.0f},
+                                         (Vector3){0.0f, 1.0f, 0.0f});
+    }
+
+    float sep = fabsf(grains[1].position.x - grains[0].position.x);
+    float relVx = fabsf(grains[1].velocity.x - grains[0].velocity.x);
+    assert(sep >= 0.075f); /* Toroidal grid resolves DEM contact 12m from origin */
+    assert(relVx < 0.80f);
+    printf("[PASS] test_toroidal_grid_far_travel_collision (sep=%.4f m, relVx=%.4f m/s)\n", sep, relVx);
+}
+
+static void test_mass_and_morphology_entrainment_sorting(void)
+{
+    enum { N = 3 };
+    GranularGrainState grains[N] = {
+        {.position = {1.2f, 0.03f, 0.0f}, .radius = 0.03f, .lifetime = 6.0f, .seed = 0.17f,
+         .materialId = GRANULAR_MAT_FLOWER_PETAL, .flags = 1u},
+        {.position = {1.2f, 0.03f, 0.3f}, .radius = 0.03f, .lifetime = 6.0f, .seed = 0.43f,
+         .materialId = GRANULAR_MAT_DRY_LEAF, .flags = 1u},
+        {.position = {1.2f, 0.03f, -0.3f}, .radius = 0.03f, .lifetime = 6.0f, .seed = 0.71f,
+         .materialId = GRANULAR_MAT_COARSE_GRAVEL, .flags = 1u}
+    };
+
+    GranularWaveDesc wave = {
+        .kind         = GRANULAR_WAVE_SPIRAL_CONVERGE,
+        .origin       = {0.0f, 0.15f, 0.0f},
+        .direction    = {0.0f, 1.0f, 0.0f},
+        .radius       = 3.0f,
+        .swirlSpeed   = 4.5f,
+        .inwardPull   = 4.0f,
+        .liftAccel    = 4.5f,
+        .analyticLock = 0.80f,
+        .duration     = 2.0f,
+        .attackTime   = 0.05f,
+        .fadeTime     = 0.2f
+    };
+
+    float dt = 1.0f / 60.0f;
+    for (int step = 0; step < 30; step++) {
+        GranularSim_StepCpuDeterministicWithWaves(
+            grains, N, NULL, &wave, 1, dt, (float)step * dt,
+            (Vector3){0.0f, 0.0f, 0.0f}, (Vector3){0.0f, 1.0f, 0.0f});
+    }
+
+    /* Petals and dry leaves entrain & lift; heavy gravel stays on ground */
+    assert(grains[0].flags == 0u && grains[0].position.y > 0.20f);
+    assert(grains[1].flags == 0u && grains[1].position.y > 0.15f);
+    assert(grains[2].flags != 0u && grains[2].position.y < 0.05f);
+    printf("[PASS] test_mass_and_morphology_entrainment_sorting (petalY=%.3f m, leafY=%.3f m, gravelY=%.3f m)\n",
+           grains[0].position.y, grains[1].position.y, grains[2].position.y);
+}
+
+static void test_progressive_palm_wave_sweep(void)
+{
+    enum { N = 3 };
+    GranularGrainState leaves[N] = {
+        {.position = {1.0f, 0.03f, 0.0f}, .radius = 0.03f, .lifetime = 6.0f, .seed = 0.21f,
+         .materialId = GRANULAR_MAT_DRY_LEAF, .flags = 1u},
+        {.position = {3.0f, 0.03f, 0.0f}, .radius = 0.03f, .lifetime = 6.0f, .seed = 0.52f,
+         .materialId = GRANULAR_MAT_DRY_LEAF, .flags = 1u},
+        {.position = {5.0f, 0.03f, 0.0f}, .radius = 0.03f, .lifetime = 6.0f, .seed = 0.83f,
+         .materialId = GRANULAR_MAT_DRY_LEAF, .flags = 1u}
+    };
+
+    GranularWaveDesc jet = {
+        .kind         = GRANULAR_WAVE_TRAVELLING_JET,
+        .origin       = {0.0f, 0.35f, 0.0f},
+        .direction    = {1.0f, 0.0f, 0.0f},
+        .radius       = 1.2f,
+        .topRadius    = 2.0f,
+        .length       = 10.0f,
+        .axialSpeed   = 10.0f,
+        .waveSpeed    = 8.0f,
+        .swirlSpeed   = 5.0f,
+        .liftAccel    = 9.0f,
+        .analyticLock = 0.85f,
+        .duration     = 2.0f,
+        .attackTime   = 0.02f,
+        .fadeTime     = 0.2f
+    };
+
+    float liftTime[3] = {-1.0f, -1.0f, -1.0f};
+    float dt = 1.0f / 60.0f;
+    for (int step = 0; step < 60; step++) {
+        float t = (float)step * dt;
+        GranularSim_StepCpuDeterministicWithWaves(
+            leaves, N, NULL, &jet, 1, dt, t,
+            (Vector3){0.0f, 0.0f, 0.0f}, (Vector3){0.0f, 1.0f, 0.0f});
+        for (int i = 0; i < N; i++) {
+            if (liftTime[i] < 0.0f && leaves[i].flags == 0u) liftTime[i] = t;
+        }
+    }
+
+    assert(liftTime[0] >= 0.0f && liftTime[1] > liftTime[0] && liftTime[2] > liftTime[1]);
+    printf("[PASS] test_progressive_palm_wave_sweep (liftTimes: 1m=%.3fs, 3m=%.3fs, 5m=%.3fs)\n",
+           liftTime[0], liftTime[1], liftTime[2]);
+}
+
+static void test_mixed_material_bed_simulation(void)
+{
+    const GranularMaterialId mats[6] = {
+        GRANULAR_MAT_DRY_LEAF, GRANULAR_MAT_FRESH_LEAF, GRANULAR_MAT_DRY_TWIG,
+        GRANULAR_MAT_FLOWER_PETAL, GRANULAR_MAT_ICE_SHARD, GRANULAR_MAT_SNOW_POWDER
+    };
+    GranularGrainState grains[6] = {0};
+    for (int i = 0; i < 6; i++) {
+        grains[i] = (GranularGrainState){
+            .position = {(float)i * 0.25f, 0.50f, 0.0f},
+            .velocity = {0.0f, -0.5f, 0.0f},
+            .radius = 0.03f,
+            .lifetime = 5.0f,
+            .seed = 0.15f * (float)(i + 1),
+            .materialId = (uint32_t)mats[i],
+            .flags = 0u
+        };
+    }
+
+    float dt = 1.0f / 60.0f;
+    for (int step = 0; step < 90; step++) {
+        GranularSim_StepCpuDeterministicWithWaves(
+            grains, 6, NULL, NULL, 0, dt, (float)step * dt,
+            (Vector3){0.0f, 0.0f, 0.0f}, (Vector3){0.0f, 1.0f, 0.0f});
+    }
+
+    /* Ice shard (heavy, low drag) settles faster than light flower petal (high lift & drag) */
+    assert(grains[4].position.y <= grains[3].position.y + 0.05f);
+    for (int i = 0; i < 6; i++) {
+        assert(isfinite(grains[i].position.x) && isfinite(grains[i].position.y) && isfinite(grains[i].position.z));
+    }
+    printf("[PASS] test_mixed_material_bed_simulation (iceY=%.3f m, petalY=%.3f m)\n",
+           grains[4].position.y, grains[3].position.y);
+}
+
+static void test_moving_tornado_cohesive_translation(void)
+{
+    enum { N = 64 };
+    GranularGrainState grains[N];
+    const float baseR = 0.28f, topR = 1.25f, height = 3.2f, swirl = 10.5f, updraft = 3.2f;
+    const float stormSpeedX = 6.0f;
+
+    for (int i = 0; i < N; i++) {
+        float u = (float)i / (float)N;
+        float angle = u * 6.2831853f * 4.0f;
+        float hn = u;
+        float coneR = baseR + (topR - baseR) * powf(hn, 1.35f);
+        float r = coneR * 0.65f;
+        grains[i] = (GranularGrainState){
+            .position = {cosf(angle) * r, 0.1f + hn * height, sinf(angle) * r},
+            .velocity = {stormSpeedX - sinf(angle) * swirl * 0.7f, updraft, cosf(angle) * swirl * 0.7f},
+            .radius = 0.02f, .lifetime = 8.0f, .seed = u, .materialId = GRANULAR_MAT_DESERT_SAND
+        };
+    }
+
+    GranularWaveDesc funnel = {
+        .kind          = GRANULAR_WAVE_CONICAL_FUNNEL,
+        .origin        = {0.0f, 0.0f, 0.0f},
+        .radius        = baseR,
+        .topRadius     = topR,
+        .length        = height,
+        .axialSpeed    = updraft,
+        .swirlSpeed    = swirl,
+        .duration      = 4.0f,
+        .attackTime    = 0.02f,
+        .fadeTime      = 0.50f,
+        .loopTop       = true,
+        .stormVelocity = {stormSpeedX, 0.0f, 0.0f},
+        .spinDown      = 0.0f
+    };
+
+    const float dt = 1.0f / 60.0f;
+    for (int step = 0; step < 60; step++) {
+        float t = (float)step * dt;
+        funnel.origin.x = stormSpeedX * t;
+        GranularSim_StepCpuDeterministicWithWaves(
+            grains, N, NULL, &funnel, 1, dt, t,
+            funnel.origin, (Vector3){0.0f, 1.0f, 0.0f});
+    }
+
+    float meanX = 0.0f, maxDistFromCenter = 0.0f;
+    for (int i = 0; i < N; i++) {
+        meanX += grains[i].position.x;
+        float d = hypotf(grains[i].position.x - funnel.origin.x, grains[i].position.z - funnel.origin.z);
+        if (d > maxDistFromCenter) maxDistFromCenter = d;
+    }
+    meanX /= (float)N;
+    float lagX = fabsf(funnel.origin.x - meanX);
+    assert(lagX < 0.85f);              /* Cohesive column translates with storm, no curtain lag */
+    assert(maxDistFromCenter < 1.85f); /* Bounded cone radius during translation */
+    printf("[PASS] test_moving_tornado_cohesive_translation (stormX=%.2f m, meanX=%.2f m, lag=%.3f m, maxR=%.3f m)\n",
+           funnel.origin.x, meanX, lagX, maxDistFromCenter);
+}
+
+static void test_tornado_spindown_no_explosion(void)
+{
+    enum { N = 64 };
+    GranularGrainState grains[N];
+    const float baseR = 0.25f, topR = 1.30f, height = 3.4f, swirl = 13.5f, updraft = 3.4f;
+
+    for (int i = 0; i < N; i++) {
+        float u = (float)i / (float)N;
+        float angle = u * 6.2831853f * 4.0f;
+        float hn = u;
+        float coneR = baseR + (topR - baseR) * powf(hn, 1.35f);
+        float r = coneR * 0.70f;
+        grains[i] = (GranularGrainState){
+            .position = {cosf(angle) * r, 0.1f + hn * height, sinf(angle) * r},
+            .velocity = {-sinf(angle) * swirl, updraft, cosf(angle) * swirl},
+            .radius = 0.02f, .lifetime = 8.0f, .seed = u, .materialId = GRANULAR_MAT_DESERT_SAND
+        };
+    }
+
+    GranularWaveDesc funnel = {
+        .kind       = GRANULAR_WAVE_CONICAL_FUNNEL,
+        .origin     = {0.0f, 0.0f, 0.0f},
+        .radius     = baseR,
+        .topRadius  = topR,
+        .length     = height,
+        .axialSpeed = updraft,
+        .swirlSpeed = swirl,
+        .duration   = 3.0f,
+        .attackTime = 0.01f,
+        .fadeTime   = 0.55f,
+        .loopTop    = true
+    };
+
+    const float dt = 1.0f / 60.0f;
+    /* Spin for 0.4s then spin down over 0.55s */
+    for (int step = 0; step < 57; step++) {
+        float t = (float)step * dt;
+        funnel.spinDown = step >= 24 ? (float)(step - 24) / 33.0f : 0.0f;
+        GranularSim_StepCpuDeterministicWithWaves(
+            grains, N, NULL, &funnel, 1, dt, t,
+            (Vector3){0.0f, 0.0f, 0.0f}, (Vector3){0.0f, 1.0f, 0.0f});
+    }
+
+    float maxR = 0.0f, meanSpeed = 0.0f;
+    for (int i = 0; i < N; i++) {
+        float r = hypotf(grains[i].position.x, grains[i].position.z);
+        if (r > maxR) maxR = r;
+        float spd = sqrtf(grains[i].velocity.x * grains[i].velocity.x +
+                          grains[i].velocity.y * grains[i].velocity.y +
+                          grains[i].velocity.z * grains[i].velocity.z);
+        meanSpeed += spd;
+    }
+    meanSpeed /= (float)N;
+    assert(maxR < topR * 1.15f); /* Zero tangential starburst explosion during spin-down */
+    assert(meanSpeed < 2.8f);    /* Swirl actively braked before confinement releases */
+    printf("[PASS] test_tornado_spindown_no_explosion (maxR=%.3f m, meanSpeed=%.3f m/s)\n", maxR, meanSpeed);
+}
+
 int main(void)
 {
     test_inelastic_collision();
     test_angle_of_repose_pile_vs_frictionless();
     test_tornado_centripetal_equilibrium();
+    test_toroidal_grid_far_travel_collision();
+    test_mass_and_morphology_entrainment_sorting();
+    test_progressive_palm_wave_sweep();
+    test_mixed_material_bed_simulation();
+    test_moving_tornado_cohesive_translation();
+    test_tornado_spindown_no_explosion();
     printf("granular_sim_test: ALL PASSED\n");
     return 0;
 }

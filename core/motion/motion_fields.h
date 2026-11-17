@@ -169,6 +169,12 @@ MotionFieldHandle MotionFields_SpawnMovingGuide(const MotionPath *path, float sp
 MotionFieldHandle MotionFields_SpawnStaticVortex(Vector3 center, Vector3 axis, float radiusM,
                                                  float swirlSpeedMps, float inwardPullN,
                                                  float durationSec, float attackSec, float fadeSec);
+
+/* 4. Spawn a vertical-axis moving tornado along path with frame-velocity tracking and updraft. */
+MotionFieldHandle MotionFields_SpawnMovingTornado(const MotionPath *path, float travelSpeedMps,
+                                                  float radiusM, float pullStrengthN,
+                                                  float swirlSpeedMps, float updraftMps,
+                                                  float durationSec);
 /* Typed receiver boundary. Static/kinematic receivers have no dynamic response;
  * rooted receivers never capture/arrive. Tracers receive medium velocity only.
  * Field-owned flow uses explicit priority/blend; sample ordinary Wind excluding

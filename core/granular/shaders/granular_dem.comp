@@ -16,10 +16,21 @@ struct GranularGrain {
     vec4 aux_pad;         // x = shearWork, yzw = reserved
 };
 
+struct GranularWave {
+    vec4 origin_radius;     // xyz = origin, w = radius
+    vec4 dir_topRadius;     // xyz = direction, w = topRadius
+    vec4 length_speeds;     // x = length, y = axialSpeed, z = waveSpeed, w = swirlSpeed
+    vec4 pull_lift_lock_dur;// x = inwardPull, y = liftAccel, z = analyticLock, w = duration
+    vec4 env_kind;          // x = attackTime, y = fadeTime, z = elapsed, w = kind
+    vec4 loop_stormVel;     // x = loopTop, yzw = stormVelocity
+    vec4 spinDown_pad;      // x = spinDown
+};
+
 layout(std430, binding = 0) readonly buffer SourceState { GranularGrain source[]; };
 layout(std430, binding = 1) writeonly buffer DestState { GranularGrain dest[]; };
 layout(std430, binding = 2) buffer GridHeads { int heads[]; };
 layout(std430, binding = 3) buffer GridNext { int next[]; };
+layout(std430, binding = 4) readonly buffer GranularWaveBuffer { GranularWave waves[]; };
 
 uniform int u_phase;
 uniform int u_grainCount;
@@ -31,6 +42,7 @@ uniform float u_cellSize;
 uniform vec3 u_receiverPoint;
 uniform vec3 u_receiverNormal;
 uniform vec3 u_gridOrigin;
+uniform int u_waveCount;
 
 // Material DEM parameters
 uniform float u_springStiffness;
@@ -50,6 +62,8 @@ uniform float u_impulseSwirl;
 // Analytical Burgers-Rott conical tornado funnel
 uniform int u_funnelActive;
 uniform vec3 u_funnelBase;
+uniform vec3 u_funnelVelocity;
+uniform float u_funnelSpinDown;
 uniform float u_funnelBaseRadius;
 uniform float u_funnelTopRadius;
 uniform float u_funnelHeight;
@@ -67,12 +81,235 @@ int decodeHead(int stored) {
 }
 
 int cellIndex(vec3 p) {
-    ivec3 c = ivec3(floor((p - u_gridOrigin) / u_cellSize)) + ivec3(16);
-    c = clamp(c, ivec3(0), ivec3(31));
+    ivec3 c = ivec3(floor((p - u_gridOrigin) / u_cellSize)) & ivec3(31);
     return (c.z * 32 + c.y) * 32 + c.x;
 }
 
-void collideReceiver(inout GranularGrain g, out bool onGround) {
+struct GrainPhys {
+    int morphology;
+    float springK;
+    float dashpotDamp;
+    float frictionMu;
+    float rollRes;
+    float cohesion;
+    float splash;
+    float refMass;
+    float liftCoeff;
+    float flutterHz;
+    float critEntrain;
+};
+
+GrainPhys getGrainPhysics(int matId) {
+    GrainPhys p;
+    p.morphology = 0; p.springK = u_springStiffness; p.dashpotDamp = u_dashpotDamping;
+    p.frictionMu = u_shearFrictionMu; p.rollRes = u_rollingResistance; p.cohesion = u_cohesion;
+    p.splash = u_saltationSplash; p.refMass = 0.012; p.liftCoeff = 0.0; p.flutterHz = 0.0; p.critEntrain = 2.6;
+    if (matId == 1) {
+        p.morphology = 1; p.springK = 3200.0; p.dashpotDamp = 115.0; p.frictionMu = 0.84;
+        p.rollRes = 0.45; p.cohesion = 0.0; p.splash = 0.14; p.refMass = 0.035; p.critEntrain = 7.8;
+    } else if (matId == 2) {
+        p.morphology = 1; p.springK = 2200.0; p.dashpotDamp = 120.0; p.frictionMu = 1.00;
+        p.rollRes = 0.55; p.cohesion = 18.0; p.splash = 0.10; p.refMass = 0.020; p.critEntrain = 4.4;
+    } else if (matId == 3) {
+        p.morphology = 0; p.springK = 3400.0; p.dashpotDamp = 110.0; p.frictionMu = 0.73;
+        p.rollRes = 0.32; p.cohesion = 0.0; p.splash = 0.22; p.refMass = 0.032; p.critEntrain = 5.5;
+    } else if (matId == 4) {
+        p.morphology = 0; p.springK = 1900.0; p.dashpotDamp = 125.0; p.frictionMu = 0.58;
+        p.rollRes = 0.20; p.cohesion = 6.0; p.splash = 0.32; p.refMass = 0.004; p.liftCoeff = 0.15; p.critEntrain = 1.4;
+    } else if (matId == 5) {
+        p.morphology = 2; p.springK = 1400.0; p.dashpotDamp = 115.0; p.frictionMu = 0.42;
+        p.rollRes = 0.65; p.cohesion = 0.0; p.splash = 0.08; p.refMass = 0.0008;
+        p.liftCoeff = 1.35; p.flutterHz = 4.2; p.critEntrain = 0.85;
+    } else if (matId == 6) {
+        p.morphology = 2; p.springK = 1600.0; p.dashpotDamp = 118.0; p.frictionMu = 0.48;
+        p.rollRes = 0.55; p.cohesion = 0.0; p.splash = 0.06; p.refMass = 0.0014;
+        p.liftCoeff = 1.15; p.flutterHz = 3.4; p.critEntrain = 1.15;
+    } else if (matId == 7) {
+        p.morphology = 3; p.springK = 2400.0; p.dashpotDamp = 120.0; p.frictionMu = 0.78;
+        p.rollRes = 0.72; p.cohesion = 0.0; p.splash = 0.12; p.refMass = 0.0045;
+        p.liftCoeff = 0.20; p.flutterHz = 1.6; p.critEntrain = 2.40;
+    } else if (matId == 8) {
+        p.morphology = 2; p.springK = 1250.0; p.dashpotDamp = 112.0; p.frictionMu = 0.36;
+        p.rollRes = 0.45; p.cohesion = 0.0; p.splash = 0.05; p.refMass = 0.0005;
+        p.liftCoeff = 1.50; p.flutterHz = 4.8; p.critEntrain = 0.65;
+    } else if (matId == 9) {
+        p.morphology = 4; p.springK = 3300.0; p.dashpotDamp = 95.0; p.frictionMu = 0.18;
+        p.rollRes = 0.12; p.cohesion = 0.0; p.splash = 0.36; p.refMass = 0.015;
+        p.liftCoeff = 0.05; p.critEntrain = 3.20;
+    } else if (matId == 10) {
+        p.morphology = 0; p.springK = 1550.0; p.dashpotDamp = 130.0; p.frictionMu = 0.76;
+        p.rollRes = 0.60; p.cohesion = 22.0; p.splash = 0.14; p.refMass = 0.0018;
+        p.liftCoeff = 0.25; p.flutterHz = 2.2; p.critEntrain = 1.05;
+    }
+    return p;
+}
+
+float waveEnvelope(GranularWave w) {
+    float kind = w.env_kind.w;
+    float dur = w.pull_lift_lock_dur.w;
+    float el = w.env_kind.z;
+    if (kind < 0.5 || dur <= 0.0 || el < 0.0 || el >= dur) return 0.0;
+    float env = 1.0;
+    if (w.env_kind.x > 1e-4 && el < w.env_kind.x) {
+        float t = el / w.env_kind.x;
+        env *= t * t * (3.0 - 2.0 * t);
+    }
+    if (w.env_kind.y > 1e-4 && (dur - el) < w.env_kind.y) {
+        float t = (dur - el) / w.env_kind.y;
+        env *= t * t * (3.0 - 2.0 * t);
+    }
+    return env;
+}
+
+void evaluateWaves(inout GranularGrain g, GrainPhys gp, out vec3 waveAcc, out float effWind) {
+    waveAcc = vec3(0.0);
+    effWind = 0.0;
+    int count = min(u_waveCount, 4);
+    for (int wi = 0; wi < count; wi++) {
+        GranularWave w = waves[wi];
+        float env = waveEnvelope(w);
+        if (env <= 1e-4) continue;
+        int kind = int(w.env_kind.w + 0.5);
+        vec3 origin = w.origin_radius.xyz;
+        float radius = w.origin_radius.w;
+        vec3 dir = w.dir_topRadius.xyz;
+        float topR = w.dir_topRadius.w;
+        float wLen = w.length_speeds.x;
+        float axialSpd = w.length_speeds.y;
+        float waveSpd = w.length_speeds.z;
+        float swirlSpd = w.length_speeds.w;
+        float inPull = w.pull_lift_lock_dur.x;
+        float liftAcc = w.pull_lift_lock_dur.y;
+        float aLock = w.pull_lift_lock_dur.z;
+        float el = w.env_kind.z;
+
+        if (kind == 1) {
+            vec3 rel = g.position_radius.xyz - origin;
+            float d = length(rel);
+            float rad = max(radius, 0.05);
+            if (d < rad) {
+                float f = 1.0 - d / rad;
+                f = f * f * env;
+                waveAcc += dir * (axialSpd * f);
+                waveAcc.y += liftAcc * f;
+                if (abs(swirlSpd) > 1e-3) {
+                    vec3 tang = vec3(-rel.z, 0.0, rel.x);
+                    float tl = length(tang);
+                    if (tl > 1e-4) waveAcc += (tang / tl) * (swirlSpd * f * 4.0);
+                }
+                if (abs(inPull) > 1e-3 && d > 1e-4) {
+                    waveAcc -= (rel / d) * (inPull * f);
+                }
+                effWind = max(effWind, (abs(swirlSpd) + abs(liftAcc) * 0.45) * f);
+            }
+        } else if (kind == 2) {
+            float dur = w.pull_lift_lock_dur.w;
+            float fadeT = w.env_kind.y;
+            float sd = w.spinDown_pad.x;
+            if (sd <= 0.0 && fadeT > 1e-4 && (dur - el) < fadeT) {
+                sd = 1.0 - (dur - el) / fadeT;
+            }
+            sd = clamp(sd, 0.0, 1.0);
+            float confEnv = sd > 0.0 ? (1.0 - sd * 0.25) : env;
+            vec3 stormVel = w.loop_stormVel.yzw;
+
+            float funnelH = max(wLen, 0.25);
+            float h = g.position_radius.y - origin.y;
+            if (w.loop_stormVel.x > 0.5 && sd < 0.25 && h > funnelH) {
+                float aWrap = fract(g.meta_ao.x * 13.7 + u_time * 3.1) * 6.28318;
+                float rWrap = radius * (0.35 + 0.65 * fract(g.meta_ao.x * 29.3));
+                g.position_radius.x = origin.x + cos(aWrap) * rWrap;
+                g.position_radius.z = origin.z + sin(aWrap) * rWrap;
+                g.position_radius.y = origin.y + 0.04 + 0.28 * fract(g.meta_ao.x * 7.1);
+                g.velocity_life.xyz = stormVel + vec3(-sin(aWrap) * swirlSpd, axialSpd * 0.85, cos(aWrap) * swirlSpd);
+                h = g.position_radius.y - origin.y;
+            }
+            float hn = clamp(h / funnelH, 0.0, 1.0);
+            float coneR = mix(radius, topR, pow(hn, 1.35));
+            float targetR = coneR * mix(0.18, 1.05, fract(g.meta_ao.x * 11.37)) * (1.0 - 0.35 * sd);
+            vec2 spine = vec2(sin(hn * 4.5 - u_time * 6.0) * 0.24 * hn, cos(hn * 3.8 - u_time * 5.2) * 0.24 * hn) * (1.0 - sd);
+            vec3 radVec = vec3(g.position_radius.x - (origin.x + spine.x), 0.0, g.position_radius.z - (origin.z + spine.y));
+            float r = length(radVec);
+            vec3 radDir = r > 1e-4 ? radVec / r : vec3(cos(g.meta_ao.x * 6.28318), 0.0, sin(g.meta_ao.x * 6.28318));
+            vec3 tangDir = vec3(-radDir.z, 0.0, radDir.x);
+
+            vec3 vRel = g.velocity_life.xyz - stormVel;
+            float vTang = dot(vRel, tangDir);
+            float vRad = dot(vRel, radDir);
+            float targetSwirl = swirlSpd * clamp(r / max(coneR, 0.15), 0.25, 1.0) * (1.0 - sd);
+            float tangAcc = (targetSwirl - vTang) * 10.5 * confEnv;
+            float centrip = -(vTang * vTang) / max(r, 0.08);
+            float radAcc = (centrip + (targetR - r) * 55.0 - vRad * 11.0) * confEnv;
+            float targetVy = axialSpd * (0.75 + 0.50 * fract(g.meta_ao.x * 5.3)) * (1.0 - sd) - 2.2 * sd;
+            float trackK = 7.5 * confEnv * 0.35;
+            waveAcc += radDir * radAcc + tangDir * tangAcc + vec3(stormVel.x - g.velocity_life.x, 0.0, stormVel.z - g.velocity_life.z) * trackK;
+            waveAcc.y += (9.81 * (1.0 - 0.65 * sd) + (targetVy - vRel.y) * 7.0) * confEnv;
+            effWind = max(effWind, abs(swirlSpd) * (1.0 - sd) * confEnv);
+        } else if (kind == 3) {
+            vec3 rel = g.position_radius.xyz - origin;
+            float rXZ = length(rel.xz);
+            float maxR = max(radius, 0.2);
+            if (rXZ < maxR) {
+                float spW = (1.0 - rXZ / maxR);
+                spW = spW * (2.0 - spW) * env;
+                float lk = (aLock > 0.0 ? aLock : 0.75) * spW;
+                vec2 rDir = rXZ > 1e-4 ? rel.xz / rXZ : vec2(cos(g.meta_ao.x * 6.28318), sin(g.meta_ao.x * 6.28318));
+                vec2 tDir = vec2(-rDir.y, rDir.x);
+                float targetH = 0.28 + 0.85 * (1.0 - rXZ / maxR) + 0.18 * fract(g.meta_ao.x * 19.1);
+                float vTangTarget = swirlSpd * (0.45 + 0.55 * (1.0 - rXZ / maxR));
+                float vRadTarget = -inPull * 0.28;
+                float vTang = dot(g.velocity_life.xz, tDir);
+                float vRad = dot(g.velocity_life.xz, rDir);
+                float centrip = -(vTang * vTang) / max(rXZ, 0.12);
+                float radAcc = (centrip + (vRadTarget - vRad) * 6.5 - inPull * 0.45) * lk;
+                float tangAcc = (vTangTarget - vTang) * 8.5 * lk;
+                float massRatio = min(0.002 / max(gp.refMass, 0.0002), 2.2);
+                waveAcc.xz += rDir * radAcc + tDir * tangAcc;
+                waveAcc.y += (9.81 + (targetH - rel.y) * 18.0 - g.velocity_life.y * 5.0 + liftAcc) * lk * massRatio;
+                effWind = max(effWind, (abs(swirlSpd) + abs(inPull) * 0.4) * spW);
+            }
+        } else if (kind == 4) {
+            vec3 dNorm = length(dir) > 1e-4 ? normalize(dir) : vec3(1.0, 0.0, 0.0);
+            vec3 rel = g.position_radius.xyz - origin;
+            float s = dot(rel, dNorm);
+            float frontDist = waveSpd * el;
+            float maxL = max(wLen, 0.5);
+            if (s >= -0.6 && s <= maxL && s <= frontDist + 0.85) {
+                vec3 perp = rel - dNorm * s;
+                float rPerp = length(perp);
+                float tubeR = max(mix(radius, topR, clamp(s / maxL, 0.0, 1.0)), 0.2);
+                if (rPerp < tubeR) {
+                    float radW = 1.0 - rPerp / tubeR;
+                    radW = radW * (2.0 - radW);
+                    float behind = frontDist - s;
+                    float frontPulse = exp(-behind * behind * 1.4);
+                    float wake = behind >= 0.0 ? (0.45 + 0.55 * frontPulse) : (1.0 - min((-behind) / 0.85, 1.0));
+                    float wTot = radW * wake * env;
+                    float lk = (aLock > 0.0 ? aLock : 0.80) * wTot;
+                    vec3 radDir = rPerp > 1e-4 ? perp / rPerp : vec3(0.0, 1.0, 0.0);
+                    vec3 tangDir = cross(dNorm, radDir);
+                    float targetFwd = axialSpd * (0.75 + 0.40 * frontPulse);
+                    float vFwd = dot(g.velocity_life.xyz, dNorm);
+                    float fwdAcc = (targetFwd - vFwd) * 9.5 * lk;
+                    float targetSwirl = swirlSpd * (0.35 + 0.65 * (rPerp / tubeR));
+                    float vTang = dot(g.velocity_life.xyz, tangDir);
+                    float tangAcc = (targetSwirl - vTang) * 8.0 * lk;
+                    float targetR = tubeR * (0.28 + 0.52 * fract(g.meta_ao.x * 17.3));
+                    float vRad = dot(g.velocity_life.xyz, radDir);
+                    float centrip = -(vTang * vTang) / max(rPerp, 0.10);
+                    float radAcc = (centrip + (targetR - rPerp) * 18.0 - vRad * 6.0) * lk;
+                    float massRatio = min(0.002 / max(gp.refMass, 0.0002), 2.2);
+                    float liftKick = (liftAcc * (0.4 + 0.6 * frontPulse) + 9.81 * 0.85) * wTot * massRatio;
+                    waveAcc += dNorm * fwdAcc + tangDir * tangAcc + radDir * radAcc;
+                    waveAcc.y += liftKick;
+                    effWind = max(effWind, (axialSpd + abs(swirlSpd) * 0.5) * wTot);
+                }
+            }
+        }
+    }
+}
+
+void collideReceiver(inout GranularGrain g, GrainPhys gp, out bool onGround) {
     onGround = false;
     float dist = dot(g.position_radius.xyz - u_receiverPoint, u_receiverNormal);
     float pen = g.position_radius.w - dist;
@@ -86,17 +323,17 @@ void collideReceiver(inout GranularGrain g, out bool onGround) {
 
     if (vn < 0.0) {
         float impactSpeed = -vn;
-        float restitution = impactSpeed > 1.2 ? u_saltationSplash * 0.45 : 0.06;
+        float restitution = impactSpeed > 1.2 ? gp.splash * 0.45 : 0.06;
         vn = impactSpeed * restitution;
 
         float vtLen = length(vt);
         if (vtLen > 1e-4) {
-            float frictionLoss = min(1.0, u_shearFrictionMu * 0.72);
+            float frictionLoss = min(1.0, gp.frictionMu * 0.72);
             vt *= (1.0 - frictionLoss);
             g.aux_pad.x += frictionLoss * vtLen * impactSpeed * 0.1;
         }
     } else {
-        float damp = exp(-(6.0 + 14.0 * u_shearFrictionMu) * u_dt);
+        float damp = exp(-(6.0 + 14.0 * gp.frictionMu) * u_dt);
         vt *= damp;
     }
     g.velocity_life.xyz = vt + u_receiverNormal * vn;
@@ -115,6 +352,8 @@ void main() {
         dest[id] = g;
         return;
     }
+
+    GrainPhys gp = getGrainPhysics(int(g.meta_ao.y + 0.5));
 
     if (u_phase == 1) {
         vec3 extAcc = vec3(0.0);
@@ -138,44 +377,77 @@ void main() {
         vec3 vel = g.velocity_life.xyz;
 
         if (u_funnelActive != 0) {
+            float sd = clamp(u_funnelSpinDown, 0.0, 1.0);
+            float conf = sd > 0.0 ? (1.0 - 0.25 * sd) : 1.0;
             float h = pos.y - u_funnelBase.y;
-            if (h > u_funnelHeight) {
+            if (h > u_funnelHeight && sd < 0.25) {
                 float aWrap = fract(g.meta_ao.x * 13.7 + u_time * 3.1) * 6.28318;
                 float rWrap = u_funnelBaseRadius * (0.35 + 0.65 * fract(g.meta_ao.x * 29.3));
                 pos.x = u_funnelBase.x + cos(aWrap) * rWrap;
                 pos.z = u_funnelBase.z + sin(aWrap) * rWrap;
                 pos.y = u_funnelBase.y + 0.04 + 0.28 * fract(g.meta_ao.x * 7.1);
-                vel = vec3(-sin(aWrap) * u_funnelSwirlSpeed, u_funnelUpdraftSpeed * 0.85, cos(aWrap) * u_funnelSwirlSpeed);
+                vel = vec3(u_funnelVelocity.x - sin(aWrap) * u_funnelSwirlSpeed,
+                           u_funnelUpdraftSpeed * 0.85,
+                           u_funnelVelocity.z + cos(aWrap) * u_funnelSwirlSpeed);
                 h = pos.y - u_funnelBase.y;
             }
 
             float hn = clamp(h / max(u_funnelHeight, 0.25), 0.0, 1.0);
             float coneR = mix(u_funnelBaseRadius, u_funnelTopRadius, pow(hn, 1.35));
             float rBias = mix(0.18, 1.05, fract(g.meta_ao.x * 11.37));
-            float targetR = coneR * rBias;
+            float targetR = coneR * rBias * (1.0 - 0.35 * sd);
 
-            // S-curve sinuous tornado spine sway
             vec2 spineOffset = vec2(
                 sin(hn * 4.5 - u_time * 6.0) * 0.24 * hn,
                 cos(hn * 3.8 - u_time * 5.2) * 0.24 * hn
-            );
+            ) * (1.0 - sd);
             vec3 radVec = vec3(pos.x - (u_funnelBase.x + spineOffset.x), 0.0,
                                pos.z - (u_funnelBase.z + spineOffset.y));
             float r = length(radVec);
             vec3 radDir = r > 1e-4 ? radVec / r : vec3(cos(g.meta_ao.x * 6.28318), 0.0, sin(g.meta_ao.x * 6.28318));
             vec3 tangDir = vec3(-radDir.z, 0.0, radDir.x);
 
-            float targetTangSpeed = u_funnelSwirlSpeed * clamp(r / max(coneR, 0.15), 0.25, 1.0);
-            float vTang = dot(vel, tangDir);
-            extAcc += tangDir * ((targetTangSpeed - vTang) * 10.5);
+            vec3 vRel = vel - u_funnelVelocity;
+            float targetTangSpeed = u_funnelSwirlSpeed * clamp(r / max(coneR, 0.15), 0.25, 1.0) * (1.0 - sd);
+            float vTang = dot(vRel, tangDir);
+            extAcc += tangDir * ((targetTangSpeed - vTang) * 10.5 * conf);
 
             float radialErr = targetR - r;
-            float vRad = dot(vel, radDir);
+            float vRad = dot(vRel, radDir);
             float centripetalAcc = -(vTang * vTang) / max(r, 0.08);
-            extAcc += radDir * (centripetalAcc + radialErr * 55.0 - vRad * 11.0);
+            extAcc += radDir * ((centripetalAcc + radialErr * 55.0 - vRad * 11.0) * conf);
 
-            float targetVy = u_funnelUpdraftSpeed * (0.75 + 0.50 * fract(g.meta_ao.x * 5.3));
-            extAcc.y += 9.81 + (targetVy - vel.y) * 7.0;
+            float capture = max(coneR * 2.2, 2.5);
+            float trackW = r < capture ? (1.0 - r / capture) : 0.0;
+            float trackK = 6.5 * conf * trackW;
+            extAcc.xz += (u_funnelVelocity.xz - vel.xz) * trackK;
+
+            float targetVy = u_funnelUpdraftSpeed * (0.75 + 0.50 * fract(g.meta_ao.x * 5.3)) * (1.0 - sd) - 2.2 * sd;
+            extAcc.y += (9.81 * (1.0 - 0.65 * sd) + (targetVy - vel.y) * 7.0) * conf;
+        }
+
+        // Planar aerofoil flutter & lift while airborne
+        if (gp.morphology == 2 && g.meta_ao.w != 1.0) {
+            float phase = u_time * gp.flutterHz * 6.28318 + g.meta_ao.x * 37.7;
+            float speedXZ = length(vel.xz);
+            float lift = min(gp.liftCoeff * (1.8 + 0.85 * speedXZ), 8.2);
+            extAcc.y += lift;
+            extAcc.x += cos(phase) * gp.liftCoeff * 2.4;
+            extAcc.z += sin(phase * 1.13) * gp.liftCoeff * 2.4;
+        }
+
+        vec3 waveAcc;
+        float effWind;
+        evaluateWaves(g, gp, waveAcc, effWind);
+        pos = g.position_radius.xyz;
+        vel = g.velocity_life.xyz;
+        if (g.meta_ao.w == 1.0) {
+            if (effWind >= gp.critEntrain) {
+                g.meta_ao.w = 0.0;
+                extAcc += waveAcc + vec3(0.0, 1.5, 0.0);
+            }
+        } else {
+            extAcc += waveAcc;
         }
 
         motionAdvanceStep(pos, vel, mBody, vec3(0.0), extAcc, 0.0, u_time, u_dt, 0.0);
@@ -184,7 +456,7 @@ void main() {
         motionBodies[id] = mBody;
 
         bool onGround = false;
-        collideReceiver(g, onGround);
+        collideReceiver(g, gp, onGround);
         g.velocity_life.w -= u_dt;
 
         int cell = cellIndex(g.position_radius.xyz);
@@ -193,7 +465,7 @@ void main() {
         return;
     }
 
-    // Phase 2: DEM 27-cell neighbor contact solve
+    // Phase 2: DEM 27-cell neighbor contact solve (toroidal grid wrap)
     vec3 posI = g.position_radius.xyz;
     vec3 velI = g.velocity_life.xyz;
     float radI = g.position_radius.w;
@@ -206,15 +478,14 @@ void main() {
     for (int z = -1; z <= 1; z++) {
         for (int y = -1; y <= 1; y++) {
             for (int x = -1; x <= 1; x++) {
-                ivec3 c = base + ivec3(x, y, z);
-                if (any(lessThan(c, ivec3(0))) || any(greaterThan(c, ivec3(31)))) continue;
+                ivec3 c = (base + ivec3(x, y, z)) & ivec3(31);
                 int n = decodeHead(heads[(c.z * 32 + c.y) * 32 + c.x]);
                 while (n >= 0) {
                     if (n != int(id) && source[n].velocity_life.w > 0.0) {
                         vec3 r = source[n].position_radius.xyz - posI;
                         float distSq = dot(r, r);
                         float sumR = radI + source[n].position_radius.w;
-                        float interactR = sumR * (u_cohesion > 0.0 ? 1.15 : 1.0);
+                        float interactR = sumR * (gp.cohesion > 0.0 ? 1.15 : 1.0);
                         if (distSq > 1e-8 && distSq < interactR * interactR) {
                             float dist = sqrt(distSq);
                             vec3 nDir = r / dist;
@@ -224,8 +495,8 @@ void main() {
                                 vec3 vr = source[n].velocity_life.xyz - velI;
                                 float vn = dot(vr, nDir);
                                 float normOverlap = min(overlap / max(sumR, 0.01), 0.65);
-                                float fSpring = u_springStiffness * normOverlap * sqrt(normOverlap);
-                                float fDamp = -u_dashpotDamping * vn;
+                                float fSpring = gp.springK * normOverlap * sqrt(normOverlap);
+                                float fDamp = -gp.dashpotDamp * vn;
                                 float maxDamp = 0.80 / max(u_dt, 1e-4);
                                 if (fDamp > maxDamp * abs(vn)) fDamp = maxDamp * abs(vn);
                                 float fn = max(fSpring + fDamp, 0.0);
@@ -234,13 +505,13 @@ void main() {
                                 vec3 vt = vr - vn * nDir;
                                 float vtLen = length(vt);
                                 if (vtLen > 1e-4) {
-                                    float ftMag = min((0.45 * vtLen) / max(u_dt, 1e-4), u_shearFrictionMu * fn);
+                                    float ftMag = min((0.45 * vtLen) / max(u_dt, 1e-4), gp.frictionMu * fn);
                                     acc += (vt / vtLen) * ftMag;
                                     g.aux_pad.x += ftMag * vtLen * u_dt;
                                 }
-                            } else if (u_cohesion > 0.0) {
+                            } else if (gp.cohesion > 0.0) {
                                 float gap = -overlap / max(sumR * 0.15, 0.005);
-                                float pull = u_cohesion * (1.0 - min(gap, 1.0));
+                                float pull = gp.cohesion * (1.0 - min(gap, 1.0));
                                 acc += nDir * pull;
                             }
                         }
@@ -255,13 +526,14 @@ void main() {
     g.position_radius.xyz += acc * (u_dt * u_dt * 0.5);
 
     bool onGround = false;
-    collideReceiver(g, onGround);
+    collideReceiver(g, gp, onGround);
 
     int totalContacts = contacts + (onGround ? 1 : 0);
+    int minContactsLock = (gp.morphology == 2 || gp.morphology == 3) ? 1 : 2;
     float speedSq = dot(g.velocity_life.xyz, g.velocity_life.xyz);
-    float lockThresh = 0.08 + 0.18 * u_shearFrictionMu;
-    if (totalContacts >= 2 && speedSq < lockThresh * lockThresh) {
-        float lockDamp = exp(-(18.0 + 22.0 * u_rollingResistance) * u_dt);
+    float lockThresh = 0.08 + 0.18 * gp.frictionMu;
+    if (totalContacts >= minContactsLock && speedSq < lockThresh * lockThresh) {
+        float lockDamp = exp(-(18.0 + 22.0 * gp.rollRes) * u_dt);
         g.velocity_life.xyz *= lockDamp;
         g.meta_ao.w = 1.0; // resting
     } else {

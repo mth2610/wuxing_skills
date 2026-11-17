@@ -1768,6 +1768,47 @@ MotionFieldHandle MotionFields_SpawnStaticVortex(Vector3 center, Vector3 axis,
   return MotionFields_CreateField(&d);
 }
 
+MotionFieldHandle MotionFields_SpawnMovingTornado(const MotionPath *path,
+                                                  float travelSpeedMps,
+                                                  float radiusM,
+                                                  float pullStrengthN,
+                                                  float swirlSpeedMps,
+                                                  float updraftMps,
+                                                  float durationSec)
+{
+  if (!path || path->count < 2 || travelSpeedMps < 0.0f || radiusM <= 0.0f ||
+      durationSec <= 0.0f)
+    return MOTION_FIELD_INVALID;
+  FieldDesc d = MotionField_Default();
+  d.volume.shape = FIELD_SPHERE;
+  d.volume.radiusM = radiusM;
+  d.volume.coreFraction = 0.25f;
+  d.trajectory.mode = FIELD_TRAJECTORY_PATH;
+  d.trajectory.path = *path;
+  d.trajectory.speedMps = travelSpeedMps;
+  d.lifetime.durationSec = durationSec;
+  d.lifetime.attackSec = 0.15f;
+  d.lifetime.fadeSec = fminf(0.55f, durationSec * 0.35f);
+  d.receiverMask = MOTION_RECEIVER_ALL;
+  d.preserveSphereOffsets = true;
+
+  float pull = pullStrengthN > 0.0f ? pullStrengthN : 1.5f;
+  d.forceLaws[d.forceLawCount++] =
+      (ForceLaw){.type = FORCE_LAW_MOVING_GUIDE,
+                 .center = (Vector3){0, 0, 0},
+                 .magnitudeNewtons = pull,
+                 .springStiffnessNPerM = pull / radiusM};
+
+  d.flow.enabled = true;
+  d.flow.addBackgroundVelocity = true;
+  d.flow.axis = (Vector3){0.0f, 1.0f, 0.0f}; /* Vertical tornado axis, not path tangent */
+  d.flow.velocityMps = (Vector3){0.0f, updraftMps, 0.0f};
+  d.flow.procedural.swirlSpeedMps = swirlSpeedMps;
+  d.flow.procedural.eddyLengthM = radiusM * 0.28f;
+  d.flow.blendWeight = 1.0f;
+  return MotionFields_CreateField(&d);
+}
+
 /* Tái sử dụng trực tiếp localPos và nearestPath từ FieldPreparedQuery (khi đã
  * biết volumeWeight > 0), tránh hoàn toàn việc biến đổi và chiếu lại đường dẫn. */
 static bool Motion_PhysicalPathLanePrepared(const FieldDesc *d,

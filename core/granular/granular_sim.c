@@ -17,6 +17,10 @@ static GranularMaterialId s_activeMatId = GRANULAR_MAT_DESERT_SAND;
 static Vector3 s_receiverPoint = {0.0f, 0.0f, 0.0f};
 static Vector3 s_receiverNormal = {0.0f, 1.0f, 0.0f};
 static float s_totalShearWork = 0.0f;
+static float s_simElapsedTime = 0.0f;
+
+static GranularWaveDesc s_waves[GRANULAR_MAX_ACTIVE_WAVES];
+static int s_waveCount = 0;
 
 static Vector3 s_cpuImpCenter = {0};
 static float s_cpuImpRadius = 0.0f;
@@ -25,11 +29,27 @@ static float s_cpuImpSwirl = 0.0f;
 
 static bool s_cpuFunnelActive = false;
 static Vector3 s_cpuFunnelBase = {0};
+static Vector3 s_cpuFunnelPrevBase = {0};
+static bool s_cpuFunnelHasPrev = false;
+static Vector3 s_cpuFunnelVel = {0};
+static float s_cpuFunnelSpinDown = 0.0f;
+static float s_cpuFunnelSpinDownT = 0.0f;
+#define GRANULAR_FUNNEL_SPINDOWN_SEC 0.55f
 static float s_cpuFunnelBaseR = 0.42f;
 static float s_cpuFunnelTopR = 1.65f;
 static float s_cpuFunnelH = 3.6f;
 static float s_cpuFunnelSwirl = 13.5f;
 static float s_cpuFunnelUpdraft = 3.4f;
+
+static float GranularSim_Hash01(unsigned int x)
+{
+    x ^= x >> 16;
+    x *= 0x7feb352du;
+    x ^= x >> 15;
+    x *= 0x846ca68bu;
+    x ^= x >> 16;
+    return (float)(x & 0x00ffffffu) / 16777216.0f;
+}
 
 bool GranularSim_Init(void)
 {
@@ -52,6 +72,9 @@ void GranularSim_Reset(void)
 {
     s_cpuGrainCount = 0;
     s_totalShearWork = 0.0f;
+    s_simElapsedTime = 0.0f;
+    s_waveCount = 0;
+    memset(s_waves, 0, sizeof(s_waves));
     GranularGpu_Clear();
 }
 
@@ -89,6 +112,112 @@ int GranularSim_SpawnCluster(const GranularGrainState *grains, int count,
     return spawnN;
 }
 
+int GranularSim_AppendCluster(const GranularGrainState *grains, int count,
+                              Vector3 receiverPoint, Vector3 receiverNormal)
+{
+    if (!grains || count <= 0) return 0;
+    if (!s_granularInit) GranularSim_Init();
+
+    if (GranularSim_GetActiveCount() <= 0) {
+        return GranularSim_SpawnCluster(grains, count, receiverPoint, receiverNormal);
+    }
+
+    float maxR = 0.03f;
+    for (int i = 0; i < count; i++) {
+        if (grains[i].radius > maxR) maxR = grains[i].radius;
+    }
+
+    if (s_usingGpu && GranularGpu_IsAvailable()) {
+        return GranularGpu_AppendGrains(grains, count, receiverPoint, receiverNormal, maxR * 2.2f);
+    }
+
+    int avail = GRANULAR_CPU_MAX_GRAINS - s_cpuGrainCount;
+    if (avail <= 0) return 0;
+    int addN = count > avail ? avail : count;
+    memcpy(&s_cpuGrains[s_cpuGrainCount], grains, (size_t)addN * sizeof(GranularGrainState));
+    s_cpuGrainCount += addN;
+    return addN;
+}
+
+int GranularSim_ScatterBed(Vector3 center, float radius, int count,
+                           const GranularMaterialId *palette, int paletteCount,
+                           float grainRadius, float lifetime, unsigned int seed)
+{
+    if (count <= 0 || radius <= 0.0f) return 0;
+    if (!palette || paletteCount <= 0) {
+        static const GranularMaterialId k_defaultPal[1] = {GRANULAR_MAT_DRY_LEAF};
+        palette = k_defaultPal;
+        paletteCount = 1;
+    }
+    if (count > GRANULAR_GPU_MAX_GRAINS) count = GRANULAR_GPU_MAX_GRAINS;
+
+    static GranularGrainState s_bedBuf[GRANULAR_GPU_MAX_GRAINS];
+    float rBase = grainRadius > 0.004f ? grainRadius : 0.032f;
+    float lifeBase = lifetime > 0.2f ? lifetime : 8.0f;
+
+    for (int i = 0; i < count; i++) {
+        unsigned int h = (unsigned int)i * 747796405u + seed * 2891336453u + 17u;
+        float u0 = GranularSim_Hash01(h + 1u);
+        float u1 = GranularSim_Hash01(h + 2u);
+        float u2 = GranularSim_Hash01(h + 3u);
+        float u3 = GranularSim_Hash01(h + 4u);
+
+        float ang = u0 * 6.2831853f;
+        float rad = sqrtf(u1) * radius;
+        GranularMaterialId matId = palette[i % paletteCount];
+        if (matId < 0 || matId >= GRANULAR_MAT_COUNT) matId = GRANULAR_MAT_DRY_LEAF;
+        float r = rBase * (0.75f + 0.50f * u2);
+
+        s_bedBuf[i] = (GranularGrainState){
+            .position   = {center.x + cosf(ang) * rad, center.y + r, center.z + sinf(ang) * rad},
+            .velocity   = {0.0f, 0.0f, 0.0f},
+            .radius     = r,
+            .lifetime   = lifeBase * (0.88f + 0.24f * u3),
+            .seed       = u0,
+            .contactAO  = 0.25f,
+            .materialId = (uint32_t)matId,
+            .flags      = 1u // Pre-settled resting bed ready for Shields entrainment
+        };
+    }
+
+    return GranularSim_AppendCluster(s_bedBuf, count, center, (Vector3){0.0f, 1.0f, 0.0f});
+}
+
+int GranularSim_SpawnWave(const GranularWaveDesc *wave)
+{
+    if (!wave || wave->kind == GRANULAR_WAVE_NONE || wave->duration <= 0.0f) return -1;
+    for (int i = 0; i < s_waveCount; i++) {
+        if (s_waves[i].kind == GRANULAR_WAVE_NONE || s_waves[i].elapsed >= s_waves[i].duration) {
+            s_waves[i] = *wave;
+            s_waves[i].elapsed = 0.0f;
+            return i;
+        }
+    }
+    if (s_waveCount < GRANULAR_MAX_ACTIVE_WAVES) {
+        int idx = s_waveCount++;
+        s_waves[idx] = *wave;
+        s_waves[idx].elapsed = 0.0f;
+        return idx;
+    }
+    // Recycle oldest slot
+    int oldest = 0;
+    for (int i = 1; i < GRANULAR_MAX_ACTIVE_WAVES; i++) {
+        if (s_waves[i].elapsed > s_waves[oldest].elapsed) oldest = i;
+    }
+    s_waves[oldest] = *wave;
+    s_waves[oldest].elapsed = 0.0f;
+    return oldest;
+}
+
+void GranularSim_ClearWaves(void)
+{
+    s_waveCount = 0;
+    memset(s_waves, 0, sizeof(s_waves));
+    if (s_usingGpu && GranularGpu_IsAvailable()) {
+        GranularGpu_SetWaves(NULL, 0);
+    }
+}
+
 void GranularSim_ApplyForceImpulse(Vector3 center, float radius,
                                    Vector3 forceAccel, float swirlRadPerSec)
 {
@@ -109,24 +238,56 @@ void GranularSim_SetTornadoFunnel(Vector3 basePos, float baseRadius, float topRa
     if (s_usingGpu && GranularGpu_IsAvailable()) {
         GranularGpu_SetTornadoFunnel(basePos, baseRadius, topRadius, height,
                                      swirlSpeed, updraftSpeed, active);
-    } else {
-        s_cpuFunnelActive = active;
+    } else if (active) {
+        s_cpuFunnelActive = true;
+        s_cpuFunnelSpinDown = 0.0f;
+        s_cpuFunnelSpinDownT = 0.0f;
+        if (s_cpuFunnelHasPrev) {
+            float dtEst = 1.0f / 60.0f; /* skill calls once per frame */
+            Vector3 v = Vector3Scale(Vector3Subtract(basePos, s_cpuFunnelPrevBase), 1.0f / dtEst);
+            float spd = Vector3Length(v);
+            if (spd > 25.0f) v = Vector3Scale(v, 25.0f / spd); /* reject teleports */
+            s_cpuFunnelVel = Vector3Lerp(s_cpuFunnelVel, v, 0.45f);
+        } else {
+            s_cpuFunnelVel = (Vector3){0};
+            s_cpuFunnelHasPrev = true;
+        }
+        s_cpuFunnelPrevBase = basePos;
         s_cpuFunnelBase = basePos;
         s_cpuFunnelBaseR = baseRadius;
         s_cpuFunnelTopR = topRadius;
         s_cpuFunnelH = height;
         s_cpuFunnelSwirl = swirlSpeed;
         s_cpuFunnelUpdraft = updraftSpeed;
-        if (active) s_receiverPoint = basePos;
+        s_receiverPoint = basePos;
+    } else {
+        /* Spin-down collapse instead of cutting centripetal force (starburst). */
+        if (s_cpuFunnelActive && s_cpuFunnelSpinDownT <= 0.0f) {
+            s_cpuFunnelSpinDownT = GRANULAR_FUNNEL_SPINDOWN_SEC;
+            s_cpuFunnelSpinDown = 0.0f;
+            s_cpuFunnelVel = Vector3Scale(s_cpuFunnelVel, 0.35f);
+        }
+        s_cpuFunnelHasPrev = false;
     }
 }
 
 void GranularSim_Update(float dt)
 {
     if (!s_granularInit || dt <= 0.0f) return;
+    s_simElapsedTime += dt;
+
+    for (int i = 0; i < s_waveCount; i++) {
+        if (s_waves[i].kind != GRANULAR_WAVE_NONE && s_waves[i].elapsed >= s_waves[i].duration) {
+            s_waves[i].kind = GRANULAR_WAVE_NONE;
+        }
+    }
 
     if (s_usingGpu && GranularGpu_IsAvailable()) {
+        GranularGpu_SetWaves(s_waves, s_waveCount);
         GranularGpu_Update(dt);
+        for (int i = 0; i < s_waveCount; i++) {
+            if (s_waves[i].kind != GRANULAR_WAVE_NONE) s_waves[i].elapsed += dt;
+        }
         return;
     }
 
@@ -155,23 +316,38 @@ void GranularSim_Update(float dt)
         s_cpuImpRadius = 0.0f;
     }
 
+    if (s_cpuFunnelSpinDownT > 0.0f) {
+        s_cpuFunnelSpinDownT -= dt;
+        s_cpuFunnelSpinDown = Clamp(1.0f - s_cpuFunnelSpinDownT / GRANULAR_FUNNEL_SPINDOWN_SEC, 0.0f, 1.0f);
+        s_cpuFunnelVel = Vector3Scale(s_cpuFunnelVel, expf(-5.0f * dt));
+        if (s_cpuFunnelSpinDownT <= 0.0f) {
+            s_cpuFunnelActive = false;
+            s_cpuFunnelSpinDown = 0.0f;
+            s_cpuFunnelVel = (Vector3){0};
+        }
+    }
+
     if (s_cpuFunnelActive) {
         static float s_cpuFunnelTime = 0.0f;
         s_cpuFunnelTime += dt;
+        const float sd = s_cpuFunnelSpinDown;
+        const float conf = sd > 0.0f ? (1.0f - 0.25f * sd) : 1.0f;
         for (int i = 0; i < s_cpuGrainCount; i++) {
             if (s_cpuGrains[i].lifetime <= 0.0f) continue;
             Vector3 pos = s_cpuGrains[i].position;
             Vector3 vel = s_cpuGrains[i].velocity;
             float seed = s_cpuGrains[i].seed;
             float h = pos.y - s_cpuFunnelBase.y;
-            if (h > s_cpuFunnelH) {
+            if (h > s_cpuFunnelH && sd < 0.25f) {
                 float f1 = fmodf(seed * 13.7f + s_cpuFunnelTime * 3.1f, 1.0f);
                 float aWrap = f1 * 6.28318f;
                 float rWrap = s_cpuFunnelBaseR * (0.35f + 0.65f * fmodf(seed * 29.3f, 1.0f));
                 pos.x = s_cpuFunnelBase.x + cosf(aWrap) * rWrap;
                 pos.z = s_cpuFunnelBase.z + sinf(aWrap) * rWrap;
                 pos.y = s_cpuFunnelBase.y + 0.04f + 0.28f * fmodf(seed * 7.1f, 1.0f);
-                vel = (Vector3){-sinf(aWrap) * s_cpuFunnelSwirl, s_cpuFunnelUpdraft * 0.85f, cosf(aWrap) * s_cpuFunnelSwirl};
+                vel = (Vector3){s_cpuFunnelVel.x - sinf(aWrap) * s_cpuFunnelSwirl,
+                                s_cpuFunnelUpdraft * 0.85f,
+                                s_cpuFunnelVel.z + cosf(aWrap) * s_cpuFunnelSwirl};
                 s_cpuGrains[i].position = pos;
                 s_cpuGrains[i].velocity = vel;
                 h = pos.y - s_cpuFunnelBase.y;
@@ -180,10 +356,10 @@ void GranularSim_Update(float dt)
             float hn = Clamp(h / fmaxf(s_cpuFunnelH, 0.25f), 0.0f, 1.0f);
             float coneR = s_cpuFunnelBaseR + (s_cpuFunnelTopR - s_cpuFunnelBaseR) * powf(hn, 1.35f);
             float rBias = 0.18f + 0.87f * fmodf(seed * 11.37f, 1.0f);
-            float targetR = coneR * rBias;
+            float targetR = coneR * rBias * (1.0f - 0.35f * sd);
 
-            float sx = sinf(hn * 4.5f - s_cpuFunnelTime * 6.0f) * 0.24f * hn;
-            float sz = cosf(hn * 3.8f - s_cpuFunnelTime * 5.2f) * 0.24f * hn;
+            float sx = sinf(hn * 4.5f - s_cpuFunnelTime * 6.0f) * 0.24f * hn * (1.0f - sd);
+            float sz = cosf(hn * 3.8f - s_cpuFunnelTime * 5.2f) * 0.24f * hn * (1.0f - sd);
             float rx = pos.x - (s_cpuFunnelBase.x + sx);
             float rz = pos.z - (s_cpuFunnelBase.z + sz);
             float r = sqrtf(rx * rx + rz * rz);
@@ -193,43 +369,64 @@ void GranularSim_Update(float dt)
             float tangX = -radZ;
             float tangZ =  radX;
 
-            float vTang = vel.x * tangX + vel.z * tangZ;
+            /* Storm-relative velocity: the funnel frame translates with its base. */
+            float vrx = vel.x - s_cpuFunnelVel.x;
+            float vrz = vel.z - s_cpuFunnelVel.z;
+            float vTang = vrx * tangX + vrz * tangZ;
             float rRatio = Clamp(r / fmaxf(coneR, 0.15f), 0.25f, 1.0f);
-            float targetTang = s_cpuFunnelSwirl * rRatio;
-            float tangAcc = (targetTang - vTang) * 10.5f;
+            float targetTang = s_cpuFunnelSwirl * rRatio * (1.0f - sd);
+            float tangAcc = (targetTang - vTang) * 10.5f * conf;
 
-            float vRad = vel.x * radX + vel.z * radZ;
+            float vRad = vrx * radX + vrz * radZ;
             float centripetalAcc = -(vTang * vTang) / fmaxf(r, 0.08f);
-            float radAcc = centripetalAcc + (targetR - r) * 55.0f - vRad * 11.0f;
+            float radAcc = (centripetalAcc + (targetR - r) * 55.0f - vRad * 11.0f) * conf;
 
-            float targetVy = s_cpuFunnelUpdraft * (0.75f + 0.50f * fmodf(seed * 5.3f, 1.0f));
-            float yAcc = 9.81f + (targetVy - vel.y) * 7.0f;
+            float targetVy = s_cpuFunnelUpdraft * (0.75f + 0.50f * fmodf(seed * 5.3f, 1.0f)) * (1.0f - sd) - 2.2f * sd;
+            float yAcc = (9.81f * (1.0f - 0.65f * sd) + (targetVy - vel.y) * 7.0f) * conf;
 
-            s_cpuGrains[i].velocity.x += (radX * radAcc + tangX * tangAcc) * dt;
+            /* Frame tracking: only grains inside the capture radius follow the storm,
+             * so stragglers are not dragged across the arena into a curtain. */
+            float capture = fmaxf(coneR * 2.2f, 2.5f);
+            float trackW = r < capture ? (1.0f - r / capture) : 0.0f;
+            float trackK = 6.5f * conf * trackW;
+
+            s_cpuGrains[i].velocity.x += (radX * radAcc + tangX * tangAcc + (s_cpuFunnelVel.x - vel.x) * trackK) * dt;
             s_cpuGrains[i].velocity.y += yAcc * dt;
-            s_cpuGrains[i].velocity.z += (radZ * radAcc + tangZ * tangAcc) * dt;
+            s_cpuGrains[i].velocity.z += (radZ * radAcc + tangZ * tangAcc + (s_cpuFunnelVel.z - vel.z) * trackK) * dt;
         }
     }
 
     if (MotionFields_GetGuideCount() > 0 || MotionFields_GetTargetCount() > 0) {
         for (int i = 0; i < s_cpuGrainCount; i++) {
             if (s_cpuGrains[i].lifetime <= 0.0f) continue;
+            const GranularMaterialProfile *gm = GranularSim_GetMaterialProfile((GranularMaterialId)s_cpuGrains[i].materialId);
+            float massKg = gm->referenceMassKg > 1e-5f ? gm->referenceMassKg : 0.012f;
+            bool isBotanical = (gm->morphology == GRANULAR_MORPH_PLANAR_LAMINA ||
+                                gm->morphology == GRANULAR_MORPH_ELONGATED_TWIG);
+            unsigned int recvMask = MOTION_RECEIVER_PARTICLE | (isBotanical ? MOTION_RECEIVER_FOLIAGE : 0u);
             MotionFieldSample sample = {0};
             MotionFields_Sample(s_cpuGrains[i].position, s_cpuGrains[i].velocity,
-                                0.05f, dt, MOTION_RECEIVER_PARTICLE, NULL, &sample);
+                                massKg, dt, recvMask, NULL, &sample);
             Vector3 mfAcc = Vector3Add(sample.accelerationMps2,
-                                       Vector3Scale(sample.forceNewtons, 20.0f));
+                                       Vector3Scale(sample.forceNewtons, 1.0f / massKg));
+            if (s_cpuGrains[i].flags == 1u) {
+                float airSpeed = Vector3Length(sample.airflowVelocity);
+                float liftForce = mfAcc.y + airSpeed;
+                if (liftForce < gm->criticalEntrainmentMps) continue;
+                s_cpuGrains[i].flags = 0u;
+            }
             s_cpuGrains[i].velocity = Vector3Add(s_cpuGrains[i].velocity,
                                                  Vector3Scale(mfAcc, dt));
             Vector3 airDelta = Vector3Subtract(sample.airflowVelocity, s_cpuGrains[i].velocity);
+            float coupleHz = isBotanical ? 4.8f : 2.5f;
             s_cpuGrains[i].velocity = Vector3Add(s_cpuGrains[i].velocity,
-                                                 Vector3Scale(airDelta, fminf(dt * 2.5f, 1.0f)));
+                                                 Vector3Scale(airDelta, fminf(dt * coupleHz, 1.0f)));
         }
     }
 
-    const GranularMaterialProfile *mat = GranularSim_GetMaterialProfile(s_activeMatId);
-    s_totalShearWork += GranularSim_StepCpuDeterministic(
-        s_cpuGrains, s_cpuGrainCount, mat, dt, s_receiverPoint, s_receiverNormal);
+    s_totalShearWork += GranularSim_StepCpuDeterministicWithWaves(
+        s_cpuGrains, s_cpuGrainCount, NULL, s_waves, s_waveCount,
+        dt, s_simElapsedTime, s_receiverPoint, s_receiverNormal);
 
     int alive = 0;
     for (int i = 0; i < s_cpuGrainCount; i++) {
@@ -238,42 +435,158 @@ void GranularSim_Update(float dt)
     if (alive == 0) s_cpuGrainCount = 0;
 }
 
-static void GranularSim_DrawCpuFallback(Camera3D camera, const GranularMaterialProfile *mat)
+static void GranularSim_DrawCpuFallback(Camera3D camera, const GranularMaterialProfile *fallbackMat)
 {
     if (s_cpuGrainCount <= 0) return;
     Vector3 forward = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
     Vector3 right = Vector3Normalize(Vector3CrossProduct(forward, camera.up));
     Vector3 up = Vector3CrossProduct(right, forward);
+    Vector3 keyLight = Vector3Normalize((Vector3){0.42f, 0.82f, 0.39f});
 
+    rlDisableBackfaceCulling();
     rlBegin(RL_TRIANGLES);
     for (int i = 0; i < s_cpuGrainCount; i++) {
         const GranularGrainState *g = &s_cpuGrains[i];
         if (g->lifetime <= 0.0f) continue;
 
+        const GranularMaterialProfile *gm = GranularSim_GetMaterialProfile((GranularMaterialId)g->materialId);
+        if (!gm) gm = fallbackMat;
+
         float lifeAlpha = g->lifetime < 0.35f ? (g->lifetime / 0.35f) : 1.0f;
-        float ao = 1.0f - 0.55f * Clamp(g->contactAO, 0.0f, 1.0f);
-        Color c = ColorLerp(mat->shadowColor, mat->baseColor, 0.30f + 0.70f * ao);
-        c.a = (unsigned char)(255.0f * lifeAlpha);
-        rlColor4ub(c.r, c.g, c.b, c.a);
+        float ao = 1.0f - 0.50f * Clamp(g->contactAO, 0.0f, 1.0f);
+        unsigned char alpha = (unsigned char)(255.0f * lifeAlpha);
+        float s0 = g->seed;
+        float s1 = fmodf(s0 * 17.31f, 1.0f);
+        float s2 = fmodf(s0 * 29.73f, 1.0f);
 
-        float r = g->radius * 1.45f;
-        Vector3 rx = Vector3Scale(right, r);
-        Vector3 ry = Vector3Scale(up, r);
+        if (gm->morphology == GRANULAR_MORPH_PLANAR_LAMINA) {
+            // 3D tumbling & fluttering botanical leaf / petal blade
+            bool resting = (g->flags == 1u);
+            float r = g->radius * 1.95f * (0.82f + 0.38f * s1);
+            float yaw = s0 * 6.2831853f + (resting ? 0.0f : s_simElapsedTime * (2.5f + 3.5f * s1));
+            float pitch = resting ? 0.08f * sinf(s0 * 41.0f) : (s_simElapsedTime * (3.2f + 4.8f * s2) + s0 * 6.283f);
+            float roll = resting ? 0.08f * cosf(s0 * 29.0f) : sinf(s_simElapsedTime * 4.5f + s0 * 19.0f) * 0.85f;
 
-        Vector3 p0 = Vector3Subtract(Vector3Subtract(g->position, rx), ry);
-        Vector3 p1 = Vector3Subtract(Vector3Add(g->position, rx), ry);
-        Vector3 p2 = Vector3Add(Vector3Add(g->position, rx), ry);
-        Vector3 p3 = Vector3Add(Vector3Subtract(g->position, rx), ry);
+            float cy = cosf(yaw), sy = sinf(yaw);
+            float cp = cosf(pitch), sp = sinf(pitch);
+            float cr = cosf(roll), sr = sinf(roll);
 
-        rlVertex3f(p0.x, p0.y, p0.z);
-        rlVertex3f(p1.x, p1.y, p1.z);
-        rlVertex3f(p2.x, p2.y, p2.z);
+            Vector3 lFwd = {cy * cp, sp, sy * cp};
+            Vector3 lUp  = {-sy * sr - cy * sp * cr, cp * cr, cy * sr - sy * sp * cr};
+            Vector3 lRight = Vector3Normalize(Vector3CrossProduct(lUp, lFwd));
 
-        rlVertex3f(p0.x, p0.y, p0.z);
-        rlVertex3f(p2.x, p2.y, p2.z);
-        rlVertex3f(p3.x, p3.y, p3.z);
+            float nDotL = fabsf(Vector3DotProduct(lUp, keyLight));
+            float shade = (0.45f + 0.55f * nDotL) * ao;
+            bool isPetal = (g->materialId == GRANULAR_MAT_FLOWER_PETAL);
+            float wScale = isPetal ? 0.68f : 0.48f;
+
+            Color cBase = ColorLerp(gm->shadowColor, gm->baseColor, shade);
+            if (g->materialId == GRANULAR_MAT_DRY_LEAF) {
+                Color autumnGold = {214, 158, 46, 255};
+                cBase = ColorLerp(cBase, autumnGold, s2 * 0.55f);
+            }
+            Color cTip = ColorLerp(cBase, gm->highlightColor, 0.32f);
+            Color cMid = ColorLerp(cBase, gm->highlightColor, 0.45f);
+            cBase.a = cTip.a = cMid.a = alpha;
+
+            Vector3 pBase = Vector3Subtract(g->position, Vector3Scale(lFwd, r * 0.85f));
+            Vector3 pTip  = Vector3Add(g->position, Vector3Scale(lFwd, r * 0.95f));
+            Vector3 pMid  = Vector3Add(g->position, Vector3Scale(lUp, r * 0.08f));
+            Vector3 pL    = Vector3Subtract(g->position, Vector3Scale(lRight, r * wScale));
+            Vector3 pR    = Vector3Add(g->position, Vector3Scale(lRight, r * wScale));
+            if (isPetal) {
+                Vector3 tipOff = Vector3Scale(lFwd, r * 0.25f);
+                pL = Vector3Add(pL, tipOff);
+                pR = Vector3Add(pR, tipOff);
+            }
+
+            // 4-triangle folded leaf/petal silhouette
+            rlColor4ub(cBase.r, cBase.g, cBase.b, alpha); rlVertex3f(pBase.x, pBase.y, pBase.z);
+            rlColor4ub(cMid.r,  cMid.g,  cMid.b,  alpha); rlVertex3f(pMid.x,  pMid.y,  pMid.z);
+            rlColor4ub(cBase.r, cBase.g, cBase.b, alpha); rlVertex3f(pL.x,    pL.y,    pL.z);
+
+            rlColor4ub(cBase.r, cBase.g, cBase.b, alpha); rlVertex3f(pBase.x, pBase.y, pBase.z);
+            rlColor4ub(cBase.r, cBase.g, cBase.b, alpha); rlVertex3f(pR.x,    pR.y,    pR.z);
+            rlColor4ub(cMid.r,  cMid.g,  cMid.b,  alpha); rlVertex3f(pMid.x,  pMid.y,  pMid.z);
+
+            rlColor4ub(cMid.r,  cMid.g,  cMid.b,  alpha); rlVertex3f(pMid.x,  pMid.y,  pMid.z);
+            rlColor4ub(cTip.r,  cTip.g,  cTip.b,  alpha); rlVertex3f(pTip.x,  pTip.y,  pTip.z);
+            rlColor4ub(cBase.r, cBase.g, cBase.b, alpha); rlVertex3f(pL.x,    pL.y,    pL.z);
+
+            rlColor4ub(cMid.r,  cMid.g,  cMid.b,  alpha); rlVertex3f(pMid.x,  pMid.y,  pMid.z);
+            rlColor4ub(cBase.r, cBase.g, cBase.b, alpha); rlVertex3f(pR.x,    pR.y,    pR.z);
+            rlColor4ub(cTip.r,  cTip.g,  cTip.b,  alpha); rlVertex3f(pTip.x,  pTip.y,  pTip.z);
+        } else if (gm->morphology == GRANULAR_MORPH_ELONGATED_TWIG) {
+            // Elongated woody branch segment
+            float r = g->radius * 1.9f * (0.85f + 0.35f * s1);
+            float spd = Vector3Length(g->velocity);
+            Vector3 dir = spd > 0.2f ? Vector3Scale(g->velocity, 1.0f / spd)
+                                     : (Vector3){cosf(s0 * 6.283f), 0.04f, sinf(s0 * 6.283f)};
+            Vector3 side = Vector3Normalize(Vector3CrossProduct(dir, up));
+            if (Vector3LengthSqr(side) < 0.01f) side = right;
+
+            Color cDark = ColorLerp(gm->shadowColor, gm->baseColor, 0.35f * ao);
+            Color cLit  = ColorLerp(gm->baseColor, gm->highlightColor, 0.25f * ao);
+            cDark.a = cLit.a = alpha;
+
+            Vector3 a = Vector3Subtract(g->position, Vector3Scale(dir, r * 1.15f));
+            Vector3 b = Vector3Add(g->position, Vector3Scale(dir, r * 1.15f));
+            Vector3 w = Vector3Scale(side, r * 0.18f);
+
+            Vector3 p0 = Vector3Subtract(a, w), p1 = Vector3Add(a, w);
+            Vector3 p2 = Vector3Add(b, w),      p3 = Vector3Subtract(b, w);
+            rlColor4ub(cDark.r, cDark.g, cDark.b, alpha); rlVertex3f(p0.x, p0.y, p0.z);
+            rlColor4ub(cLit.r,  cLit.g,  cLit.b,  alpha); rlVertex3f(p1.x, p1.y, p1.z);
+            rlColor4ub(cLit.r,  cLit.g,  cLit.b,  alpha); rlVertex3f(p2.x, p2.y, p2.z);
+            rlColor4ub(cDark.r, cDark.g, cDark.b, alpha); rlVertex3f(p0.x, p0.y, p0.z);
+            rlColor4ub(cLit.r,  cLit.g,  cLit.b,  alpha); rlVertex3f(p2.x, p2.y, p2.z);
+            rlColor4ub(cDark.r, cDark.g, cDark.b, alpha); rlVertex3f(p3.x, p3.y, p3.z);
+        } else if (gm->morphology == GRANULAR_MORPH_CRYSTAL_SHARD) {
+            // Faceted diamond crystal shard
+            float r = g->radius * 1.65f * (0.85f + 0.35f * s1);
+            float ang = s0 * 6.2831853f;
+            Vector3 ax = Vector3Add(Vector3Scale(right, cosf(ang)), Vector3Scale(up, sinf(ang)));
+            Vector3 ay = Vector3Subtract(Vector3Scale(up, cosf(ang)), Vector3Scale(right, sinf(ang)));
+
+            Color cShad = gm->shadowColor;
+            Color cBase = gm->baseColor;
+            Color cHigh = gm->highlightColor;
+            Vector3 pT = Vector3Add(g->position, Vector3Scale(ay, r * 1.25f));
+            Vector3 pB = Vector3Subtract(g->position, Vector3Scale(ay, r * 1.25f));
+            Vector3 pL = Vector3Subtract(g->position, Vector3Scale(ax, r * 0.55f));
+            Vector3 pR = Vector3Add(g->position, Vector3Scale(ax, r * 0.55f));
+
+            rlColor4ub(cHigh.r, cHigh.g, cHigh.b, alpha); rlVertex3f(pT.x, pT.y, pT.z);
+            rlColor4ub(cBase.r, cBase.g, cBase.b, alpha); rlVertex3f(pL.x, pL.y, pL.z);
+            rlColor4ub(cShad.r, cShad.g, cShad.b, alpha); rlVertex3f(pB.x, pB.y, pB.z);
+
+            rlColor4ub(cHigh.r, cHigh.g, cHigh.b, alpha); rlVertex3f(pT.x, pT.y, pT.z);
+            rlColor4ub(cShad.r, cShad.g, cShad.b, alpha); rlVertex3f(pB.x, pB.y, pB.z);
+            rlColor4ub(cBase.r, cBase.g, cBase.b, alpha); rlVertex3f(pR.x, pR.y, pR.z);
+        } else {
+            // Angular clod / fine continuum: faceted irregular pentagon
+            float r = g->radius * 1.45f * (0.80f + 0.40f * s1);
+            Color cCore = ColorLerp(gm->shadowColor, gm->baseColor, 0.40f + 0.60f * ao);
+            Color cEdge = ColorLerp(gm->shadowColor, gm->baseColor, 0.20f + 0.50f * ao);
+            float baseAng = s0 * 6.2831853f;
+            Vector3 pts[5];
+            for (int k = 0; k < 5; k++) {
+                float a = baseAng + (float)k * 1.256637f;
+                float rk = r * (0.78f + 0.35f * fmodf(s0 * (float)(k * 13 + 7), 1.0f));
+                pts[k] = Vector3Add(g->position, Vector3Add(Vector3Scale(right, cosf(a) * rk),
+                                                            Vector3Scale(up, sinf(a) * rk)));
+            }
+            for (int k = 0; k < 5; k++) {
+                int kn = (k + 1) % 5;
+                rlColor4ub(cCore.r, cCore.g, cCore.b, alpha); rlVertex3f(g->position.x, g->position.y, g->position.z);
+                rlColor4ub(cEdge.r, cEdge.g, cEdge.b, alpha); rlVertex3f(pts[k].x, pts[k].y, pts[k].z);
+                rlColor4ub(cEdge.r, cEdge.g, cEdge.b, alpha); rlVertex3f(pts[kn].x, pts[kn].y, pts[kn].z);
+            }
+        }
     }
     rlEnd();
+    rlDrawRenderBatchActive();
+    rlEnableBackfaceCulling();
 }
 
 void GranularSim_DrawBody(Camera3D camera)

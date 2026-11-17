@@ -681,7 +681,7 @@ const char           *VFX_EarthCrackMode_Name(VFX_EarthCrackMode mode);
 void                  VC_EarthCrack_Update(float dt);
 void                  VC_EarthCrack_Draw3D(Camera3D cam);
 
-// ── Granular Materials: Sand, Gravel, Loam & Coupled Dust (GPU Gems 3 DEM) ──
+// ── Granular Materials: Sand, Gravel, Leaves, Petals, Twigs, Ice & Snow ──────
 typedef enum {
     VFX_GRANULAR_PRESET_SAND_GEYSER = 0,       // Sa Trụ Xung Thiên: erupting sand column -> 3D dune cone
     VFX_GRANULAR_PRESET_DUNE_AVALANCHE,        // Lưu Sa Cuồng Triều: advancing saltating sand wave
@@ -689,21 +689,31 @@ typedef enum {
     VFX_GRANULAR_PRESET_SAND_BLAST_JET,        // Cuồng Sa Phá Kích: directional scouring sand jet -> talus
     VFX_GRANULAR_PRESET_BOULDER_CRUSH_TALUS,   // Thạch Phá Thiên Kinh: collapsing gravel/loam talus heap
     VFX_GRANULAR_PRESET_HOURGLASS_PILLAR,      // Kim Sa Trụ: levitating gold-iron sand -> avalanching cone
+    VFX_GRANULAR_PRESET_WUXIA_LEAF_PALM_STRIKE,// Lạc Diệp Chưởng Phong: leaf/twig bed -> Qi charge -> palm wave sweep
+    VFX_GRANULAR_PRESET_BLOSSOM_QI_TEMPEST,    // Lạc Hoa Cuồng Phong: petals & jade leaves in rising vortex tempest
+    VFX_GRANULAR_PRESET_FROST_SHARD_BLIZZARD,  // Hàn Băng Tuyết Bạo: snow powder + ice shard freezing jet
+    VFX_GRANULAR_PRESET_EARTH_SHATTER_WAVE,    // Thổ Liệt Toái Thạch: mixed gravel, soil & twigs shockfront
     VFX_GRANULAR_PRESET_COUNT
 } VFX_GranularPreset;
 
 typedef struct VFX_GranularSandConfig {
     VFX_GranularPreset preset;
-    int     materialId;        // GranularMaterialId (0=Sand, 1=Gravel, 2=Soil, 3=GoldIron, 4=Ash)
+    int     materialId;        // GranularMaterialId (0..10)
     int     grainCount;        // 128..4096 (clamped by quality tier)
-    float   grainRadius;       // Physical grain radius in meters (0.025..0.09)
+    float   grainRadius;       // Physical grain radius in meters (0.015..0.09)
     float   spreadRadius;      // Initial cluster / nozzle radius in meters
     float   launchSpeed;       // Initial ejection speed (m/s)
-    float   swirlSpeed;        // Vortex angular impulse (rad/s)
+    float   swirlSpeed;        // Vortex angular impulse (rad/s or m/s)
     float   lifetime;          // Settled mound persistence (s)
     float   dustIntensity;     // Coupled fine dust cloud intensity [0..1.5]
     Vector3 source;
     Vector3 target;
+    // Generalized multi-material & multi-phase choreography fields (append-only)
+    int     secondaryMaterialId; // Optional mixed material (e.g. twigs/petals/ice)
+    float   secondaryRatio;      // [0..0.5] fraction of grains using secondaryMaterialId
+    float   bedRadius;           // Pre-scattered ground bed radius (m)
+    float   chargeDuration;      // Phase 1 Qi gather anticipation duration (s)
+    float   waveSpeed;           // Phase 2 travelling wavefront speed (m/s)
 } VFX_GranularSandConfig;
 
 VFX_GranularSandConfig  VFX_GranularSand_DefaultConfig(void);
