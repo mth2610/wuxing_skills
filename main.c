@@ -8,6 +8,7 @@
 #include "core/gas/gas_system.h"
 #include "core/metaball_fx.h"
 #include "core/particles/particle_manager.h"
+#include "core/granular/granular_sim.h"
 #include "post_process/post_fx.h"
 #include "post_process/render_scale.h"
 #include "sandbox/sandbox_core.h"
@@ -1648,20 +1649,8 @@ int main(int argc, char **argv) {
         }
     }
 
-    // Cảnh Giới Thái Cực → monochrome world (Module 6). Any live taiji
-    // agent (player via balanced loadout, boss below 30% HP) fades the
-    // whole canvas to black-and-white; fades back out on exit.
-    {
-        static float s_taijiMono = 0.0f;
-        bool anyTaiji = (currentScreen == SCREEN_GAME) &&
-                        (Entity_IsTaijiActive(Control_GetAgentId()) ||
-                         (Boss_IsAlive() && Entity_IsTaijiActive(Boss_GetAgentId())));
-        float target = anyTaiji ? 1.0f : 0.0f;
-        float speed = 2.5f * dt; // ~0.4s fade
-        if (s_taijiMono < target)      { s_taijiMono += speed; if (s_taijiMono > target) s_taijiMono = target; }
-        else if (s_taijiMono > target) { s_taijiMono -= speed; if (s_taijiMono < target) s_taijiMono = target; }
-        PostFX_SetMonochrome(s_taijiMono);
-    }
+    // Thái Cực monochrome disabled in active gameplay (incomplete feature).
+    PostFX_SetMonochrome(0.0f);
 
     static bool isDragging = false;
     static int pathCount = 0;
@@ -1738,6 +1727,7 @@ int main(int argc, char **argv) {
     if (benchmarkVisible) updateTime[4] = GetTime();
     LiquidImpact_Update(dt);
     ParticleManager_Update(dt);
+    GranularSim_Update(dt);
     if (benchmarkVisible) updateTime[5] = GetTime();
     GasSystem_Update(dt);
     if (benchmarkVisible) updateTime[6] = GetTime();
@@ -1939,6 +1929,7 @@ int main(int argc, char **argv) {
     PASS_MARK("luma");
 
     VFX_Compose_Draw3D(camera);
+    GranularSim_DrawBody(camera);
 
     // =========================================================================
     // MỚI: TOÀN BỘ PHẦN TRUY XUẤT VÀ VẼ KHỐI CẦU DEBUG LIGHT ĐÃ ĐƯỢC BỐC SANG ĐÂY
@@ -2310,6 +2301,7 @@ int main(int argc, char **argv) {
   UnloadTexture(globalParticleTex);
   UnloadTexture(testAtlasTex);
   ParticleManager_Unload();
+  GranularSim_Unload();
   UnloadTrailSystem();
   DecalSystem_Unload();
   ScreenDistort_Unload();

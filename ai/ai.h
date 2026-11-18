@@ -73,6 +73,7 @@ typedef struct {
 } MonsterKillEvent;
 
 int  AI_SpawnMonsterCamp(Vector3 center, int count, int element, MonsterKind kind);
+int  AI_SpawnOneShotMonster(Vector3 pos, int element, MonsterKind kind);
 void AI_ClearMonsterCamps(void);
 bool AI_IsCampMonster(int agentId);
 int  AI_PollMonsterKills(MonsterKillEvent *out, int max);

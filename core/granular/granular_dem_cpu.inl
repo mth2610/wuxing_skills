@@ -252,6 +252,50 @@ static const GranularMaterialProfile k_granularMaterials[GRANULAR_MAT_COUNT] = {
         .flutterFreqHz          = 2.2f,
         .criticalEntrainmentMps = 1.05f,
     },
+    [GRANULAR_MAT_CRYSTAL_SHARD] = {
+        .densityKgM3            = 2650.0f,
+        .springStiffness        = 3500.0f,
+        .dashpotDamping         = 92.0f,
+        .shearFrictionMu        = 0.28f,
+        .rollingResistance      = 0.18f,
+        .cohesion               = 0.0f,
+        .airDrag                = 0.30f,
+        .saltationSplash        = 0.38f,
+        .dustEntrainmentRate    = 0.35f,
+        .baseColor              = {52,  198, 138, 255},
+        .shadowColor            = {18,  76,  56,  255},
+        .highlightColor         = {208, 255, 232, 255},
+        .glintIntensity         = 2.40f,
+        .glintSharpness         = 192.0f,
+        .grainAspect            = 0.44f,
+        .morphology             = GRANULAR_MORPH_CRYSTAL_SHARD,
+        .referenceMassKg        = 0.024f,
+        .liftCoefficient        = 0.04f,
+        .flutterFreqHz          = 0.0f,
+        .criticalEntrainmentMps = 4.6f,
+    },
+    [GRANULAR_MAT_METAL_SHARD] = {
+        .densityKgM3            = 7200.0f,
+        .springStiffness        = 3800.0f,
+        .dashpotDamping         = 88.0f,
+        .shearFrictionMu        = 0.44f,
+        .rollingResistance      = 0.24f,
+        .cohesion               = 0.0f,
+        .airDrag                = 0.14f,
+        .saltationSplash        = 0.42f,
+        .dustEntrainmentRate    = 0.15f,
+        .baseColor              = {148, 162, 182, 255},
+        .shadowColor            = {42,  48,  60,  255},
+        .highlightColor         = {255, 244, 210, 255},
+        .glintIntensity         = 2.85f,
+        .glintSharpness         = 224.0f,
+        .grainAspect            = 0.34f,
+        .morphology             = GRANULAR_MORPH_METAL_SHARD,
+        .referenceMassKg        = 0.045f,
+        .liftCoefficient        = 0.02f,
+        .flutterFreqHz          = 0.0f,
+        .criticalEntrainmentMps = 6.2f,
+    },
 };
 
 const GranularMaterialProfile *GranularSim_GetMaterialProfile(GranularMaterialId id)
@@ -386,7 +430,15 @@ static inline void GranularCpu_EvaluateWaves(GranularGrainState *g,
             float tangAcc = (targetSwirl - vTang) * 10.5f * confineEnv;
             float centripetalAcc = -(vTang * vTang) / (r > 0.08f ? r : 0.08f);
             float radAcc = (centripetalAcc + (targetR - r) * 55.0f - vRad * 11.0f) * confineEnv;
-            float targetVy = w->axialSpeed * (0.75f + 0.50f * fmodf(g->seed * 5.3f, 1.0f)) * (1.0f - spinDown) - 2.2f * spinDown;
+
+            // Mass & aerodynamic stratification: heavy clods/gravel/metal orbit lower,
+            // while lightweight leaves/petals/snow rise high into the flaring crown.
+            float massKg = mat->referenceMassKg > 0.0002f ? mat->referenceMassKg : 0.012f;
+            float buoyancyStrat = 0.012f / massKg;
+            if (buoyancyStrat < 0.42f) buoyancyStrat = 0.42f;
+            else if (buoyancyStrat > 1.55f) buoyancyStrat = 1.55f;
+            buoyancyStrat += mat->liftCoefficient * 0.18f;
+            float targetVy = w->axialSpeed * buoyancyStrat * (0.75f + 0.50f * fmodf(g->seed * 5.3f, 1.0f)) * (1.0f - spinDown) - 2.2f * spinDown;
             float yAcc = (9.81f * (1.0f - 0.65f * spinDown) + (targetVy - vRelY) * 7.0f) * confineEnv;
             float trackK = 7.5f * confineEnv;
 

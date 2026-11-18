@@ -25,3 +25,11 @@ bool Net_JoinOrHostExploreRealm(int realmId, char *outJoinCode, int maxCodeLen) 
     (void)realmId; (void)outJoinCode; (void)maxCodeLen;
     return false;
 }
+
+bool Net_VoiceIsAvailable(void) { return false; }
+void Net_VoiceSetMicEnabled(bool enabled) { (void)enabled; }
+bool Net_VoiceIsMicEnabled(void) { return false; }
+void Net_VoiceSetMutedAll(bool muted) { (void)muted; }
+bool Net_VoiceIsMutedAll(void) { return false; }
+bool Net_VoiceIsAnyoneSpeaking(void) { return false; }
+int  Net_VoiceGetSpeakingCount(void) { return 0; }

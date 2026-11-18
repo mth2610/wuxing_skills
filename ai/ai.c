@@ -107,14 +107,14 @@ int AI_GetHeroBotCount(AgentTeam team) {
     return n;
 }
 
-// Nearest enemy hero, weighted toward low HP (finish weakened targets).
-static int BotFindTarget(const Agent *me) {
+// Nearest attackable hero, weighted toward low HP (finish weakened targets).
+static int BotFindTarget(int myId, const Agent *me) {
     int best = -1;
     float bestScore = 1e9f;
     for (int i = 0; i < MAX_AGENTS; i++) {
         const Agent *a = Entity_GetAgent(i);
         if (a == NULL || a == me || a->archetype != ARCH_HERO) continue;
-        if (a->team == me->team) continue;
+        if (!Entity_CanDamageTarget(myId, i)) continue;
         float dx = a->position.x - me->position.x;
         float dz = a->position.z - me->position.z;
         float score = sqrtf(dx * dx + dz * dz) + a->health * 0.05f;
@@ -137,7 +137,7 @@ static void UpdateHeroBots(float dt) {
         bot->dodgeTimer -= dt;
         bot->strafePhase += dt;
 
-        int targetId = BotFindTarget(me);
+        int targetId = BotFindTarget(bot->agentId, me);
         const Agent *target = (targetId >= 0) ? Entity_GetAgent(targetId) : NULL;
 
         // Dash away from a close enemy projectile (perpendicular escape).
@@ -288,6 +288,7 @@ int AI_PollHeroCasts(HeroBotCast *out, int max) {
 
 typedef struct {
     bool        used;
+    bool        noRespawn;
     int         agentId;
     Vector3     homePos;
     Vector3     lastKnownPos;
@@ -360,6 +361,28 @@ int AI_SpawnMonsterCamp(Vector3 center, int count, int element, MonsterKind kind
     return spawned;
 }
 
+int AI_SpawnOneShotMonster(Vector3 pos, int element, MonsterKind kind) {
+    int slot = -1;
+    for (int i = 0; i < AI_MAX_CAMP_MONSTERS; i++) {
+        if (!s_campMonsters[i].used) { slot = i; break; }
+    }
+    if (slot < 0) return -1;
+    CampMonster *cm = &s_campMonsters[slot];
+    *cm = (CampMonster){ 0 };
+    cm->used = true;
+    cm->noRespawn = true;
+    cm->homePos = pos;
+    cm->element = (element >= 0 && element <= 4) ? element : 0;
+    cm->kind = kind;
+    cm->patrolAngle = 0.0f;
+    SpawnCampAgent(cm);
+    if (cm->agentId < 0) {
+        cm->used = false;
+        return -1;
+    }
+    return cm->agentId;
+}
+
 void AI_ClearMonsterCamps(void) {
     for (int i = 0; i < AI_MAX_CAMP_MONSTERS; i++) {
         if (s_campMonsters[i].used && s_campMonsters[i].agentId >= 0 &&
@@ -402,7 +425,11 @@ static void UpdateCampMonsters(float dt) {
                     };
                 }
                 cm->agentId = -1;
-                cm->respawnTimer = CAMP_RESPAWN_SECS;
+                if (cm->noRespawn) {
+                    cm->used = false;
+                } else {
+                    cm->respawnTimer = CAMP_RESPAWN_SECS;
+                }
             } else {
                 cm->respawnTimer -= dt;
                 if (cm->respawnTimer <= 0.0f) {

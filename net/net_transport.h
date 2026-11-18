@@ -170,4 +170,13 @@ bool Net_JoinOnline(const char *joinCode);
 // "wuxing:explore:<realm>" (<8 players); joins P2P if found, else hosts.
 bool Net_JoinOrHostExploreRealm(int realmId, char *outJoinCode, int maxCodeLen);
 
+// --- EOS RTC Voice Chat (0-cost Lobby Voice Room) ---
+bool Net_VoiceIsAvailable(void);
+void Net_VoiceSetMicEnabled(bool enabled);
+bool Net_VoiceIsMicEnabled(void);
+void Net_VoiceSetMutedAll(bool muted);
+bool Net_VoiceIsMutedAll(void);
+bool Net_VoiceIsAnyoneSpeaking(void);
+int  Net_VoiceGetSpeakingCount(void);
+
 #endif // NET_TRANSPORT_H

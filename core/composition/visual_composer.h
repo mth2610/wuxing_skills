@@ -693,12 +693,15 @@ typedef enum {
     VFX_GRANULAR_PRESET_BLOSSOM_QI_TEMPEST,    // Lạc Hoa Cuồng Phong: petals & jade leaves in rising vortex tempest
     VFX_GRANULAR_PRESET_FROST_SHARD_BLIZZARD,  // Hàn Băng Tuyết Bạo: snow powder + ice shard freezing jet
     VFX_GRANULAR_PRESET_EARTH_SHATTER_WAVE,    // Thổ Liệt Toái Thạch: mixed gravel, soil & twigs shockfront
+    VFX_GRANULAR_PRESET_DESERT_SAND_TEMPEST,   // Cuồng Sa Bão Táp: sand + soil clods + gravel + dry twigs/leaves funnel
+    VFX_GRANULAR_PRESET_AUTUMN_GALE_WHIRLWIND, // Thu Phong Lạc Diệp: dry/fresh leaves + twigs + soil whirlwind
+    VFX_GRANULAR_PRESET_CRYSTAL_METAL_STORM,   // Kim Tinh Cuồng Phong: metal shards + crystal shards + gold-iron sand cyclone
     VFX_GRANULAR_PRESET_COUNT
 } VFX_GranularPreset;
 
 typedef struct VFX_GranularSandConfig {
     VFX_GranularPreset preset;
-    int     materialId;        // GranularMaterialId (0..10)
+    int     materialId;        // GranularMaterialId (0..12)
     int     grainCount;        // 128..4096 (clamped by quality tier)
     float   grainRadius;       // Physical grain radius in meters (0.015..0.09)
     float   spreadRadius;      // Initial cluster / nozzle radius in meters
@@ -709,11 +712,13 @@ typedef struct VFX_GranularSandConfig {
     Vector3 source;
     Vector3 target;
     // Generalized multi-material & multi-phase choreography fields (append-only)
-    int     secondaryMaterialId; // Optional mixed material (e.g. twigs/petals/ice)
+    int     secondaryMaterialId; // Optional mixed material (e.g. twigs/petals/ice/soil)
     float   secondaryRatio;      // [0..0.5] fraction of grains using secondaryMaterialId
     float   bedRadius;           // Pre-scattered ground bed radius (m)
     float   chargeDuration;      // Phase 1 Qi gather anticipation duration (s)
     float   waveSpeed;           // Phase 2 travelling wavefront speed (m/s)
+    int     tertiaryMaterialId;  // Optional 3rd debris material (e.g. gravel/leaves/crystal)
+    float   tertiaryRatio;       // [0..0.35] fraction of grains using tertiaryMaterialId
 } VFX_GranularSandConfig;
 
 VFX_GranularSandConfig  VFX_GranularSand_DefaultConfig(void);

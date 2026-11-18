@@ -10,9 +10,9 @@
 static const float SHOT_TIMES[] = { 0.15f, 0.5f, 1.0f, 2.0f, 3.5f };
 #define SHOT_COUNT ((int)(sizeof(SHOT_TIMES) / sizeof(SHOT_TIMES[0])))
 
-// Cast position: slightly behind arena centre so projectiles travel forward.
-static const Vector3 CAST_POS   = { 6.0f, 0.0f, 7.4f };
-static const Vector3 CAST_TARGET = { 6.0f, 0.0f, 1.4f };
+// Cast position: in front of sandbox player (-11.0, 0.0, 4.4) travelling toward arena centre.
+static const Vector3 CAST_POS   = { -10.5f, 0.0f, 4.4f };
+static const Vector3 CAST_TARGET = { -4.5f, 0.0f, 4.4f };
 
 static int   s_skillIndex  = -1;
 static int   s_nextShot    = 0;
@@ -59,10 +59,12 @@ void VisualVerify_RunFrame(float elapsed) {
         params.anchorType = CAST_ANCHOR_TARGET;
         params.pathType   = CAST_PATH_PROJECTILE;
         params.damage     = 100.0f;
-        CastSkill(s_skillIndex, 0, CAST_POS, CAST_TARGET, params);
+        SkillManager_SetFreeCast(true);
+        bool ok = CastSkill(s_skillIndex, 0, CAST_POS, CAST_TARGET, params);
+        SkillManager_SetFreeCast(false);
         s_castTime = elapsed;
         s_castDone = true;
-        TraceLog(LOG_INFO, "[VISUAL_VERIFY] Cast '%s' at t=%.3f", VisualVerify_GetSkillName(), elapsed);
+        TraceLog(LOG_INFO, "[VISUAL_VERIFY] Cast '%s' at t=%.3f (ok=%d)", VisualVerify_GetSkillName(), elapsed, ok ? 1 : 0);
     }
 
     if (!s_castDone) return;

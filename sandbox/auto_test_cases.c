@@ -12,6 +12,8 @@
 #include "game/game_rules.h"
 #include "game/quest_datau.h"
 #include "open_world/ow_world.h"
+#include "open_world/ow_weather.h"
+#include "open_world/ow_sandbox_modes.h"
 #include "open_world/realms/ow_desert_earth.h"
 #include "net/net_prediction.h"
 #include "ai/ai.h"
@@ -1804,6 +1806,58 @@ static AutoTestResult AutoTest_NetP2PExploreOptStep(int frameInCase, char *outRe
   return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
 }
 
+static AutoTestResult AutoTest_DesertSandboxAndWeatherStep(int frameInCase, char *outReason, int outReasonSize)
+{
+  (void)frameInCase;
+  const OWRealmDef *realm = OWRealm_GetDesertEarth();
+  OW_Init(realm, false);
+
+  // 1. 3-state PK rules: PEACE blocks, SPAR clamps at 1 HP, SLAUGHTER attacks non-safe targets
+  int h1 = Entity_SpawnAgent((Vector3){ 120.0f, 0.0f, 170.0f }, 100.0f, 3, TEAM_ALLY, ARCH_HERO);
+  int h2 = Entity_SpawnAgent((Vector3){ 123.0f, 0.0f, 170.0f }, 100.0f, 3, TEAM_ALLY, ARCH_HERO);
+  bool ok = AutoTest_ExpectTrue(h1 >= 0 && h2 >= 0, "spawned two open-world heroes", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(!Entity_CanDamageTarget(h1, h2), "PEACE blocks hero damage", outReason, outReasonSize);
+
+  Entity_SetPkMode(h1, PK_MODE_SPAR);
+  Entity_SetPkMode(h2, PK_MODE_SPAR);
+  ok &= AutoTest_ExpectTrue(Entity_CanDamageTarget(h1, h2), "SPAR allows mutual spar damage", outReason, outReasonSize);
+  Entity_ApplyDamageFrom(h2, h1, 500.0f, 1.0f, (Vector3){ 0 });
+  const Agent *a2 = Entity_GetAgent(h2);
+  int attId = -1;
+  bool sparEnded = Entity_ConsumeSparDefeated(h2, &attId);
+  ok &= AutoTest_ExpectTrue(a2 != NULL && a2->health >= 0.99f && a2->health <= 1.01f && sparEnded && attId == h1,
+                            "SPAR non-lethal clamp holds at 1.0 HP and flags sparDefeated", outReason, outReasonSize);
+
+  Entity_SetPkMode(h1, PK_MODE_SLAUGHTER);
+  Entity_SetPkMode(h2, PK_MODE_PEACE);
+  ok &= AutoTest_ExpectTrue(Entity_CanDamageTarget(h1, h2), "SLAUGHTER can attack non-safe hero", outReason, outReasonSize);
+  Entity_SetSafeZone(h2, true);
+  ok &= AutoTest_ExpectTrue(!Entity_CanDamageTarget(h1, h2), "SafeZone blocks SLAUGHTER", outReason, outReasonSize);
+
+  Entity_ApplyDamage(h1, 1e9f, (Vector3){ 0 });
+  Entity_ApplyDamage(h2, 1e9f, (Vector3){ 0 });
+
+  // 2. Data-driven Weather cycling (4 desert profiles)
+  ok &= AutoTest_ExpectTrue(OWWeather_GetProfileCount() == 4, "Desert realm defines 4 weather profiles", outReason, outReasonSize);
+  OWWeather_SetWeather(1, 30.0f);
+  ok &= AutoTest_ExpectTrue(OWWeather_GetCurrentIndex() == 1 && OWWeather_GetMoveSpeedMult() > 1.2f,
+                            "Sandstorm grants tailwind speed bonus", outReason, outReasonSize);
+  OWWeather_SetWeather(2, 30.0f);
+  ok &= AutoTest_ExpectTrue(OWWeather_GetCurrentIndex() == 2 && OWWeather_GetXpMult() >= 1.49f,
+                            "Mirage weather grants 1.5x skill XP multiplier", outReason, outReasonSize);
+
+  // 3. Data-driven Spawner presets & Clear
+  PlayerEntity tmpPlayer = { 0 };
+  tmpPlayer.agentId = Entity_SpawnAgent((Vector3){ 120.0f, 0.0f, 170.0f }, 100.0f, 3, TEAM_ALLY, ARCH_HERO);
+  ok &= AutoTest_ExpectTrue(OWSandbox_TriggerPreset(&tmpPlayer, 0), "Spawn monster pack preset succeeds", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(OWSandbox_GetActiveCustomSpawnCount() == 8, "8 desert monsters spawned", outReason, outReasonSize);
+  OWSandbox_ClearCustomSpawns();
+  ok &= AutoTest_ExpectTrue(OWSandbox_GetActiveCustomSpawnCount() == 0, "ClearCustomSpawns removes all spawned monsters", outReason, outReasonSize);
+  Entity_ApplyDamage(tmpPlayer.agentId, 1e9f, (Vector3){ 0 });
+
+  return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
+}
+
 void AutoTestCases_Register(PlayerEntity *player)
 {
   s_player = player;
@@ -1837,5 +1891,6 @@ void AutoTestCases_Register(PlayerEntity *player)
   AutoTest_Register("desert_open_world_loop", AutoTest_DesertOpenWorldLoopStep, 5);
   AutoTest_Register("datau_npc_cycle_and_guiding_wisp", AutoTest_DaTauNpcCycleAndWispStep, 5);
   AutoTest_Register("net_p2p_explore_optimization", AutoTest_NetP2PExploreOptStep, 5);
+  AutoTest_Register("ow_desert_sandbox_and_weather", AutoTest_DesertSandboxAndWeatherStep, 5);
 }
 

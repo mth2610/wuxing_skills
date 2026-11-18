@@ -423,6 +423,78 @@ static void test_tornado_spindown_no_explosion(void)
     printf("[PASS] test_tornado_spindown_no_explosion (maxR=%.3f m, meanSpeed=%.3f m/s)\n", maxR, meanSpeed);
 }
 
+static void test_all_13_material_profiles_valid(void)
+{
+    for (int i = 0; i < GRANULAR_MAT_COUNT; i++) {
+        const GranularMaterialProfile *m = GranularSim_GetMaterialProfile((GranularMaterialId)i);
+        assert(m != NULL);
+        assert(isfinite(m->densityKgM3) && m->densityKgM3 > 100.0f);
+        assert(isfinite(m->springStiffness) && m->springStiffness > 500.0f);
+        assert(isfinite(m->shearFrictionMu) && m->shearFrictionMu >= 0.0f);
+        assert(isfinite(m->referenceMassKg) && m->referenceMassKg > 0.0f);
+        assert(isfinite(m->criticalEntrainmentMps) && m->criticalEntrainmentMps > 0.0f);
+        assert(m->morphology <= GRANULAR_MORPH_METAL_SHARD);
+    }
+    const GranularMaterialProfile *crystal = GranularSim_GetMaterialProfile(GRANULAR_MAT_CRYSTAL_SHARD);
+    const GranularMaterialProfile *metal   = GranularSim_GetMaterialProfile(GRANULAR_MAT_METAL_SHARD);
+    assert(crystal->morphology == GRANULAR_MORPH_CRYSTAL_SHARD);
+    assert(metal->morphology == GRANULAR_MORPH_METAL_SHARD);
+    assert(metal->densityKgM3 > crystal->densityKgM3);
+    printf("[PASS] test_all_13_material_profiles_valid (count=%d)\n", GRANULAR_MAT_COUNT);
+}
+
+static void test_tornado_mass_stratification(void)
+{
+    enum { N = 60 };
+    GranularGrainState grains[N];
+    for (int i = 0; i < N; i++) {
+        int group = i % 3; // 0: gravel (heavy), 1: sand (medium), 2: dry leaf (light + lift)
+        uint32_t mat = (group == 0) ? GRANULAR_MAT_COARSE_GRAVEL
+                     : (group == 1 ? GRANULAR_MAT_DESERT_SAND : GRANULAR_MAT_DRY_LEAF);
+        float angle = ((float)i / (float)N) * 6.2831853f * 3.0f;
+        float r = 0.55f;
+        grains[i] = (GranularGrainState){
+            .position = {cosf(angle) * r, 0.35f, sinf(angle) * r},
+            .velocity = {-sinf(angle) * 7.0f, 1.5f, cosf(angle) * 7.0f},
+            .radius = 0.025f, .lifetime = 8.0f, .seed = (float)i / (float)N,
+            .materialId = mat
+        };
+    }
+
+    GranularWaveDesc funnel = {
+        .kind       = GRANULAR_WAVE_CONICAL_FUNNEL,
+        .origin     = {0.0f, 0.0f, 0.0f},
+        .radius     = 0.25f,
+        .topRadius  = 1.40f,
+        .length     = 3.80f,
+        .axialSpeed = 3.5f,
+        .swirlSpeed = 8.5f,
+        .duration   = 4.0f,
+        .attackTime = 0.02f,
+        .fadeTime   = 0.40f,
+        .loopTop    = false
+    };
+
+    const float dt = 1.0f / 60.0f;
+    for (int step = 0; step < 90; step++) {
+        GranularSim_StepCpuDeterministicWithWaves(
+            grains, N, NULL, &funnel, 1, dt, (float)step * dt,
+            (Vector3){0.0f, 0.0f, 0.0f}, (Vector3){0.0f, 1.0f, 0.0f});
+    }
+
+    float sumY[3] = {0.0f, 0.0f, 0.0f};
+    for (int i = 0; i < N; i++) {
+        sumY[i % 3] += grains[i].position.y;
+    }
+    float meanGravel = sumY[0] / 20.0f;
+    float meanSand   = sumY[1] / 20.0f;
+    float meanLeaf   = sumY[2] / 20.0f;
+    assert(meanLeaf > meanSand);
+    assert(meanSand > meanGravel);
+    printf("[PASS] test_tornado_mass_stratification (gravelY=%.3f m < sandY=%.3f m < leafY=%.3f m)\n",
+           meanGravel, meanSand, meanLeaf);
+}
+
 int main(void)
 {
     test_inelastic_collision();
@@ -434,6 +506,8 @@ int main(void)
     test_mixed_material_bed_simulation();
     test_moving_tornado_cohesive_translation();
     test_tornado_spindown_no_explosion();
+    test_all_13_material_profiles_valid();
+    test_tornado_mass_stratification();
     printf("granular_sim_test: ALL PASSED\n");
     return 0;
 }

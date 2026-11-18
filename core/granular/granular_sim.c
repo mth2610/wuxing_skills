@@ -381,7 +381,10 @@ void GranularSim_Update(float dt)
             float centripetalAcc = -(vTang * vTang) / fmaxf(r, 0.08f);
             float radAcc = (centripetalAcc + (targetR - r) * 55.0f - vRad * 11.0f) * conf;
 
-            float targetVy = s_cpuFunnelUpdraft * (0.75f + 0.50f * fmodf(seed * 5.3f, 1.0f)) * (1.0f - sd) - 2.2f * sd;
+            const GranularMaterialProfile *gm = GranularSim_GetMaterialProfile((GranularMaterialId)s_cpuGrains[i].materialId);
+            float massKg = gm->referenceMassKg > 0.0002f ? gm->referenceMassKg : 0.012f;
+            float buoyancyStrat = Clamp(0.012f / massKg, 0.42f, 1.55f) + gm->liftCoefficient * 0.18f;
+            float targetVy = s_cpuFunnelUpdraft * buoyancyStrat * (0.75f + 0.50f * fmodf(seed * 5.3f, 1.0f)) * (1.0f - sd) - 2.2f * sd;
             float yAcc = (9.81f * (1.0f - 0.65f * sd) + (targetVy - vel.y) * 7.0f) * conf;
 
             /* Frame tracking: only grains inside the capture radius follow the storm,
@@ -541,20 +544,21 @@ static void GranularSim_DrawCpuFallback(Camera3D camera, const GranularMaterialP
             rlColor4ub(cDark.r, cDark.g, cDark.b, alpha); rlVertex3f(p0.x, p0.y, p0.z);
             rlColor4ub(cLit.r,  cLit.g,  cLit.b,  alpha); rlVertex3f(p2.x, p2.y, p2.z);
             rlColor4ub(cDark.r, cDark.g, cDark.b, alpha); rlVertex3f(p3.x, p3.y, p3.z);
-        } else if (gm->morphology == GRANULAR_MORPH_CRYSTAL_SHARD) {
-            // Faceted diamond crystal shard
-            float r = g->radius * 1.65f * (0.85f + 0.35f * s1);
-            float ang = s0 * 6.2831853f;
+        } else if (gm->morphology == GRANULAR_MORPH_CRYSTAL_SHARD || gm->morphology == GRANULAR_MORPH_METAL_SHARD) {
+            // Faceted 3D-shaded diamond/crystal or metallic blade shard
+            float r = g->radius * (gm->morphology == GRANULAR_MORPH_METAL_SHARD ? 1.85f : 1.65f) * (0.85f + 0.35f * s1);
+            float ang = s0 * 6.2831853f + ((g->flags == 1u) ? 0.0f : s_simElapsedTime * (3.5f + 4.5f * s2));
             Vector3 ax = Vector3Add(Vector3Scale(right, cosf(ang)), Vector3Scale(up, sinf(ang)));
             Vector3 ay = Vector3Subtract(Vector3Scale(up, cosf(ang)), Vector3Scale(right, sinf(ang)));
 
             Color cShad = gm->shadowColor;
             Color cBase = gm->baseColor;
             Color cHigh = gm->highlightColor;
+            float wFrac = gm->morphology == GRANULAR_MORPH_METAL_SHARD ? 0.42f : 0.55f;
             Vector3 pT = Vector3Add(g->position, Vector3Scale(ay, r * 1.25f));
             Vector3 pB = Vector3Subtract(g->position, Vector3Scale(ay, r * 1.25f));
-            Vector3 pL = Vector3Subtract(g->position, Vector3Scale(ax, r * 0.55f));
-            Vector3 pR = Vector3Add(g->position, Vector3Scale(ax, r * 0.55f));
+            Vector3 pL = Vector3Subtract(g->position, Vector3Scale(ax, r * wFrac));
+            Vector3 pR = Vector3Add(g->position, Vector3Scale(ax, r * wFrac));
 
             rlColor4ub(cHigh.r, cHigh.g, cHigh.b, alpha); rlVertex3f(pT.x, pT.y, pT.z);
             rlColor4ub(cBase.r, cBase.g, cBase.b, alpha); rlVertex3f(pL.x, pL.y, pL.z);

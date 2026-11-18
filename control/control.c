@@ -130,20 +130,7 @@ void Control_Apply(const PlayerIntent *in, float dt) {
 
     if (in->castSkillSlot >= 0 && in->castSkillSlot < AGENT_SKILL_SLOTS &&
         !Entity_IsStunned(s_agentId)) {
-        int skillIndex;
-        if (a->taijiActive) {
-            // Cảnh Giới Thái Cực: the 4 normal skills are LOCKED; slot 0
-            // becomes PHONG (suction vortex), slot 1 LÔI (thunderstrike),
-            // slots 2-3 do nothing (resolved lazily — registry order is
-            // generated).
-            static int s_phongIdx = -2, s_loiIdx = -2; // -2 = unresolved
-            if (s_phongIdx == -2) s_phongIdx = Skill_GetIndexByName("TAIJI_PHONG");
-            if (s_loiIdx   == -2) s_loiIdx   = Skill_GetIndexByName("TAIJI_LOI");
-            skillIndex = (in->castSkillSlot == 0) ? s_phongIdx :
-                         (in->castSkillSlot == 1) ? s_loiIdx : -1;
-        } else {
-            skillIndex = a->equippedSkills[in->castSkillSlot];
-        }
+        int skillIndex = a->equippedSkills[in->castSkillSlot];
         if (skillIndex >= 0 && SkillManager_CanCast(skillIndex, s_agentId)) {
             int lvl = s_skillLevelFn ? s_skillLevelFn(skillIndex) : 1;
             int milestone = 0;

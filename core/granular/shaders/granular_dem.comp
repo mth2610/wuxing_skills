@@ -140,6 +140,14 @@ GrainPhys getGrainPhysics(int matId) {
         p.morphology = 0; p.springK = 1550.0; p.dashpotDamp = 130.0; p.frictionMu = 0.76;
         p.rollRes = 0.60; p.cohesion = 22.0; p.splash = 0.14; p.refMass = 0.0018;
         p.liftCoeff = 0.25; p.flutterHz = 2.2; p.critEntrain = 1.05;
+    } else if (matId == 11) {
+        p.morphology = 4; p.springK = 3500.0; p.dashpotDamp = 92.0; p.frictionMu = 0.28;
+        p.rollRes = 0.18; p.cohesion = 0.0; p.splash = 0.38; p.refMass = 0.024;
+        p.liftCoeff = 0.04; p.flutterHz = 0.0; p.critEntrain = 4.60;
+    } else if (matId == 12) {
+        p.morphology = 5; p.springK = 3800.0; p.dashpotDamp = 88.0; p.frictionMu = 0.44;
+        p.rollRes = 0.24; p.cohesion = 0.0; p.splash = 0.42; p.refMass = 0.045;
+        p.liftCoeff = 0.02; p.flutterHz = 0.0; p.critEntrain = 6.20;
     }
     return p;
 }
@@ -240,7 +248,8 @@ void evaluateWaves(inout GranularGrain g, GrainPhys gp, out vec3 waveAcc, out fl
             float tangAcc = (targetSwirl - vTang) * 10.5 * confEnv;
             float centrip = -(vTang * vTang) / max(r, 0.08);
             float radAcc = (centrip + (targetR - r) * 55.0 - vRad * 11.0) * confEnv;
-            float targetVy = axialSpd * (0.75 + 0.50 * fract(g.meta_ao.x * 5.3)) * (1.0 - sd) - 2.2 * sd;
+            float buoyancyStrat = clamp(0.012 / max(gp.refMass, 0.0002), 0.42, 1.55) + gp.liftCoeff * 0.18;
+            float targetVy = axialSpd * buoyancyStrat * (0.75 + 0.50 * fract(g.meta_ao.x * 5.3)) * (1.0 - sd) - 2.2 * sd;
             float trackK = 7.5 * confEnv * 0.35;
             waveAcc += radDir * radAcc + tangDir * tangAcc + vec3(stormVel.x - g.velocity_life.x, 0.0, stormVel.z - g.velocity_life.z) * trackK;
             waveAcc.y += (9.81 * (1.0 - 0.65 * sd) + (targetVy - vRel.y) * 7.0) * confEnv;
@@ -331,6 +340,7 @@ void collideReceiver(inout GranularGrain g, GrainPhys gp, out bool onGround) {
             float frictionLoss = min(1.0, gp.frictionMu * 0.72);
             vt *= (1.0 - frictionLoss);
             g.aux_pad.x += frictionLoss * vtLen * impactSpeed * 0.1;
+            g.aux_pad.z = mix(g.aux_pad.z, clamp(vtLen / max(g.position_radius.w, 0.015), 2.0, 22.0), 0.65);
         }
     } else {
         float damp = exp(-(6.0 + 14.0 * gp.frictionMu) * u_dt);
@@ -422,7 +432,8 @@ void main() {
             float trackK = 6.5 * conf * trackW;
             extAcc.xz += (u_funnelVelocity.xz - vel.xz) * trackK;
 
-            float targetVy = u_funnelUpdraftSpeed * (0.75 + 0.50 * fract(g.meta_ao.x * 5.3)) * (1.0 - sd) - 2.2 * sd;
+            float buoyancyStrat = clamp(0.012 / max(gp.refMass, 0.0002), 0.42, 1.55) + gp.liftCoeff * 0.18;
+            float targetVy = u_funnelUpdraftSpeed * buoyancyStrat * (0.75 + 0.50 * fract(g.meta_ao.x * 5.3)) * (1.0 - sd) - 2.2 * sd;
             extAcc.y += (9.81 * (1.0 - 0.65 * sd) + (targetVy - vel.y) * 7.0) * conf;
         }
 
@@ -457,6 +468,18 @@ void main() {
 
         bool onGround = false;
         collideReceiver(g, gp, onGround);
+
+        // Integrate 3D rotational tumble phase (aux_pad.y) & angular speed (aux_pad.z)
+        if (g.meta_ao.w == 1.0) {
+            g.aux_pad.z *= exp(-12.0 * u_dt);
+        } else {
+            float spd = length(g.velocity_life.xyz);
+            float targetSpin = (gp.morphology == 2) ? (gp.flutterHz * 1.45 + spd * 0.9)
+                             : (gp.morphology >= 4 ? (3.5 + spd * 1.8) : (1.5 + spd * 1.3));
+            g.aux_pad.z = mix(g.aux_pad.z, targetSpin, min(1.0, u_dt * 3.0));
+        }
+        g.aux_pad.y = mod(g.aux_pad.y + g.aux_pad.z * u_dt, 6.2831853);
+
         g.velocity_life.w -= u_dt;
 
         int cell = cellIndex(g.position_radius.xyz);

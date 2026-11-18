@@ -2,6 +2,7 @@
 #include "core/gfx_quality.h"
 #include "core/motion/motion_gpu.h"
 #include "core/resource_manager.h"
+#include "core/shading/shader_preprocessor.h"
 #include "rlgl.h"
 #include "raymath.h"
 #include <math.h>
@@ -80,15 +81,15 @@ static struct {
 static struct {
     int view, projection, aspectRatio, time;
     int baseColor, shadowColor, highlightColor;
-    int glintIntensity, glintSharpness, lightDir;
+    int glintIntensity, glintSharpness, lightDir, camPos;
 } s_drawUni;
 
 static unsigned int GranularGpu_LoadCompute(void)
 {
-    char *src = LoadFileText("core/granular/shaders/granular_dem.comp");
+    char *src = ShaderPreprocessor_Load("core/granular/shaders/granular_dem.comp");
     if (!src) return 0;
     unsigned int shader = rlLoadShader(src, RL_COMPUTE_SHADER);
-    UnloadFileText(src);
+    RL_FREE(src);
     if (!shader) return 0;
     unsigned int program = rlLoadShaderProgramCompute(shader);
     rlUnloadShader(shader);
@@ -133,17 +134,22 @@ bool GranularGpu_Init(void)
         "core/granular/shaders/granular_grain.vs",
         "core/granular/shaders/granular_grain.fs");
 
-    static const float quad[] = {
-        -1.0f, -1.0f, 0.0f,
-         1.0f, -1.0f, 0.0f,
-         1.0f,  1.0f, 0.0f,
-        -1.0f, -1.0f, 0.0f,
-         1.0f,  1.0f, 0.0f,
-        -1.0f,  1.0f, 0.0f
+    // Unified 36-vertex (12-triangle) template VBO:
+    // First 6 verts carry standard [-1..1]^2 quad corners in .xy (for fine continuum splats)
+    // and .z carries vertex index 0..35 for true 3D procedural sub-meshes.
+    static float tmpl[36 * 3];
+    static const float quadXY[6][2] = {
+        {-1.0f, -1.0f}, { 1.0f, -1.0f}, { 1.0f,  1.0f},
+        {-1.0f, -1.0f}, { 1.0f,  1.0f}, {-1.0f,  1.0f}
     };
+    for (int v = 0; v < 36; v++) {
+        tmpl[v * 3 + 0] = (v < 6) ? quadXY[v][0] : 0.0f;
+        tmpl[v * 3 + 1] = (v < 6) ? quadXY[v][1] : 0.0f;
+        tmpl[v * 3 + 2] = (float)v;
+    }
     s_vao = rlLoadVertexArray();
     rlEnableVertexArray(s_vao);
-    s_vbo = rlLoadVertexBuffer(quad, sizeof(quad), false);
+    s_vbo = rlLoadVertexBuffer(tmpl, sizeof(tmpl), false);
     rlSetVertexAttribute(0, 3, RL_FLOAT, 0, 0, 0);
     rlEnableVertexAttribute(0);
     rlDisableVertexArray();
@@ -198,6 +204,7 @@ bool GranularGpu_Init(void)
     s_drawUni.glintIntensity = GetShaderLocation(s_renderShader, "u_glintIntensity");
     s_drawUni.glintSharpness = GetShaderLocation(s_renderShader, "u_glintSharpness");
     s_drawUni.lightDir       = GetShaderLocation(s_renderShader, "u_lightDir");
+    s_drawUni.camPos         = GetShaderLocation(s_renderShader, "u_camPos");
 
     s_available = true;
     return true;
@@ -280,7 +287,7 @@ void GranularGpu_UploadGrains(const GranularGrainState *grains, int count,
             .contactAO = grains[i].contactAO,
             .flags = (float)grains[i].flags,
             .shearWork = 0.0f,
-            .pad0 = 0.0f, .pad1 = 0.0f, .pad2 = 0.0f
+            .pad0 = grains[i].seed * 6.2831853f, .pad1 = 2.0f + grains[i].seed * 3.0f, .pad2 = 0.0f
         };
         s_bodyUploadBuf[i] = GranularGpu_PackBodyForGrain(&grains[i], mat);
     }
@@ -334,7 +341,7 @@ int GranularGpu_AppendGrains(const GranularGrainState *grains, int count,
             .contactAO = grains[i].contactAO,
             .flags = (float)grains[i].flags,
             .shearWork = 0.0f,
-            .pad0 = 0.0f, .pad1 = 0.0f, .pad2 = 0.0f
+            .pad0 = grains[i].seed * 6.2831853f, .pad1 = 2.0f + grains[i].seed * 3.0f, .pad2 = 0.0f
         };
         s_bodyAppendBuf[i] = GranularGpu_PackBodyForGrain(&grains[i], &s_activeMat);
     }
@@ -551,11 +558,12 @@ void GranularGpu_DrawBody(Camera3D camera, const GranularMaterialProfile *mat)
     if (s_drawUni.glintIntensity >= 0) SetShaderValue(s_renderShader, s_drawUni.glintIntensity, &m->glintIntensity, SHADER_UNIFORM_FLOAT);
     if (s_drawUni.glintSharpness >= 0) SetShaderValue(s_renderShader, s_drawUni.glintSharpness, &m->glintSharpness, SHADER_UNIFORM_FLOAT);
     if (s_drawUni.lightDir >= 0) SetShaderValue(s_renderShader, s_drawUni.lightDir, lightDir, SHADER_UNIFORM_VEC3);
+    if (s_drawUni.camPos >= 0) SetShaderValue(s_renderShader, s_drawUni.camPos, &camera.position.x, SHADER_UNIFORM_VEC3);
 
     rlBindShaderBuffer(s_stateA, 0);
     rlEnableShader(s_renderShader.id);
     rlEnableVertexArray(s_vao);
-    rlDrawVertexArrayInstanced(0, 6, s_grainCount);
+    rlDrawVertexArrayInstanced(0, 36, s_grainCount);
     rlDisableVertexArray();
     rlDisableShader();
     EndShaderMode();

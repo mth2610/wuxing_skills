@@ -23,6 +23,8 @@
 #include "eos_connect.h"
 #include "eos_lobby.h"
 #include "eos_p2p.h"
+#include "eos_rtc.h"
+#include "eos_rtc_audio.h"
 #ifdef __ANDROID__
 #include "Android/eos_Android.h"
 #endif
@@ -52,13 +54,21 @@ static EOS_HPlatform      s_platform = NULL;
 static EOS_HConnect       s_connect  = NULL;
 static EOS_HLobby         s_lobby    = NULL;
 static EOS_HP2P           s_p2p      = NULL;
+static EOS_HRTC           s_rtc      = NULL;
+static EOS_HRTCAudio      s_rtcAudio = NULL;
 static EOS_ProductUserId  s_localPuid = NULL;
 static EOS_ProductUserId  s_hostPuid  = NULL; // CLIENT: the lobby owner we talk to
 static char               s_lobbyId[128] = { 0 };
+static char               s_rtcRoomName[128] = { 0 };
+static bool               s_micEnabled = false;
+static bool               s_mutedAll   = false;
+static EOS_ProductUserId  s_speakers[NET_MAX_PLAYERS];
+static int                s_speakerCount = 0;
 static bool               s_isHost = false;
-static EOS_NotificationId s_notifyRequest     = EOS_INVALID_NOTIFICATIONID;
-static EOS_NotificationId s_notifyClosed      = EOS_INVALID_NOTIFICATIONID;
-static EOS_NotificationId s_notifyEstablished = EOS_INVALID_NOTIFICATIONID;
+static EOS_NotificationId s_notifyRequest        = EOS_INVALID_NOTIFICATIONID;
+static EOS_NotificationId s_notifyClosed         = EOS_INVALID_NOTIFICATIONID;
+static EOS_NotificationId s_notifyEstablished    = EOS_INVALID_NOTIFICATIONID;
+static EOS_NotificationId s_notifyRtcParticipant = EOS_INVALID_NOTIFICATIONID;
 
 static const EOS_P2P_SocketId s_socketId = {
     .ApiVersion = EOS_P2P_SOCKETID_API_LATEST,
@@ -207,6 +217,10 @@ static bool EnsureLoggedIn(void) {
                                 getenv("WUXING_EOS_VERBOSE") != NULL
                                     ? EOS_LOG_Verbose : EOS_LOG_Warning);
 
+        static EOS_Platform_RTCOptions s_rtcOpts = { 0 };
+        s_rtcOpts.ApiVersion = EOS_PLATFORM_RTCOPTIONS_API_LATEST;
+        s_rtcOpts.BackgroundMode = EOS_RTCBM_KeepRoomsAlive;
+
         EOS_Platform_Options opt = { 0 };
         opt.ApiVersion   = EOS_PLATFORM_OPTIONS_API_LATEST;
         opt.ProductId    = s_productId;
@@ -216,14 +230,17 @@ static bool EnsureLoggedIn(void) {
         opt.ClientCredentials.ClientSecret = s_clientSecret;
         opt.bIsServer = EOS_FALSE;
         opt.Flags     = EOS_PF_DISABLE_OVERLAY | EOS_PF_DISABLE_SOCIAL_OVERLAY;
+        opt.RTCOptions = &s_rtcOpts;
         s_platform = EOS_Platform_Create(&opt);
         if (s_platform == NULL) {
             TraceLog(LOG_WARNING, "[EOS] EOS_Platform_Create failed — check eos_keys.cfg values");
             return false;
         }
-        s_connect = EOS_Platform_GetConnectInterface(s_platform);
-        s_lobby   = EOS_Platform_GetLobbyInterface(s_platform);
-        s_p2p     = EOS_Platform_GetP2PInterface(s_platform);
+        s_connect  = EOS_Platform_GetConnectInterface(s_platform);
+        s_lobby    = EOS_Platform_GetLobbyInterface(s_platform);
+        s_p2p      = EOS_Platform_GetP2PInterface(s_platform);
+        s_rtc      = EOS_Platform_GetRTCInterface(s_platform);
+        s_rtcAudio = s_rtc ? EOS_RTC_GetAudioInterface(s_rtc) : NULL;
 
         // Relay control (must be set BEFORE any connection opens). NAT punch
         // fails on many home routers (symmetric/strict NAT), and when it
@@ -489,11 +506,119 @@ static void EosTick(float dt) {
     }
 }
 
+static void EOS_CALL OnRtcParticipantUpdated(const EOS_RTCAudio_ParticipantUpdatedCallbackInfo *data) {
+    if (!data || !data->ParticipantId) return;
+    int found = -1;
+    for (int i = 0; i < s_speakerCount; i++) {
+        if (s_speakers[i] == data->ParticipantId) { found = i; break; }
+    }
+    if (data->bSpeaking && data->AudioStatus == EOS_RTCAS_Enabled) {
+        if (found < 0 && s_speakerCount < NET_MAX_PLAYERS) {
+            s_speakers[s_speakerCount++] = data->ParticipantId;
+        }
+    } else if (found >= 0) {
+        s_speakers[found] = s_speakers[s_speakerCount - 1];
+        s_speakerCount--;
+    }
+}
+
+static void SetupRtcRoomForLobby(void) {
+    s_rtcRoomName[0] = '\0';
+    s_speakerCount = 0;
+    s_micEnabled = false;
+    s_mutedAll = false;
+    if (!s_lobby || !s_rtcAudio || !s_localPuid || s_lobbyId[0] == '\0') return;
+
+    EOS_Lobby_GetRTCRoomNameOptions rn = { 0 };
+    rn.ApiVersion  = EOS_LOBBY_GETRTCROOMNAME_API_LATEST;
+    rn.LobbyId     = s_lobbyId;
+    rn.LocalUserId = s_localPuid;
+    uint32_t outLen = sizeof(s_rtcRoomName);
+    if (EOS_Lobby_GetRTCRoomName(s_lobby, &rn, s_rtcRoomName, &outLen) != EOS_Success) {
+        s_rtcRoomName[0] = '\0';
+        return;
+    }
+
+    EOS_RTCAudio_AddNotifyParticipantUpdatedOptions po = { 0 };
+    po.ApiVersion  = EOS_RTCAUDIO_ADDNOTIFYPARTICIPANTUPDATED_API_LATEST;
+    po.LocalUserId = s_localPuid;
+    po.RoomName    = s_rtcRoomName;
+    s_notifyRtcParticipant = EOS_RTCAudio_AddNotifyParticipantUpdated(
+        s_rtcAudio, &po, NULL, OnRtcParticipantUpdated);
+
+    // Start with mic muted by default until player toggles [M] / Mic button
+    Net_VoiceSetMicEnabled(false);
+    TraceLog(LOG_INFO, "[EOS-RTC] Voice room ready: %s", s_rtcRoomName);
+}
+
+static void TeardownRtcRoom(void) {
+    if (s_notifyRtcParticipant != EOS_INVALID_NOTIFICATIONID && s_rtcAudio) {
+        EOS_RTCAudio_RemoveNotifyParticipantUpdated(s_rtcAudio, s_notifyRtcParticipant);
+        s_notifyRtcParticipant = EOS_INVALID_NOTIFICATIONID;
+    }
+    s_rtcRoomName[0] = '\0';
+    s_speakerCount = 0;
+    s_micEnabled = false;
+    s_mutedAll = false;
+}
+
+static void EOS_CALL OnVoiceUpdateResult(const EOS_RTCAudio_UpdateSendingCallbackInfo *data) {
+    (void)data;
+}
+
+static void EOS_CALL OnVoiceReceiveResult(const EOS_RTCAudio_UpdateReceivingCallbackInfo *data) {
+    (void)data;
+}
+
+bool Net_VoiceIsAvailable(void) {
+    return (s_rtcAudio != NULL && s_localPuid != NULL && s_rtcRoomName[0] != '\0');
+}
+
+void Net_VoiceSetMicEnabled(bool enabled) {
+    s_micEnabled = enabled;
+    if (!Net_VoiceIsAvailable()) return;
+    EOS_RTCAudio_UpdateSendingOptions opt = { 0 };
+    opt.ApiVersion  = EOS_RTCAUDIO_UPDATESENDING_API_LATEST;
+    opt.LocalUserId = s_localPuid;
+    opt.RoomName    = s_rtcRoomName;
+    opt.AudioStatus = enabled ? EOS_RTCAS_Enabled : EOS_RTCAS_Disabled;
+    EOS_RTCAudio_UpdateSending(s_rtcAudio, &opt, NULL, OnVoiceUpdateResult);
+}
+
+bool Net_VoiceIsMicEnabled(void) {
+    return Net_VoiceIsAvailable() && s_micEnabled;
+}
+
+void Net_VoiceSetMutedAll(bool muted) {
+    s_mutedAll = muted;
+    if (!Net_VoiceIsAvailable()) return;
+    EOS_RTCAudio_UpdateReceivingOptions opt = { 0 };
+    opt.ApiVersion    = EOS_RTCAUDIO_UPDATERECEIVING_API_LATEST;
+    opt.LocalUserId   = s_localPuid;
+    opt.RoomName      = s_rtcRoomName;
+    opt.ParticipantId = NULL; // NULL = all participants in the room
+    opt.bAudioEnabled = muted ? EOS_FALSE : EOS_TRUE;
+    EOS_RTCAudio_UpdateReceiving(s_rtcAudio, &opt, NULL, OnVoiceReceiveResult);
+}
+
+bool Net_VoiceIsMutedAll(void) {
+    return s_mutedAll;
+}
+
+bool Net_VoiceIsAnyoneSpeaking(void) {
+    return s_speakerCount > 0;
+}
+
+int Net_VoiceGetSpeakingCount(void) {
+    return s_speakerCount;
+}
+
 static void EOS_CALL OnLeaveLobby(const EOS_Lobby_LeaveLobbyCallbackInfo *data) {
     (void)data; // teardown is fire-and-forget
 }
 
 static void EosStop(void) {
+    TeardownRtcRoom();
     if (s_p2p != NULL && s_localPuid != NULL) {
         // Close every connection on our socket in one call (multi-peer).
         EOS_P2P_CloseConnectionsOptions cls = { 0 };
@@ -594,6 +719,7 @@ bool Net_StartHostOnline(char *outJoinCode, int maxCodeLen) {
     create.PermissionLevel  = EOS_LPL_PUBLICADVERTISED;
     create.bPresenceEnabled = EOS_FALSE;
     create.bAllowInvites    = EOS_TRUE;
+    create.bEnableRTCRoom   = EOS_TRUE;
     create.BucketId         = EOS_BUCKET_ID;
     s_opStatus = 0; s_opLobbyId[0] = '\0';
     EOS_Lobby_CreateLobby(s_lobby, &create, NULL, OnCreateLobby);
@@ -629,6 +755,7 @@ bool Net_StartHostOnline(char *outJoinCode, int maxCodeLen) {
 
     s_isHost = true;
     RegisterP2PNotifies();
+    SetupRtcRoomForLobby();
     NetTransport_SetBackend(NET_MODE_HOST, EosSend, EosTick, EosStop);
     strncpy(outJoinCode, code, (size_t)maxCodeLen - 1);
     outJoinCode[maxCodeLen - 1] = '\0';
@@ -718,6 +845,7 @@ bool Net_JoinOnline(const char *joinCode) {
     s_isHost = false;
     s_hostPuid = owner;
     RegisterP2PNotifies();
+    SetupRtcRoomForLobby();
     NetTransport_SetBackend(NET_MODE_CLIENT, EosSend, EosTick, EosStop);
     // Optimistically up: the first intent packets trigger the NAT punch
     // (bAllowDelayedDelivery queues them); the host flips connected when the
@@ -788,6 +916,7 @@ bool Net_JoinOrHostExploreRealm(int realmId, char *outJoinCode, int maxCodeLen) 
                         s_isHost = false;
                         s_hostPuid = owner;
                         RegisterP2PNotifies();
+                        SetupRtcRoomForLobby();
                         NetTransport_SetBackend(NET_MODE_CLIENT, EosSend, EosTick, EosStop);
                         NetTransport_BackendConnected(NULL);
                         if (outJoinCode && maxCodeLen > 0) outJoinCode[0] = '\0';
@@ -812,6 +941,7 @@ bool Net_JoinOrHostExploreRealm(int realmId, char *outJoinCode, int maxCodeLen) 
     create.PermissionLevel  = EOS_LPL_PUBLICADVERTISED;
     create.bPresenceEnabled = EOS_FALSE;
     create.bAllowInvites    = EOS_TRUE;
+    create.bEnableRTCRoom   = EOS_TRUE;
     create.BucketId         = bucket;
     s_opStatus = 0; s_opLobbyId[0] = '\0';
     EOS_Lobby_CreateLobby(s_lobby, &create, NULL, OnCreateLobby);
@@ -845,6 +975,7 @@ bool Net_JoinOrHostExploreRealm(int realmId, char *outJoinCode, int maxCodeLen) 
 
     s_isHost = true;
     RegisterP2PNotifies();
+    SetupRtcRoomForLobby();
     NetTransport_SetBackend(NET_MODE_HOST, EosSend, EosTick, EosStop);
     if (outJoinCode && maxCodeLen > 0) {
         strncpy(outJoinCode, code, (size_t)maxCodeLen - 1);

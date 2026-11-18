@@ -31,7 +31,7 @@ void EmissionSystem_Init(void) {
 void EmissionSystem_Unload(void) { EmissionSystem_Init(); }
 EmissionHandle Emission_Create(const EmissionConfig *c, Vector3 origin) {
     if (!c || !c->sink || c->callbackBudget > EMITTER_MAX_CALLBACK_BUDGET || !Emission_FiniteVector(origin) ||
-        c->kind < EMISSION_PARTICLE || c->kind > EMISSION_MESH ||
+        c->kind < EMISSION_PARTICLE || c->kind > EMISSION_GRANULAR ||
         c->schedule < EMISSION_BURST || c->schedule > EMISSION_DISTANCE ||
         !isfinite(c->duration) || c->duration < 0.0f ||
         (c->schedule == EMISSION_TIMED_COUNT && c->duration <= 0.0f) ||

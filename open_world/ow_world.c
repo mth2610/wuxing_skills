@@ -2,6 +2,8 @@
 #include "open_world/ow_world.h"
 #include "open_world/ow_loot.h"
 #include "open_world/ow_quest_npc.h"
+#include "open_world/ow_sandbox_modes.h"
+#include "open_world/ow_weather.h"
 #include "character/player_profile.h"
 #include "combat/combat.h"
 #include "core/composition/visual_composer.h"
@@ -39,7 +41,6 @@ static EmoteBubble  s_emotes[MAX_EMOTE_BUBBLES];
 
 static float s_mightTimer     = 0.0f;
 static float s_xpBoostTimer   = 0.0f;
-static float s_sandstormTimer = 80.0f;
 static float s_bannerTimer    = 0.0f;
 static char  s_bannerText[128] = { 0 };
 static bool  s_emoteMenuOpen  = false;
@@ -103,7 +104,13 @@ Vector3 OW_GetDaTauNpcPos(void) {
 }
 
 int OW_GetActiveNodeCount(void) { return OWLoot_GetActiveNodeCount(); }
-void OW_TriggerSandstormEvent(void) { OWLoot_TriggerSandstormReveal(); }
+void OW_TriggerSandstormEvent(void) {
+    if (OWWeather_GetProfileCount() > 1) {
+        OWWeather_SetWeather(1, 0.0f);
+    } else {
+        OWLoot_TriggerSandstormReveal();
+    }
+}
 void OW_SyncQuestEncounter(void) { OWQuestNpc_SyncEncounter(); }
 
 Vector3 OW_GetGuideTarget(Vector3 playerPos) {
@@ -159,6 +166,7 @@ static void GrantSkillXpWithFeedback(int skillIndex, uint32_t baseXp, Vector3 wo
     uint32_t xp = baseXp;
     if (s_killStreak >= 5) xp = (uint32_t)((float)xp * 1.25f);
     if (s_xpBoostTimer > 0.0f) xp *= 2u;
+    xp = (uint32_t)((float)xp * OWWeather_GetXpMult());
 
     bool leveledUp = PlayerProfile_AddSkillXp(skillIndex, xp);
     const char *skName = GetRegisteredSkillName(skillIndex);
@@ -214,7 +222,6 @@ void OW_Init(const OWRealmDef *realm, bool spawnCamps) {
     memset(s_windSurges, 0, sizeof(s_windSurges));
     s_mightTimer = 0.0f;
     s_xpBoostTimer = 0.0f;
-    s_sandstormTimer = 80.0f;
     s_bannerTimer = 0.0f;
     s_emoteMenuOpen = false;
     s_tradeMenuOpen = false;
@@ -231,6 +238,8 @@ void OW_Init(const OWRealmDef *realm, bool spawnCamps) {
 
     OWLoot_Init(realm);
     OWQuestNpc_Init(realm, spawnCamps);
+    OWWeather_Init(realm);
+    OWSandbox_Init(realm);
 
     s_windSurgeCount = realm->windSurgeCount;
     if (s_windSurgeCount > OW_MAX_WIND_SURGES) s_windSurgeCount = OW_MAX_WIND_SURGES;
@@ -273,11 +282,8 @@ void OW_Update(PlayerEntity *player, float dt) {
         if (s_killStreakTimer <= 0.0f) s_killStreak = 0;
     }
 
-    s_sandstormTimer -= dt;
-    if (s_sandstormTimer <= 0.0f) {
-        s_sandstormTimer = 80.0f;
-        OW_TriggerSandstormEvent();
-    }
+    OWWeather_Update(player, dt);
+    OWSandbox_Update(player, dt);
 
     NetSocialEvent sev[8];
     int nsev = Net_PollSocialEvents(sev, 8);
@@ -355,7 +361,12 @@ void OW_Update(PlayerEntity *player, float dt) {
         }
     }
 
-    if (IsKeyPressed(KEY_F) || s_touchInteractReq) { s_touchInteractReq = false; OW_TryInteractNearest(pa->position); }
+    if (IsKeyPressed(KEY_F) || s_touchInteractReq) {
+        s_touchInteractReq = false;
+        if (!OWSandbox_TryInteract(player)) {
+            OW_TryInteractNearest(pa->position);
+        }
+    }
     if (IsKeyPressed(KEY_C) || s_touchWindReq)     { s_touchWindReq = false; OW_TriggerGuidingWind(); }
     if (IsKeyPressed(KEY_R) || s_touchHealReq)     { s_touchHealReq = false; UsePotionKey(player, POTION_HEAL_HP); }
     if (IsKeyPressed(KEY_F1) || s_touchManaReq)    { s_touchManaReq = false; UsePotionKey(player, POTION_RESTORE_MANA); }
@@ -364,14 +375,17 @@ void OW_Update(PlayerEntity *player, float dt) {
 
     if (IsKeyPressed(KEY_V) || s_touchDuelReq) {
         s_touchDuelReq = false;
-        if (inSafe) {
-            OW_SetBanner("TRONG OC DAO AN TOAN KHONG THE BAT CO TY VO PK!", 2.5f);
+        OWSandbox_CyclePkMode(player);
+    }
+
+    if (IsKeyPressed(KEY_M)) {
+        if (!Net_VoiceIsAvailable()) {
+            OW_SetBanner("MIC CHI HOAT DONG KHI KET NOI PHONG ONLINE (EOS)!", 2.8f);
         } else {
-            bool nextDuel = !Entity_GetDuelFlag(player->agentId);
-            Entity_SetDuelFlag(player->agentId, nextDuel);
-            Net_SendSocialState(player->agentId, 0, nextDuel);
-            OW_SetBanner(nextDuel ? "DA BAT CO TY VO PK! CO THE SO TAI VOI NGUOI CHOI KHAC!"
-                                  : "DA TAT CO PK - TRO VE CHE DO HOA BINH", 3.0f);
+            bool nextMic = !Net_VoiceIsMicEnabled();
+            Net_VoiceSetMicEnabled(nextMic);
+            OW_SetBanner(nextMic ? "DA BAT MIC VOICE CHAT! DONG DAO CO THE NGHE BAN!"
+                                 : "DA TAT MIC VOICE CHAT", 2.4f);
         }
     }
 
@@ -410,18 +424,14 @@ void OW_Draw3D(const PlayerEntity *player, Camera3D cam) {
     }
 
     OWLoot_Draw3D();
+    OWWeather_Draw3D(player, cam);
+    OWSandbox_Draw3D(player, cam);
 
     if (s_windActive) {
         float progress = s_windElapsed / GUIDING_WIND_DURATION;
         if (progress > 0.0f && progress < 1.0f) {
             VFX_ComposeGuidingWind(s_windStartPos, s_windEndPos, progress, cam);
         }
-    }
-
-    const Agent *pa = player ? Entity_GetAgent(player->agentId) : NULL;
-    if (pa && pa->duelFlag) {
-        DrawCircle3D((Vector3){ pa->position.x, pa->position.y + 0.14f, pa->position.z },
-                     1.1f, (Vector3){ 1, 0, 0 }, 90.0f, (Color){ 255, 85, 85, 220 });
     }
 }
 
@@ -432,20 +442,28 @@ void OW_DrawHUD(const PlayerEntity *player, Camera3D cam) {
     PlayerProfile *prof = PlayerProfile_GetGlobal();
 
     OWQuestNpc_DrawHUD(pa, cam);
+    OWWeather_DrawHUD();
+    OWSandbox_DrawHUD(player, cam);
 
     bool touchMode = UI_IsTouchControlsEnabled();
     if (pa) {
         int z = OW_GetZoneAt(pa->position);
-        float zw = touchMode ? 360.0f : 460.0f;
+        float zw = touchMode ? 360.0f : 480.0f;
         float zy = touchMode ? 76.0f : 44.0f;
         Rectangle zr = { (float)sw * 0.5f - zw * 0.5f, zy, zw, 28.0f };
-        WuxiaUI_DrawRibbon(zr, pa->duelFlag ? WUXIA_CRIMSON : WUXIA_GOLD);
+        Color pkRibCol = (pa->pkMode == PK_MODE_SLAUGHTER) ? WUXIA_CRIMSON
+                       : (pa->pkMode == PK_MODE_SPAR)      ? WUXIA_GOLD
+                                                           : WUXIA_JADE;
+        const char *pkStr = OWSandbox_GetPkModeLabel(pa->pkMode);
+        WuxiaUI_DrawRibbon(zr, pkRibCol);
         const char *hudLine = touchMode
-            ? TextFormat("%s   ·   %s", OW_GetZoneName(z), pa->duelFlag ? "PK: BAT" : "HOA BINH")
-            : TextFormat("%s   ·   [C] Gio Dan Loi   ·   %s", OW_GetZoneName(z), pa->duelFlag ? "PK: BAT" : "HOA BINH");
-        WuxiaUI_DrawTextCentered(hudLine, zr, 13.0f, pa->duelFlag ? (Color){ 255, 145, 135, 255 } : WUXIA_GOLD_BRIGHT);
+            ? TextFormat("%s   ·   %s", OW_GetZoneName(z), pkStr)
+            : TextFormat("%s   ·   [B] Ky Ngo   ·   [V] %s", OW_GetZoneName(z), pkStr);
+        WuxiaUI_DrawTextCentered(hudLine, zr, 13.0f,
+                                 (pa->pkMode == PK_MODE_SLAUGHTER) ? (Color){ 255, 145, 135, 255 } : WUXIA_GOLD_BRIGHT);
 
-        const char *prompt = OWQuestNpc_GetNearbyPrompt(pa->position);
+        const char *prompt = OWSandbox_GetNearbyPrompt(pa->position);
+        if (!prompt) prompt = OWQuestNpc_GetNearbyPrompt(pa->position);
         if (!prompt) prompt = OWLoot_GetNearbyPrompt(pa->position);
         if (prompt) {
             if (touchMode) {
@@ -492,9 +510,31 @@ void OW_DrawHUD(const PlayerEntity *player, Camera3D cam) {
                             prof->potions[POTION_HEAL_HP], prof->potions[POTION_RESTORE_MANA],
                             prof->potions[POTION_EARTH_MIGHT], prof->potions[POTION_SKILL_XP_BOOST]),
                  24, py + 7, 12, (Color){ 225, 235, 210, 255 });
-        DrawText(TextFormat("Khoang:%d  Thao:%d | [V] PK  [T] BieuCam  [H] GiaoDich  [C] Gio",
+        DrawText(TextFormat("Khoang:%d  Thao:%d | [V] PK  [M] Mic  [T] BieuCam  [C] Gio",
                             prof->elementalStones[s_realm.realmId % 5], prof->herbs),
                  24, py + 24, 11, (Color){ 195, 205, 225, 255 });
+    }
+
+    // Voice chat status / quick toggle button (PC & Touch)
+    {
+        bool voiceOk = Net_VoiceIsAvailable();
+        bool micOn = Net_VoiceIsMicEnabled();
+        int spk = Net_VoiceGetSpeakingCount();
+        const char *vLbl = !voiceOk ? "MIC: OFFLINE"
+                         : micOn    ? TextFormat("MIC: BAT (%d NOI)", spk)
+                         : (spk > 0) ? TextFormat("MIC: TAT (%d NOI)", spk)
+                                     : "MIC: TAT [M]";
+        Color vCol = micOn ? WUXIA_JADE : (spk > 0 ? WUXIA_GOLD : WUXIA_AZURE);
+        Rectangle vr = { touchMode ? 16.0f : 396.0f, touchMode ? 148.0f : (float)(GetScreenHeight() - 114), 124.0f, 34.0f };
+        if (WuxiaUI_DrawButton(vr, vLbl, vCol, micOn, 11.5f)) {
+            if (!voiceOk) {
+                OW_SetBanner("MIC CHI HOAT DONG KHI KET NOI PHONG ONLINE (EOS)!", 2.8f);
+            } else {
+                bool nextMic = !micOn;
+                Net_VoiceSetMicEnabled(nextMic);
+                OW_SetBanner(nextMic ? "DA BAT MIC VOICE CHAT!" : "DA TAT MIC VOICE CHAT", 2.2f);
+            }
+        }
     }
 
     if (s_mightTimer > 0.0f)

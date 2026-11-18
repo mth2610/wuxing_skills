@@ -153,3 +153,64 @@ bool EmissionSink_Ribbon(void *user,const EmissionSpawn *spawn) {
     return TrailRibbon_Spawn(&config)>=0;
 }
 
+int EmissionGranularSink_Flush(EmissionGranularSink *sink) {
+    if (!sink || sink->batchCount <= 0) return 0;
+    Vector3 rNorm = Vector3LengthSqr(sink->receiverNormal) > 1e-5f
+        ? sink->receiverNormal : (Vector3){0.0f, 1.0f, 0.0f};
+    int added = GranularSim_AppendCluster(sink->batch, sink->batchCount, sink->receiverPoint, rNorm);
+    sink->batchCount = 0;
+    return added;
+}
+
+bool EmissionSink_Granular(void *user, const EmissionSpawn *spawn) {
+    EmissionGranularSink *sink = (EmissionGranularSink *)user;
+    if (!sink || !spawn || spawn->kind != EMISSION_GRANULAR || !spawn->spawnTemplate) return false;
+    if (sink->batchCount >= EMISSION_GRANULAR_BATCH_CAP) {
+        EmissionGranularSink_Flush(sink);
+    }
+
+    GranularGrainState grain = *(const GranularGrainState *)spawn->spawnTemplate;
+    grain.position = spawn->sample.position;
+    uint32_t h = (uint32_t)(spawn->sequence * 747796405u + 2891336453u);
+    h ^= h >> 16; h *= 0x7feb352du; h ^= h >> 15;
+    grain.seed = (float)(h & 0x00ffffffu) / 16777216.0f;
+
+    bool hasRad = fabsf(sink->initialSpeed) > 1e-4f;
+    bool hasSwirl = fabsf(sink->swirlSpeed) > 1e-4f;
+    if (hasRad || hasSwirl) {
+        Vector3 N = spawn->sample.normal;
+        float sLen = sqrtf(N.x * N.x + N.y * N.y + N.z * N.z);
+        if (sLen > 1e-4f) {
+            N = (Vector3){N.x / sLen, N.y / sLen, N.z / sLen};
+        } else {
+            Vector3 radDiff = {spawn->sample.position.x - sink->center.x,
+                               spawn->sample.position.y - sink->center.y,
+                               spawn->sample.position.z - sink->center.z};
+            float radLen = sqrtf(radDiff.x * radDiff.x + radDiff.y * radDiff.y + radDiff.z * radDiff.z);
+            N = radLen > 1e-4f ? (Vector3){radDiff.x / radLen, radDiff.y / radLen, radDiff.z / radLen}
+                               : (Vector3){0.0f, 1.0f, 0.0f};
+        }
+        Vector3 vel = {N.x * sink->initialSpeed, N.y * sink->initialSpeed, N.z * sink->initialSpeed};
+        if (hasSwirl) {
+            Vector3 axis = sink->swirlAxis;
+            float axLen = sqrtf(axis.x * axis.x + axis.y * axis.y + axis.z * axis.z);
+            if (axLen > 1e-4f) {
+                axis = (Vector3){axis.x / axLen, axis.y / axLen, axis.z / axLen};
+                Vector3 swirlT = {axis.y * N.z - axis.z * N.y,
+                                  axis.z * N.x - axis.x * N.z,
+                                  axis.x * N.y - axis.y * N.x};
+                float stLen = sqrtf(swirlT.x * swirlT.x + swirlT.y * swirlT.y + swirlT.z * swirlT.z);
+                if (stLen > 1e-4f) {
+                    vel.x += (swirlT.x / stLen) * sink->swirlSpeed;
+                    vel.y += (swirlT.y / stLen) * sink->swirlSpeed;
+                    vel.z += (swirlT.z / stLen) * sink->swirlSpeed;
+                }
+            }
+        }
+        grain.velocity = vel;
+    }
+
+    sink->batch[sink->batchCount++] = grain;
+    return true;
+}
+

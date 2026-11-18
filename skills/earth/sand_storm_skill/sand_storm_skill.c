@@ -4,6 +4,7 @@
 #include "core/granular/granular_sim.h"
 #include "core/motion/motion_fields.h"
 #include "core/presets/vfx_presets.h"
+#include "core/trails/trail_ribbon.h"
 #include "core/map_manager.h"
 #include "entities/entities.h"
 #include "raymath.h"
@@ -18,6 +19,7 @@
 #endif
 
 #define MAX_SAND_STORM_INSTANCES 4
+#define SAND_STORM_RIBBON_COUNT  3
 #define SAND_SPINUP_DURATION     0.28f
 #define SAND_TORNADO_SPEED       6.8f
 #define SAND_TORNADO_MAX_RANGE   10.5f
@@ -36,6 +38,7 @@ typedef struct {
     int casterTeam;
     SandStormPhase phase;
     float timer;
+    float totalAge;
     float dustTimer;
     float progress;
     float maxRange;
@@ -51,6 +54,8 @@ typedef struct {
     Vector3 forward;
 
     MotionFieldHandle tornadoField;
+    TrailAttachmentHandle ribbonAttach[SAND_STORM_RIBBON_COUNT];
+    int ribbonTrailId[SAND_STORM_RIBBON_COUNT];
 } SandStormInstance;
 
 static SandStormInstance s_sandInstances[MAX_SAND_STORM_INSTANCES];
@@ -66,11 +71,40 @@ static float SandStorm_Hash01(unsigned int x)
     return (float)(x & 0x00ffffffu) / 16777216.0f;
 }
 
+static Vector3 SandStorm_RibbonOrbitPos(const SandStormInstance *inst, int idx, float age)
+{
+    static const float hFrac[SAND_STORM_RIBBON_COUNT] = { 0.28f, 0.56f, 0.78f };
+    static const float speedMul[SAND_STORM_RIBBON_COUNT] = { 7.8f, -6.2f, 9.4f };
+    static const float phaseOff[SAND_STORM_RIBBON_COUNT] = { 0.0f, 2.094f, 4.188f };
+
+    float baseR = 0.24f * inst->sizeScale;
+    float topR = 1.38f * inst->sizeScale;
+    float height = 3.65f * inst->sizeScale;
+    float hn = hFrac[idx];
+    float r = (baseR + (topR - baseR) * powf(hn, 1.30f)) * 0.92f;
+    float ang = age * speedMul[idx] + phaseOff[idx];
+    return (Vector3){
+        inst->tornadoPos.x + cosf(ang) * r,
+        inst->tornadoPos.y + hn * height,
+        inst->tornadoPos.z + sinf(ang) * r
+    };
+}
+
 static void SandStorm_ReleaseTornado(SandStormInstance *inst)
 {
     if (inst->tornadoField != MOTION_FIELD_INVALID) {
         MotionFields_Stop(inst->tornadoField);
         inst->tornadoField = MOTION_FIELD_INVALID;
+    }
+    for (int r = 0; r < SAND_STORM_RIBBON_COUNT; r++) {
+        if (inst->ribbonTrailId[r] >= 0) {
+            TrailRibbon_ReleaseHead(inst->ribbonTrailId[r]);
+            inst->ribbonTrailId[r] = -1;
+        }
+        if (inst->ribbonAttach[r] != 0) {
+            TrailAttachment_Destroy(inst->ribbonAttach[r]);
+            inst->ribbonAttach[r] = 0;
+        }
     }
     GranularSim_SetTornadoFunnel((Vector3){0}, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, false);
 }
@@ -105,6 +139,10 @@ void InitSandStormSkill(int screenWidth, int screenHeight)
         s_sandInstances[i].active = false;
         s_sandInstances[i].phase = SAND_PHASE_IDLE;
         s_sandInstances[i].tornadoField = MOTION_FIELD_INVALID;
+        for (int r = 0; r < SAND_STORM_RIBBON_COUNT; r++) {
+            s_sandInstances[i].ribbonAttach[r] = 0;
+            s_sandInstances[i].ribbonTrailId[r] = -1;
+        }
     }
     s_sandSkillIndex = Skill_GetIndexByName("SAND_STORM");
     if (s_sandSkillIndex >= 0) {
@@ -135,10 +173,15 @@ void CastSandStormSkill(int agentId, Vector3 startPos, Vector3 target, SkillPara
     inst->casterTeam = caster ? (int)caster->team : (int)TEAM_ALLY;
     inst->phase = SAND_PHASE_SPINUP;
     inst->timer = 0.0f;
+    inst->totalAge = 0.0f;
     inst->dustTimer = 0.0f;
     inst->progress = 0.0f;
     inst->hitApplied = false;
     inst->tornadoField = MOTION_FIELD_INVALID;
+    for (int r = 0; r < SAND_STORM_RIBBON_COUNT; r++) {
+        inst->ribbonAttach[r] = 0;
+        inst->ribbonTrailId[r] = -1;
+    }
 
     inst->sizeScale = params.sizeScale > 0.05f ? params.sizeScale : 1.0f;
     inst->speed = SAND_TORNADO_SPEED;
@@ -157,13 +200,13 @@ void CastSandStormSkill(int agentId, Vector3 startPos, Vector3 target, SkillPara
     inst->targetPos.y = MapManager_GetGroundHeightAt(inst->targetPos.x, inst->targetPos.z);
     inst->tornadoPos = inst->startPos;
 
-    // 1. Seed 2,560 fine DEM sand grains along a conical tornado column
+    // 1. Seed 2,800 stratified multi-material 3D grains (Sand + Soil Clods + Gravel + Twigs + Leaves)
     GranularSim_Init();
-    static GranularGrainState s_grains[2560];
-    const int count = 2560;
-    const float baseR = 0.22f * inst->sizeScale;
-    const float topR = 1.35f * inst->sizeScale;
-    const float height = 3.60f * inst->sizeScale;
+    static GranularGrainState s_grains[2800];
+    const int count = 2800;
+    const float baseR = 0.24f * inst->sizeScale;
+    const float topR = 1.38f * inst->sizeScale;
+    const float height = 3.65f * inst->sizeScale;
     const float transitDur = inst->maxRange / inst->speed;
     const float totalLife = SAND_SPINUP_DURATION + transitDur + SAND_DUNE_HOLD_DURATION + 0.8f;
 
@@ -174,7 +217,30 @@ void CastSandStormSkill(int agentId, Vector3 startPos, Vector3 target, SkillPara
         float u2 = SandStorm_Hash01(s + 3u);
         float u3 = SandStorm_Hash01(s + 4u);
 
-        float hn = u1 * u1; /* denser near ground skirt, flaring upward */
+        uint32_t matId = GRANULAR_MAT_DESERT_SAND;
+        float gRadius = 0.018f + 0.006f * u3;
+        float hn = u1 * u1;
+
+        // Stratified debris mix:
+        // 62% Desert Sand, 16% Loess Soil Clods, 12% Coarse Gravel, 6% Dry Twigs, 4% Dry Leaves
+        if (u3 > 0.96f) {
+            matId = GRANULAR_MAT_DRY_LEAF;
+            gRadius = (0.032f + 0.012f * u2) * inst->sizeScale;
+            hn = 0.25f + 0.72f * u1;
+        } else if (u3 > 0.90f) {
+            matId = GRANULAR_MAT_DRY_TWIG;
+            gRadius = (0.030f + 0.012f * u2) * inst->sizeScale;
+            hn = 0.15f + 0.70f * u1;
+        } else if (u3 > 0.78f) {
+            matId = GRANULAR_MAT_COARSE_GRAVEL;
+            gRadius = (0.032f + 0.018f * u2) * inst->sizeScale;
+            hn = u1 * u1 * 0.42f; // Heavy stones stay near the base skirt
+        } else if (u3 > 0.62f) {
+            matId = GRANULAR_MAT_LOESS_SOIL;
+            gRadius = (0.028f + 0.016f * u2) * inst->sizeScale;
+            hn = u1 * 0.75f;
+        }
+
         float y = 0.05f + hn * height;
         float coneR = baseR + (topR - baseR) * powf(hn, 1.35f);
         float r = coneR * (0.18f + 0.87f * u2);
@@ -187,19 +253,70 @@ void CastSandStormSkill(int agentId, Vector3 startPos, Vector3 target, SkillPara
                 inst->startPos.z + sinf(angle) * r
             },
             .velocity = {
-                -sinf(angle) * 6.5f,
+                -sinf(angle) * 7.2f,
                 2.5f + u3 * 1.5f,
-                cosf(angle) * 6.5f
+                cosf(angle) * 7.2f
             },
-            .radius = 0.017f + 0.006f * u3,
+            .radius = gRadius,
             .lifetime = totalLife * (0.90f + 0.20f * u2),
             .seed = u0,
-            .contactAO = 0.0f,
-            .materialId = GRANULAR_MAT_DESERT_SAND,
+            .contactAO = 0.15f,
+            .materialId = matId,
             .flags = 0u
         };
     }
     GranularSim_SpawnCluster(s_grains, count, inst->startPos, (Vector3){0.0f, 1.0f, 0.0f});
+
+    // 1b. Pre-scatter 280 resting ground debris grains along the path to be entrained by the storm
+    static GranularGrainState s_pathBed[280];
+    Vector3 rightVec = {-inst->forward.z, 0.0f, inst->forward.x};
+    for (int i = 0; i < 280; i++) {
+        unsigned int s = (unsigned int)i * 1597334677u + 17u;
+        float u0 = SandStorm_Hash01(s + 1u);
+        float u1 = SandStorm_Hash01(s + 2u);
+        float u2 = SandStorm_Hash01(s + 3u);
+        float along = u0 * inst->maxRange;
+        float lat = (u1 - 0.5f) * 2.4f * inst->sizeScale;
+        Vector3 gp = {
+            inst->startPos.x + inst->forward.x * along + rightVec.x * lat,
+            0.0f,
+            inst->startPos.z + inst->forward.z * along + rightVec.z * lat
+        };
+        gp.y = MapManager_GetGroundHeightAt(gp.x, gp.z) + 0.03f;
+        uint32_t matId = (u2 < 0.35f) ? GRANULAR_MAT_LOESS_SOIL
+                       : (u2 < 0.65f ? GRANULAR_MAT_COARSE_GRAVEL
+                                     : (u2 < 0.85f ? GRANULAR_MAT_DRY_LEAF : GRANULAR_MAT_DRY_TWIG));
+        s_pathBed[i] = (GranularGrainState){
+            .position = gp,
+            .velocity = {0.0f, 0.0f, 0.0f},
+            .radius = 0.030f + 0.014f * u2,
+            .lifetime = totalLife,
+            .seed = u0,
+            .contactAO = 0.25f,
+            .materialId = matId,
+            .flags = 1u // Resting bed ready for storm entrainment
+        };
+    }
+    GranularSim_AppendCluster(s_pathBed, 280, inst->startPos, (Vector3){0.0f, 1.0f, 0.0f});
+
+    // 1c. GPU-simulated Helical Wind & Dust Ribbons (2x TRAIL_PRESET_SMOKE + 1x TRAIL_PRESET_WIND_BLADE)
+    for (int r = 0; r < SAND_STORM_RIBBON_COUNT; r++) {
+        Vector3 rPos = SandStorm_RibbonOrbitPos(inst, r, 0.0f);
+        inst->ribbonAttach[r] = TrailAttachment_Create(MatrixTranslate(rPos.x, rPos.y, rPos.z));
+        if (inst->ribbonAttach[r] != 0) {
+            TrailRibbonConfig rcfg = TrailRibbon_Default();
+            rcfg.mode = TRAIL_RIBBON_HEAD_ANCHORED;
+            rcfg.attachment = inst->ribbonAttach[r];
+            rcfg.nodeCount = (r == 2) ? 20 : 24;
+            rcfg.lengthM = (r == 2) ? 2.6f * inst->sizeScale : 3.2f * inst->sizeScale;
+            rcfg.widthM = (r == 2) ? 0.24f * inst->sizeScale : 0.48f * inst->sizeScale;
+            rcfg.lifetimeSec = SAND_SPINUP_DURATION + transitDur + 0.35f;
+            rcfg.headPosition = rPos;
+            rcfg.tailDirection = (Vector3){0.0f, -0.4f, 0.0f};
+            VFX_TrailRibbonApplyPreset(&rcfg, (r == 2) ? TRAIL_PRESET_WIND_BLADE : TRAIL_PRESET_SMOKE, VC_MAT_EARTH);
+            inst->ribbonTrailId[r] = TrailRibbon_Spawn(&rcfg);
+        }
+    }
 
     // 2. Moving FIELD_CAPSULE MotionField (swirl + curl turbulence + updraft)
     FieldDesc fd = MotionField_Default();
@@ -244,6 +361,17 @@ void UpdateSandStormSkill(float dt, Vector3 enemyPos, float enemyRadius)
         if (!inst->active) continue;
 
         inst->timer += dt;
+        inst->totalAge += dt;
+
+        // Update orbiting GPU trail attachments during spinup & advance
+        if (inst->phase == SAND_PHASE_SPINUP || inst->phase == SAND_PHASE_ADVANCE) {
+            for (int r = 0; r < SAND_STORM_RIBBON_COUNT; r++) {
+                if (inst->ribbonAttach[r] != 0) {
+                    Vector3 rPos = SandStorm_RibbonOrbitPos(inst, r, inst->totalAge);
+                    TrailAttachment_Update(inst->ribbonAttach[r], MatrixTranslate(rPos.x, rPos.y, rPos.z), dt, false);
+                }
+            }
+        }
 
         if (inst->phase == SAND_PHASE_SPINUP) {
             if (inst->timer >= SAND_SPINUP_DURATION) {
@@ -273,21 +401,13 @@ void UpdateSandStormSkill(float dt, Vector3 enemyPos, float enemyRadius)
             GranularSim_SetTornadoFunnel(inst->tornadoPos, baseR, topR, height,
                                          7.5f, 3.8f, true);
 
-            // 3-tier dust sheath wrapping base skirt, mid-funnel, and upper crown
+            // Ground-hugging scouring dust puff at base skirt (1 clean call per 0.14s)
             inst->dustTimer += dt;
-            if (inst->dustTimer >= 0.07f) {
+            if (inst->dustTimer >= 0.14f) {
                 inst->dustTimer = 0.0f;
                 VFX_ComposeImpactDustVariant(
                     Vector3Add(inst->tornadoPos, (Vector3){0.0f, 0.15f, 0.0f}),
-                    VC_MAT_EARTH, 1.50f * inst->sizeScale, 0.85f,
-                    VFX_IMPACT_DUST_VARIANT_DUST_PUFF);
-                VFX_ComposeImpactDustVariant(
-                    Vector3Add(inst->tornadoPos, (Vector3){0.0f, 1.15f * inst->sizeScale, 0.0f}),
-                    VC_MAT_EARTH, 1.25f * inst->sizeScale, 0.70f,
-                    VFX_IMPACT_DUST_VARIANT_DUST_PUFF);
-                VFX_ComposeImpactDustVariant(
-                    Vector3Add(inst->tornadoPos, (Vector3){0.0f, 2.35f * inst->sizeScale, 0.0f}),
-                    VC_MAT_EARTH, 1.60f * inst->sizeScale, 0.60f,
+                    VC_MAT_EARTH, 1.45f * inst->sizeScale, 0.78f,
                     VFX_IMPACT_DUST_VARIANT_DUST_PUFF);
             }
 

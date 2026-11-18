@@ -16,6 +16,8 @@
 #include "game/quest_datau.h"
 #include "open_world/ow_world.h"
 #include "open_world/ow_quest_npc.h"
+#include "open_world/ow_sandbox_modes.h"
+#include "open_world/ow_weather.h"
 #include "open_world/realms/ow_desert_earth.h"
 #include "ai/ai.h"
 #include "ui/ui.h"
@@ -81,24 +83,6 @@ static void BuildGameTouchSlots(const PlayerEntity *player, UITouchSkillSlot out
         outSlots[k].ready = false;
     }
     if (!a) return;
-
-    if (a->taijiActive)
-    {
-        int phong = Skill_GetIndexByName("TAIJI_PHONG");
-        int loi   = Skill_GetIndexByName("TAIJI_LOI");
-        int taijiIdx[2] = {phong, loi};
-        for (int k = 0; k < 2; k++)
-        {
-            if (taijiIdx[k] >= 0)
-            {
-                outSlots[k].skillIndex = taijiIdx[k];
-                UI_FormatShortSkillName(GetRegisteredSkillName(taijiIdx[k]), outSlots[k].shortLabel, sizeof(outSlots[k].shortLabel));
-                outSlots[k].color = GetRegisteredSkillColor(taijiIdx[k]);
-                outSlots[k].ready = SkillManager_CanCast(taijiIdx[k], player->agentId);
-            }
-        }
-        return;
-    }
 
     for (int k = 0; k < AGENT_SKILL_SLOTS && k < 5; k++)
     {
@@ -301,14 +285,20 @@ static void ApplyModeBalanceToPlayer(int agentId)
     WardrobeItemStats ws = PlayerWardrobe_GetTotalStats(pw);
     float dmgOut = 1.0f + fmaxf(0.0f, ws.elementalBonus);
     float dmgTaken = fmaxf(0.25f, 1.0f - fmaxf(0.0f, ws.elementalResist));
-    if (s_mode == GAME_MODE_EXPLORE && s_exploreRealm == 3 && OW_GetMightTimer() > 0.0f) {
-        dmgOut += 0.35f;
-        dmgTaken = fmaxf(0.25f, dmgTaken - 0.30f);
+    float moveSpd = (ws.speedMultiplier > 0.0f) ? ws.speedMultiplier : 1.0f;
+    if (s_mode == GAME_MODE_EXPLORE && s_exploreRealm == 3) {
+        if (OW_GetMightTimer() > 0.0f) {
+            dmgOut += 0.35f;
+            dmgTaken = fmaxf(0.25f, dmgTaken - 0.30f);
+        }
+        const Agent *pa = Entity_GetAgent(agentId);
+        dmgOut *= OWSandbox_GetSlaughterDamageMult(pa);
+        moveSpd *= OWWeather_GetMoveSpeedMult() * OWSandbox_GetSlaughterSpeedMult(pa);
     }
     AgentPvEBonuses b = {
         .bonusMaxHealth  = ws.bonusHealth,
         .bonusMaxMana    = ws.bonusMana,
-        .moveSpeedMult   = (ws.speedMultiplier > 0.0f) ? ws.speedMultiplier : 1.0f,
+        .moveSpeedMult   = moveSpd,
         .damageOutMult   = dmgOut,
         .damageTakenMult = dmgTaken,
         .manaRegenMult   = 1.0f + fmaxf(0.0f, ws.manaRegenBonus),
@@ -1134,14 +1124,7 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
         }
     }
 
-    // Thái Cực sting — the frame the local player crosses into the state.
-    {
-        static bool s_prevTaiji = false;
-        bool now = Entity_IsTaijiActive(player->agentId);
-        if (now && !s_prevTaiji)
-            Audio_PlaySFX(SFX_TAIJI_ENTER);
-        s_prevTaiji = now;
-    }
+    // Thái Cực mode disabled in active gameplay per user request (incomplete feature).
 
     // Combat hits/clashes → SFX (host only; the client mirrors positions,
     // not combat events). Peek is non-draining, one frame's worth.

@@ -21,6 +21,8 @@ typedef enum {
     GRANULAR_MAT_FLOWER_PETAL,      // Silky blossom petal (high buoyancy, spiral flutter)
     GRANULAR_MAT_ICE_SHARD,         // Crystalline frost/ice shard (low mu, high Fresnel/glint)
     GRANULAR_MAT_SNOW_POWDER,       // Cohesive powder snow (sintering cohesion, ice sparkle)
+    GRANULAR_MAT_CRYSTAL_SHARD,     // Translucent spirit jade/quartz crystal shard (Beer-Lambert + Fresnel)
+    GRANULAR_MAT_METAL_SHARD,       // Forged steel/bronze razor fragment (high density, metallic F0 glint)
     GRANULAR_MAT_COUNT
 } GranularMaterialId;
 
@@ -29,7 +31,8 @@ typedef enum {
     GRANULAR_MORPH_ANGULAR_CLOD   = 1, // Discrete faceted pebbles & soil clods
     GRANULAR_MORPH_PLANAR_LAMINA  = 2, // Thin aerofoil leaves & petals with 3D tumble & flutter
     GRANULAR_MORPH_ELONGATED_TWIG = 3, // Anisotropic woody segments & splinters
-    GRANULAR_MORPH_CRYSTAL_SHARD  = 4  // Faceted translucent ice/mineral shards
+    GRANULAR_MORPH_CRYSTAL_SHARD  = 4, // Faceted translucent ice/mineral shards
+    GRANULAR_MORPH_METAL_SHARD    = 5  // Chiseled 4-plane diamond metallic blade/shrapnel
 } GranularMorphology;
 
 typedef struct {

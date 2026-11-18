@@ -55,6 +55,8 @@ VFX_GranularSandConfig VFX_GranularSand_DefaultConfig(void)
     cfg.bedRadius           = 3.4f;
     cfg.chargeDuration      = 0.75f;
     cfg.waveSpeed           = 9.5f;
+    cfg.tertiaryMaterialId  = GRANULAR_MAT_LOESS_SOIL;
+    cfg.tertiaryRatio       = 0.0f;
     return cfg;
 }
 
@@ -72,6 +74,7 @@ void VFX_GranularSand_ApplyPreset(VFX_GranularSandConfig *cfg, VFX_GranularPrese
     if (!cfg) return;
     cfg->preset = preset;
     cfg->secondaryRatio = 0.0f;
+    cfg->tertiaryRatio = 0.0f;
     cfg->bedRadius = 2.5f;
     cfg->chargeDuration = 0.0f;
     cfg->waveSpeed = 8.0f;
@@ -196,6 +199,51 @@ void VFX_GranularSand_ApplyPreset(VFX_GranularSandConfig *cfg, VFX_GranularPrese
         cfg->lifetime            = 5.5f;
         cfg->dustIntensity       = 1.10f;
         break;
+    case VFX_GRANULAR_PRESET_DESERT_SAND_TEMPEST:
+        cfg->materialId          = GRANULAR_MAT_DESERT_SAND;
+        cfg->secondaryMaterialId = GRANULAR_MAT_LOESS_SOIL;
+        cfg->secondaryRatio      = 0.18f;
+        cfg->tertiaryMaterialId  = GRANULAR_MAT_COARSE_GRAVEL;
+        cfg->tertiaryRatio       = 0.12f;
+        cfg->grainCount          = 2800;
+        cfg->grainRadius         = 0.024f;
+        cfg->spreadRadius        = 1.35f;
+        cfg->bedRadius           = 3.0f;
+        cfg->launchSpeed         = 3.8f;
+        cfg->swirlSpeed          = 9.5f;
+        cfg->lifetime            = 6.5f;
+        cfg->dustIntensity       = 0.85f;
+        break;
+    case VFX_GRANULAR_PRESET_AUTUMN_GALE_WHIRLWIND:
+        cfg->materialId          = GRANULAR_MAT_DRY_LEAF;
+        cfg->secondaryMaterialId = GRANULAR_MAT_DRY_TWIG;
+        cfg->secondaryRatio      = 0.22f;
+        cfg->tertiaryMaterialId  = GRANULAR_MAT_FRESH_LEAF;
+        cfg->tertiaryRatio       = 0.14f;
+        cfg->grainCount          = 2048;
+        cfg->grainRadius         = 0.036f;
+        cfg->spreadRadius        = 1.45f;
+        cfg->bedRadius           = 3.2f;
+        cfg->launchSpeed         = 3.6f;
+        cfg->swirlSpeed          = 8.8f;
+        cfg->lifetime            = 6.8f;
+        cfg->dustIntensity       = 0.35f;
+        break;
+    case VFX_GRANULAR_PRESET_CRYSTAL_METAL_STORM:
+        cfg->materialId          = GRANULAR_MAT_METAL_SHARD;
+        cfg->secondaryMaterialId = GRANULAR_MAT_CRYSTAL_SHARD;
+        cfg->secondaryRatio      = 0.35f;
+        cfg->tertiaryMaterialId  = GRANULAR_MAT_GOLD_IRON_SAND;
+        cfg->tertiaryRatio       = 0.25f;
+        cfg->grainCount          = 2048;
+        cfg->grainRadius         = 0.032f;
+        cfg->spreadRadius        = 1.35f;
+        cfg->bedRadius           = 2.8f;
+        cfg->launchSpeed         = 4.0f;
+        cfg->swirlSpeed          = 10.2f;
+        cfg->lifetime            = 6.2f;
+        cfg->dustIntensity       = 0.40f;
+        break;
     default:
         break;
     }
@@ -213,7 +261,10 @@ const char *VFX_GranularSandPreset_Name(VFX_GranularPreset preset)
         "Wuxia Leaf Palm Strike",
         "Blossom Qi Tempest",
         "Frost Shard Blizzard",
-        "Earth Shatter Wave"
+        "Earth Shatter Wave",
+        "Desert Sand Tempest",
+        "Autumn Gale Whirlwind",
+        "Crystal Metal Storm"
     };
     return (preset >= 0 && preset < VFX_GRANULAR_PRESET_COUNT) ? names[preset] : "Unknown";
 }
@@ -226,11 +277,13 @@ int VFX_GranularSand_GetParams(VFX_GranularSandConfig *cfg, VFX_ParamDef *out, i
         "Sand Geyser", "Dune Avalanche", "Quicksand Vortex",
         "Sand Blast Jet", "Boulder Crush Talus", "Hourglass Pillar",
         "Wuxia Leaf Palm Strike", "Blossom Qi Tempest",
-        "Frost Shard Blizzard", "Earth Shatter Wave"
+        "Frost Shard Blizzard", "Earth Shatter Wave",
+        "Desert Sand Tempest", "Autumn Gale Whirlwind", "Crystal Metal Storm"
     };
     static const char *const matNames[] = {
         "Desert Sand", "Coarse Gravel", "Loess Soil", "Gold Iron Sand", "Volcanic Ash",
-        "Dry Leaf", "Fresh Leaf", "Dry Twig", "Flower Petal", "Ice Shard", "Snow Powder"
+        "Dry Leaf", "Fresh Leaf", "Dry Twig", "Flower Petal", "Ice Shard", "Snow Powder",
+        "Crystal Shard", "Metal Shard"
     };
 
     if (n < max) out[n++] = (VFX_ParamDef){
@@ -242,6 +295,24 @@ int VFX_GranularSand_GetParams(VFX_GranularSandConfig *cfg, VFX_ParamDef *out, i
         .name = "Material", .group = "Material", .type = VFX_PARAM_ENUM,
         .valPtr = &cfg->materialId, .minInt = 0, .maxInt = GRANULAR_MAT_COUNT - 1,
         .stepFloat = 1.0f, .enumNames = matNames, .enumCount = GRANULAR_MAT_COUNT
+    };
+    if (n < max) out[n++] = (VFX_ParamDef){
+        .name = "Secondary Mat", .group = "Material", .type = VFX_PARAM_ENUM,
+        .valPtr = &cfg->secondaryMaterialId, .minInt = 0, .maxInt = GRANULAR_MAT_COUNT - 1,
+        .stepFloat = 1.0f, .enumNames = matNames, .enumCount = GRANULAR_MAT_COUNT
+    };
+    if (n < max) out[n++] = (VFX_ParamDef){
+        .name = "Secondary Ratio", .group = "Material", .type = VFX_PARAM_FLOAT,
+        .valPtr = &cfg->secondaryRatio, .minFloat = 0.0f, .maxFloat = 0.5f, .stepFloat = 0.05f
+    };
+    if (n < max) out[n++] = (VFX_ParamDef){
+        .name = "Tertiary Mat", .group = "Material", .type = VFX_PARAM_ENUM,
+        .valPtr = &cfg->tertiaryMaterialId, .minInt = 0, .maxInt = GRANULAR_MAT_COUNT - 1,
+        .stepFloat = 1.0f, .enumNames = matNames, .enumCount = GRANULAR_MAT_COUNT
+    };
+    if (n < max) out[n++] = (VFX_ParamDef){
+        .name = "Tertiary Ratio", .group = "Material", .type = VFX_PARAM_FLOAT,
+        .valPtr = &cfg->tertiaryRatio, .minFloat = 0.0f, .maxFloat = 0.35f, .stepFloat = 0.05f
     };
     if (n < max) out[n++] = (VFX_ParamDef){
         .name = "Grain count", .group = "DEM", .type = VFX_PARAM_INT,
@@ -298,6 +369,8 @@ int VFX_ComposeGranularSandEx(Vector3 source, Vector3 target, const VFX_Granular
 
     bool isMultiPhaseWuxia = (cfg->preset >= VFX_GRANULAR_PRESET_WUXIA_LEAF_PALM_STRIKE &&
                               cfg->preset <= VFX_GRANULAR_PRESET_EARTH_SHATTER_WAVE);
+    bool isCycloneTempest = (cfg->preset >= VFX_GRANULAR_PRESET_DESERT_SAND_TEMPEST &&
+                             cfg->preset <= VFX_GRANULAR_PRESET_CRYSTAL_METAL_STORM);
 
     for (int i = 0; i < count; i++) {
         unsigned int seedBase = (unsigned int)i * 747796405u + 2891336453u;
@@ -327,9 +400,32 @@ int VFX_ComposeGranularSandEx(Vector3 source, Vector3 target, const VFX_Granular
 
             if (cfg->secondaryRatio > 0.01f && u3 < cfg->secondaryRatio) {
                 grainMat = (uint32_t)cfg->secondaryMaterialId;
+            } else if (cfg->tertiaryRatio > 0.01f && u3 < cfg->secondaryRatio + cfg->tertiaryRatio) {
+                grainMat = (uint32_t)cfg->tertiaryMaterialId;
             } else if (cfg->preset == VFX_GRANULAR_PRESET_WUXIA_LEAF_PALM_STRIKE && u3 > 0.86f) {
                 grainMat = GRANULAR_MAT_FRESH_LEAF;
             } else if (cfg->preset == VFX_GRANULAR_PRESET_EARTH_SHATTER_WAVE && u3 > 0.85f) {
+                grainMat = GRANULAR_MAT_DRY_TWIG;
+            }
+        } else if (isCycloneTempest) {
+            float baseR = 0.28f;
+            float topR = cfg->spreadRadius > 0.5f ? cfg->spreadRadius : 1.40f;
+            float height = 3.55f;
+            float hn = u1 * u1;
+            float coneR = baseR + (topR - baseR) * powf(hn, 1.35f);
+            float r = coneR * (0.20f + 0.82f * u2);
+            pos.x += cosf(angle) * r;
+            pos.z += sinf(angle) * r;
+            pos.y += 0.05f + hn * height;
+            vel.x = -sinf(angle) * cfg->swirlSpeed * 0.72f;
+            vel.z =  cosf(angle) * cfg->swirlSpeed * 0.72f;
+            vel.y = cfg->launchSpeed * (0.65f + 0.55f * u3);
+
+            if (cfg->secondaryRatio > 0.01f && u3 < cfg->secondaryRatio) {
+                grainMat = (uint32_t)cfg->secondaryMaterialId;
+            } else if (cfg->tertiaryRatio > 0.01f && u3 < cfg->secondaryRatio + cfg->tertiaryRatio) {
+                grainMat = (uint32_t)cfg->tertiaryMaterialId;
+            } else if (cfg->preset == VFX_GRANULAR_PRESET_DESERT_SAND_TEMPEST && u3 > 0.92f) {
                 grainMat = GRANULAR_MAT_DRY_TWIG;
             }
         } else {
@@ -431,6 +527,22 @@ int VFX_ComposeGranularSandEx(Vector3 source, Vector3 target, const VFX_Granular
             .fadeTime     = 0.15f
         };
         GranularSim_SpawnWave(&chargeWave);
+    } else if (isCycloneTempest) {
+        GranularWaveDesc funnel = {
+            .kind       = GRANULAR_WAVE_CONICAL_FUNNEL,
+            .origin     = groundPoint,
+            .direction  = {0.0f, 1.0f, 0.0f},
+            .radius     = 0.28f,
+            .topRadius  = cfg->spreadRadius > 0.5f ? cfg->spreadRadius : 1.40f,
+            .length     = 3.55f,
+            .axialSpeed = cfg->launchSpeed,
+            .swirlSpeed = cfg->swirlSpeed,
+            .duration   = fmaxf(cfg->lifetime - 1.2f, 2.5f),
+            .attackTime = 0.15f,
+            .fadeTime   = 0.65f,
+            .loopTop    = true
+        };
+        GranularSim_SpawnWave(&funnel);
     } else if (cfg->preset == VFX_GRANULAR_PRESET_QUICKSAND_VORTEX) {
         MotionFields_SpawnStaticVortex(groundPoint, (Vector3){0.0f, 1.0f, 0.0f},
                                        cfg->spreadRadius * 1.6f, cfg->swirlSpeed,
@@ -555,7 +667,6 @@ static void VC_GranularSand_Update(float dt)
         }
     }
 
-    GranularSim_Update(dt);
     if (GranularSim_GetActiveCount() <= 0) {
         s_granularSandInst.active = false;
     }
@@ -563,7 +674,7 @@ static void VC_GranularSand_Update(float dt)
 
 static void VC_GranularSand_Draw3D(Camera3D cam)
 {
-    GranularSim_DrawBody(cam);
+    (void)cam;
 }
 
 #endif // VC_GRANULAR_SAND_INL

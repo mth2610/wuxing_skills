@@ -28,6 +28,12 @@ typedef enum { ARCH_HERO = 0, ARCH_MINION, ARCH_BOSS } AgentArchetype;
 #define MAX_AGENT_MODIFIERS 4
 
 // PvE-only gear/attribute bonuses (disabled / normalized to 0 in PvP modes).
+typedef enum {
+    PK_MODE_PEACE = 0,     // Hòa Bình: Không đánh Hero khác, không bị người chơi Tỉ Thí đánh
+    PK_MODE_SPAR,          // Tỉ Thí: Đấu giao hữu 1v1, kẹp máu ở 1.0 HP (không chết)
+    PK_MODE_SLAUGHTER      // Đồ Sát: Tự do tấn công mọi Hero ngoài Safe Zone, tích Sát Khí
+} AgentPkMode;
+
 typedef struct {
     float bonusMaxHealth;   // Added to base maxHealth
     float bonusMaxMana;     // Added to base maxMana
@@ -107,7 +113,11 @@ typedef struct {
     AgentPvEBonuses pveBonuses;
 
     // --- Open-world PK & Skill-Mastery tracking ---
-    bool           duelFlag;            // True when player toggles PK/Duel mode outside Safe Zone
+    bool           duelFlag;            // Legacy/sync flag: true when pkMode != PK_MODE_PEACE
+    AgentPkMode    pkMode;              // 3-state open-world PK stance
+    int            infamyLevel;         // Slaughter infamy (Sát Khí) stack count
+    bool           sparDefeated;        // Set when HP hits 1.0f floor during non-lethal SPAR
+    int            lastAttackerId;      // Last Hero/Agent who damaged this agent
     bool           inSafeZone;          // True inside Safe Sanctum (e.g. Oasis) — immune to PK
     int            lastCastSkillIndex;  // Last skill cast by this agent (for direct use-based XP)
     float          lastCastDamageScale; // PvE skill-level damage multiplier (ignored vs ARCH_HERO)
@@ -133,6 +143,11 @@ void Entity_ApplyDamageFrom(int targetId, int attackerId, float baseDamage,
 bool Entity_CanDamageTarget(int attackerId, int targetId);
 void Entity_SetDuelFlag(int agentId, bool on);
 bool Entity_GetDuelFlag(int agentId);
+void Entity_SetPkMode(int agentId, AgentPkMode mode);
+AgentPkMode Entity_GetPkMode(int agentId);
+void Entity_AddInfamy(int agentId, int delta);
+int  Entity_GetInfamyLevel(int agentId);
+bool Entity_ConsumeSparDefeated(int agentId, int *outAttackerId);
 void Entity_SetSafeZone(int agentId, bool inSafe);
 bool Entity_IsInSafeZone(int agentId);
 void Entity_SetLastCast(int agentId, int skillIndex, float pveDamageScale);

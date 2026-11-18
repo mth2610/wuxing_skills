@@ -2,6 +2,9 @@
 #include "core/shaders/common/vfx_composite.glsl"
 
 in vec2 v_corner;
+in vec3 v_worldNormal;
+in vec3 v_worldPos;
+in vec3 v_localPos;
 in float v_life;
 in float v_seed;
 in float v_contactAO;
@@ -18,6 +21,7 @@ uniform vec3 u_highlightColor;
 uniform float u_glintIntensity;
 uniform float u_glintSharpness;
 uniform vec3 u_lightDir;
+uniform vec3 u_camPos;
 
 // Sine-free 2D hash (Mali-safe per ENGINE_LANDMINES)
 float Granular_Hash21(vec2 p)
@@ -50,13 +54,13 @@ GrainOptics getGrainOptics(int matId)
         o.baseCol = vec3(0.910, 0.776, 0.533); o.shadCol = vec3(0.580, 0.447, 0.282); o.highCol = vec3(1.000, 0.973, 0.878);
         o.glintInt = 1.45; o.glintSharp = 128.0;
     } else if (matId == 1) {
-        o.morphology = 1;
+        o.morphology = 1; // Coarse gravel / river scree
         o.baseCol = vec3(0.541, 0.502, 0.455); o.shadCol = vec3(0.188, 0.173, 0.157); o.highCol = vec3(0.863, 0.839, 0.800);
-        o.glintInt = 0.45; o.glintSharp = 48.0;
+        o.glintInt = 0.55; o.glintSharp = 56.0;
     } else if (matId == 2) {
-        o.morphology = 1;
+        o.morphology = 1; // Loess soil clod
         o.baseCol = vec3(0.463, 0.345, 0.227); o.shadCol = vec3(0.165, 0.118, 0.078); o.highCol = vec3(0.698, 0.580, 0.424);
-        o.glintInt = 0.15; o.glintSharp = 24.0;
+        o.glintInt = 0.20; o.glintSharp = 24.0;
     } else if (matId == 3) {
         o.baseCol = vec3(0.776, 0.604, 0.227); o.shadCol = vec3(0.282, 0.188, 0.063); o.highCol = vec3(1.000, 0.910, 0.510);
         o.glintInt = 2.10; o.glintSharp = 160.0;
@@ -99,12 +103,20 @@ GrainOptics getGrainOptics(int matId)
         o.morphology = 0; // Snow powder
         o.baseCol = vec3(0.933, 0.965, 1.000); o.shadCol = vec3(0.502, 0.635, 0.808); o.highCol = vec3(1.000, 1.000, 1.000);
         o.glintInt = 1.75; o.glintSharp = 160.0;
+    } else if (matId == 11) {
+        o.morphology = 4; // Spirit jade/mineral crystal shard
+        o.baseCol = vec3(0.204, 0.776, 0.541); o.shadCol = vec3(0.071, 0.298, 0.220); o.highCol = vec3(0.816, 1.000, 0.910);
+        o.glintInt = 2.40; o.glintSharp = 192.0;
+    } else if (matId == 12) {
+        o.morphology = 5; // Forged metal blade shard
+        o.baseCol = vec3(0.580, 0.635, 0.714); o.shadCol = vec3(0.165, 0.188, 0.235); o.highCol = vec3(1.000, 0.957, 0.824);
+        o.glintInt = 2.85; o.glintSharp = 224.0;
     }
     return o;
 }
 
-// Asymmetrical convex angular pebble / sand-clod signed distance (no polar flower harmonics)
-float Granular_PebbleSDF(vec2 q, float seed)
+// Asymmetrical convex angular sand-clump SDF for fine continuum (no polar harmonics)
+float Granular_FineClumpSDF(vec2 q, float seed)
 {
     float s1 = fract(seed * 13.73 + 0.19);
     float s2 = fract(seed * 29.41 + 0.53);
@@ -129,139 +141,132 @@ float Granular_PebbleSDF(vec2 q, float seed)
     return max(d, length(p) - 0.92);
 }
 
-// Acuminate botanical leaf or rounded blossom petal SDF
-float Granular_LeafLaminaSDF(vec2 q, float seed, bool isPetal, out float midribDist)
-{
-    // Slight natural midrib curvature
-    float bend = (fract(seed * 31.7) - 0.5) * 0.22;
-    vec2 p = q;
-    p.y -= bend * (1.0 - p.x * p.x);
-    midribDist = abs(p.y);
-
-    float t = clamp(p.x * 0.5 + 0.5, 0.0, 1.0);
-    float halfWidth;
-    if (isPetal) {
-        // Tear-drop / lotus petal: narrow base, lush rounded tip
-        halfWidth = sin(pow(t, 0.68) * 3.1415926) * 0.88;
-    } else {
-        // Tapered acuminate leaf blade
-        halfWidth = sin(pow(t, 0.78) * 3.1415926) * (0.76 - 0.14 * t);
-    }
-    float dx = abs(p.x) - 0.92;
-    float dy = abs(p.y) - max(halfWidth, 0.01);
-    return max(dx, dy);
-}
-
-// Anisotropic woody twig segment with side knot
-float Granular_TwigSDF(vec2 q, float seed, out float barkGrain)
-{
-    float curve = (fract(seed * 17.3) - 0.5) * 0.18;
-    vec2 p = q;
-    p.y -= curve * (p.x * p.x - 0.35);
-    float dMain = max(abs(p.x) - 0.90, abs(p.y) - mix(0.18, 0.25, fract(seed * 43.1)));
-
-    // Small forked stub on one side
-    float stubX = (fract(seed * 53.7) - 0.5) * 0.55;
-    vec2 sVec = vec2(p.x - stubX, p.y - 0.16);
-    vec2 sDir = normalize(vec2(0.7, 0.7));
-    float proj = clamp(dot(sVec, sDir), 0.0, 0.42);
-    float dStub = length(sVec - sDir * proj) - 0.09;
-
-    barkGrain = Granular_Hash21(vec2(floor(p.x * 8.0), floor(p.y * 22.0 + seed * 19.0)));
-    return min(dMain, dStub);
-}
-
-// Sharp hexagonal/diamond ice crystal shard SDF
-float Granular_IceShardSDF(vec2 q, float seed, out float ridge)
-{
-    float a0 = (fract(seed * 19.1) - 0.5) * 0.35;
-    float ca = cos(a0), sa = sin(a0);
-    vec2 p = vec2(ca * q.x - sa * q.y, sa * q.x + ca * q.y);
-    float d1 = abs(p.x) * 0.46 + abs(p.y) * 1.15 - 0.85;
-    float d2 = abs(p.x) - 0.92;
-    float d = max(d1, d2);
-    ridge = 1.0 - smoothstep(0.0, 0.22, abs(p.y));
-    return d;
-}
-
 void main()
 {
     if (v_life <= 0.0) discard;
 
     int matId = int(v_materialId + 0.5);
     GrainOptics opt = getGrainOptics(matId);
-    float ao = 1.0 - 0.56 * clamp(v_contactAO, 0.0, 1.0);
+    float ao = 1.0 - 0.52 * clamp(v_contactAO, 0.0, 1.0);
     float lifeFade = smoothstep(0.0, 0.35, v_life);
     vec3 L = normalize(u_lightDir);
-    vec3 V = vec3(0.0, 0.0, 1.0);
+    vec3 V = normalize(u_camPos - v_worldPos);
+
+    if (opt.morphology == 1) {
+        // 3D Chiseled Angular Clod / Pebble (flat geometric facet shading + strata speckle)
+        vec3 N = normalize(v_worldNormal);
+        if (dot(N, V) < 0.0) N = -N;
+
+        float NdotL = max(dot(N, L), 0.0);
+        float skyBounce = 0.20 + 0.14 * clamp(N.y, -1.0, 1.0);
+        float grainNoise = Granular_Hash21(floor(v_localPos.xz * 7.5 + v_seed * 23.0));
+        float macroTone = mix(0.84, 1.16, fract(v_seed * 29.7));
+
+        vec3 albedo = mix(opt.shadCol, opt.baseCol * macroTone * mix(0.84, 1.16, grainNoise), 0.36 + 0.64 * ao);
+        vec3 litBody = albedo * (skyBounce * ao + 0.88 * NdotL * ao);
+
+        vec3 H = normalize(L + V);
+        float spec = pow(max(dot(N, H), 0.0), opt.glintSharp);
+        litBody += opt.highCol * (spec * opt.glintInt * (0.4 + 0.6 * ao));
+
+        finalColor = VFX_ResolveBody(litBody, 1.0, lifeFade);
+        return;
+    }
 
     if (opt.morphology == 2) {
-        // Planar lamina: leaf or flower petal
-        float midribDist = 0.0;
-        bool isPetal = (matId == 8);
-        float dist = Granular_LeafLaminaSDF(v_corner, v_seed, isPetal, midribDist);
-        if (dist > 0.0) discard;
+        // 3D Curved & Folded Botanical Leaf / Petal (wrap diffuse + backlit SSS + veins)
+        vec3 N = normalize(v_worldNormal);
+        if (dot(N, V) < 0.0) N = -N;
 
-        float vein = 1.0 - smoothstep(0.0, 0.09, midribDist);
-        float edgeTip = smoothstep(-0.3, 0.8, v_corner.x);
+        float midrib = 1.0 - smoothstep(0.0, 0.14, abs(v_corner.y));
+        float lateralVein = 1.0 - smoothstep(0.0, 0.08, abs(fract((v_corner.x * 2.2 - abs(v_corner.y) * 1.1) * 2.0) - 0.5));
+        float edgeTip = smoothstep(-0.2, 0.85, v_corner.x);
+
         vec3 baseTone = mix(opt.shadCol, opt.baseCol, 0.45 + 0.55 * v_tiltShade);
-        baseTone = mix(baseTone, opt.highCol, vein * 0.38 + edgeTip * 0.18);
+        baseTone = mix(baseTone, opt.highCol, midrib * 0.38 + lateralVein * 0.12 + edgeTip * 0.18);
 
-        // Dual-sided wrap SSS lighting
-        vec3 N = normalize(vec3(v_corner.y * 0.35, 0.25, 0.90));
-        float wrapDiff = max(0.0, (dot(N, L) + 0.45) / 1.45);
-        vec3 litBody = baseTone * (0.42 * ao + 0.72 * wrapDiff) * v_tiltShade;
-        float coverage = smoothstep(0.0, -0.08, dist) * lifeFade;
-        finalColor = VFX_ResolveBody(litBody, 1.0, coverage);
+        float wrapDiff = max(0.0, (dot(N, L) + 0.55) / 1.55);
+        float backlitSSS = pow(max(dot(-L, V), 0.0), 2.5) * 0.55;
+        vec3 litBody = baseTone * (0.38 * ao + 0.72 * wrapDiff + backlitSSS) * v_tiltShade;
+
+        finalColor = VFX_ResolveBody(litBody, 1.0, lifeFade);
         return;
     }
 
     if (opt.morphology == 3) {
-        // Elongated woody twig
-        float bark = 0.5;
-        float dist = Granular_TwigSDF(v_corner, v_seed, bark);
-        if (dist > 0.0) discard;
+        // 3D Woody Twig Segment (bark striations + faceted cylindrical lighting)
+        vec3 N = normalize(v_worldNormal);
+        if (dot(N, V) < 0.0) N = -N;
 
-        float cylZ = sqrt(max(0.0, 1.0 - clamp(v_corner.y * 3.2, -1.0, 1.0) * clamp(v_corner.y * 3.2, -1.0, 1.0)));
-        vec3 N = normalize(vec3(0.0, v_corner.y * 2.5, cylZ));
+        float bark = Granular_Hash21(vec2(floor(v_localPos.x * 10.0), floor((v_localPos.y + v_localPos.z) * 18.0 + v_seed * 19.0)));
         float NdotL = max(dot(N, L), 0.0);
-        vec3 albedo = mix(opt.shadCol, opt.baseCol * mix(0.80, 1.18, bark), 0.35 + 0.65 * ao);
-        vec3 litBody = albedo * (0.34 * ao + 0.78 * NdotL);
-        float coverage = smoothstep(0.0, -0.08, dist) * lifeFade;
-        finalColor = VFX_ResolveBody(litBody, 1.0, coverage);
+        vec3 albedo = mix(opt.shadCol, opt.baseCol * mix(0.78, 1.22, bark), 0.32 + 0.68 * ao);
+        vec3 litBody = albedo * (0.30 * ao + 0.82 * NdotL);
+
+        finalColor = VFX_ResolveBody(litBody, 1.0, lifeFade);
         return;
     }
 
     if (opt.morphology == 4) {
-        // Faceted ice shard
-        float ridge = 0.0;
-        float dist = Granular_IceShardSDF(v_corner, v_seed, ridge);
-        if (dist > 0.0) discard;
+        // 3D Hexagonal Bipyramid Ice / Spirit Crystal Shard
+        vec3 N = normalize(v_worldNormal);
+        if (dot(N, V) < 0.0) N = -N;
 
-        vec3 N = normalize(vec3(v_corner.x * 0.45, sign(v_corner.y) * 0.65, 0.75));
+        float NoV = clamp(dot(N, V), 0.001, 1.0);
         float NdotL = max(dot(N, L), 0.0);
         vec3 H = normalize(L + V);
         float spec = pow(max(dot(N, H), 0.0), opt.glintSharp);
-        float fresnel = pow(1.0 - max(N.z, 0.0), 2.2);
-        vec3 albedo = mix(opt.shadCol, opt.baseCol, 0.50 + 0.50 * ao);
-        vec3 litBody = albedo * (0.48 * ao + 0.68 * NdotL) + opt.highCol * (spec * opt.glintInt + ridge * 0.35 + fresnel * 0.55);
-        float coverage = smoothstep(0.0, -0.06, dist) * lifeFade;
-        finalColor = VFX_ResolveBody(litBody, 1.0, coverage);
+        float fresnel = pow(1.0 - NoV, 2.4);
+        float backlit = pow(max(dot(-L, V), 0.0), 2.5) * 0.42;
+
+        // Beer-Lambert internal absorption + frosted bevels
+        float pathLen = mix(0.35, 1.35, 1.0 - NoV);
+        vec3 beer = exp(-max(vec3(1.0) - opt.baseCol, vec3(0.08)) * pathLen * 1.15);
+        float bevel = 1.0 - smoothstep(0.0, 0.22, min(v_corner.x, 1.0 - v_corner.x));
+
+        vec3 albedo = mix(opt.shadCol, opt.baseCol, 0.45 + 0.55 * ao) * mix(beer, vec3(1.0), 0.45);
+        vec3 litBody = albedo * (0.40 * ao + 0.72 * NdotL + backlit)
+                     + opt.highCol * (spec * opt.glintInt + fresnel * 0.65 + bevel * 0.35);
+
+        finalColor = VFX_ResolveBody(litBody, 1.0, lifeFade);
         return;
     }
 
-    // Fine continuum (0, 3, 4, 10) or angular clod (1, 2)
-    bool isFineSand = (opt.morphology == 0);
-    float dist = Granular_PebbleSDF(v_corner, v_seed);
+    if (opt.morphology == 5) {
+        // 3D Razor Diamond-Bevel Metal Shard (studio dual-key metallic F0 reflections)
+        vec3 N = normalize(v_worldNormal);
+        if (dot(N, V) < 0.0) N = -N;
+
+        float NoV = clamp(dot(N, V), 0.001, 1.0);
+        vec3 R = reflect(-V, N);
+        vec3 L1 = normalize(vec3(0.45, 0.78, 0.42));
+        vec3 L2 = normalize(vec3(-0.62, 0.35, 0.70));
+        float spec1 = pow(max(dot(R, L1), 0.0), 48.0);
+        float spec2 = pow(max(dot(R, L2), 0.0), 72.0);
+        float skyBand = smoothstep(-0.25, 0.65, R.y);
+        float fresnel = pow(1.0 - NoV, 2.8);
+
+        float facetDiff = 0.28 + 0.72 * max(dot(N, L1), 0.0);
+        vec3 envColor = mix(opt.shadCol * 0.65, opt.baseCol * 1.35 + vec3(0.18, 0.16, 0.12), skyBand);
+        vec3 litBody = mix(opt.baseCol * facetDiff * 0.58, envColor, 0.62) * (0.55 + 0.45 * ao);
+        litBody += opt.highCol * (spec1 * 1.45 + spec2 * 1.15) * opt.glintInt * 0.42;
+        litBody += opt.highCol * fresnel * 0.65;
+
+        finalColor = VFX_ResolveBody(litBody, 1.0, lifeFade);
+        return;
+    }
+
+    // Fine Continuum (Sand, Gold-Iron Sand, Volcanic Ash, Snow Powder)
+    float dist = Granular_FineClumpSDF(v_corner, v_seed);
     if (dist > 0.0) discard;
 
     float centerDepth = clamp(-dist * 1.45, 0.0, 1.0);
     float z = sqrt(max(0.0, 1.0 - (1.0 - centerDepth) * (1.0 - centerDepth)));
     vec3 N = normalize(vec3(v_corner.x * 0.85, v_corner.y * 0.85, z * 1.15));
 
-    vec2 grainGrid = floor((v_corner + vec2(v_seed * 17.0, v_seed * 31.0)) * (isFineSand ? 7.5 : 3.0));
+    vec2 grainGrid = floor((v_corner + vec2(v_seed * 17.0, v_seed * 31.0)) * 7.5);
     float microSpeckle = Granular_Hash21(grainGrid);
-    vec3 microTilt = vec3(microSpeckle - 0.5, Granular_Hash21(grainGrid + 7.3) - 0.5, 0.0) * (isFineSand ? 0.42 : 0.16);
+    vec3 microTilt = vec3(microSpeckle - 0.5, Granular_Hash21(grainGrid + 7.3) - 0.5, 0.0) * 0.42;
     N = normalize(N + microTilt);
 
     float NdotL = max(dot(N, L), 0.0);
@@ -269,17 +274,13 @@ void main()
     float speckleTone = mix(0.82, 1.18, microSpeckle);
 
     vec3 albedo = mix(opt.shadCol, opt.baseCol * macroTone * speckleTone, 0.42 + 0.58 * ao);
-    float ambientFloor = isFineSand ? 0.56 : 0.32;
-    float diffuseGain  = isFineSand ? 0.62 : 0.84;
-    vec3 litBody = albedo * (ambientFloor * ao + diffuseGain * NdotL * ao);
+    vec3 litBody = albedo * (0.56 * ao + 0.62 * NdotL * ao);
 
-    vec3 H = normalize(L + V);
-    float glintMask = step(0.88, microSpeckle) * step(0.55, fract(v_seed * 53.1 + microSpeckle));
+    vec3 H = normalize(L + vec3(0.0, 0.0, 1.0));
+    float glintMask = step(0.86, microSpeckle) * step(0.52, fract(v_seed * 53.1 + microSpeckle));
     float spec = pow(max(dot(N, H), 0.0), max(opt.glintSharp, 24.0));
     litBody += opt.highCol * (spec * opt.glintInt * glintMask * (0.4 + 0.6 * ao));
 
-    float softEdge = isFineSand ? smoothstep(0.0, -0.32, dist) * 0.82 : smoothstep(0.0, -0.10, dist);
-    float coverage = softEdge * lifeFade;
-
+    float coverage = smoothstep(0.0, -0.32, dist) * 0.84 * lifeFade;
     finalColor = VFX_ResolveBody(litBody, 1.0, coverage);
 }

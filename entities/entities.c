@@ -223,6 +223,8 @@ bool Entity_CanDamageTarget(int attackerId, int targetId) {
     if (att->archetype == ARCH_HERO && tgt->archetype == ARCH_HERO) {
         if (att->inSafeZone || tgt->inSafeZone) return false;
         if (att->team != tgt->team) return true;
+        if (att->pkMode == PK_MODE_SLAUGHTER || tgt->pkMode == PK_MODE_SLAUGHTER) return true;
+        if (att->pkMode == PK_MODE_SPAR && tgt->pkMode == PK_MODE_SPAR) return true;
         return att->duelFlag && tgt->duelFlag;
     }
     return att->team != tgt->team;
@@ -250,7 +252,18 @@ void Entity_ApplyDamageFrom(int targetId, int attackerId, float baseDamage,
     }
 
     CancelMeditate(tgt);
-    tgt->health -= dmg;
+    if (att != NULL && dmg > 0.0f) {
+        tgt->lastAttackerId = attackerId;
+    }
+    bool isNonLethalSpar = (att != NULL && att->archetype == ARCH_HERO && tgt->archetype == ARCH_HERO &&
+                            att->team == tgt->team &&
+                            att->pkMode == PK_MODE_SPAR && tgt->pkMode == PK_MODE_SPAR);
+    if (isNonLethalSpar && dmg > 0.0f && (tgt->health - dmg) <= 1.0f) {
+        tgt->health = 1.0f;
+        tgt->sparDefeated = true;
+    } else {
+        tgt->health -= dmg;
+    }
     if (tgt->health > tgt->maxHealth) tgt->health = tgt->maxHealth;
     tgt->velocity.x += knockback.x;
     tgt->velocity.y += knockback.y;
@@ -274,17 +287,54 @@ void Entity_ApplyDamageFrom(int targetId, int attackerId, float baseDamage,
 void Entity_SetDuelFlag(int agentId, bool on) {
     if (agentId < 0 || agentId >= MAX_AGENTS || !agentPool[agentId].active) return;
     agentPool[agentId].duelFlag = on;
+    agentPool[agentId].pkMode = on ? PK_MODE_SPAR : PK_MODE_PEACE;
 }
 
 bool Entity_GetDuelFlag(int agentId) {
     const Agent *a = Entity_GetAgent(agentId);
-    return a ? a->duelFlag : false;
+    return a ? (a->duelFlag || a->pkMode != PK_MODE_PEACE) : false;
+}
+
+void Entity_SetPkMode(int agentId, AgentPkMode mode) {
+    if (agentId < 0 || agentId >= MAX_AGENTS || !agentPool[agentId].active) return;
+    agentPool[agentId].pkMode = mode;
+    agentPool[agentId].duelFlag = (mode != PK_MODE_PEACE);
+}
+
+AgentPkMode Entity_GetPkMode(int agentId) {
+    const Agent *a = Entity_GetAgent(agentId);
+    return a ? a->pkMode : PK_MODE_PEACE;
+}
+
+void Entity_AddInfamy(int agentId, int delta) {
+    if (agentId < 0 || agentId >= MAX_AGENTS || !agentPool[agentId].active) return;
+    int next = agentPool[agentId].infamyLevel + delta;
+    if (next < 0) next = 0;
+    agentPool[agentId].infamyLevel = next;
+}
+
+int Entity_GetInfamyLevel(int agentId) {
+    const Agent *a = Entity_GetAgent(agentId);
+    return a ? a->infamyLevel : 0;
+}
+
+bool Entity_ConsumeSparDefeated(int agentId, int *outAttackerId) {
+    if (agentId < 0 || agentId >= MAX_AGENTS || !agentPool[agentId].active) return false;
+    if (!agentPool[agentId].sparDefeated) return false;
+    agentPool[agentId].sparDefeated = false;
+    if (outAttackerId) *outAttackerId = agentPool[agentId].lastAttackerId;
+    return true;
 }
 
 void Entity_SetSafeZone(int agentId, bool inSafe) {
     if (agentId < 0 || agentId >= MAX_AGENTS || !agentPool[agentId].active) return;
     agentPool[agentId].inSafeZone = inSafe;
-    if (inSafe) agentPool[agentId].duelFlag = false;
+    if (inSafe) {
+        agentPool[agentId].duelFlag = false;
+        agentPool[agentId].pkMode = PK_MODE_PEACE;
+        agentPool[agentId].infamyLevel = 0;
+        agentPool[agentId].sparDefeated = false;
+    }
 }
 
 bool Entity_IsInSafeZone(int agentId) {
