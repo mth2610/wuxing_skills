@@ -176,9 +176,9 @@
       }
     },
     {
-      "id": "ao_giao_linh_4",
-      "name": "Áo Giao Lĩnh Thanh Vân Điệp 4",
-      "description": "Áo giao lĩnh lụa lam ngọc thêu vân mây, viền lụa ngà chạy dọc cổ áo và tay thụng, điểm kim tuyến vàng ở đai lưng. Tà áo hai lớp mềm rủ, tay áo thụng buông dài, dải lụa thắt lưng bay theo gió.",
+      "id": "ao_nhat_binh",
+      "name": "Áo Nhật Bình",
+      "description": "Áo nhật bình lụa lam ngọc thêu vân mây, viền lụa ngà chạy dọc cổ áo và tay thụng, điểm kim tuyến vàng ở đai lưng. Tà áo hai lớp mềm rủ, tay áo thụng buông dài, dải lụa thắt lưng bay theo gió.",
       "source": "Di vật tại Tiên Vân Đỉnh",
       "unlock_type": "exploration",
       "unlock_hint": "Khám phá thạch thất trên Tiên Vân Đỉnh",
@@ -187,7 +187,7 @@
       "element": "water",
       "rarity": "epic",
       "is_skinned": true,
-      "model_path": "assets/characters/equipment/torso/ao_giao_linh_4.glb",
+      "model_path": "assets/characters/equipment/torso/ao_giao_linh_5.glb",
       "ui_color": [
         58,
         132,

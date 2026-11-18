@@ -22,7 +22,7 @@ struct Model;
 struct CharacterAnimState;
 
 #define SPRING_BONE_MAX 48
-#define SPRING_COLLIDER_MAX 12
+#define SPRING_COLLIDER_MAX 18
 
 typedef enum {
     SPRING_COLLIDER_SPHERE = 0,

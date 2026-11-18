@@ -68,12 +68,12 @@ static void TuneByName(SpringBone *b)
         return;
     if (strstr(b->name, "sleeve"))
     {
-        b->stiffness = 0.28f;
+        b->stiffness = 0.52f;
         b->damping = 0.85f;
-        b->gravityFactor = 0.85f;
-        b->windInfluence = 0.75f;
-        b->maxAngleDeg = 52.0f;
-        b->boneRadius = 0.022f;
+        b->gravityFactor = 0.45f;
+        b->windInfluence = 0.40f;
+        b->maxAngleDeg = 24.0f;
+        b->boneRadius = 0.024f;
     }
     else if (strstr(b->name, "ribbon"))
     {
@@ -86,12 +86,12 @@ static void TuneByName(SpringBone *b)
     }
     else if (strstr(b->name, "skirt") || strstr(b->name, "hem") || strstr(b->name, "robe"))
     {
-        b->stiffness = 0.20f;
+        b->stiffness = 0.26f;
         b->damping = 0.88f;
         b->gravityFactor = 0.78f;
         b->windInfluence = 0.65f;
-        b->maxAngleDeg = 48.0f;
-        b->boneRadius = 0.026f;
+        b->maxAngleDeg = 44.0f;
+        b->boneRadius = 0.032f;
     }
     else
     {
@@ -131,18 +131,22 @@ void SpringBone_AddDefaultColliders(SpringBoneSystem *sys)
     if (sys->colliderCount > 0)
         return;
 
-    // Hông & Đùi (2 tầng mỗi bên)
-    SpringBone_AddCollider(sys, "mixamorig:Hips", (Vector3){0.0f, -0.04f, 0.02f}, 0.165f);
-    SpringBone_AddCollider(sys, "mixamorig:LeftUpLeg", (Vector3){0.0f, -0.16f, 0.02f}, 0.120f);
-    SpringBone_AddCollider(sys, "mixamorig:RightUpLeg", (Vector3){0.0f, -0.16f, 0.02f}, 0.120f);
-    SpringBone_AddCollider(sys, "mixamorig:LeftUpLeg", (Vector3){0.0f, -0.34f, 0.02f}, 0.105f);
-    SpringBone_AddCollider(sys, "mixamorig:RightUpLeg", (Vector3){0.0f, -0.34f, 0.02f}, 0.105f);
+    // Hông, Đùi & Đầu gối/Ống chân (Mixamo UpLeg/Leg có +Y hướng xuống dọc theo chân, -Z hướng ra trước)
+    SpringBone_AddCollider(sys, "mixamorig:Hips", (Vector3){0.0f, -0.02f, 0.00f}, 0.165f);
+    SpringBone_AddCollider(sys, "mixamorig:LeftUpLeg", (Vector3){0.0f, 0.14f, -0.01f}, 0.125f);
+    SpringBone_AddCollider(sys, "mixamorig:RightUpLeg", (Vector3){0.0f, 0.14f, -0.01f}, 0.125f);
+    SpringBone_AddCollider(sys, "mixamorig:LeftUpLeg", (Vector3){0.0f, 0.30f, -0.01f}, 0.115f);
+    SpringBone_AddCollider(sys, "mixamorig:RightUpLeg", (Vector3){0.0f, 0.30f, -0.01f}, 0.115f);
+    SpringBone_AddCollider(sys, "mixamorig:LeftLeg", (Vector3){0.0f, 0.14f, 0.00f}, 0.105f);
+    SpringBone_AddCollider(sys, "mixamorig:RightLeg", (Vector3){0.0f, 0.14f, 0.00f}, 0.105f);
 
-    // Toàn bộ Cánh tay & Cẳng tay (đẩy ống tay áo bọc quanh tay khi gió thổi)
-    SpringBone_AddCollider(sys, "mixamorig:LeftArm", (Vector3){0.0f, -0.12f, 0.00f}, 0.085f);
-    SpringBone_AddCollider(sys, "mixamorig:RightArm", (Vector3){0.0f, -0.12f, 0.00f}, 0.085f);
-    SpringBone_AddCollider(sys, "mixamorig:LeftForeArm", (Vector3){0.0f, -0.10f, 0.00f}, 0.080f);
-    SpringBone_AddCollider(sys, "mixamorig:RightForeArm", (Vector3){0.0f, -0.10f, 0.00f}, 0.080f);
+    // Toàn bộ Cánh tay & Cẳng tay (Mixamo Arm/ForeArm có +Y hướng dọc ra bàn tay)
+    SpringBone_AddCollider(sys, "mixamorig:LeftArm", (Vector3){0.0f, 0.13f, 0.00f}, 0.090f);
+    SpringBone_AddCollider(sys, "mixamorig:RightArm", (Vector3){0.0f, 0.13f, 0.00f}, 0.090f);
+    SpringBone_AddCollider(sys, "mixamorig:LeftForeArm", (Vector3){0.0f, 0.05f, 0.00f}, 0.088f);
+    SpringBone_AddCollider(sys, "mixamorig:RightForeArm", (Vector3){0.0f, 0.05f, 0.00f}, 0.088f);
+    SpringBone_AddCollider(sys, "mixamorig:LeftForeArm", (Vector3){0.0f, 0.18f, 0.00f}, 0.085f);
+    SpringBone_AddCollider(sys, "mixamorig:RightForeArm", (Vector3){0.0f, 0.18f, 0.00f}, 0.085f);
 
     // Ngực & Thân trên
     SpringBone_AddCollider(sys, "mixamorig:Spine1", (Vector3){0.0f, 0.04f, 0.00f}, 0.135f);
@@ -847,20 +851,31 @@ static void SpringBone_Simulate(SpringBoneSystem *sys, const struct CharacterAni
                 nextPos = Vector3Add(headWorld, Vector3Scale(clampedDir, currentLength));
             }
 
-            // Constraint 3: Spherical body/torso/thigh collision
+            // Constraint 3: Segment-vs-sphere body/torso/thigh/arm collision
+            const bool isSleeve = (strstr(bone->name, "sleeve") != NULL);
             for (int c = 0; c < sys->colliderCount; c++)
             {
                 const SpringCollider *col = &sys->colliders[c];
+                // Arm/ForeArm sit INSIDE the sleeve tube; pushing outside strips the sleeve off the arm.
+                if (isSleeve && strstr(col->boneName, "Arm") != NULL)
+                    continue;
                 float colRadius = col->radius * charScale + bone->boneRadius;
-                Vector3 fromCol = Vector3Subtract(nextPos, col->worldPos);
+                Vector3 seg = Vector3Subtract(nextPos, headWorld);
+                float segLenSq = Vector3LengthSqr(seg);
+                if (segLenSq < 1e-8f)
+                    continue;
+                float t = Vector3DotProduct(Vector3Subtract(col->worldPos, headWorld), seg) / segLenSq;
+                t = Clamp(t, 0.25f, 1.0f);
+                Vector3 closestPt = Vector3Add(headWorld, Vector3Scale(seg, t));
+                Vector3 fromCol = Vector3Subtract(closestPt, col->worldPos);
                 float colDistSq = Vector3LengthSqr(fromCol);
                 if (colDistSq < colRadius * colRadius && colDistSq > 1e-8f)
                 {
                     float colDist = sqrtf(colDistSq);
                     Vector3 pushDir = Vector3Scale(fromCol, 1.0f / colDist);
-                    nextPos = Vector3Add(col->worldPos, Vector3Scale(pushDir, colRadius));
+                    Vector3 pushedPt = Vector3Add(col->worldPos, Vector3Scale(pushDir, colRadius));
 
-                    Vector3 correctedDir = Vector3Normalize(Vector3Subtract(nextPos, headWorld));
+                    Vector3 correctedDir = Vector3Normalize(Vector3Subtract(pushedPt, headWorld));
                     nextPos = Vector3Add(headWorld, Vector3Scale(correctedDir, currentLength));
                 }
             }

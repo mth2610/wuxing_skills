@@ -104,3 +104,10 @@
 - **Symptom:** A GLB dropped into `assets/characters/equipment/<slot>/` never reaches the wardrobe; the scan log says "Catalog initialized with N items" and nothing else.
 - **Cause:** The scan passed `"*.glb"` as the filter, which is a glob, not what raylib 6 expects — the call returns 0 files with no error.
 - **Rule:** The full trap (measured filter behaviour) is in `ENGINE_LANDMINES.md` §29. Here: enumerate with `NULL` and filter with `IsFileExtension()`; `sandbox/auto_test_cases.c`'s `player_wardrobe_system` case now drops a probe GLB into a throwaway tree and fails if it is not discovered.
+
+---
+
+### 13. Mixamo Limb Colliders Point Along `+Y` (Distal), Not `-Y`
+- **Symptom:** Wide sleeves and front/back robe flaps (`cloth_sleeve_*`, `cloth_skirt_*`) collapse straight into arms, thighs, and knees, exposing bare limbs or inner pants.
+- **Cause:** In Mixamo rigs (`player.glb`), `LeftUpLeg`/`RightUpLeg` are rotated $180^\circ$ around $X$ and `LeftArm`/`RightArm`/`ForeArm` have their child joints at $+Y$, so local $+Y$ always points **distally** along the limb (and local $-Z$ points forward on `UpLeg`). Passing negative $Y$ offsets to `SpringBone_AddCollider` places thigh colliders up inside the torso and arm colliders behind the shoulder/elbow.
+- **Rule:** Limb collider `localOffset.y` must be **positive** along `UpLeg`/`Leg` and `Arm`/`ForeArm` (and `localOffset.z <= 0` on `UpLeg` for forward clearance). Pair with segment-vs-sphere collision in `SpringBone_Simulate` and `DEFLATE_FLAG_ARM` + under-robe `MODULAR_SLOT_LEGS` deflation in `CharacterModel_DrawCustomClothEx`.

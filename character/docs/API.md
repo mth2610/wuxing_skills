@@ -26,6 +26,7 @@ void CharacterModel_Draw(const CharacterAnimState *state, Vector3 position, floa
 void CharacterModel_DrawCustom(Model customModel, const CharacterAnimState *state, Vector3 position, float yawRadians, float scale, Color tint);
 void CharacterModel_DrawCustomEx(Model customModel, const CharacterAnimState *state, Vector3 position, float yawRadians, float scale, Color tint, bool deflateTorso, bool deflateLegs);
 void CharacterModel_DrawCustomCloth(Model customModel, const CharacterAnimState *state, Vector3 position, float yawRadians, float scale, Color tint, const struct SpringBoneSystem *spring);
+void CharacterModel_DrawCustomClothEx(Model customModel, const CharacterAnimState *state, Vector3 position, float yawRadians, float scale, Color tint, bool deflateTorso, bool deflateLegs, const struct SpringBoneSystem *spring);
 
 bool CharacterModel_GetBoneTransform(const char *boneName, const CharacterAnimState *state, Matrix *outTransform);
 bool CharacterModel_SampleSurfacePoint(const CharacterAnimState *state, Vector3 *outPos, Vector3 *outNormal);

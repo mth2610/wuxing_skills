@@ -147,6 +147,12 @@ void CharacterModel_DrawCustomCloth(Model customModel, const CharacterAnimState 
                                     float yawRadians, float scale, Color tint,
                                     const struct SpringBoneSystem *spring);
 
+// Variant of CharacterModel_DrawCustomCloth with optional torso/leg deflation (e.g. pants worn under a robe).
+void CharacterModel_DrawCustomClothEx(Model customModel, const CharacterAnimState *state, Vector3 position,
+                                      float yawRadians, float scale, Color tint,
+                                      bool deflateTorso, bool deflateLegs,
+                                      const struct SpringBoneSystem *spring);
+
 // Getters for integration with visual composer / skill effects
 struct MeshAdjacency;
 Model CharacterModel_GetModel(void);

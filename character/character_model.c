@@ -972,6 +972,8 @@ static void CharacterModel_UpdateSkinnedMeshWithCloth(Model model, ModelAnimatio
     const bool needDeflate = deflateTorso || deflateLegs;
     Matrix boneNormMatrices[CHAR_MAX_SKIN_BONES];
     unsigned char boneDeflateFlags[CHAR_MAX_SKIN_BONES];
+    float boneArmCenterY[CHAR_MAX_SKIN_BONES];
+    float boneArmCenterZ[CHAR_MAX_SKIN_BONES];
     bool evaluatedStack[CHAR_MAX_SKIN_BONES];
     bool *evaluated = evaluatedStack;
     if (boneCount <= CHAR_MAX_SKIN_BONES)
@@ -996,9 +998,13 @@ static void CharacterModel_UpdateSkinnedMeshWithCloth(Model model, ModelAnimatio
             unsigned char flags = 0;
             if (needDeflate && boneName != NULL)
             {
-                if (strstr(boneName, "Spine") || strstr(boneName, "Shoulder"))
+                if (strstr(boneName, "Spine"))
                 {
                     flags |= DEFLATE_FLAG_TORSO;
+                }
+                else if (strstr(boneName, "Shoulder"))
+                {
+                    flags |= DEFLATE_FLAG_TORSO | DEFLATE_FLAG_ARM;
                 }
                 else if (strstr(boneName, "UpLeg") || strstr(boneName, "Leg"))
                 {
@@ -1008,12 +1014,30 @@ static void CharacterModel_UpdateSkinnedMeshWithCloth(Model model, ModelAnimatio
                 {
                     flags |= DEFLATE_FLAG_HIPS;
                 }
-                else if (strstr(boneName, "Arm") && !strstr(boneName, "ForeArm"))
+                else if (strstr(boneName, "Arm"))
                 {
                     flags |= DEFLATE_FLAG_ARM;
                 }
             }
             boneDeflateFlags[b] = flags;
+            if (flags & DEFLATE_FLAG_ARM)
+            {
+                if (model.skeleton.bindPose != NULL)
+                {
+                    boneArmCenterY[b] = model.skeleton.bindPose[b].translation.y;
+                    boneArmCenterZ[b] = model.skeleton.bindPose[b].translation.z;
+                }
+                else
+                {
+                    boneArmCenterY[b] = 1.48f;
+                    boneArmCenterZ[b] = 0.0f;
+                }
+            }
+            else
+            {
+                boneArmCenterY[b] = 0.0f;
+                boneArmCenterZ[b] = 0.0f;
+            }
         }
     }
 
@@ -1050,6 +1074,8 @@ static void CharacterModel_UpdateSkinnedMeshWithCloth(Model model, ModelAnimatio
                 float torsoWeight = 0.0f;
                 float legWeight = 0.0f;
                 float armWeight = 0.0f;
+                float armCenterYAcc = 0.0f;
+                float armCenterZAcc = 0.0f;
                 int tempCounter = boneCounter;
                 for (int j = 0; j < 4; j++, tempCounter++)
                 {
@@ -1069,6 +1095,8 @@ static void CharacterModel_UpdateSkinnedMeshWithCloth(Model model, ModelAnimatio
                         else if (flags & DEFLATE_FLAG_ARM)
                         {
                             armWeight += bw;
+                            armCenterYAcc += boneArmCenterY[bi] * bw;
+                            armCenterZAcc += boneArmCenterZ[bi] * bw;
                         }
                     }
                 }
@@ -1081,6 +1109,18 @@ static void CharacterModel_UpdateSkinnedMeshWithCloth(Model model, ModelAnimatio
                         shrink = 0.82f;
                     vx *= shrink;
                     vz *= shrink;
+                }
+
+                if (deflateTorso && armWeight > 0.12f)
+                {
+                    // Arms extend along ±X in T-pose; retract Y/Z radially toward the arm bone axis.
+                    float shrink = 1.0f - (0.28f * armWeight);
+                    if (shrink < 0.68f)
+                        shrink = 0.68f;
+                    float armCY = armCenterYAcc / armWeight;
+                    float armCZ = armCenterZAcc / armWeight;
+                    vy = armCY + (vy - armCY) * shrink;
+                    vz = armCZ + (vz - armCZ) * shrink;
                 }
 
                 if (deflateLegs && legWeight > 0.12f)
@@ -1293,6 +1333,15 @@ void CharacterModel_DrawCustomCloth(Model customModel, const CharacterAnimState 
 {
     CharacterModel_DrawCustomInternal(customModel, state, position, yawRadians, scale, tint,
                                       false, false, spring);
+}
+
+void CharacterModel_DrawCustomClothEx(Model customModel, const CharacterAnimState *state, Vector3 position,
+                                      float yawRadians, float scale, Color tint,
+                                      bool deflateTorso, bool deflateLegs,
+                                      const SpringBoneSystem *spring)
+{
+    CharacterModel_DrawCustomInternal(customModel, state, position, yawRadians, scale, tint,
+                                      deflateTorso, deflateLegs, spring);
 }
 
 void CharacterModel_DrawCustom(Model customModel, const CharacterAnimState *state, Vector3 position, float yawRadians, float scale, Color tint)

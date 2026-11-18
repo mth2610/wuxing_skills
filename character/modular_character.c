@@ -361,7 +361,8 @@ void ModularInstance_Draw(ModularInstance *inst)
             bool hasTorso = (inst->loadout.itemIndices[MODULAR_SLOT_TORSO] >= 0) ||
                             (inst->loadout.itemIndices[MODULAR_SLOT_FULL_OUTFIT] >= 0);
             bool hasLegs = (inst->loadout.itemIndices[MODULAR_SLOT_LEGS] >= 0) ||
-                           (inst->loadout.itemIndices[MODULAR_SLOT_FULL_OUTFIT] >= 0);
+                           (inst->loadout.itemIndices[MODULAR_SLOT_FULL_OUTFIT] >= 0) ||
+                           hasTorso;
             CharacterModel_DrawCustomEx(masterModel, &inst->animState, inst->position, inst->yaw, inst->scale, inst->tint, hasTorso, hasLegs);
         }
     }
@@ -404,9 +405,11 @@ void ModularInstance_Draw(ModularInstance *inst)
 
             if (item->isSkinned)
             {
-                CharacterModel_DrawCustomCloth(item->model, &inst->animState,
-                                               inst->position, inst->yaw, inst->scale, inst->tint,
-                                               cloth);
+                bool deflateUnderRobe = (s == MODULAR_SLOT_LEGS) &&
+                                        ((inst->loadout.itemIndices[MODULAR_SLOT_TORSO] >= 0) || hasFullOutfit);
+                CharacterModel_DrawCustomClothEx(item->model, &inst->animState,
+                                                 inst->position, inst->yaw, inst->scale, inst->tint,
+                                                 false, deflateUnderRobe, cloth);
             }
             else
             {

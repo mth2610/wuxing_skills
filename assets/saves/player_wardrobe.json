@@ -2,15 +2,15 @@
   "player_id": "Player_1",
   "equipped": {
     "base_body": "human_body",
-    "torso": "ao_giao_linh_4",
-    "legs": "",
+    "torso": "ao_nhat_binh",
+    "legs": "quan_wuxia",
     "boots": "chien_hai_van_du",
     "bracers": "",
     "headgear": "non_la_hiep_khach",
     "mask": "",
     "hair": "",
     "waist": "",
-    "back": "vo_kiem_son_mai",
+    "back": "",
     "weapon_r": "",
     "weapon_l": "",
     "full_outfit": ""
@@ -31,6 +31,7 @@
     "human_male_base",
     "ao_giao_linh_2",
     "ao_giao_linh_3",
-    "ao_giao_linh_4"
+    "ao_giao_linh_4",
+    "ao_nhat_binh"
   ]
 }
