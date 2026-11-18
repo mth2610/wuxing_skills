@@ -282,7 +282,7 @@ void CastEarthDiscVolleySkill(int agentId, Vector3 startPos, Vector3 target, Ski
 
     float totalDmg        = Skill_CalculateDamage(SKILL_CAT_PROJECTILE, params);
     inst->damagePerDisc   = (totalDmg > 0.0f ? totalDmg : 45.0f) / (float)inst->totalSlices;
-    inst->knockback       = Skill_CalculateKnockback(SKILL_CAT_PROJECTILE, params) * 0.45f;
+    inst->knockback       = 0.0f;
 
     Skill_RequestAnim(agentId, "mma_kick", EDV_STOMP_RISE_TIME);
 

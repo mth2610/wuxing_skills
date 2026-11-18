@@ -156,16 +156,20 @@ void main() {
                        + texture(u_bloomTex, uv + d.zy).rgb
                        + texture(u_bloomTex, uv + d.xw).rgb
                        + texture(u_bloomTex, uv + d.zw).rgb) * 0.25;
-        sceneCol.rgb += bloomAvg * u_bloomIntensity;
+        if (any(isnan(bloomAvg)) || any(isinf(bloomAvg))) bloomAvg = vec3(0.0);
+        sceneCol.rgb += clamp(bloomAvg, vec3(0.0), vec3(64.0)) * u_bloomIntensity;
     }
 
     // 2b. Tone mapping
     float exposure = u_exposure;
     if (u_autoExposure > 0.0) {
         float autoE = texture(u_exposureTex, vec2(0.5)).r;
-        if (autoE > 0.0) exposure *= mix(1.0, autoE, u_autoExposure);
+        if (!isnan(autoE) && !isinf(autoE) && autoE > 0.0) {
+            exposure *= mix(1.0, clamp(autoE, 0.1, 10.0), u_autoExposure);
+        }
     }
-    vec3 exposedScene = max(sceneCol.rgb, vec3(0.0)) * exposure;
+    if (any(isnan(sceneCol.rgb)) || any(isinf(sceneCol.rgb))) sceneCol.rgb = vec3(0.0);
+    vec3 exposedScene = clamp(sceneCol.rgb, vec3(0.0), vec3(64.0)) * clamp(exposure, 0.0, 16.0);
     if (u_tonemapEnabled > 0.5) {
         sceneCol.rgb = toneMapScene(exposedScene);
     }

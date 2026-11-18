@@ -60,7 +60,13 @@ void MapManager_Init(void) {
         }
         
         if (s_maps[s_activeMapIndex].Init) {
+#ifdef __ANDROID__
+            PollInputEvents();
+#endif
             s_maps[s_activeMapIndex].Init();
+#ifdef __ANDROID__
+            PollInputEvents();
+#endif
         }
         MapManager_SyncWindTerrain();
     }
@@ -239,7 +245,13 @@ void MapManager_SetActiveIndex(int index) {
         MapProp_SetGrassState(MAP_GRASS_STATE_LUSH, 0.0f);
         MapProp_ClearGrassBurnZones();
         if (s_maps[s_activeMapIndex].Init) {
+#ifdef __ANDROID__
+            PollInputEvents();
+#endif
             s_maps[s_activeMapIndex].Init();
+#ifdef __ANDROID__
+            PollInputEvents();
+#endif
         }
         MapManager_SyncWindTerrain();
     }

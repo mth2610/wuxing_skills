@@ -236,10 +236,17 @@ static int s_reedCount = 0;
 
 static void BuildNinhThuanFlora(void)
 {
+#ifdef __ANDROID__
+    const float grassSpacing = 1.25f;
+    const int   maxGrass     = 3200;
+#else
+    const float grassSpacing = 0.64f;
+    const int   maxGrass     = NINH_THUAN_MAX_GRASS;
+#endif
     MapMeadowDistribution dist = {
         .minBounds = {12.0f, 12.0f},
         .maxBounds = {MAP_WIDTH - 12.0f, MAP_DEPTH - 12.0f},
-        .spacing = 0.64f,
+        .spacing = grassSpacing,
         .jitter = 0.26f,
         .minRadius = 0.14f,
         .maxRadius = 0.24f,
@@ -249,7 +256,7 @@ static void BuildNinhThuanFlora(void)
         .seed = 90421u,
     };
     s_grassCount = MapProp_GenerateMeadowPlacements(
-        s_grassPlacements, NINH_THUAN_MAX_GRASS,
+        s_grassPlacements, maxGrass,
         &s_ground, kMapCenter,
         dist, NinhThuanDryGrassDensity, NULL);
 
@@ -679,7 +686,8 @@ void InitNinhThuanMap(void)
     BuildNinhThuanRocks();
     BuildNinhThuanFlora();
 
-    // Seed interactive arid granular debris bed (loess clods, gravel, dry twigs, dry leaves) on dry land
+    // Seed interactive arid granular debris bed (skipped on Android to reduce load time & thermal load)
+#ifndef __ANDROID__
     {
         enum { NINH_THUAN_BED_CAP = 2600 };
         GranularGrainState *bedGrains = (GranularGrainState *)MemAlloc((size_t)NINH_THUAN_BED_CAP * sizeof(GranularGrainState));
@@ -719,6 +727,7 @@ void InitNinhThuanMap(void)
             MemFree(bedGrains);
         }
     }
+#endif
 
     s_ready = true;
     EnvShadow_SetMapCasterCallback(DrawNinhThuanShadowCasters, NULL);

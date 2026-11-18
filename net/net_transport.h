@@ -27,6 +27,7 @@ typedef enum { NET_MODE_OFF = 0, NET_MODE_HOST, NET_MODE_CLIENT } NetMode;
 bool    Net_StartHost(int port);                  // false: socket/bind failed
 bool    Net_StartClient(const char *ip, int port);// false: socket/resolve failed
 void    Net_Stop(void);
+void    Net_Shutdown(void);
 NetMode Net_GetMode(void);
 bool    Net_IsPeerConnected(void);
 

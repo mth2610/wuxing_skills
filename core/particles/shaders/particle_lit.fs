@@ -419,7 +419,8 @@ void main()
         if (dot(lutProbe, lutProbe) < 0.001) rampCol = calcBlackbodyNormalized(heat);
         vec3 col = rampCol * (fragColor.r * 2.0) * fl * (0.1 + heat * heat * 1.1);
 
-        finalColor = vec4(col * (alpha * u_emissiveBoost), 0.0);
+        vec3 puffOut = min(col * (alpha * u_emissiveBoost), vec3(32.0));
+        finalColor = vec4(max(puffOut, vec3(0.0)), 0.0);
         return;
     }
 
@@ -459,7 +460,8 @@ void main()
         if (dot(lutProbe, lutProbe) < 0.001) rampCol = calcBlackbodyNormalized(heat);
         vec3 col = rampCol * (fragColor.r * 2.0) * fl * (0.1 + heat * heat * 1.1);
 
-        finalColor = vec4(col * (alpha * u_emissiveBoost), 0.0);
+        vec3 puffOut = min(col * (alpha * u_emissiveBoost), vec3(32.0));
+        finalColor = vec4(max(puffOut, vec3(0.0)), 0.0);
         return;
     }
 
@@ -566,9 +568,11 @@ void main()
         vec3 rampCol = texture(u_rampLUT, vec2(heat, 0.5)).rgb;
         vec3 flame = rampCol * (flameMask * coverage * u_emissiveBoost);
 
-        float bodyAlpha = coverage * density;
+        float bodyAlpha = clamp(coverage * density, 0.0, 1.0);
         vec3 smoke = u_smokeTint * envLit * bodyAlpha;
-        finalColor = vec4(flame + smoke, bodyAlpha);
+        vec3 mode4Out = flame + smoke;
+        if (any(isnan(mode4Out)) || any(isinf(mode4Out))) mode4Out = vec3(0.0);
+        finalColor = vec4(clamp(mode4Out, vec3(0.0), vec3(32.0)), bodyAlpha);
         return;
     }
 

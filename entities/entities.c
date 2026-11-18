@@ -719,15 +719,18 @@ bool Entity_ExecuteBasicAttack(int attackerId, BasicAttackType type,
     if (distSq <= BASIC_ATTACK_RANGE * BASIC_ATTACK_RANGE) {
         switch (type) {
             case BASIC_ATTACK_PUNCH:
-                Entity_ApplyDamageFrom(targetId, attackerId, 5.0f, 1.0f, Vector3Scale(pushDir, 1.5f));
+                Entity_ApplyDamageFrom(targetId, attackerId, 5.0f, 1.0f, (Vector3){ 0 });
                 break;
-            case BASIC_ATTACK_KICK:
-                Entity_ApplyDamageFrom(targetId, attackerId, 8.0f, 1.0f, Vector3Scale(pushDir, 3.0f));
+            case BASIC_ATTACK_KICK: {
+                Vector3 kb = (GetRandomValue(0, 99) < 12) ? Vector3Scale(pushDir, 1.4f) : (Vector3){ 0 };
+                Entity_ApplyDamageFrom(targetId, attackerId, 8.0f, 1.0f, kb);
                 break;
+            }
             case BASIC_ATTACK_PALM:
-                // "Chưởng" — highest damage, breaks guard, small pop into the air.
                 Entity_ApplyDamageFrom(targetId, attackerId, 12.0f, 1.0f, (Vector3){ 0 });
-                Entity_ApplyLaunch(targetId, 3.0f, Vector3Scale(pushDir, 2.0f));
+                if (GetRandomValue(0, 99) < 15) {
+                    Entity_ApplyLaunch(targetId, 2.2f, Vector3Scale(pushDir, 1.2f));
+                }
                 break;
         }
     }
@@ -738,7 +741,7 @@ bool Entity_ExecuteBasicAttack(int attackerId, BasicAttackType type,
         // Free elemental bonus hit — no mana cost, this whole path never
         // touches Entity_TrySpendMana. Applies regardless of melee range
         // (the rock/bolt is what closes the distance, not the fist).
-        Entity_ApplyDamageFrom(targetId, attackerId, 6.0f, 1.0f, Vector3Scale(pushDir, 2.0f));
+        Entity_ApplyDamageFrom(targetId, attackerId, 6.0f, 1.0f, (Vector3){ 0 });
         if (outWallPos) *outWallPos = wallPos;
         if (outWallElement) *outWallElement = wallElement;
         return true;

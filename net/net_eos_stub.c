@@ -32,4 +32,5 @@ bool Net_VoiceIsMicEnabled(void) { return false; }
 void Net_VoiceSetMutedAll(bool muted) { (void)muted; }
 bool Net_VoiceIsMutedAll(void) { return false; }
 bool Net_VoiceIsAnyoneSpeaking(void) { return false; }
+void Net_Shutdown(void) { Net_Stop(); }
 int  Net_VoiceGetSpeakingCount(void) { return 0; }

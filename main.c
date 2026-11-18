@@ -322,6 +322,14 @@ static void DrawParticleTrailVFXLayers(Camera3D camera, Texture2D particleTextur
   if (hasEmissionTrails || hasEmissionParticles) VFXRender_EndPass();
 }
 
+static int s_defaultVpX = 0, s_defaultVpY = 0, s_defaultVpW = 0, s_defaultVpH = 0;
+
+static inline void RestoreDefaultFramebufferViewport(void) {
+  int w = (s_defaultVpW > 0) ? s_defaultVpW : GetRenderWidth();
+  int h = (s_defaultVpH > 0) ? s_defaultVpH : GetRenderHeight();
+  rlViewport(s_defaultVpX, s_defaultVpY, w, h);
+}
+
 /* Post-scene VFX that need screen-space preparation before their body pass. */
 static void CompositeScreenSpaceVFX(Camera3D camera)
 {
@@ -354,7 +362,7 @@ static void CompositeScreenSpaceVFX(Camera3D camera)
   rlPopMatrix();
   rlMatrixMode(RL_MODELVIEW);
   rlPopMatrix();
-  rlViewport(0, 0, GetRenderWidth(), GetRenderHeight());
+  RestoreDefaultFramebufferViewport();
 }
 
 static inline float QualityToRenderScale(GfxQuality q) {
@@ -498,12 +506,10 @@ int main(int argc, char **argv) {
   }
   SetConfigFlags(configFlags);
 #if defined(PLATFORM_ANDROID) || defined(__ANDROID__)
-  // Ensure rlvk persists its VkPipelineCache to the app's writable cache dir
-  // instead of falling back to read-only "/" and recompiling 105 pipelines on every launch.
-  if (getenv("TMPDIR") == NULL) {
-      mkdir("/data/data/com.mth2610.wuxing/cache", 0755);
-      setenv("TMPDIR", "/data/data/com.mth2610.wuxing/cache", 0);
-  }
+  // Ensure rlvk persists its VkPipelineCache and SPIR-V cache to the app's
+  // writable cache dir (Android's inherited TMPDIR is often non-writable).
+  mkdir("/data/data/com.mth2610.wuxing/cache", 0755);
+  setenv("TMPDIR", "/data/data/com.mth2610.wuxing/cache", 1);
 #endif
   InitWindow(screenWidth, screenHeight, "Avatar: True 3D Element Testbed");
   if (!headlessMode) {
@@ -577,9 +583,15 @@ int main(int argc, char **argv) {
   // KHỞI TẠO CÁC HỆ THỐNG ĐỒ HỌA VFX
   // -----------------------------------------------------------------
   ParticleManager_Init();
+#if defined(PLATFORM_ANDROID) || defined(__ANDROID__)
+  PollInputEvents();
+#endif
   InitTrailSystem();
   VFXLight_Init();
   DecalSystem_Init();
+#if defined(PLATFORM_ANDROID) || defined(__ANDROID__)
+  PollInputEvents();
+#endif
   /* Scene targets FIRST: PostFX_Init reads SceneTargets_IsHDR(), and the distort
      pass reads the colour target this creates. Both are sized by the adaptive
      render scale rather than the window: the frame is fill-bound, and the post
@@ -595,10 +607,16 @@ int main(int argc, char **argv) {
   PostFX_Init(RenderScale_GetWidth(), RenderScale_GetHeight());
   SurfaceMaterial_Init(); // G2 — must precede InitSandbox (CharacterModel_Load applies it)
   GasSystem_Init(screenWidth, screenHeight);
+#if defined(PLATFORM_ANDROID) || defined(__ANDROID__)
+  PollInputEvents();
+#endif
   Atmosphere_Init();      // G3 — ambient dust motes over the arena
   Atmosphere_Configure((Vector3){6.0f, 3.0f, 4.4f}, (Vector3){15.0f, 5.0f, 15.0f},
                        340, (Color){160, 190, 235, 255});
   VolumetricFog_Init(screenWidth, screenHeight); // Ghost of Tsushima Volumetric Fog & God-Rays
+#if defined(PLATFORM_ANDROID) || defined(__ANDROID__)
+  PollInputEvents();
+#endif
   Wind_Init();            // Ghost of Tsushima: Global Macro Wind + Vorticles System
   MetaballFX_Init(screenWidth, screenHeight);
   Wardrobe_InitGlobal(WARDROBE_DEFAULT_SAVE_PATH);
@@ -707,6 +725,9 @@ int main(int argc, char **argv) {
   }
   Tuning_Init(tuningPath);
   InitSkillManager(screenWidth, screenHeight);
+#if defined(PLATFORM_ANDROID) || defined(__ANDROID__)
+  PollInputEvents();
+#endif
   if (autoTestMode) AutoTestCases_Register(&player);
   DamageVolume_Init();
   EmitterSystem_Init();
@@ -719,12 +740,18 @@ int main(int argc, char **argv) {
   SkillDebugger_Init();
   Environment_Init();
   EnvShadow_Init(); // Real Shading P6 — depth-only shadow map, OFF until toggled
+#if defined(PLATFORM_ANDROID) || defined(__ANDROID__)
+  PollInputEvents();
+#endif
   MapManager_Init();
   Wind_SetTerrainHeightQuery(WindTerrainHeightFromActiveMap, NULL);
   Combat_Init();
 
   EnemyEntity enemy;
   InitSandbox(&player, &enemy);
+#if defined(PLATFORM_ANDROID) || defined(__ANDROID__)
+  PollInputEvents();
+#endif
   WindRefreshTerrainGrid(player.position, true);
   GameScreen_Init(&player);
 
@@ -1714,6 +1741,12 @@ int main(int argc, char **argv) {
     BeginDrawing();
 #if defined(GRAPHICS_API_VULKAN) || defined(WUXING_USE_VULKAN)
     rlvkBeginFrameCommands();
+    rlvkGetViewport(&s_defaultVpX, &s_defaultVpY, &s_defaultVpW, &s_defaultVpH);
+#else
+    s_defaultVpX = 0;
+    s_defaultVpY = 0;
+    s_defaultVpW = GetRenderWidth();
+    s_defaultVpH = GetRenderHeight();
 #endif
     if (benchmarkVisible) profileAcquireSeconds = GetTime() - profileAcquireSeconds;
 
@@ -2052,7 +2085,7 @@ int main(int argc, char **argv) {
            last bound and the screen stays black. */
         rlDrawRenderBatchActive();
         rlDisableFramebuffer();
-        rlViewport(0, 0, GetRenderWidth(), GetRenderHeight());
+        RestoreDefaultFramebufferViewport();
         PostFX_UseDirectSource(SceneTargets_GetSceneTexture());
     }
     /* Announce on CHANGE, not once at startup: the mode flips with gameplay, and
@@ -2327,6 +2360,7 @@ int main(int argc, char **argv) {
   EmitterSystem_Unload();
   ResourceManager_Unload();
   MapManager_Unload();
+  Net_Shutdown();
   Audio_Shutdown();
   CloseWindow();
 

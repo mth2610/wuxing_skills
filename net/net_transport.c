@@ -239,8 +239,24 @@ int Net_GetPeerCount(void) {
 
 void Net_ClientSubmitIntent(const PlayerIntent *intent) {
     if (intent == NULL || s_mode != NET_MODE_CLIENT) return;
+    if (!s_clientIntentValid) {
+        s_clientIntent = *intent;
+        s_clientIntentValid = true;
+        return;
+    }
+    // Preserve edge-triggered actions pressed between NET_INTENT_HZ sends so
+    // 60+ FPS frames never overwrite them before Net_Tick transmits.
+    bool keepJump = s_clientIntent.jump || intent->jump;
+    bool keepDash = s_clientIntent.dash || intent->dash;
+    bool keepMed  = s_clientIntent.meditate || intent->meditate;
+    int  keepSlot = (intent->castSkillSlot >= 0) ? intent->castSkillSlot : s_clientIntent.castSkillSlot;
+    int  keepAtk  = (intent->basicAttack > 0) ? intent->basicAttack : s_clientIntent.basicAttack;
     s_clientIntent = *intent;
-    s_clientIntentValid = true;
+    s_clientIntent.jump = keepJump;
+    s_clientIntent.dash = keepDash;
+    s_clientIntent.meditate = keepMed;
+    s_clientIntent.castSkillSlot = keepSlot;
+    s_clientIntent.basicAttack = keepAtk;
 }
 
 // --- Roster ------------------------------------------------------------------
@@ -569,8 +585,8 @@ static void HostSpawnPeerHero(int idx) {
     if (p->agentId < 0) return;
     // Same default loadout the local player gets (game/game_screen.c).
     static const struct { const char *name; int element; } kLoadout[AGENT_SKILL_SLOTS] = {
-        { "GLACIAL_CANNON", 0 }, { "FIRE", 2 }, { "STONE_PRISON", 3 },
-        { "LEAF_WHIRLWIND", 1 }, { "METAL_BLADE_STORM", 4 },
+        { "ICE_CRYSTAL_LANCE", 0 }, { "INFERNO_SURGE", 2 }, { "EARTH_DISC_VOLLEY", 3 },
+        { "METAL_BLADE_STORM", 4 }, { "VINE_SNARE", 1 },
     };
     for (int slot = 0; slot < AGENT_SKILL_SLOTS; slot++) {
         int skillIdx = Skill_GetIndexByName(kLoadout[slot].name);

@@ -853,14 +853,18 @@ void InitSongQuaoMap(void)
                     .materialId = mId
                 };
             }
+#ifndef __ANDROID__
             GranularSim_SeedMapBedFromGrains(bedGrains, grainCap);
+#endif
             MemFree(bedGrains);
         }
         MemFree(allDebris);
     }
     else
     {
+#ifndef __ANDROID__
         GranularSim_SeedMapBed(kMapCenter, 32.0f, 1500, NULL, 0, 101u);
+#endif
     }
 
     BuildFloraPlacements();

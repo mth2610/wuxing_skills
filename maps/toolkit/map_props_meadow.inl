@@ -177,6 +177,9 @@ int MapProp_GenerateMeadowPlacements(MapMeadowPlacement *outPlacements, int maxC
 
     for (int row = 0; row < rows; row++)
     {
+#ifdef __ANDROID__
+        if ((row & 15) == 0) PollInputEvents();
+#endif
         float baseZ = distribution.minBounds.y + ((float)row + 0.5f) * rowSpacing;
         for (int column = 0; column < columns; column++)
         {

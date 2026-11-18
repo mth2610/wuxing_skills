@@ -202,3 +202,14 @@ void Control_FaceTowards(Vector3 point) {
     float dz = point.z - a->position.z;
     if (dx * dx + dz * dz > 0.0001f) s_yaw = atan2f(dx, dz);
 }
+
+void Control_UpdateFacingFromIntent(const PlayerIntent *in) {
+    if (!in) return;
+    float lenSq = in->moveDir.x * in->moveDir.x + in->moveDir.y * in->moveDir.y;
+    if (lenSq > 0.0001f) {
+        s_yaw = atan2f(in->moveDir.x, in->moveDir.y);
+    }
+    if (in->castSkillSlot >= 0) {
+        Control_FaceTowards(in->aimPoint);
+    }
+}

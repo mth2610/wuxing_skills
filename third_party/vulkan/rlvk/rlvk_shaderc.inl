@@ -238,6 +238,25 @@ static char *rlvkInjectClipZEpilogue(const char *src)
     return out;
 }
 
+static uint64_t rlvkHashGlslSource(const char *src, int stage)
+{
+    uint64_t h = 14695981039346656037ULL;
+    h ^= (uint64_t)(stage + 1);
+    h *= 1099511628211ULL;
+#ifdef __ANDROID__
+    if (stage == 2) {
+        h ^= 0xA11D01ULL;
+        h *= 1099511628211ULL;
+    }
+#endif
+    for (const unsigned char *p = (const unsigned char *)src; *p; p++)
+    {
+        h ^= (uint64_t)(*p);
+        h *= 1099511628211ULL;
+    }
+    return h;
+}
+
 // GLSL -> SPIR-V through shaderc with relaxed Vulkan rules. Optimization stays OFF so OpName /
 // OpMemberName debug info survives for reflection. Returned words are RL_MALLOC'd.
 static bool rlvkCompileGlsl(const char *source, int stage /*0=vs 1=fs 2=cs*/, u32 **outWords, size_t *outWordCount)
@@ -246,6 +265,38 @@ static bool rlvkCompileGlsl(const char *source, int stage /*0=vs 1=fs 2=cs*/, u3
     char *patched = (stage == 0) ? rlvkInjectClipZEpilogue(source) : NULL;
     if (patched)
         source = patched;
+
+    // On-disk SPIR-V cache keyed by GLSL source + stage hash (avoids re-running shaderc
+    // across launches, especially impactful on Android cold/warm boots).
+    char spvCachePath[512] = {0};
+    const char *cacheDir = getenv("TMPDIR");
+    if (cacheDir && cacheDir[0] != '\0')
+    {
+        uint64_t srcHash = rlvkHashGlslSource(source, stage);
+        snprintf(spvCachePath, sizeof(spvCachePath), "%s/rlvk_spv_%016llx_s%d.spv",
+                 cacheDir, (unsigned long long)srcHash, stage);
+        FILE *cf = fopen(spvCachePath, "rb");
+        if (cf)
+        {
+            fseek(cf, 0, SEEK_END);
+            long sz = ftell(cf);
+            fseek(cf, 0, SEEK_SET);
+            if (sz >= 20 && (sz % 4) == 0)
+            {
+                u32 *buf = (u32 *)RL_MALLOC((size_t)sz);
+                if (buf && fread(buf, 1, (size_t)sz, cf) == (size_t)sz && buf[0] == 0x07230203u)
+                {
+                    fclose(cf);
+                    if (patched) RL_FREE(patched);
+                    *outWords = buf;
+                    *outWordCount = (size_t)sz / 4;
+                    return true;
+                }
+                if (buf) RL_FREE(buf);
+            }
+            fclose(cf);
+        }
+    }
 
     shaderc_compile_options_t opts = p_shaderc_compile_options_initialize();
     // Baseline target: Vulkan 1.1 / SPIR-V 1.3 - modules stay loadable on every supported
@@ -301,6 +352,26 @@ static bool rlvkCompileGlsl(const char *source, int stage /*0=vs 1=fs 2=cs*/, u3
     memcpy(*outWords, p_shaderc_result_get_bytes(res), bytes);
     *outWordCount = bytes / 4;
     p_shaderc_result_release(res);
+
+    if (spvCachePath[0] != '\0')
+    {
+        char tmpPath[528];
+        snprintf(tmpPath, sizeof(tmpPath), "%s.tmp", spvCachePath);
+        FILE *wf = fopen(tmpPath, "wb");
+        if (wf)
+        {
+            if (fwrite(*outWords, 4, *outWordCount, wf) == *outWordCount)
+            {
+                fclose(wf);
+                rename(tmpPath, spvCachePath);
+            }
+            else
+            {
+                fclose(wf);
+                remove(tmpPath);
+            }
+        }
+    }
     const char *dumpSpvDir = getenv("RLVK_DUMP_SPV");
     if (dumpSpvDir) // debug: write the module for spirv-dis inspection
     {

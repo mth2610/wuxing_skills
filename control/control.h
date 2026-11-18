@@ -56,6 +56,7 @@ float Control_GetYaw(void);
 // Snap facing toward a world point (e.g. game/'s basic attack turning the
 // character toward its auto-found target).
 void Control_FaceTowards(Vector3 point);
+void Control_UpdateFacingFromIntent(const PlayerIntent *in);
 
 // Zone-rule hook (game/ computes the rule, control just consumes a number):
 // multiplies the cooldown armed after a successful cast. 1.0 = normal;

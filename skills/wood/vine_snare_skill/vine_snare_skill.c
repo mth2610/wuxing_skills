@@ -158,7 +158,7 @@ void CastVineSnareSkill(int agentId, Vector3 startPos, Vector3 target, SkillPara
     v->seed = (unsigned int)GetRandomValue(1, 999999);
 
     v->damage = 32.0f * scale * (1.0f + 0.12f * (float)(params.level > 0 ? params.level - 1 : 0));
-    v->knockback = Skill_CalculateKnockback(SKILL_CAT_AOE_CONTROL, params) * 0.25f;
+    v->knockback = 0.0f;
 
     Skill_RequestAnim(agentId, "inside_crescent_kick", VINE_CAST_SECS);
 

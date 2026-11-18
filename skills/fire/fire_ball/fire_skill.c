@@ -95,7 +95,23 @@ static void DetonateInferno(InfernoInstance *inst, Vector3 at) {
         at.z
     };
 
-    VFX_ComposeFireballBurst(at, VC_MAT_FIRE, 1.50f * inst->sizeScale, 1.0f);
+    // Billowing Shader-Puff fireball detonation burst (no flipbook/normal Mode 4)
+    VFX_FireConfig burstCfg = VFX_Fire_DefaultConfig();
+    VFX_Fire_ApplyPreset(&burstCfg, VFX_FIRE_PRESET_FIREBALL);
+    burstCfg.preset = VFX_FIRE_PRESET_CUSTOM;
+    burstCfg.mode = VFX_FIRE_MODE_SHADER_PUFF;
+    burstCfg.particleCount = 140;
+    burstCfg.particleRadius = 0.48f * inst->sizeScale;
+    burstCfg.sourceRadius = 0.55f * inst->sizeScale;
+    burstCfg.fieldSpeed = 7.5f;
+    burstCfg.lifetime = 0.55f;
+    burstCfg.coreHeat = 1.75f;
+    burstCfg.intensity = 2.80f;
+    burstCfg.emitSparks = true;
+    burstCfg.emitSmoke = false;
+    burstCfg.dynamicLight = true;
+    VFX_ComposeGuidedFire(at, &burstCfg);
+
     VFX_ComposeEmberBurst(at, (Vector3){ 0.0f, 1.0f, 0.0f }, VC_MAT_FIRE, 1.35f * inst->sizeScale, 0.95f);
     VFX_ComposeGroundWave(inst->groundImpact, VC_MAT_FIRE, 3.1f * inst->sizeScale, 0.90f,
                           VFX_GroundHeightFromMap, NULL);
@@ -109,6 +125,7 @@ static void DetonateInferno(InfernoInstance *inst, Vector3 at) {
 void InitFireSkill(int screenWidth, int screenHeight) {
     (void)screenWidth;
     (void)screenHeight;
+    VFX_Fire_Warmup();
 
     for (int i = 0; i < MAX_INFERNO_INSTANCES; i++) {
         s_instances[i].active = false;
@@ -172,7 +189,7 @@ void CastFireSkill(int agentId, Vector3 startPos, Vector3 target, float twistPha
     inst->sizeScale = scale;
 
     inst->damage = 46.0f * scale;
-    inst->knockback = 4.5f * scale;
+    inst->knockback = 0.0f;
 
     inst->headMat = MatrixTranslate(launchPos.x, launchPos.y, launchPos.z);
     inst->orbitMat = inst->headMat;

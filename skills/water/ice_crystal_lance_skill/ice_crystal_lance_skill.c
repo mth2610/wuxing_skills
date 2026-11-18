@@ -136,7 +136,7 @@ void CastIceCrystalLanceSkill(int agentId, Vector3 startPos, Vector3 target, Ski
 
     inst->damage = Skill_CalculateDamage(SKILL_CAT_PROJECTILE, params);
     if (inst->damage <= 0.0f) inst->damage = 42.0f;
-    inst->knockback = Skill_CalculateKnockback(SKILL_CAT_PROJECTILE, params);
+    inst->knockback = 0.0f;
 
     Skill_RequestAnim(agentId, "elbow_punch", ICE_LANCE_CAST_SECS);
 
@@ -185,7 +185,7 @@ void UpdateIceCrystalLanceSkill(float dt, Vector3 enemyPos, float enemyRadius) {
                     const Agent *ag = Entity_GetAgent(hitIds[h]);
                     if (ag != NULL && ag->team != inst->casterTeam) {
                         anyEnemy = true;
-                        break;
+                        Entity_ApplyStun(hitIds[h], 0.45f);
                     }
                 }
                 if (anyEnemy || inst->distTraveled >= inst->distTotal) {

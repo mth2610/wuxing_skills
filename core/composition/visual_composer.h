@@ -272,6 +272,7 @@ int VFX_Fire_GetParams(VFX_FireConfig *cfg, VFX_ParamDef *outParams, int maxPara
 int VFX_ComposeFireEx(Vector3 pos, const VFX_FireConfig *cfg);
 #define VFX_ComposeGuidedFire VFX_ComposeFireEx
 void VFX_KillFire(int handle);
+void VFX_Fire_Warmup(void);
 const char *VFX_FirePreset_Name(VFX_FirePreset preset);
 const char *VFX_FireMode_Name(VFX_FireMode mode);
 const char *VFX_FireEmitterShape_Name(VFX_FireEmitterShape shape);

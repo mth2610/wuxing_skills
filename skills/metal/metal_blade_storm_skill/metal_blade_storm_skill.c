@@ -157,7 +157,7 @@ void CastMetalBladeStormSkill(int agentId, Vector3 startPos, Vector3 target, Ski
     float totalDmg       = Skill_CalculateDamage(SKILL_CAT_PROJECTILE, params);
     float baseDmg        = (totalDmg > 0.0f) ? totalDmg : 50.0f;
     inst->damagePerBlade = baseDmg / (float)inst->totalBlades;
-    inst->knockback      = Skill_CalculateKnockback(SKILL_CAT_PROJECTILE, params) * 0.45f;
+    inst->knockback      = 0.0f;
 
     // 1. Draw sword / Kiếm Quyết summon stance
     Skill_RequestAnim(agentId, "withdrawing_sword", MBS_SUMMON_TIME);

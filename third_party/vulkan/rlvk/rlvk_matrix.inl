@@ -181,6 +181,14 @@ void rlViewport(int x, int y, int width, int height)
     }
 }
 
+void rlvkGetViewport(int *x, int *y, int *width, int *height)
+{
+    if (x) *x = RLVK.State.viewportX;
+    if (y) *y = RLVK.State.viewportY;
+    if (width) *width = RLVK.State.viewportW;
+    if (height) *height = RLVK.State.viewportH;
+}
+
 // Set clip planes distances
 void rlSetClipPlanes(f64 n, f64 f)
 {

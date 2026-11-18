@@ -653,6 +653,21 @@ static void EosStop(void) {
     // Platform + login stay up for the process — re-hosting skips auth.
 }
 
+void Net_Shutdown(void) {
+    Net_Stop();
+    if (s_platform != NULL) {
+        EosStop();
+        EOS_Platform_Release(s_platform);
+        s_platform = NULL;
+        s_connect  = NULL;
+        s_lobby    = NULL;
+        s_p2p      = NULL;
+        s_rtc      = NULL;
+        s_localPuid = NULL;
+        EOS_Shutdown();
+    }
+}
+
 // --- Lobby: create with join code / find by join code ------------------------
 
 static void EOS_CALL OnCreateLobby(const EOS_Lobby_CreateLobbyCallbackInfo *data) {

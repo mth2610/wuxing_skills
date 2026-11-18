@@ -327,6 +327,7 @@ RLVKAPI void rlvkPresent(void);                     // Present the current frame
 // BeginDrawing/EndDrawing pair, before runtime uploads or compute. Idempotent;
 // unavailable surfaces/acquire failures retain the existing lazy fallback.
 RLVKAPI void rlvkBeginFrameCommands(void);
+RLVKAPI void rlvkGetViewport(int *x, int *y, int *width, int *height);
 
 //------------------------------------------------------------------------------------
 // Functions Declaration - Format capability query

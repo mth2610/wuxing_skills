@@ -162,7 +162,7 @@ void CastEarthPillarPrisonSkill(int agentId, Vector3 startPos, Vector3 target, S
     p->spikeHandle = -1;
 
     p->damage = 46.0f * scale * (1.0f + 0.12f * (float)(params.level > 0 ? params.level - 1 : 0));
-    p->knockback = Skill_CalculateKnockback(SKILL_CAT_AOE_CONTROL, params) * 0.35f;
+    p->knockback = 0.0f;
 
     Skill_RequestAnim(agentId, "hell_slammer_a", PILLAR_PRISON_CAST_SECS);
 

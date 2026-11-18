@@ -732,12 +732,39 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
         // Connected client: the host owns rules/waves/outcomes — this side
         // only points the camera/HUD at the hero the host assigned us
         // (mirrored 1:1 into the local pool by snapshot sync).
+        static int s_syncedClientHeroId = -1;
+        if (!Net_ClientDrivesWorld())
+            s_syncedClientHeroId = -1;
         if (Net_ClientDrivesWorld())
         {
             s_wasExploreClient = (s_mode == GAME_MODE_EXPLORE);
             int hid = Net_GetLocalHeroAgentId();
             if (hid >= 0)
+            {
                 player->agentId = hid;
+                const Agent *ha = Entity_GetAgent(hid);
+                if (ha != NULL)
+                {
+                    bool allEmpty = true;
+                    for (int sl = 0; sl < AGENT_SKILL_SLOTS; sl++)
+                    {
+                        if (ha->equippedSkills[sl] >= 0) { allEmpty = false; break; }
+                    }
+                    if (hid != s_syncedClientHeroId || allEmpty)
+                    {
+                        if (hid != s_syncedClientHeroId)
+                            Control_Init(hid);
+                        s_syncedClientHeroId = hid;
+                        EquipDefaultLoadout(hid);
+                        const Agent *syncedA = Entity_GetAgent(hid);
+                        if (syncedA != NULL)
+                        {
+                            for (int sl = 0; sl < AGENT_SKILL_SLOTS; sl++)
+                                Net_ClientSendLoadout(sl, syncedA->equippedSkills[sl], syncedA->equippedElements[sl]);
+                        }
+                    }
+                }
+            }
             if (s_mode == GAME_MODE_EXPLORE)
             {
                 DaTau_Update(dt);
@@ -1292,6 +1319,9 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
         if (Net_ClientDrivesWorld())
         {
             // The host simulates our hero; snapshots move it back to us.
+            // Update local facing yaw immediately so the client character
+            // rotates toward its movement/cast direction instead of staying frozen.
+            Control_UpdateFacingFromIntent(&intent);
             Net_ClientSubmitIntent(&intent);
         }
         else

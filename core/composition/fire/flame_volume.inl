@@ -1594,6 +1594,11 @@ static void FVol_EnsureAnchoredCurve(void) {
     }
 }
 
+void VFX_Fire_Warmup(void)
+{
+    FVol_InitShared();
+}
+
 int VFX_ComposeFireEx(Vector3 pos, const VFX_FireConfig *cfg)
 {
     if (!cfg) cfg = &s_liveFireConfig;
