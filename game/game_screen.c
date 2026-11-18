@@ -15,6 +15,7 @@
 #include "game/game_rules.h"
 #include "game/quest_datau.h"
 #include "open_world/ow_world.h"
+#include "open_world/ow_quest_npc.h"
 #include "open_world/realms/ow_desert_earth.h"
 #include "ai/ai.h"
 #include "ui/ui.h"
@@ -1206,6 +1207,10 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
             intent.jump = true;
             intent.dash = true;
         }
+        if (s_gameTouchInput.dodgePressed)
+            intent.dash = true;
+        if (s_gameTouchInput.meditateHeld)
+            intent.meditate = true;
         for (int k = 0; k < 4; k++)
         {
             if (s_gameTouchInput.skillPressed[k] && intent.castSkillSlot < 0)
@@ -1226,10 +1231,67 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
     // the boss overrides the raw mouse aim — mobile-first UX (thiết kế §XI).
     if (s_state == GAME_FIGHTING && !UI_IsLoadoutOpen() && !UI_Hub_IsModalOpen())
     {
+        static Vector2 s_worldTapDownPos = {0};
+        static bool s_worldTapTracking = false;
+        if (!s_gameTouchInput.pointerOverUI && IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
+        {
+            s_worldTapDownPos = GetMousePosition();
+            s_worldTapTracking = true;
+        }
+        if (s_worldTapTracking && IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
+        {
+            s_worldTapTracking = false;
+            Vector2 up = GetMousePosition();
+            float tdx = up.x - s_worldTapDownPos.x;
+            float tdy = up.y - s_worldTapDownPos.y;
+            if (!s_gameTouchInput.pointerOverUI && (tdx * tdx + tdy * tdy) <= 18.0f * 18.0f)
+            {
+                bool handledTap = false;
+                if (s_mode == GAME_MODE_EXPLORE && s_exploreRealm == 3)
+                    handledTap = OWQuestNpc_HandleTap(player->position, up, *camera);
+
+                if (!handledTap)
+                {
+                    const Agent *selfA = Entity_GetAgent(player->agentId);
+                    int bestPick = -1;
+                    float bestPxSq = 68.0f * 68.0f;
+                    if (selfA)
+                    {
+                        for (int idx = 0; idx < MAX_AGENTS; idx++)
+                        {
+                            if (idx == player->agentId) continue;
+                            const Agent *cand = Entity_GetAgent(idx);
+                            if (!cand || !Entity_CanDamageTarget(player->agentId, idx)) continue;
+                            Vector3 mid = { cand->position.x, cand->position.y + 0.9f, cand->position.z };
+                            Vector2 sp = GetWorldToScreen(mid, *camera);
+                            float px = sp.x - up.x, py = sp.y - up.y;
+                            float d2 = px * px + py * py;
+                            if (d2 < bestPxSq) { bestPxSq = d2; bestPick = idx; }
+                        }
+                    }
+                    if (bestPick >= 0)
+                        UI_SetManualTarget(bestPick);
+                }
+            }
+        }
+
         bool hasAuto = false;
         Vector3 autoPt = UI_GetAutoAimPoint(player->agentId, &hasAuto);
         if (hasAuto)
+        {
             intent.aimPoint = autoPt;
+        }
+        else if (UI_IsTouchControlsEnabled())
+        {
+            // On touch screens, never aim at the corner button where the finger tapped;
+            // aim forward in the character's current facing direction.
+            float yaw = Control_GetYaw();
+            intent.aimPoint = (Vector3){
+                player->position.x + sinf(yaw) * 8.0f,
+                player->position.y,
+                player->position.z + cosf(yaw) * 8.0f
+            };
+        }
 
         // Swing damping: while an attack/cast animation plays, walking
         // drops to 35% so the feet stop sliding through the swing — the
@@ -1479,6 +1541,17 @@ void GameScreen_Draw3D(const PlayerEntity *player)
     {
         OW_Draw3D(player, s_hudCamera);
     }
+    int lockedTarget = UI_GetManualTarget();
+    if (lockedTarget >= 0)
+    {
+        const Agent *lt = Entity_GetAgent(lockedTarget);
+        if (lt)
+        {
+            Vector3 rp = { lt->position.x, lt->position.y + 0.12f, lt->position.z };
+            DrawCircle3D(rp, 0.95f, (Vector3){ 1, 0, 0 }, 90.0f, (Color){ 255, 90, 75, 235 });
+            DrawCircle3D(rp, 1.15f, (Vector3){ 1, 0, 0 }, 90.0f, GOLD);
+        }
+    }
 
     if (s_mode == GAME_MODE_PVP_ESCORT_1V1 || s_mode == GAME_MODE_PVP_ESCORT_2V2)
     {
@@ -1664,8 +1737,21 @@ void GameScreen_DrawHUD(const PlayerEntity *player)
         DrawText(dq->title, qX + 10, qY + 46, 13, WHITE);
         DrawText(TextFormat("%s (%d/%d)", dq->desc, dq->currentCount, dq->targetCount),
                  qX + 10, qY + 64, 12, (Color){ 200, 225, 200, 255 });
-        DrawText(TextFormat("[N] Doi nhiem vu (Lenh bai: %d)", prof->daTauTokens),
-                 qX + 10, qY + 84, 11, (Color){ 170, 175, 190, 230 });
+        if (UI_IsTouchControlsEnabled())
+        {
+            Rectangle skipBtn = { (float)(qX + 10), (float)(qY + 80), 130.0f, 20.0f };
+            bool hov = CheckCollisionPointRec(GetMousePosition(), skipBtn);
+            DrawRectangleRec(skipBtn, hov ? (Color){ 54, 48, 28, 240 } : (Color){ 28, 32, 44, 225 });
+            DrawRectangleLinesEx(skipBtn, 1.0f, GOLD);
+            DrawText(TextFormat("DOI NV (LB:%d)", prof->daTauTokens), (int)skipBtn.x + 8, (int)skipBtn.y + 4, 11, GOLD);
+            if (hov && IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
+                DaTau_SkipWithToken();
+        }
+        else
+        {
+            DrawText(TextFormat("[N] Doi nhiem vu (Lenh bai: %d)", prof->daTauTokens),
+                     qX + 10, qY + 84, 11, (Color){ 170, 175, 190, 230 });
+        }
         if (DaTau_GetCompleteBannerTimer() > 0.0f)
         {
             const char *msg = DaTau_GetLastRewardText();
@@ -1788,6 +1874,35 @@ void GameScreen_DrawHUD(const PlayerEntity *player)
         DrawText(t, sw / 2 - MeasureText(t, 44) / 2, sh / 2 - 60, 44, (Color){200, 70, 70, 255});
         const char *hint = "ENTER";
         DrawText(hint, sw / 2 - MeasureText(hint, 18) / 2, sh / 2 - 8, 18, (Color){200, 200, 200, 255});
+    }
+
+    if (UI_IsTouchControlsEnabled() && s_state == GAME_FIGHTING && !UI_IsLoadoutOpen() && !UI_Hub_IsModalOpen())
+    {
+        float ty = (s_mode == GAME_MODE_EXPLORE) ? 124.0f : 14.0f;
+        float tx = (float)sw - 16.0f;
+        struct { const char *lbl; Color col; int action; } topBtns[3] = {
+            { "MENU",  (Color){ 235, 115, 110, 235 }, 2 },
+            { "TU DO", (Color){ 135, 205, 255, 235 }, 1 },
+            { "CHIEU", (Color){ 235, 200, 115, 235 }, 0 }
+        };
+        for (int b = 0; b < 3; b++)
+        {
+            if (b == 1 && s_mode != GAME_MODE_EXPLORE) continue;
+            float bw = (float)(MeasureText(topBtns[b].lbl, 12) + 20);
+            tx -= bw;
+            Rectangle br = { tx, ty, bw, 28.0f };
+            bool hov = CheckCollisionPointRec(GetMousePosition(), br);
+            DrawRectangleRec(br, hov ? (Color){ 40, 46, 62, 240 } : (Color){ 18, 22, 32, 215 });
+            DrawRectangleLinesEx(br, 1.3f, topBtns[b].col);
+            DrawText(topBtns[b].lbl, (int)br.x + 10, (int)br.y + 8, 12, WHITE);
+            if (hov && IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
+            {
+                if (topBtns[b].action == 0) UI_ToggleLoadout();
+                else if (topBtns[b].action == 1) UI_Hub_OpenModal(0);
+                else { s_backToMenu = true; ResetMatch((PlayerEntity *)player); }
+            }
+            tx -= 6.0f;
+        }
     }
 
     EndMode2D();

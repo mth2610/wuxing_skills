@@ -1,6 +1,7 @@
 // open_world/ow_quest_npc.c
 #include "open_world/ow_quest_npc.h"
 #include "open_world/ow_loot.h"
+#include "ui/ui.h"
 #include "entities/entities.h"
 #include "game/quest_datau.h"
 #include "maps/map_manager.h"
@@ -193,6 +194,27 @@ bool OWQuestNpc_TryInteract(Vector3 playerPos) {
     return false;
 }
 
+static bool CheckNpcTap(Vector3 npcPos, Vector3 playerPos, Vector2 tapPos, Camera3D cam) {
+    Vector3 mid = { npcPos.x, MapManager_GetGroundHeightAt(npcPos.x, npcPos.z) + 1.0f, npcPos.z };
+    Vector2 sp = GetWorldToScreen(mid, cam);
+    float dx = sp.x - tapPos.x, dy = sp.y - tapPos.y;
+    if (dx * dx + dy * dy <= 62.0f * 62.0f) {
+        if (DistXZ(playerPos, npcPos) <= 5.5f) {
+            OWQuestNpc_TryInteract(playerPos);
+        } else {
+            OW_SetBanner("LAI GAN NPC HON DE NOI CHUYEN!", 2.2f);
+        }
+        return true;
+    }
+    return false;
+}
+
+bool OWQuestNpc_HandleTap(Vector3 playerPos, Vector2 tapScreenPos, Camera3D cam) {
+    if (CheckNpcTap(s_daTauPos, playerPos, tapScreenPos, cam)) return true;
+    if (CheckNpcTap(s_alchemistPos, playerPos, tapScreenPos, cam)) return true;
+    return false;
+}
+
 bool OWQuestNpc_GetEncounterGuideTarget(Vector3 playerPos, Vector3 *outPos) {
     const DaTauQuest *q = DaTau_GetCurrent();
     if (!q || q->phase != DATAU_PHASE_IN_PROGRESS || !s_encounter.active) return false;
@@ -360,29 +382,42 @@ void OWQuestNpc_DrawHUD(const Agent *pa, Camera3D cam) {
     Vector3 ap = s_alchemistPos;
     ap.y = MapManager_GetGroundHeightAt(ap.x, ap.z) + 2.3f;
     Vector2 asp = GetWorldToScreen(ap, cam);
-    const char *atag = "LUYEN DAN SU [F]";
+    const char *atag = UI_IsTouchControlsEnabled() ? "LUYEN DAN SU" : "LUYEN DAN SU [F]";
     int atw = MeasureText(atag, 12);
     DrawRectangle((int)asp.x - atw / 2 - 6, (int)asp.y - 10, atw + 12, 18, (Color){ 16, 26, 22, 210 });
     DrawText(atag, (int)asp.x - atw / 2, (int)asp.y - 7, 12, (Color){ 140, 240, 175, 255 });
 
     if (s_npcDialogOpen && q) {
-        Rectangle db = { (float)sw / 2 - 220.0f, 145.0f, 440.0f, 180.0f };
+        Rectangle db = { (float)sw / 2 - 230.0f, 130.0f, 460.0f, 198.0f };
         DrawRectangleRec(db, (Color){ 16, 20, 28, 245 });
         DrawRectangleLinesEx(db, 2.0f, GOLD);
-        DrawText("SU GIA DA TAU — NHAN/TRA NHIEM VU", (int)db.x + 18, (int)db.y + 14, 15, GOLD);
-        DrawText(q->title, (int)db.x + 18, (int)db.y + 46, 15, WHITE);
-        DrawText(q->desc, (int)db.x + 18, (int)db.y + 70, 12, LIGHTGRAY);
-        DrawText(TextFormat("Phan thuong: %d Vang  |  %d Diem  |  +1 Khoang  |  +1 Thao",
-                            q->rewardGold, q->rewardPoints),
-                 (int)db.x + 18, (int)db.y + 96, 12, (Color){ 145, 240, 175, 255 });
+        DrawText("SU GIA DA TAU — NHIEM VU", (int)db.x + 18, (int)db.y + 14, 16, GOLD);
 
-        const char *btnTxt = (q->phase == DATAU_PHASE_WAIT_ACCEPT)  ? "[F] NHAN NHIEM VU NAY!" :
-                             (q->phase == DATAU_PHASE_READY_RETURN) ? "[F] TRA NHIEM VU & NHAN THUONG!" :
-                                                                      "DANG THUC HIEN (THEO GIO) [F]";
-        Rectangle btn = { db.x + 18, db.y + 128, db.width - 36, 36 };
-        DrawRectangleRec(btn, (Color){ 42, 38, 24, 255 });
+        Rectangle closeBtn = { db.x + db.width - 80.0f, db.y + 10.0f, 66.0f, 28.0f };
+        DrawRectangleRec(closeBtn, (Color){ 88, 30, 30, 240 });
+        DrawRectangleLinesEx(closeBtn, 1.2f, (Color){ 235, 130, 120, 235 });
+        DrawText("DONG", (int)closeBtn.x + 14, (int)closeBtn.y + 7, 13, WHITE);
+        if (CheckCollisionPointRec(GetMousePosition(), closeBtn) && IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+            s_npcDialogOpen = false;
+        }
+
+        DrawText(q->title, (int)db.x + 18, (int)db.y + 48, 16, WHITE);
+        DrawText(q->desc, (int)db.x + 18, (int)db.y + 74, 13, LIGHTGRAY);
+        DrawText(TextFormat("Thuong: %d Vang | %d Diem | +1 Khoang | +1 Thao",
+                            q->rewardGold, q->rewardPoints),
+                 (int)db.x + 18, (int)db.y + 102, 13, (Color){ 145, 240, 175, 255 });
+
+        const char *btnTxt = (q->phase == DATAU_PHASE_WAIT_ACCEPT)  ? "NHAN NHIEM VU NAY!" :
+                             (q->phase == DATAU_PHASE_READY_RETURN) ? "TRA NHIEM VU & NHAN THUONG!" :
+                                                                      "DANG THUC HIEN (THEO GIO)";
+        Rectangle btn = { db.x + 18, db.y + 136, db.width - 36, 46 };
+        bool hov = CheckCollisionPointRec(GetMousePosition(), btn);
+        DrawRectangleRec(btn, hov ? (Color){ 64, 56, 32, 255 } : (Color){ 42, 38, 24, 255 });
         DrawRectangleLinesEx(btn, 1.5f, GOLD);
-        int bw = MeasureText(btnTxt, 14);
-        DrawText(btnTxt, (int)(btn.x + btn.width * 0.5f - bw * 0.5f), (int)btn.y + 11, 14, GOLD);
+        int bw = MeasureText(btnTxt, 15);
+        DrawText(btnTxt, (int)(btn.x + btn.width * 0.5f - bw * 0.5f), (int)btn.y + 15, 15, GOLD);
+        if (pa && hov && IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+            OWQuestNpc_TryInteract(pa->position);
+        }
     }
 }

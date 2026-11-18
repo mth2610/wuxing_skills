@@ -22,6 +22,8 @@ void UI_Update(float dt);
 // Auto-aim for agentId. Returns the point via outPoint and true when a
 // target exists; false = caller keeps its own aim (mouse).
 Vector3 UI_GetAutoAimPoint(int agentId, bool *hasTarget);
+void    UI_SetManualTarget(int agentId);
+int     UI_GetManualTarget(void);
 
 // 2D pass, after the 3D scene: skill slots (keys 1-4) with cooldown
 // shading + the auto-aim reticle. Call from the game screen's HUD.
@@ -54,6 +56,7 @@ typedef struct {
     char  shortLabel[12];
     Color color;
     bool  ready;
+    float cooldownRemain;
 } UITouchSkillSlot;
 
 typedef struct {
@@ -64,6 +67,9 @@ typedef struct {
     bool  attackPressed;
     bool  khinhCongHeld;
     bool  khinhCongPressed;
+    bool  dodgeHeld;
+    bool  dodgePressed;
+    bool  meditateHeld;
     bool  skillHeld[5];
     bool  skillPressed[5];
     bool  pointerOverUI;

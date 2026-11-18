@@ -12,6 +12,7 @@ void OWQuestNpc_DrawHUD(const Agent *playerAgent, Camera3D cam);
 
 void OWQuestNpc_SyncEncounter(void);
 bool OWQuestNpc_TryInteract(Vector3 playerPos);
+bool OWQuestNpc_HandleTap(Vector3 playerPos, Vector2 tapScreenPos, Camera3D cam);
 bool OWQuestNpc_GetEncounterGuideTarget(Vector3 playerPos, Vector3 *outPos);
 const char *OWQuestNpc_GetNearbyPrompt(Vector3 playerPos);
 int  OWQuestNpc_GetSteleAgentId(void);

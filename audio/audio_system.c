@@ -140,8 +140,11 @@ void Audio_PlayMusic(MusicId id) {
     if (id == s_musicId && s_musicLoaded) return;
     Audio_StopMusic();
     if (id <= MUS_NONE || id >= MUS_COUNT || kMusicPath[id] == NULL) return;
+    static bool s_musicMissing[MUS_COUNT] = { false };
+    if (s_musicMissing[id]) return;
     s_music = LoadMusicStream(kMusicPath[id]);
     if (!IsMusicValid(s_music)) { // asset missing — stay silent
+        s_musicMissing[id] = true;
         TraceLog(LOG_INFO, "[AUDIO] music %s not present yet", kMusicPath[id]);
         return;
     }

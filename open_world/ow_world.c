@@ -11,6 +11,7 @@
 #include "maps/map_manager.h"
 #include "net/net_transport.h"
 #include "skills/skill_manager.h"
+#include "ui/ui.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -53,6 +54,12 @@ static Vector3 s_lastPlayerPos = { 0 };
 
 static int   s_killStreak      = 0;
 static float s_killStreakTimer = 0.0f;
+
+static bool  s_touchInteractReq = false;
+static bool  s_touchWindReq     = false;
+static bool  s_touchHealReq     = false;
+static bool  s_touchManaReq     = false;
+static bool  s_touchDuelReq     = false;
 
 static float DistXZ(Vector3 a, Vector3 b) {
     float dx = a.x - b.x, dz = a.z - b.z;
@@ -347,14 +354,15 @@ void OW_Update(PlayerEntity *player, float dt) {
         }
     }
 
-    if (IsKeyPressed(KEY_F)) OW_TryInteractNearest(pa->position);
-    if (IsKeyPressed(KEY_C)) OW_TriggerGuidingWind();
-    if (IsKeyPressed(KEY_R))  UsePotionKey(player, POTION_HEAL_HP);
-    if (IsKeyPressed(KEY_F1)) UsePotionKey(player, POTION_RESTORE_MANA);
+    if (IsKeyPressed(KEY_F) || s_touchInteractReq) { s_touchInteractReq = false; OW_TryInteractNearest(pa->position); }
+    if (IsKeyPressed(KEY_C) || s_touchWindReq)     { s_touchWindReq = false; OW_TriggerGuidingWind(); }
+    if (IsKeyPressed(KEY_R) || s_touchHealReq)     { s_touchHealReq = false; UsePotionKey(player, POTION_HEAL_HP); }
+    if (IsKeyPressed(KEY_F1) || s_touchManaReq)    { s_touchManaReq = false; UsePotionKey(player, POTION_RESTORE_MANA); }
     if (IsKeyPressed(KEY_F2)) UsePotionKey(player, POTION_EARTH_MIGHT);
     if (IsKeyPressed(KEY_F3)) UsePotionKey(player, POTION_SKILL_XP_BOOST);
 
-    if (IsKeyPressed(KEY_V)) {
+    if (IsKeyPressed(KEY_V) || s_touchDuelReq) {
+        s_touchDuelReq = false;
         if (inSafe) {
             OW_SetBanner("TRONG OC DAO AN TOAN KHONG THE BAT CO TY VO PK!", 2.5f);
         } else {
@@ -424,35 +432,79 @@ void OW_DrawHUD(const PlayerEntity *player, Camera3D cam) {
 
     OWQuestNpc_DrawHUD(pa, cam);
 
+    bool touchMode = UI_IsTouchControlsEnabled();
     if (pa) {
         int z = OW_GetZoneAt(pa->position);
-        DrawRectangle(sw / 2 - 225, 44, 450, 28, (Color){ 16, 18, 26, 210 });
-        DrawRectangleLines(sw / 2 - 225, 44, 450, 28, (Color){ 215, 178, 95, 190 });
-        const char *hudLine = TextFormat("%s  |  [C] Gio Dan Loi  |  %s",
-                                         OW_GetZoneName(z),
-                                         pa->duelFlag ? "PK: BAT" : "HOA BINH");
+        int zw = touchMode ? 330 : 450;
+        int zy = touchMode ? 78 : 44;
+        DrawRectangle(sw / 2 - zw / 2, zy, zw, 28, (Color){ 16, 18, 26, 210 });
+        DrawRectangleLines(sw / 2 - zw / 2, zy, zw, 28, (Color){ 215, 178, 95, 190 });
+        const char *hudLine = touchMode
+            ? TextFormat("%s  |  %s", OW_GetZoneName(z), pa->duelFlag ? "PK: BAT" : "HOA BINH")
+            : TextFormat("%s  |  [C] Gio Dan Loi  |  %s", OW_GetZoneName(z), pa->duelFlag ? "PK: BAT" : "HOA BINH");
         int tw = MeasureText(hudLine, 12);
-        DrawText(hudLine, sw / 2 - tw / 2, 52, 12, pa->duelFlag ? (Color){ 255, 130, 120, 255 } : GOLD);
+        DrawText(hudLine, sw / 2 - tw / 2, zy + 8, 12, pa->duelFlag ? (Color){ 255, 130, 120, 255 } : GOLD);
 
         const char *prompt = OWQuestNpc_GetNearbyPrompt(pa->position);
         if (!prompt) prompt = OWLoot_GetNearbyPrompt(pa->position);
         if (prompt) {
-            int lw = MeasureText(prompt, 15);
-            DrawRectangle(sw / 2 - lw / 2 - 14, GetScreenHeight() - 148, lw + 28, 30, (Color){ 20, 24, 34, 230 });
-            DrawRectangleLines(sw / 2 - lw / 2 - 14, GetScreenHeight() - 148, lw + 28, 30, GOLD);
-            DrawText(prompt, sw / 2 - lw / 2, GetScreenHeight() - 141, 15, GOLD);
+            if (touchMode) {
+                const char *clean = (strncmp(prompt, "[F] ", 4) == 0) ? prompt + 4 : prompt;
+                int lw = MeasureText(clean, 15);
+                float bw = (float)(lw + 40);
+                if (bw < 240.0f) bw = 240.0f;
+                Rectangle ib = { (float)sw * 0.5f - bw * 0.5f, (float)GetScreenHeight() - 100.0f, bw, 46.0f };
+                bool hov = CheckCollisionPointRec(GetMousePosition(), ib);
+                DrawRectangleRec(ib, hov ? (Color){ 68, 56, 24, 245 } : (Color){ 32, 28, 18, 238 });
+                DrawRectangleLinesEx(ib, 2.0f, GOLD);
+                DrawText(clean, (int)(ib.x + (ib.width - lw) * 0.5f), (int)ib.y + 15, 15, GOLD);
+                if (hov && IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+                    s_touchInteractReq = true;
+                }
+            } else {
+                int lw = MeasureText(prompt, 15);
+                DrawRectangle(sw / 2 - lw / 2 - 14, GetScreenHeight() - 148, lw + 28, 30, (Color){ 20, 24, 34, 230 });
+                DrawRectangleLines(sw / 2 - lw / 2 - 14, GetScreenHeight() - 148, lw + 28, 30, GOLD);
+                DrawText(prompt, sw / 2 - lw / 2, GetScreenHeight() - 141, 15, GOLD);
+            }
         }
     }
 
-    int py = GetScreenHeight() - 118;
-    DrawRectangle(16, py, 370, 44, (Color){ 16, 18, 28, 200 });
-    DrawText(TextFormat("[R] Mau:%d  [F1] Mana:%d  [F2] HoThe:%d  [F3] x2XP:%d",
-                        prof->potions[POTION_HEAL_HP], prof->potions[POTION_RESTORE_MANA],
-                        prof->potions[POTION_EARTH_MIGHT], prof->potions[POTION_SKILL_XP_BOOST]),
-             24, py + 7, 12, (Color){ 225, 235, 210, 255 });
-    DrawText(TextFormat("Khoang:%d  Thao:%d | [V] PK  [T] BieuCam  [H] GiaoDich  [C] Gio",
-                        prof->elementalStones[s_realm.realmId % 5], prof->herbs),
-             24, py + 24, 11, (Color){ 195, 205, 225, 255 });
+    if (touchMode) {
+        // Clean mobile quick-action pills tucked right below the top-left HP/MP bar (leaves joystick 100% clear)
+        struct { const char *lbl; Color border; bool *flag; } pills[4] = {
+            { TextFormat("MAU (%d)", prof->potions[POTION_HEAL_HP]), (Color){ 225, 85, 85, 235 }, &s_touchHealReq },
+            { TextFormat("MANA (%d)", prof->potions[POTION_RESTORE_MANA]), (Color){ 80, 160, 245, 235 }, &s_touchManaReq },
+            { "GIO", (Color){ 105, 225, 200, 235 }, &s_touchWindReq },
+            { "GIAO LUU", (Color){ 165, 205, 255, 235 }, NULL }
+        };
+        float px = 16.0f;
+        float py = 110.0f;
+        for (int i = 0; i < 4; i++) {
+            int tw = MeasureText(pills[i].lbl, 12);
+            float pw = (float)(tw + 20);
+            Rectangle pr = { px, py, pw, 30.0f };
+            bool hov = CheckCollisionPointRec(GetMousePosition(), pr);
+            DrawRectangleRec(pr, hov ? (Color){ 36, 42, 58, 240 } : (Color){ 18, 22, 32, 215 });
+            DrawRectangleLinesEx(pr, 1.3f, pills[i].border);
+            DrawText(pills[i].lbl, (int)pr.x + 10, (int)pr.y + 9, 12, WHITE);
+            if (hov && IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+                if (pills[i].flag) *pills[i].flag = true;
+                else s_emoteMenuOpen = !s_emoteMenuOpen;
+            }
+            px += pw + 6.0f;
+        }
+    } else {
+        int py = GetScreenHeight() - 118;
+        DrawRectangle(16, py, 370, 44, (Color){ 16, 18, 28, 200 });
+        DrawText(TextFormat("[R] Mau:%d  [F1] Mana:%d  [F2] HoThe:%d  [F3] x2XP:%d",
+                            prof->potions[POTION_HEAL_HP], prof->potions[POTION_RESTORE_MANA],
+                            prof->potions[POTION_EARTH_MIGHT], prof->potions[POTION_SKILL_XP_BOOST]),
+                 24, py + 7, 12, (Color){ 225, 235, 210, 255 });
+        DrawText(TextFormat("Khoang:%d  Thao:%d | [V] PK  [T] BieuCam  [H] GiaoDich  [C] Gio",
+                            prof->elementalStones[s_realm.realmId % 5], prof->herbs),
+                 24, py + 24, 11, (Color){ 195, 205, 225, 255 });
+    }
 
     if (s_mightTimer > 0.0f)
         DrawText(TextFormat("HOANG THO HO THE: %.0fs", s_mightTimer), 20, 125, 13, ORANGE);
@@ -484,20 +536,54 @@ void OW_DrawHUD(const PlayerEntity *player, Camera3D cam) {
         DrawText(txt, (int)sp.x - tw / 2, (int)sp.y - 7, 13, WHITE);
     }
 
-    if (s_emoteMenuOpen) {
-        DrawRectangle(sw / 2 - 200, 130, 400, 56, (Color){ 16, 20, 30, 235 });
-        DrawRectangleLines(sw / 2 - 200, 130, 400, 56, SKYBLUE);
-        DrawText("BIEU CAM GIAO LUU (BAM PHIM):", sw / 2 - 185, 138, 12, SKYBLUE);
-        DrawText("[F5] Chao Hoi   [F6] Goi Boss   [F7] Moi Ty Vo   [F8] Giao Dich",
-                 sw / 2 - 185, 158, 12, WHITE);
+    if (s_emoteMenuOpen && player) {
+        Rectangle eb = { (float)sw / 2 - 220.0f, 125.0f, 440.0f, 108.0f };
+        DrawRectangleRec(eb, (Color){ 16, 20, 30, 240 });
+        DrawRectangleLinesEx(eb, 1.5f, SKYBLUE);
+        DrawText("GIAO LUU & TY VO", (int)eb.x + 14, (int)eb.y + 10, 14, SKYBLUE);
+
+        Rectangle eClose = { eb.x + eb.width - 74.0f, eb.y + 8.0f, 62.0f, 24.0f };
+        DrawRectangleRec(eClose, (Color){ 88, 30, 30, 240 });
+        DrawText("DONG", (int)eClose.x + 12, (int)eClose.y + 5, 12, WHITE);
+        if (CheckCollisionPointRec(GetMousePosition(), eClose) && IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
+            s_emoteMenuOpen = false;
+
+        const char *eLbls[5] = { "Chao Hoi", "Goi Boss", "Moi Ty Vo", "Giao Dich",
+                                 (pa && pa->duelFlag) ? "Tat PK" : "Bat PK" };
+        for (int i = 0; i < 5; i++) {
+            float bx = eb.x + 12.0f + i * 84.0f;
+            Rectangle br = { bx, eb.y + 44.0f, 78.0f, 46.0f };
+            bool hov = CheckCollisionPointRec(GetMousePosition(), br);
+            DrawRectangleRec(br, hov ? (Color){ 42, 54, 72, 255 } : (Color){ 26, 32, 46, 255 });
+            DrawRectangleLinesEx(br, 1.2f, (i == 4 && pa && pa->duelFlag) ? RED : SKYBLUE);
+            int tw = MeasureText(eLbls[i], 11);
+            DrawText(eLbls[i], (int)(br.x + (br.width - tw) * 0.5f), (int)br.y + 17, 11, WHITE);
+            if (hov && IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+                if (i < 4) {
+                    RecordEmote(player->agentId, i + 1);
+                    Net_SendSocialState(player->agentId, i + 1, Entity_GetDuelFlag(player->agentId));
+                    if (i == 3) s_tradeMenuOpen = true;
+                } else {
+                    s_touchDuelReq = true;
+                }
+                s_emoteMenuOpen = false;
+            }
+        }
     }
 
     if (s_tradeMenuOpen && pa) {
-        Rectangle tb = { (float)sw / 2 - 180.0f, 195.0f, 360.0f, 190.0f };
-        DrawRectangleRec(tb, (Color){ 18, 22, 32, 242 });
+        Rectangle tb = { (float)sw / 2 - 190.0f, 195.0f, 380.0f, 220.0f };
+        DrawRectangleRec(tb, (Color){ 18, 22, 32, 245 });
         DrawRectangleLinesEx(tb, 1.5f, GOLD);
         DrawText("GIAO DICH / TANG VAT PHAM (P2P)", (int)tb.x + 14, (int)tb.y + 12, 14, GOLD);
-        DrawText("Bam phim de gui qua cho dong dao trong phong:", (int)tb.x + 14, (int)tb.y + 34, 11, LIGHTGRAY);
+
+        Rectangle tClose = { tb.x + tb.width - 74.0f, tb.y + 8.0f, 62.0f, 24.0f };
+        DrawRectangleRec(tClose, (Color){ 88, 30, 30, 240 });
+        DrawText("DONG", (int)tClose.x + 12, (int)tClose.y + 5, 12, WHITE);
+        if (CheckCollisionPointRec(GetMousePosition(), tClose) && IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
+            s_tradeMenuOpen = false;
+
+        DrawText("Cham de gui qua cho dong dao trong phong:", (int)tb.x + 14, (int)tb.y + 36, 11, LIGHTGRAY);
 
         struct { const char *lbl; int kind; int amt; } opts[4] = {
             { "Gui 100 Vang", 0, 100 },
@@ -506,7 +592,7 @@ void OW_DrawHUD(const PlayerEntity *player, Camera3D cam) {
             { "Gui 1 Hoi Sinh Dan", 3, 1 }
         };
         for (int i = 0; i < 4; i++) {
-            Rectangle br = { tb.x + 14, tb.y + 56 + i * 30, tb.width - 28, 24 };
+            Rectangle br = { tb.x + 14, tb.y + 58 + i * 38, tb.width - 28, 32 };
             bool hov = CheckCollisionPointRec(GetMousePosition(), br);
             DrawRectangleRec(br, hov ? (Color){ 48, 44, 30, 255 } : (Color){ 28, 32, 44, 255 });
             DrawRectangleLinesEx(br, 1.0f, hov ? GOLD : GRAY);

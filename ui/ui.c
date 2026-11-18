@@ -20,6 +20,7 @@ static const Camera3D *s_camera = NULL;
 static bool    s_hasTarget = false;
 static Vector3 s_aimPoint = { 0 };
 static int     s_aimAgentId = -1;
+static int     s_manualTargetId = -1;
 
 // Loadout panel state.
 static bool s_loadoutOpen = false;
@@ -29,8 +30,17 @@ void UI_Init(void) {
     s_camera = NULL;
     s_hasTarget = false;
     s_aimAgentId = -1;
+    s_manualTargetId = -1;
     s_loadoutOpen = false;
     s_selSlot = 0;
+}
+
+void UI_SetManualTarget(int agentId) {
+    s_manualTargetId = agentId;
+}
+
+int UI_GetManualTarget(void) {
+    return s_manualTargetId;
 }
 
 static Color ElemColor(int elem) {
@@ -88,6 +98,21 @@ Vector3 UI_GetAutoAimPoint(int agentId, bool *hasTarget) {
     const Agent *self = Entity_GetAgent(agentId);
     if (self == NULL) return (Vector3){ 0 };
 
+    // Priority 0: Player's manual tap-locked target (if alive & within 32m).
+    if (s_manualTargetId >= 0 && s_manualTargetId != agentId) {
+        const Agent *mt = Entity_GetAgent(s_manualTargetId);
+        if (mt && Entity_CanDamageTarget(agentId, s_manualTargetId)) {
+            float dx = mt->position.x - self->position.x;
+            float dz = mt->position.z - self->position.z;
+            if (dx * dx + dz * dz <= 32.0f * 32.0f) {
+                if (hasTarget) *hasTarget = true;
+                return mt->position;
+            }
+        } else {
+            s_manualTargetId = -1;
+        }
+    }
+
     // Priority 1: nearest ENEMY projectile in flight — aiming at it lines up
     // the đối-đòn cast that triggers Đấu Pháp in combat/.
     CombatProjectileInfo projs[MAX_COMBAT_PROJECTILES];
@@ -119,6 +144,27 @@ Vector3 UI_GetAutoAimPoint(int agentId, bool *hasTarget) {
         }
     }
 
+    // Priority 3: nearest hostile monster/enemy within 24m (open-world combat).
+    int bestHostile = -1;
+    float bestHostileSq = 24.0f * 24.0f;
+    for (int i = 0; i < MAX_AGENTS; i++) {
+        if (i == agentId) continue;
+        const Agent *cand = Entity_GetAgent(i);
+        if (!cand || (cand->archetype != ARCH_MINION && cand->archetype != ARCH_BOSS)) continue;
+        if (!Entity_CanDamageTarget(agentId, i)) continue;
+        float dx = cand->position.x - self->position.x;
+        float dz = cand->position.z - self->position.z;
+        float dSq = dx * dx + dz * dz;
+        if (dSq < bestHostileSq) {
+            bestHostileSq = dSq;
+            bestHostile = i;
+        }
+    }
+    if (bestHostile >= 0) {
+        if (hasTarget) *hasTarget = true;
+        return Entity_GetAgent(bestHostile)->position;
+    }
+
     return (Vector3){ 0 };
 }
 
@@ -134,6 +180,9 @@ static Rectangle LoadoutSkillRect(Rectangle p, int visIdx) {
     int col = visIdx % 2, row = visIdx / 2;
     return (Rectangle){ p.x + 262 + col * 186, p.y + 64 + row * 54, 176, 44 };
 }
+static Rectangle LoadoutCloseRect(Rectangle p) {
+    return (Rectangle){ p.x + p.width - 96, p.y + 12, 82, 34 };
+}
 
 void UI_Update(float dt) {
     (void)dt;
@@ -146,6 +195,10 @@ void UI_Update(float dt) {
     if (s_loadoutOpen && s_aimAgentId >= 0 && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
         Vector2 m = GetMousePosition();
         Rectangle p = LoadoutPanel();
+        if (CheckCollisionPointRec(m, LoadoutCloseRect(p))) {
+            s_loadoutOpen = false;
+            return;
+        }
         for (int slot = 0; slot < AGENT_SKILL_SLOTS; slot++) {
             if (CheckCollisionPointRec(m, LoadoutSlotRect(p, slot))) {
                 s_selSlot = slot;
@@ -173,8 +226,8 @@ void UI_DrawOverlay(int agentId) {
     int sw = GetScreenWidth();
     int sh = GetScreenHeight();
 
-    // --- Skill slot chips (keys 1-4), cooldown-shaded, fitted cleanly inside each box ---
-    if (self != NULL) {
+    // --- Skill slot chips (keys 1-5) — hidden on touch screens where the circular arc is used ---
+    if (self != NULL && !UI_IsTouchControlsEnabled()) {
         int chipW = sw / 10;
         if (chipW < 108) chipW = 108;
         if (chipW > 142) chipW = 142;
@@ -232,8 +285,12 @@ void UI_DrawOverlay(int agentId) {
         int ce = self->currentElement;
         if (ce >= 0 && ce <= 4) {
             DrawText(TextFormat("HE: %s", elemNames[ce]),
-                     (int)(p.x + p.width) - 130, (int)p.y + 20, 18, ElemColor(ce));
+                     (int)(p.x + p.width) - 210, (int)p.y + 20, 18, ElemColor(ce));
         }
+        Rectangle closeRec = LoadoutCloseRect(p);
+        DrawRectangleRec(closeRec, (Color){ 95, 32, 32, 240 });
+        DrawRectangleLinesEx(closeRec, 1.5f, (Color){ 235, 130, 120, 235 });
+        DrawText("DONG", (int)closeRec.x + 19, (int)closeRec.y + 9, 15, WHITE);
 
         Vector2 m = GetMousePosition();
 
@@ -302,6 +359,7 @@ static int     s_touchJoyPointerId = -1;
 static Vector2 s_touchJoyKnob      = { 0, 0 };
 static bool    s_prevTouchAttack   = false;
 static bool    s_prevTouchKhinh    = false;
+static bool    s_prevTouchDodge    = false;
 static bool    s_prevTouchSkill[5] = { false, false, false, false, false };
 
 void UI_SetTouchControlsEnabled(bool enabled) {
@@ -345,6 +403,10 @@ typedef struct {
     float   attackR;
     Vector2 khinhCenter;
     float   khinhR;
+    Vector2 dodgeCenter;
+    float   dodgeR;
+    Vector2 meditateCenter;
+    float   meditateR;
     Vector2 skillCenter[5];
     float   skillR;
 } TouchCombatLayout;
@@ -358,20 +420,26 @@ static TouchCombatLayout ComputeTouchCombatLayout(void) {
     if (s > 1.45f) s = 1.45f;
     L.scale = s;
 
-    L.joyCenter = (Vector2){ 135.0f * s, sh - 135.0f * s };
+    L.joyCenter = (Vector2){ 130.0f * s, sh - 130.0f * s };
     L.joyBaseR  = 62.0f * s;
     L.joyKnobR  = 26.0f * s;
 
-    L.attackCenter = (Vector2){ sw - 108.0f * s, sh - 105.0f * s };
+    L.attackCenter = (Vector2){ sw - 105.0f * s, sh - 102.0f * s };
     L.attackR      = 46.0f * s;
 
-    L.khinhCenter  = (Vector2){ sw - 208.0f * s, sh - 52.0f * s };
-    L.khinhR       = 28.0f * s;
+    L.khinhCenter  = (Vector2){ sw - 208.0f * s, sh - 44.0f * s };
+    L.khinhR       = 25.0f * s;
 
-    float arcR = 122.0f * s;
-    L.skillR   = 25.0f * s;
+    L.dodgeCenter  = (Vector2){ sw - 282.0f * s, sh - 54.0f * s };
+    L.dodgeR       = 25.0f * s;
+
+    L.meditateCenter = (Vector2){ sw - 48.0f * s, sh - 268.0f * s };
+    L.meditateR      = 22.0f * s;
+
+    float arcR = 132.0f * s;
+    L.skillR   = 26.0f * s;
     for (int k = 0; k < 5; k++) {
-        float angleRad = (175.0f - (float)k * 27.5f) * (PI / 180.0f);
+        float angleRad = (176.0f - (float)k * 26.5f) * (PI / 180.0f);
         L.skillCenter[k].x = L.attackCenter.x + cosf(angleRad) * arcR;
         L.skillCenter[k].y = L.attackCenter.y - sinf(angleRad) * arcR;
     }
@@ -389,6 +457,7 @@ void UI_PollTouchCombat(const UITouchSkillSlot slots[5], UITouchCombatInput *out
     if (!s_touchControlsEnabled) {
         s_prevTouchAttack = false;
         s_prevTouchKhinh  = false;
+        s_prevTouchDodge  = false;
         for (int k = 0; k < 5; k++) s_prevTouchSkill[k] = false;
         return;
     }
@@ -441,8 +510,10 @@ void UI_PollTouchCombat(const UITouchSkillSlot slots[5], UITouchCombatInput *out
         outInput->pointerOverUI = true;
     }
 
-    bool attackNow = false;
-    bool khinhNow  = false;
+    bool attackNow   = false;
+    bool khinhNow    = false;
+    bool dodgeNow    = false;
+    bool meditateNow = false;
     bool skillNow[5] = { false, false, false, false, false };
 
     for (int i = 0; i < count; i++) {
@@ -455,6 +526,16 @@ void UI_PollTouchCombat(const UITouchSkillSlot slots[5], UITouchCombatInput *out
         }
         if (Dist2D(pt, L.khinhCenter) <= L.khinhR * 1.35f) {
             khinhNow = true;
+            outInput->pointerOverUI = true;
+            continue;
+        }
+        if (Dist2D(pt, L.dodgeCenter) <= L.dodgeR * 1.35f) {
+            dodgeNow = true;
+            outInput->pointerOverUI = true;
+            continue;
+        }
+        if (Dist2D(pt, L.meditateCenter) <= L.meditateR * 1.35f) {
+            meditateNow = true;
             outInput->pointerOverUI = true;
             continue;
         }
@@ -475,6 +556,12 @@ void UI_PollTouchCombat(const UITouchSkillSlot slots[5], UITouchCombatInput *out
     outInput->khinhCongHeld    = khinhNow;
     outInput->khinhCongPressed = khinhNow && !s_prevTouchKhinh;
     s_prevTouchKhinh           = khinhNow;
+
+    outInput->dodgeHeld    = dodgeNow;
+    outInput->dodgePressed = dodgeNow && !s_prevTouchDodge;
+    s_prevTouchDodge       = dodgeNow;
+
+    outInput->meditateHeld = meditateNow;
 
     for (int k = 0; k < 5; k++) {
         outInput->skillHeld[k]    = skillNow[k];
@@ -552,18 +639,29 @@ void UI_DrawTouchCombat(const UITouchSkillSlot slots[5], const UITouchCombatInpu
     Color atkAccent = (Color){ 235, 175, 75, 240 };
     DrawWuxiaTouchCircleBtn(L.attackCenter, L.attackR, atkAccent, atkActive, true, NULL, "DANH", s * 1.18f);
 
-    // 3. Khinh Công Button ("KHINH")
+    // 3. Khinh Công ("KHINH"), Dodge ("NE"), and Meditate ("THIEN")
     bool khinhActive = input ? input->khinhCongHeld : s_prevTouchKhinh;
     Color khinhAccent = (Color){ 95, 220, 215, 235 };
-    DrawWuxiaTouchCircleBtn(L.khinhCenter, L.khinhR, khinhAccent, khinhActive, true, "^", "KHINH", s);
+    DrawWuxiaTouchCircleBtn(L.khinhCenter, L.khinhR, khinhAccent, khinhActive, true, "^", "KHINH", s * 0.92f);
 
-    // 4. 5 Skill Buttons (from skill list)
+    bool dodgeActive = input ? input->dodgeHeld : s_prevTouchDodge;
+    Color dodgeAccent = (Color){ 240, 205, 110, 235 };
+    DrawWuxiaTouchCircleBtn(L.dodgeCenter, L.dodgeR, dodgeAccent, dodgeActive, true, NULL, "NE", s * 0.96f);
+
+    bool medActive = input ? input->meditateHeld : false;
+    Color medAccent = (Color){ 130, 195, 255, 235 };
+    DrawWuxiaTouchCircleBtn(L.meditateCenter, L.meditateR, medAccent, medActive, true, NULL, "THIEN", s * 0.85f);
+
+    // 4. 5 Skill Buttons (with cooldown seconds when on CD)
     for (int k = 0; k < 5; k++) {
         if (slots && slots[k].skillIndex < 0) continue;
         bool held = input ? input->skillHeld[k] : s_prevTouchSkill[k];
         bool ready = slots ? slots[k].ready : true;
+        float cd = slots ? slots[k].cooldownRemain : 0.0f;
         Color col = slots ? slots[k].color : (Color){ 120, 190, 255, 230 };
-        const char *lbl = (slots && slots[k].shortLabel[0]) ? slots[k].shortLabel : TextFormat("S%d", k + 1);
+        const char *lbl = (!ready && cd > 0.05f)
+            ? TextFormat("%.1fs", cd)
+            : ((slots && slots[k].shortLabel[0]) ? slots[k].shortLabel : TextFormat("S%d", k + 1));
         DrawWuxiaTouchCircleBtn(L.skillCenter[k], L.skillR, col, held, ready,
                                 TextFormat("%d", k + 1), lbl, s * 0.92f);
     }
