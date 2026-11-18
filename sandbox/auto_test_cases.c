@@ -10,6 +10,7 @@
 #include "boss/boss_system.h"
 #include "game/game_screen.h"
 #include "game/game_rules.h"
+#include "game/quest_datau.h"
 #include "ai/ai.h"
 #include "formations/formation_system.h"
 #include "net/net.h"
@@ -20,6 +21,7 @@
 #include "character/character_model.h"
 #include "character/modular_character.h"
 #include "character/wardrobe_system.h"
+#include "character/player_profile.h"
 #include "ui/ui_wardrobe.h"
 #include "sandbox/sandbox_core.h"
 #include "raymath.h"
@@ -1487,6 +1489,144 @@ static AutoTestResult AutoTest_ClothSecondaryMotionStep(int frameInCase, char *o
   return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
 }
 
+static AutoTestResult AutoTest_PvEPvPBalanceStep(int frameInCase, char *outReason, int outReasonSize) {
+  if (frameInCase > 0) return AUTOTEST_PASS;
+
+  int a = Entity_SpawnAgent((Vector3){ 6.0f, 0.0f, 4.4f }, 100.0f, 0, TEAM_ALLY, ARCH_HERO);
+  bool ok = AutoTest_ExpectTrue(a >= 0, "spawned balance test agent", outReason, outReasonSize);
+
+  AgentPvEBonuses pve = {
+    .bonusMaxHealth  = 60.0f,
+    .bonusMaxMana    = 40.0f,
+    .moveSpeedMult   = 1.20f,
+    .damageOutMult   = 1.50f,
+    .damageTakenMult = 0.50f,
+    .manaRegenMult   = 2.00f,
+  };
+  Entity_SetPvEBonuses(a, &pve);
+  const Agent *pa = Entity_GetAgent(a);
+  ok &= AutoTest_ExpectFloatNear(pa->maxHealth, 160.0f, 0.01f, "PvE maxHealth boosted to 160", outReason, outReasonSize);
+  ok &= AutoTest_ExpectFloatNear(pa->maxMana, 140.0f, 0.01f, "PvE maxMana boosted to 140", outReason, outReasonSize);
+  ok &= AutoTest_ExpectFloatNear(Entity_GetSpeedMult(a), 1.20f, 0.01f, "PvE speedMult 1.20", outReason, outReasonSize);
+  ok &= AutoTest_ExpectFloatNear(Entity_GetDamageOutMult(a), 1.50f, 0.01f, "PvE dmgOutMult 1.50", outReason, outReasonSize);
+
+  // Incoming damage halved by PvE armor
+  Entity_ApplyDamage(a, 20.0f, (Vector3){ 0 });
+  ok &= AutoTest_ExpectFloatNear(Entity_GetAgent(a)->health, 150.0f, 0.01f, "PvE damageTakenMult halved 20->10", outReason, outReasonSize);
+
+  // Switch to PvP -> 100% fair-play normalization
+  Entity_SetPvEBonuses(a, NULL);
+  pa = Entity_GetAgent(a);
+  ok &= AutoTest_ExpectFloatNear(pa->maxHealth, 100.0f, 0.01f, "PvP maxHealth normalized to 100", outReason, outReasonSize);
+  ok &= AutoTest_ExpectFloatNear(pa->maxMana, 100.0f, 0.01f, "PvP maxMana normalized to 100", outReason, outReasonSize);
+  ok &= AutoTest_ExpectFloatNear(Entity_GetSpeedMult(a), 1.0f, 0.01f, "PvP speedMult normalized to 1.0", outReason, outReasonSize);
+  ok &= AutoTest_ExpectFloatNear(Entity_GetDamageOutMult(a), 1.0f, 0.01f, "PvP dmgOutMult normalized to 1.0", outReason, outReasonSize);
+
+  // Skill level progression: Lv.1 -> Lv.2 in PvE, but PvP always returns 1
+  int testSkill = 0;
+  PlayerProfile *prof = PlayerProfile_GetGlobal();
+  uint8_t savedLvl = prof->skillLevel[testSkill];
+  uint32_t savedXp = prof->skillXp[testSkill];
+  prof->skillLevel[testSkill] = 1;
+  prof->skillXp[testSkill] = 0;
+  bool leveled = PlayerProfile_AddSkillXp(testSkill, 150);
+  ok &= AutoTest_ExpectTrue(leveled && prof->skillLevel[testSkill] == 2,
+                            "skill leveled up to 2 in profile", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(PlayerProfile_GetEffectiveSkillLevel(testSkill, false) == 2,
+                            "PvE effective skill level is 2", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(PlayerProfile_GetEffectiveSkillLevel(testSkill, true) == 1,
+                            "PvP effective skill level normalized to 1", outReason, outReasonSize);
+  prof->skillLevel[testSkill] = savedLvl;
+  prof->skillXp[testSkill] = savedXp;
+
+  Entity_ApplyDamage(a, 1e9f, (Vector3){ 0 });
+  return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
+}
+
+static AutoTestResult AutoTest_LoadoutFiveSlotsStep(int frameInCase, char *outReason, int outReasonSize) {
+  if (frameInCase > 0) return AUTOTEST_PASS;
+
+  int a = Entity_SpawnAgent((Vector3){ 6.0f, 0.0f, 4.4f }, 100.0f, 0, TEAM_ALLY, ARCH_HERO);
+  bool ok = AutoTest_ExpectTrue(a >= 0, "spawned 5-slot loadout agent", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(AGENT_SKILL_SLOTS == 5, "AGENT_SKILL_SLOTS is 5", outReason, outReasonSize);
+
+  // 2 Âm (Water, Wood) + 2 Dương (Fire, Metal) + 1 Trung Hòa (Earth) -> Thái Cực!
+  Entity_SetEquippedSkill(a, 0, 10, 0); // Water (Âm)
+  Entity_SetEquippedSkill(a, 1, 11, 1); // Wood  (Âm)
+  Entity_SetEquippedSkill(a, 2, 12, 2); // Fire  (Dương)
+  Entity_SetEquippedSkill(a, 3, 13, 4); // Metal (Dương)
+  Entity_SetEquippedSkill(a, 4, 14, 3); // Earth (Trung Hòa)
+  ok &= AutoTest_ExpectTrue(Entity_IsTaijiActive(a), "5-slot 2am+2duong+1tho enters taiji", outReason, outReasonSize);
+
+  // Swap Earth for Fire -> 3 Dương + 2 Âm -> exits Thái Cực, Fire majority
+  Entity_SetEquippedSkill(a, 4, 15, 2);
+  ok &= AutoTest_ExpectTrue(!Entity_IsTaijiActive(a), "unbalanced 5-slot exits taiji", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(Entity_GetAgent(a)->currentElement == 2, "5-slot majority = Fire", outReason, outReasonSize);
+
+  Entity_ApplyDamage(a, 1e9f, (Vector3){ 0 });
+  return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
+}
+
+static AutoTestResult AutoTest_DaTauQuestStep(int frameInCase, char *outReason, int outReasonSize) {
+  if (frameInCase > 0) return AUTOTEST_PASS;
+
+  PlayerProfile *prof = PlayerProfile_GetGlobal();
+  int savedGold = prof->gold;
+  int savedPts = prof->daTauPoints;
+  int savedStreak = prof->daTauStreak;
+  int savedTotal = prof->daTauTotalCompleted;
+
+  DaTau_Init(0);
+  const DaTauQuest *q = DaTau_GetCurrent();
+  bool ok = AutoTest_ExpectTrue(q->active && q->targetCount > 0, "datau quest rolled", outReason, outReasonSize);
+
+  int needed = q->targetCount;
+  bool completed = false;
+  for (int i = 0; i < needed + 5 && !completed; i++) {
+    completed = DaTau_OnMonsterKilled(MONSTER_RANGED_CASTER, 0, true);
+    if (!completed) completed = DaTau_OnMonsterKilled(MONSTER_ELITE_GUARD, 0, true);
+  }
+  ok &= AutoTest_ExpectTrue(completed, "datau quest completed", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(prof->daTauStreak == savedStreak + 1, "streak incremented", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(prof->gold > savedGold && prof->daTauPoints > savedPts,
+                            "gold and points rewarded", outReason, outReasonSize);
+
+  prof->gold = savedGold;
+  prof->daTauPoints = savedPts;
+  prof->daTauStreak = savedStreak;
+  prof->daTauTotalCompleted = savedTotal;
+  return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
+}
+
+static AutoTestResult AutoTest_DualBossEscortStep(int frameInCase, char *outReason, int outReasonSize) {
+  if (frameInCase > 0) return AUTOTEST_PASS;
+
+  Boss_ClearAll();
+  Vector3 c = { 6.0f, 0.0f, 4.4f };
+  int b0 = Boss_SpawnSlot(0, &BOSS_MOC_LINH, (Vector3){ 2.0f, 0.0f, 4.4f }, TEAM_ALLY);
+  int b1 = Boss_SpawnSlot(1, &BOSS_HAC_DIEN_TON_GIA, (Vector3){ 10.0f, 0.0f, 4.4f }, TEAM_ENEMY);
+  bool ok = AutoTest_ExpectTrue(b0 >= 0 && b1 >= 0, "both bosses spawned", outReason, outReasonSize);
+
+  BossRoute r0 = { .waypoints = { c }, .waypointCount = 1, .marchSpeedMps = 4.0f };
+  BossRoute r1 = { .waypoints = { c }, .waypointCount = 1, .marchSpeedMps = 4.0f };
+  Boss_SetRoute(0, &r0);
+  Boss_SetRoute(1, &r1);
+
+  float x0Before = Entity_GetAgent(b0)->position.x;
+  float x1Before = Entity_GetAgent(b1)->position.x;
+  for (int f = 0; f < 30; f++) {
+    Boss_Update(1.0f / 60.0f);
+    Entity_Update(1.0f / 60.0f);
+  }
+  float x0After = Entity_GetAgent(b0)->position.x;
+  float x1After = Entity_GetAgent(b1)->position.x;
+  ok &= AutoTest_ExpectTrue(x0After > x0Before + 0.5f && x1After < x1Before - 0.5f,
+                            "both bosses march toward convergence", outReason, outReasonSize);
+
+  Boss_ClearAll();
+  return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
+}
+
 void AutoTestCases_Register(PlayerEntity *player)
 {
   s_player = player;
@@ -1512,5 +1652,9 @@ void AutoTestCases_Register(PlayerEntity *player)
   AutoTest_Register("player_wardrobe_system", AutoTest_PlayerWardrobeSystemStep, 5);
   AutoTest_Register("ui_wardrobe_system", AutoTest_UIWardrobeStep, 5);
   AutoTest_Register("cloth_secondary_motion", AutoTest_ClothSecondaryMotionStep, 130);
+  AutoTest_Register("pve_pvp_balance_norm", AutoTest_PvEPvPBalanceStep, 5);
+  AutoTest_Register("loadout_five_slots", AutoTest_LoadoutFiveSlotsStep, 5);
+  AutoTest_Register("datau_quest_chain", AutoTest_DaTauQuestStep, 5);
+  AutoTest_Register("pvp_dual_boss_escort", AutoTest_DualBossEscortStep, 5);
 }
 

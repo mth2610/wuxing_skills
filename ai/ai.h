@@ -57,4 +57,24 @@ typedef struct {
 } HeroBotCast;
 int AI_PollHeroCasts(HeroBotCast *out, int max);
 
+// --- PvE Explore Monster Camps (Mode 1: Giang Hồ Ngũ Hành) ---
+#define AI_MAX_CAMP_MONSTERS 48
+
+typedef enum {
+    MONSTER_SWARM_MELEE = 0, // Tiểu Yêu cận chiến
+    MONSTER_RANGED_CASTER,   // Pháp Yêu bắn đạn Ngũ Hành
+    MONSTER_ELITE_GUARD      // Tinh Anh Thủ Lĩnh
+} MonsterKind;
+
+typedef struct {
+    Vector3     pos;
+    int         element;
+    MonsterKind kind;
+} MonsterKillEvent;
+
+int  AI_SpawnMonsterCamp(Vector3 center, int count, int element, MonsterKind kind);
+void AI_ClearMonsterCamps(void);
+bool AI_IsCampMonster(int agentId);
+int  AI_PollMonsterKills(MonsterKillEvent *out, int max);
+
 #endif // AI_H

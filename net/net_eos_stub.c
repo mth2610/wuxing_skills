@@ -20,3 +20,8 @@ bool Net_JoinOnline(const char *joinCode) {
     TraceLog(LOG_WARNING, "[NET] online backend not built — see EOS_SETUP.md (LAN: --host/--join)");
     return false;
 }
+
+bool Net_JoinOrHostExploreRealm(int realmId, char *outJoinCode, int maxCodeLen) {
+    (void)realmId; (void)outJoinCode; (void)maxCodeLen;
+    return false;
+}

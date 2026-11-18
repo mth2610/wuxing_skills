@@ -270,6 +270,7 @@ add_executable(wuxing
     ui/ui.c
     ui/ui_lobby.c
     ui/ui_wardrobe.c
+    ui/ui_hub.c
 
     # --- Formations (Trận Pháp engine + one _def.c per formation — Module 10) ---
     formations/formation_system.c
@@ -285,12 +286,14 @@ add_executable(wuxing
     character/character_model.c
     character/modular_character.c
     character/wardrobe_system.c
+    character/player_profile.c
     character/spring_bone.c
     character/weapon_trail.c
 
     # --- Game Screen (production-bound; sandbox/ stays the dev harness) ---
     game/game_screen.c
     game/game_rules.c
+    game/quest_datau.c
 
     # --- Sandbox & Test Simulator ---
     sandbox/sandbox_core.c

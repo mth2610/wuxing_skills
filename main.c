@@ -25,6 +25,7 @@
 #include "core/trails/trail_system.h"
 #include "sandbox/ui_panel.h"
 #include "ui/ui_wardrobe.h"
+#include "ui/ui_hub.h"
 #include "core/vfx_light.h"
 #include "sandbox/vfx_test.h" // MỚI: Chỉ giữ duy nhất file test này để điều phối
 #include "core/resource_manager.h"
@@ -71,6 +72,7 @@
 #include "net/net.h"
 #include "character/character_model.h"
 #include "character/wardrobe_system.h"
+#include "character/player_profile.h"
 #include <stdio.h>
 
 // Biến camera toàn cục
@@ -601,6 +603,7 @@ int main(int argc, char **argv) {
   Wind_Init();            // Ghost of Tsushima: Global Macro Wind + Vorticles System
   MetaballFX_Init(screenWidth, screenHeight);
   Wardrobe_InitGlobal(WARDROBE_DEFAULT_SAVE_PATH);
+  PlayerProfile_InitGlobal(PLAYER_PROFILE_DEFAULT_SAVE_PATH);
   /* THE DEFAULT PARTICLE SPRITE.
    *
    * Was GenImageGradientRadial(64, 64, 0.0f, WHITE, BLANK) — raylib's built-in,
@@ -1068,137 +1071,56 @@ int main(int argc, char **argv) {
             }
         }
 
-        Vector2 mousePos = GetMousePosition();
-
-        int sw = GetScreenWidth();
-        int sh = GetScreenHeight();
-        Rectangle btnSandbox = { sw/2 - 150, sh/2 - 60, 300, 50 };
-        Rectangle btnVFX = { sw/2 - 150, sh/2 + 20, 300, 50 };
-        Rectangle btnGame = { sw/2 - 150, sh/2 + 100, 300, 50 };
-        Rectangle btnHost = { sw/2 - 150, sh/2 + 180, 300, 50 };
-        Rectangle btnJoin = { sw/2 - 150, sh/2 + 260, 300, 50 };
-
-        // Robust Android tap: arm the button under the touch while it's DOWN, fire on RELEASE if
-        // the release settles over the same button. IsMouseButtonPressed (down-edge) is unreliable
-        // here — on the down frame GetMousePosition can still be the stale/previous position, so the
-        // over-button test misses even though the button highlights. Same fix pattern as the sandbox
-        // top buttons (sandbox/ui_panel.c). Buttons are screen-centered, so no top-edge gesture zone.
-        Rectangle menuBtns[5] = { btnSandbox, btnVFX, btnGame, btnHost, btnJoin };
-        bool downNow = IsMouseButtonDown(MOUSE_BUTTON_LEFT);
-        int overIdx = -1;
-        for (int i = 0; i < 5; i++)
-            if (CheckCollisionPointRec(mousePos, menuBtns[i])) { overIdx = i; break; }
-        static int s_menuArmed = -1;
-        if (downNow && overIdx >= 0) s_menuArmed = overIdx;
-        int fired = -1;
-        if (!downNow && s_menuArmed >= 0) {
-            if (overIdx == s_menuArmed) fired = s_menuArmed;
-            s_menuArmed = -1;
+        BeginDrawing();
+        int hubParam = 0;
+        UIHubAction hubAct = UI_Hub_UpdateDrawMain(&hubParam, menuJoinInput, (int)sizeof(menuJoinInput), menuOnlineMsg);
+        if (menuOnlinePending != 0) {
+            int sw = GetScreenWidth(), sh = GetScreenHeight();
+            const char *t = (menuOnlinePending == 1) ? "DANG TAO PHONG QUA EPIC..."
+                                                     : "DANG TIM PHONG QUA EPIC...";
+            int tw2 = MeasureText(t, 26);
+            DrawRectangle(sw/2 - tw2/2 - 20, sh/2 - 30, tw2 + 40, 44, (Color){ 15, 15, 25, 230 });
+            DrawText(t, sw/2 - tw2/2, sh/2 - 20, 26, (Color){ 240, 220, 120, 255 });
         }
+        EndDrawing();
 
-        if (fired == 0) {
-            currentScreen = SCREEN_SKILL_SANDBOX;
-        }
-        if (fired == 1) {
-            currentScreen = SCREEN_VFX_TESTER;
-        }
-        if (fired == 2) {
-            GameScreen_SetMode(GAME_MODE_BOSS); // offline entry — boss match
+        if (hubAct == UI_HUB_ACT_EXPLORE_REALM) {
+            if (Net_OnlineAvailable() && Net_GetMode() == NET_MODE_OFF) {
+                if (Net_JoinOrHostExploreRealm(hubParam, roomCode, (int)sizeof(roomCode))) {
+                    GameScreen_SetOnlineCode(roomCode);
+                }
+            }
+            GameScreen_SetExploreRealm(hubParam);
+            GameScreen_SetMode(GAME_MODE_EXPLORE);
+            GameScreen_Init(&player);
             currentScreen = SCREEN_GAME;
-        }
-        if (fired == 3) {
+        } else if (hubAct == UI_HUB_ACT_PVP_1V1) {
+            GameScreen_SetMode(GAME_MODE_PVP_ESCORT_1V1);
+            GameScreen_Init(&player);
+            currentScreen = SCREEN_GAME;
+        } else if (hubAct == UI_HUB_ACT_PVP_2V2) {
+            GameScreen_SetMode(GAME_MODE_PVP_ESCORT_2V2);
+            GameScreen_Init(&player);
+            currentScreen = SCREEN_GAME;
+        } else if (hubAct == UI_HUB_ACT_HOST_ONLINE) {
             if (!Net_OnlineAvailable())
                 snprintf(menuOnlineMsg, sizeof(menuOnlineMsg), "BUILD CHUA BAT EOS — cmake -DWUXING_EOS=ON");
             else if (Net_GetMode() == NET_MODE_OFF) {
                 menuOnlineMsg[0] = '\0';
-                menuJoinOpen = false;
                 menuOnlinePending = 1;
             }
-        }
-        if (fired == 4) {
+        } else if (hubAct == UI_HUB_ACT_JOIN_ONLINE) {
             if (!Net_OnlineAvailable())
                 snprintf(menuOnlineMsg, sizeof(menuOnlineMsg), "BUILD CHUA BAT EOS — cmake -DWUXING_EOS=ON");
-            else {
-                menuJoinOpen = !menuJoinOpen;
-                menuOnlineMsg[0] = '\0';
-            }
-        }
-
-        // Room-code entry (open while the NHAP MA button is toggled on).
-        if (menuJoinOpen) {
-            int ch;
-            while ((ch = GetCharPressed()) != 0) {
-                if (ch >= 'a' && ch <= 'z') ch -= 32;
-                if (((ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9')) &&
-                    menuJoinLen < 5) {
-                    menuJoinInput[menuJoinLen++] = (char)ch;
-                    menuJoinInput[menuJoinLen] = '\0';
-                }
-            }
-            if (IsKeyPressed(KEY_BACKSPACE) && menuJoinLen > 0)
-                menuJoinInput[--menuJoinLen] = '\0';
-            if (IsKeyPressed(KEY_ENTER) && menuJoinLen >= 3 &&
-                Net_GetMode() == NET_MODE_OFF) {
+            else if (Net_GetMode() == NET_MODE_OFF) {
                 menuOnlineMsg[0] = '\0';
                 menuOnlinePending = 2;
             }
+        } else if (hubAct == UI_HUB_ACT_SANDBOX) {
+            currentScreen = SCREEN_SKILL_SANDBOX;
+        } else if (hubAct == UI_HUB_ACT_VFX_TESTER) {
+            currentScreen = SCREEN_VFX_TESTER;
         }
-
-        BeginDrawing();
-        ClearBackground(DARKGRAY);
-
-        const char* title = "WUXING SKILLS TESTBED";
-        int titleW = MeasureText(title, 30);
-        DrawText(title, sw/2 - titleW/2, sh/2 - 150, 30, WHITE);
-
-        DrawRectangleRounded(btnSandbox, 0.2f, 10, CheckCollisionPointRec(mousePos, btnSandbox) ? GRAY : LIGHTGRAY);
-        DrawRectangleRoundedLines(btnSandbox, 0.2f, 10, WHITE);
-        DrawText("1. ENTER SKILL SANDBOX", (int)btnSandbox.x + 30, (int)btnSandbox.y + 15, 20, BLACK);
-
-        DrawRectangleRounded(btnVFX, 0.2f, 10, CheckCollisionPointRec(mousePos, btnVFX) ? GRAY : LIGHTGRAY);
-        DrawRectangleRoundedLines(btnVFX, 0.2f, 10, WHITE);
-        DrawText("2. ENTER VFX PREFAB TESTER", (int)btnVFX.x + 10, (int)btnVFX.y + 15, 20, BLACK);
-
-        DrawRectangleRounded(btnGame, 0.2f, 10, CheckCollisionPointRec(mousePos, btnGame) ? GRAY : LIGHTGRAY);
-        DrawRectangleRoundedLines(btnGame, 0.2f, 10, WHITE);
-        DrawText("3. ENTER GAME", (int)btnGame.x + 90, (int)btnGame.y + 15, 20, BLACK);
-
-        // Online (EOS) — greyed-out label when the build carries the stub.
-        bool onlineUp = Net_OnlineAvailable();
-        Color onlineTxt = onlineUp ? BLACK : (Color){ 90, 90, 90, 255 };
-        DrawRectangleRounded(btnHost, 0.2f, 10, CheckCollisionPointRec(mousePos, btnHost) ? GRAY : LIGHTGRAY);
-        DrawRectangleRoundedLines(btnHost, 0.2f, 10, WHITE);
-        DrawText("4. TAO PHONG ONLINE", (int)btnHost.x + 45, (int)btnHost.y + 15, 20, onlineTxt);
-
-        DrawRectangleRounded(btnJoin, 0.2f, 10, (menuJoinOpen || CheckCollisionPointRec(mousePos, btnJoin)) ? GRAY : LIGHTGRAY);
-        DrawRectangleRoundedLines(btnJoin, 0.2f, 10, WHITE);
-        DrawText("5. NHAP MA VAO PHONG", (int)btnJoin.x + 40, (int)btnJoin.y + 15, 20, onlineTxt);
-
-        if (menuJoinOpen) {
-            // Entry box to the right of the join button: MA: ABC_ + ENTER hint.
-            Rectangle box = { btnJoin.x + btnJoin.width + 16, btnJoin.y, 190, 50 };
-            DrawRectangleRec(box, (Color){ 25, 25, 35, 255 });
-            DrawRectangleLinesEx(box, 2, (Color){ 240, 220, 120, 255 });
-            const char *entry = TextFormat("MA: %s%s", menuJoinInput,
-                                           (((int)(g_totalElapsed * 2.0f)) & 1) ? "_" : " ");
-            DrawText(entry, (int)box.x + 12, (int)box.y + 8, 24, (Color){ 240, 220, 120, 255 });
-            DrawText("ENTER DE VAO", (int)box.x + 12, (int)box.y + 34, 12, (Color){ 180, 180, 190, 255 });
-        }
-        if (menuOnlineMsg[0] != '\0') {
-            int mw = MeasureText(menuOnlineMsg, 18);
-            DrawText(menuOnlineMsg, sw/2 - mw/2, (int)btnJoin.y + 60, 18, (Color){ 235, 140, 90, 255 });
-        }
-        if (menuOnlinePending != 0) {
-            // This frame queued a blocking EOS call — tell the user before
-            // the window freezes for the few seconds it takes.
-            const char *t = (menuOnlinePending == 1) ? "DANG TAO PHONG QUA EPIC..."
-                                                     : "DANG TIM PHONG QUA EPIC...";
-            int tw2 = MeasureText(t, 26);
-            DrawRectangle(sw/2 - tw2/2 - 20, sh/2 - 230, tw2 + 40, 44, (Color){ 15, 15, 25, 230 });
-            DrawText(t, sw/2 - tw2/2, sh/2 - 220, 26, (Color){ 240, 220, 120, 255 });
-        }
-
-        EndDrawing();
         continue;
     }
 
@@ -1224,10 +1146,11 @@ int main(int argc, char **argv) {
         }
 
         if (Net_ConsumeMatchStart()) {
-            // Net rooms play team battle (Đợt A3); WUXING_NET_BOSS=1 keeps
-            // the old invasion-vs-boss run for dev/testing.
-            GameScreen_SetMode(getenv("WUXING_NET_BOSS") != NULL
-                                   ? GAME_MODE_BOSS : GAME_MODE_TEAM_BATTLE);
+            // Net rooms play Song Linh Ho Phap Escort (1v1 or 2v2); keep env overrides for dev/tests.
+            GameMode netMode = (Net_GetPeerCount() <= 1) ? GAME_MODE_PVP_ESCORT_1V1 : GAME_MODE_PVP_ESCORT_2V2;
+            if (getenv("WUXING_NET_BOSS") != NULL) netMode = GAME_MODE_BOSS;
+            else if (getenv("WUXING_TEAM_TEST") != NULL) netMode = GAME_MODE_TEAM_BATTLE;
+            GameScreen_SetMode(netMode);
             GameScreen_Init(&player); // fresh match state for everyone
             currentScreen = SCREEN_GAME;
             continue;
@@ -1730,8 +1653,9 @@ int main(int argc, char **argv) {
     // whole canvas to black-and-white; fades back out on exit.
     {
         static float s_taijiMono = 0.0f;
-        bool anyTaiji = Entity_IsTaijiActive(Control_GetAgentId()) ||
-                        (Boss_IsAlive() && Entity_IsTaijiActive(Boss_GetAgentId()));
+        bool anyTaiji = (currentScreen == SCREEN_GAME) &&
+                        (Entity_IsTaijiActive(Control_GetAgentId()) ||
+                         (Boss_IsAlive() && Entity_IsTaijiActive(Boss_GetAgentId())));
         float target = anyTaiji ? 1.0f : 0.0f;
         float speed = 2.5f * dt; // ~0.4s fade
         if (s_taijiMono < target)      { s_taijiMono += speed; if (s_taijiMono > target) s_taijiMono = target; }

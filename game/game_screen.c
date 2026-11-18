@@ -6,12 +6,17 @@
 #include "skills/skill_helper.h"
 #include "core/composition/visual_composer.h"
 #include "character/character_model.h"
+#include "character/wardrobe_system.h"
+#include "character/player_profile.h"
 #include "control/control.h"
 #include "boss/boss_system.h"
 #include "maps/map_manager.h"
+#include "maps/toolkit/map_props.h"
 #include "game/game_rules.h"
+#include "game/quest_datau.h"
 #include "ai/ai.h"
 #include "ui/ui.h"
+#include "ui/ui_hub.h"
 #include "net/net_transport.h"
 #include "combat/combat.h"
 #include "audio/audio_system.h"
@@ -36,10 +41,29 @@ static bool s_backToMenu = false;
 // --- Module 7 match state ---
 static GameState s_state = GAME_ARENA_INTRO;
 static GameMode s_mode = GAME_MODE_BOSS; // Đợt A3 — main.c sets per entry
+static int s_exploreRealm = 0;           // 0=Thủy, 1=Mộc, 2=Hỏa, 3=Thổ, 4=Kim
 static char s_onlineCode[16] = {0};      // EOS room code shown while hosting
 static float s_introTimer = 0.0f;
 static int s_lastBossPhase = -1;      // minion waves trigger on phase change (M8)
 static float s_swingSlowTimer = 0.0f; // movement damped while a swing plays
+static float s_playerRespawnTimer = 0.0f;
+static float s_pvpMatchTimer = 240.0f;
+static float s_pillarCapture = 0.0f;
+static float s_pillarPulseTimer = 0.0f;
+static float s_minionWaveTimer = 18.0f;
+static float s_spiritOrbTimer = 40.0f;
+static bool  s_spiritOrbActive = false;
+static Vector3 s_spiritOrbPos = { 0 };
+static float s_spiritOrbBanner = 0.0f;
+static float s_worldBossTimer = 75.0f;
+static bool  s_worldBossActive = false;
+static float s_worldBossBanner = 0.0f;
+static int   s_tuongSinhLastElem = -1;
+static int   s_tuongSinhChain = 0;
+static float s_tuongSinhTimer = 0.0f;
+static bool  s_wasExploreClient = false;
+static float s_failoverBannerTimer = 0.0f;
+static Camera3D s_hudCamera = { 0 };
 static UITouchCombatInput s_gameTouchInput = {0};
 
 static void BuildGameTouchSlots(const PlayerEntity *player, UITouchSkillSlot outSlots[5])
@@ -72,7 +96,7 @@ static void BuildGameTouchSlots(const PlayerEntity *player, UITouchSkillSlot out
         return;
     }
 
-    for (int k = 0; k < AGENT_SKILL_SLOTS && k < 4; k++)
+    for (int k = 0; k < AGENT_SKILL_SLOTS && k < 5; k++)
     {
         int idx = a->equippedSkills[k];
         if (idx >= 0)
@@ -82,16 +106,6 @@ static void BuildGameTouchSlots(const PlayerEntity *player, UITouchSkillSlot out
             outSlots[k].color = GetRegisteredSkillColor(idx);
             outSlots[k].ready = SkillManager_CanCast(idx, player->agentId);
         }
-    }
-
-    // 5th skill button: LEAF_WHIRLWIND (Mộc), matching the 5-skill mobile bar
-    int fifthIdx = Skill_GetIndexByName("LEAF_WHIRLWIND");
-    if (fifthIdx >= 0)
-    {
-        outSlots[4].skillIndex = fifthIdx;
-        UI_FormatShortSkillName(GetRegisteredSkillName(fifthIdx), outSlots[4].shortLabel, sizeof(outSlots[4].shortLabel));
-        outSlots[4].color = GetRegisteredSkillColor(fifthIdx);
-        outSlots[4].ready = SkillManager_CanCast(fifthIdx, player->agentId);
     }
 }
 
@@ -117,9 +131,54 @@ static const Vector3 PLAYER_SPAWN = {90.0f, 0.0f, 150.0f};
 static const Vector3 BOSS_SPAWN = {98.0f, 0.0f, 150.0f};
 static const float INTRO_SECONDS = 2.0f;
 
-// Default loadout (keys 1-4). One skill per element — deliberately NOT
-// 2 Âm + 2 Dương (that combination enters Thái Cực; the player should
-// discover it by re-equipping, No Tutorial). Majority tie → Thủy.
+static int GameSkillElementByName(const char *name)
+{
+    if (!name) return 0;
+    if (strcmp(name, "FIRE") == 0) return 2;
+    if (strcmp(name, "GLACIAL_CANNON") == 0 || strcmp(name, "WATER_STREAM") == 0) return 0;
+    if (strcmp(name, "LEAF_WHIRLWIND") == 0) return 1;
+    if (strcmp(name, "EARTH_DISC_VOLLEY") == 0 || strcmp(name, "STONE_PRISON") == 0 ||
+        strcmp(name, "SAND_STORM") == 0) return 3;
+    if (strcmp(name, "METAL_BLADE_STORM") == 0 || strcmp(name, "VOLUME_SMOKE") == 0) return 4;
+    return 0;
+}
+
+static bool IsModePvP(GameMode m)
+{
+    return m == GAME_MODE_TEAM_BATTLE ||
+           m == GAME_MODE_PVP_ESCORT_1V1 ||
+           m == GAME_MODE_PVP_ESCORT_2V2;
+}
+
+static int GameSkillLevelProvider(int skillIndex)
+{
+    return PlayerProfile_GetEffectiveSkillLevel(skillIndex, IsModePvP(s_mode));
+}
+
+static void ApplyModeBalanceToPlayer(int agentId)
+{
+    if (IsModePvP(s_mode)) {
+        Entity_SetPvEBonuses(agentId, NULL);
+        return;
+    }
+    const PlayerWardrobe *pw = Wardrobe_GetGlobalPlayer();
+    if (!pw) {
+        Entity_SetPvEBonuses(agentId, NULL);
+        return;
+    }
+    WardrobeItemStats ws = PlayerWardrobe_GetTotalStats(pw);
+    AgentPvEBonuses b = {
+        .bonusMaxHealth  = ws.bonusHealth,
+        .bonusMaxMana    = ws.bonusMana,
+        .moveSpeedMult   = (ws.speedMultiplier > 0.0f) ? ws.speedMultiplier : 1.0f,
+        .damageOutMult   = 1.0f + fmaxf(0.0f, ws.elementalBonus),
+        .damageTakenMult = fmaxf(0.25f, 1.0f - fmaxf(0.0f, ws.elementalResist)),
+        .manaRegenMult   = 1.0f + fmaxf(0.0f, ws.manaRegenBonus),
+    };
+    Entity_SetPvEBonuses(agentId, &b);
+}
+
+// Default loadout (keys 1-5) from PlayerProfile, falling back to 5 starter skills.
 static void EquipDefaultLoadout(int agentId)
 {
     static const struct
@@ -131,13 +190,47 @@ static void EquipDefaultLoadout(int agentId)
         {"FIRE", 2},              // Hỏa
         {"EARTH_DISC_VOLLEY", 3}, // Thổ
         {"METAL_BLADE_STORM", 4}, // Kim
+        {"SAND_STORM", 3},        // Thổ
     };
+    const PlayerProfile *prof = PlayerProfile_GetGlobal();
     for (int slot = 0; slot < AGENT_SKILL_SLOTS; slot++)
     {
-        int idx = Skill_GetIndexByName(kLoadout[slot].name);
+        const char *skName = (prof && prof->equippedSkillNames[slot][0] != '\0')
+            ? prof->equippedSkillNames[slot] : kLoadout[slot].name;
+        int idx = Skill_GetIndexByName(skName);
+        int elem = (prof && prof->equippedSkillNames[slot][0] != '\0')
+            ? GameSkillElementByName(skName) : kLoadout[slot].element;
+        if (idx < 0) {
+            idx = Skill_GetIndexByName(kLoadout[slot].name);
+            elem = kLoadout[slot].element;
+        }
         if (idx >= 0)
-            Entity_SetEquippedSkill(agentId, slot, idx, kLoadout[slot].element);
+            Entity_SetEquippedSkill(agentId, slot, idx, elem);
     }
+}
+
+static const char *ExploreMapNameForRealm(int realm)
+{
+    switch (realm) {
+        case 0: return "SONG_QUAO";     // Thủy
+        case 1: return "SONG_QUAO";     // Mộc
+        case 2: return "NINH_THUAN";    // Hỏa
+        case 3: return "NINH_THUAN";    // Thổ
+        case 4: return "DEFAULT_ARENA"; // Kim
+        default: return "SONG_QUAO";
+    }
+}
+
+static const char *ExploreRealmTitle(int realm)
+{
+    static const char *kTitles[5] = {
+        "HAN THUY DAM (THUY)",
+        "THANH MOC LAM (MOC)",
+        "XICH HOA SON (HOA)",
+        "HOANG THO DAI (THO)",
+        "KIM TUYET COC (KIM)"
+    };
+    return kTitles[(realm >= 0 && realm < 5) ? realm : 0];
 }
 
 static void ResetMatch(PlayerEntity *player)
@@ -146,27 +239,39 @@ static void ResetMatch(PlayerEntity *player)
     s_introTimer = INTRO_SECONDS;
     s_lastBossPhase = -1;
     s_swingSlowTimer = 0.0f;
+    s_playerRespawnTimer = 0.0f;
+    s_pvpMatchTimer = 240.0f;
+    s_pillarCapture = 0.0f;
+    s_pillarPulseTimer = 0.0f;
+    s_minionWaveTimer = 18.0f;
+    s_spiritOrbTimer = 40.0f;
+    s_spiritOrbActive = false;
+    s_spiritOrbBanner = 0.0f;
+    s_worldBossTimer = 75.0f;
+    s_worldBossActive = false;
+    s_worldBossBanner = 0.0f;
+    s_tuongSinhLastElem = -1;
+    s_tuongSinhChain = 0;
+    s_tuongSinhTimer = 0.0f;
+    s_wasExploreClient = false;
+    s_failoverBannerTimer = 0.0f;
     if (UI_IsLoadoutOpen())
         UI_ToggleLoadout();
-    // Team battle: bots re-materialize from the roster each round (the
-    // INTRO tick spawns them) — clear the old brains/agents first.
-    if (s_mode == GAME_MODE_TEAM_BATTLE)
+    if (UI_Hub_IsModalOpen())
+        UI_Hub_CloseModal();
+    AI_ClearMonsterCamps();
+    if (s_mode == GAME_MODE_TEAM_BATTLE ||
+        s_mode == GAME_MODE_PVP_ESCORT_1V1 ||
+        s_mode == GAME_MODE_PVP_ESCORT_2V2)
         AI_ClearHeroBots();
-    // Fresh remote-hero render state (slots get reused across rounds).
     for (int i = 0; i < MAX_AGENTS; i++)
         s_remoteAnimInit[i] = false;
 
-    // Player agent may have died last match (HP or ring-out) — respawn it.
-    // Placement happens in the INTRO tick (bounds are only correct while
-    // this screen is active); spawning at the match point here is fine
-    // because ResetMatch only runs at startup or while in-game.
     if (Entity_GetAgent(player->agentId) == NULL)
     {
         Vector3 spawn = PLAYER_SPAWN;
         spawn.y = MapManager_GetGroundHeightAt(spawn.x, spawn.z);
         player->agentId = Entity_SpawnAgent(spawn, 100.0f, 0, TEAM_ALLY, ARCH_HERO);
-        // Team battle: the lobby may have moved the host to side 1 — the
-        // respawned agent must keep that side (roster's HOST entry has it).
         if (s_mode == GAME_MODE_TEAM_BATTLE)
         {
             NetRosterEntry roster[NET_MAX_PLAYERS];
@@ -182,16 +287,12 @@ static void ResetMatch(PlayerEntity *player)
         }
     }
     Control_Init(player->agentId);
+    Control_SetSkillLevelProvider(GameSkillLevelProvider);
 
     EquipDefaultLoadout(player->agentId);
+    ApplyModeBalanceToPlayer(player->agentId);
 
-    // Leftover boss from an aborted match: kill it so the next intro spawns
-    // a fresh one (Boss_Spawn would otherwise leak the old pool agent).
-    if (Boss_IsAlive())
-    {
-        Entity_ApplyDamage(Boss_GetAgentId(), 1e9f, (Vector3){0});
-        Boss_Update(0.0f); // lets the boss system notice the death
-    }
+    Boss_ClearAll();
 }
 
 GameState GameScreen_GetState(void)
@@ -201,6 +302,8 @@ GameState GameScreen_GetState(void)
 
 void GameScreen_SetMode(GameMode mode) { s_mode = mode; }
 GameMode GameScreen_GetMode(void) { return s_mode; }
+void GameScreen_SetExploreRealm(int realmId) { s_exploreRealm = (realmId >= 0 && realmId < 5) ? realmId : 0; }
+int  GameScreen_GetExploreRealm(void) { return s_exploreRealm; }
 
 // Host, team battle: line every living hero up on its side's spawn cluster
 // (remote heroes joined at the invasion point; the round starts in ranks).
@@ -235,6 +338,13 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
 {
     if (IsKeyPressed(KEY_ESCAPE))
     {
+        if (UI_Hub_IsModalOpen())
+        {
+            UI_Hub_CloseModal();
+            EquipDefaultLoadout(player->agentId);
+            ApplyModeBalanceToPlayer(player->agentId);
+            return;
+        }
         if (UI_IsLoadoutOpen())
         {
             UI_ToggleLoadout(); // ESC closes the panel first, not the match
@@ -247,31 +357,55 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
         }
     }
 
-    // Trang Bị panel — mid-fight swapping is allowed (the match keeps
-    // running; the risk is the point). Player intents freeze while open.
+    // TAB opens full Global Hub Modal in Explore Mode, or quick Loadout in PvP
     if (s_state == GAME_FIGHTING && IsKeyPressed(KEY_TAB))
     {
-        UI_ToggleLoadout();
+        if (s_mode == GAME_MODE_EXPLORE)
+        {
+            if (UI_Hub_IsModalOpen()) {
+                UI_Hub_CloseModal();
+                EquipDefaultLoadout(player->agentId);
+                ApplyModeBalanceToPlayer(player->agentId);
+            } else {
+                UI_Hub_OpenModal(0);
+            }
+        }
+        else
+        {
+            UI_ToggleLoadout();
+        }
     }
 
     // --- Match state machine (Module 7) ---
     if (s_state == GAME_ARENA_INTRO)
     {
-        // Pin the match map + its ring-out bounds (only while this screen
-        // is active — never from Init, which runs once at startup for every
-        // screen; main.c restores the DEFAULT_ARENA bounds on exit).
-        if (strcmp(MapManager_GetName(MapManager_GetActiveIndex()), MATCH_MAP_NAME) != 0)
+        const char *targetMap = (s_mode == GAME_MODE_EXPLORE)
+            ? ExploreMapNameForRealm(s_exploreRealm) : MATCH_MAP_NAME;
+        if (strcmp(MapManager_GetName(MapManager_GetActiveIndex()), targetMap) != 0)
         {
             for (int i = 0; i < MapManager_GetCount(); i++)
             {
-                if (strcmp(MapManager_GetName(i), MATCH_MAP_NAME) == 0)
+                if (strcmp(MapManager_GetName(i), targetMap) == 0)
                 {
                     MapManager_SetActiveIndex(i);
                     break;
                 }
             }
         }
-        Entity_SetArenaBounds(MATCH_ARENA_CENTER, MATCH_ARENA_RADIUS);
+        if (s_mode == GAME_MODE_EXPLORE)
+        {
+            Vector3 mc = {0};
+            float mr = 30.0f;
+            MapManager_GetActiveBounds(&mc, &mr);
+            Entity_SetArenaBounds(mc, mr);
+            Vector3 sp = MapManager_GetActiveSpawnPoint();
+            player->position = sp;
+            Entity_SetPosition(player->agentId, sp);
+        }
+        else
+        {
+            Entity_SetArenaBounds(MATCH_ARENA_CENTER, MATCH_ARENA_RADIUS);
+        }
         if (s_mode == GAME_MODE_TEAM_BATTLE)
         {
             // Both sides stand in ranks through the title card. The host
@@ -326,7 +460,15 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
                     player->position = pa->position;
             }
         }
-        else
+        else if (s_mode == GAME_MODE_PVP_ESCORT_1V1 || s_mode == GAME_MODE_PVP_ESCORT_2V2)
+        {
+            Vector3 spA = TEAM_SPAWN[0];
+            spA.y = MapManager_GetGroundHeightAt(spA.x, spA.z);
+            player->position = spA;
+            Entity_SetPosition(player->agentId, spA);
+            Entity_SetPvEBonuses(player->agentId, NULL);
+        }
+        else if (s_mode != GAME_MODE_EXPLORE)
         {
             // Hold the player at the spawn point through the title card.
             player->position = PLAYER_SPAWN;
@@ -341,6 +483,71 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
                 Vector3 bossSpawn = BOSS_SPAWN;
                 bossSpawn.y = MapManager_GetGroundHeightAt(bossSpawn.x, bossSpawn.z);
                 Boss_Spawn(&BOSS_MOC_LINH, bossSpawn, TEAM_ENEMY);
+            }
+            else if (s_mode == GAME_MODE_EXPLORE)
+            {
+                if (s_exploreRealm == 2) MapProp_SetGrassState(MAP_GRASS_STATE_SCORCHED, 0.85f);
+                else if (s_exploreRealm == 3) MapProp_SetGrassState(MAP_GRASS_STATE_DRY, 0.0f);
+                else MapProp_SetGrassState(MAP_GRASS_STATE_LUSH, 0.0f);
+
+                Vector3 sp = MapManager_GetActiveSpawnPoint();
+                Vector3 ac = {0};
+                float ar = 20.0f;
+                MapManager_GetActiveBounds(&ac, &ar);
+                float campDist = (ar > 25.0f) ? 11.0f : 7.0f;
+                AI_SpawnMonsterCamp((Vector3){ sp.x + campDist, 0, sp.z }, 3, s_exploreRealm, MONSTER_SWARM_MELEE);
+                AI_SpawnMonsterCamp((Vector3){ sp.x - campDist, 0, sp.z }, 3, s_exploreRealm, MONSTER_SWARM_MELEE);
+                AI_SpawnMonsterCamp((Vector3){ sp.x, 0, sp.z + campDist }, 2, s_exploreRealm, MONSTER_RANGED_CASTER);
+                AI_SpawnMonsterCamp((Vector3){ sp.x, 0, sp.z - campDist }, 1, s_exploreRealm, MONSTER_ELITE_GUARD);
+                DaTau_Init(s_exploreRealm);
+            }
+            else if (s_mode == GAME_MODE_PVP_ESCORT_1V1 || s_mode == GAME_MODE_PVP_ESCORT_2V2)
+            {
+                int teamSize = (s_mode == GAME_MODE_PVP_ESCORT_2V2) ? 2 : 1;
+                if (!Net_ClientDrivesWorld())
+                {
+                    while (GameRules_CountAliveHeroes(TEAM_ALLY) < teamSize)
+                    {
+                        int b = AI_SpawnHeroBot(TEAM_SPAWN[0], TEAM_ALLY);
+                        if (b < 0) break;
+                        EquipDefaultLoadout(b);
+                    }
+                    while (GameRules_CountAliveHeroes(TEAM_ENEMY) < teamSize)
+                    {
+                        int b = AI_SpawnHeroBot(TEAM_SPAWN[1], TEAM_ENEMY);
+                        if (b < 0) break;
+                        EquipDefaultLoadout(b);
+                    }
+                    PlaceHeroesAtTeamSpawns();
+
+                    Vector3 bPosA = { 78.0f, 0.0f, 142.0f };
+                    bPosA.y = MapManager_GetGroundHeightAt(bPosA.x, bPosA.z);
+                    Boss_SpawnSlot(0, &BOSS_MOC_LINH, bPosA, TEAM_ALLY);
+                    BossRoute routeA = {
+                        .waypoints = {
+                            { 84.0f, 0.0f, 138.0f },
+                            { 90.0f, 0.0f, 142.0f },
+                            MATCH_ARENA_CENTER
+                        },
+                        .waypointCount = 3,
+                        .marchSpeedMps = 1.25f
+                    };
+                    Boss_SetRoute(0, &routeA);
+
+                    Vector3 bPosB = { 110.0f, 0.0f, 158.0f };
+                    bPosB.y = MapManager_GetGroundHeightAt(bPosB.x, bPosB.z);
+                    Boss_SpawnSlot(1, &BOSS_HAC_DIEN_TON_GIA, bPosB, TEAM_ENEMY);
+                    BossRoute routeB = {
+                        .waypoints = {
+                            { 104.0f, 0.0f, 162.0f },
+                            { 98.0f, 0.0f, 158.0f },
+                            MATCH_ARENA_CENTER
+                        },
+                        .waypointCount = 3,
+                        .marchSpeedMps = 1.25f
+                    };
+                    Boss_SetRoute(1, &routeB);
+                }
             }
             else if (!Net_ClientDrivesWorld())
             {
@@ -380,9 +587,50 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
         // (mirrored 1:1 into the local pool by snapshot sync).
         if (Net_ClientDrivesWorld())
         {
+            s_wasExploreClient = (s_mode == GAME_MODE_EXPLORE);
             int hid = Net_GetLocalHeroAgentId();
             if (hid >= 0)
                 player->agentId = hid;
+            if (s_mode == GAME_MODE_EXPLORE)
+            {
+                DaTau_Update(dt);
+                DaTau_TickZoneHold(dt, Entity_GetAgent(player->agentId) != NULL);
+                if (!Net_IsPeerConnected())
+                {
+                    // Seamless Host Failover: keep player & local profile intact,
+                    // transition to solo local simulation with fresh monster camps!
+                    Net_Stop();
+                    s_wasExploreClient = false;
+                    s_failoverBannerTimer = 4.0f;
+                    Vector3 curPos = player->position;
+                    player->agentId = Entity_SpawnAgent(curPos, 100.0f, 0, TEAM_ALLY, ARCH_HERO);
+                    Control_Init(player->agentId);
+                    EquipDefaultLoadout(player->agentId);
+                    ApplyModeBalanceToPlayer(player->agentId);
+                    Vector3 sp = MapManager_GetActiveSpawnPoint();
+                    AI_SpawnMonsterCamp((Vector3){ sp.x + 10.0f, 0, sp.z }, 3, s_exploreRealm, MONSTER_SWARM_MELEE);
+                    AI_SpawnMonsterCamp((Vector3){ sp.x - 10.0f, 0, sp.z }, 3, s_exploreRealm, MONSTER_SWARM_MELEE);
+                    AI_SpawnMonsterCamp((Vector3){ sp.x, 0, sp.z + 10.0f }, 2, s_exploreRealm, MONSTER_RANGED_CASTER);
+                    AI_SpawnMonsterCamp((Vector3){ sp.x, 0, sp.z - 10.0f }, 1, s_exploreRealm, MONSTER_ELITE_GUARD);
+                }
+                NetKillReward rewards[16];
+                int nr = Net_ClientPollKillRewards(rewards, 16);
+                if (nr > 0)
+                {
+                    PlayerProfile *prof = PlayerProfile_GetGlobal();
+                    const Agent *me = Entity_GetAgent(player->agentId);
+                    for (int r = 0; r < nr; r++)
+                    {
+                        prof->gold += rewards[r].gold;
+                        if (rewards[r].isBoss || rewards[r].monsterKind == MONSTER_ELITE_GUARD)
+                            prof->elementalStones[s_exploreRealm % 5] += 1;
+                        if (me && me->equippedSkills[0] >= 0)
+                            PlayerProfile_AddSkillXp(me->equippedSkills[0], (uint32_t)rewards[r].xp);
+                        DaTau_OnMonsterKilled(rewards[r].monsterKind, rewards[r].element, rewards[r].isBoss);
+                    }
+                    PlayerProfile_SaveGlobal();
+                }
+            }
             // Match outcome comes from the host, stated from the HOST's
             // perspective — map it through team membership: same side as
             // the host → keep it, opposite side → swap.
@@ -434,6 +682,216 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
             {
                 int aliveTeam = (ally > 0) ? 0 : 1;
                 s_state = (aliveTeam == s_hostSide) ? GAME_VICTORY : GAME_DEFEAT;
+            }
+        }
+        else if (s_mode == GAME_MODE_EXPLORE)
+        {
+            DaTau_Update(dt);
+            if (s_worldBossBanner > 0.0f) s_worldBossBanner -= dt;
+            if (IsKeyPressed(KEY_N)) {
+                DaTau_SkipWithToken();
+            }
+
+            // World Boss Kỳ Ngộ Giang Hồ every 75s
+            if (!s_worldBossActive)
+            {
+                s_worldBossTimer -= dt;
+                if (s_worldBossTimer <= 0.0f)
+                {
+                    Vector3 sp = MapManager_GetActiveSpawnPoint();
+                    Vector3 wbPos = { sp.x + 8.0f, 0.0f, sp.z + 6.0f };
+                    wbPos.y = MapManager_GetGroundHeightAt(wbPos.x, wbPos.z);
+                    if (Boss_SpawnSlot(0, &BOSS_HAC_DIEN_TON_GIA, wbPos, TEAM_ENEMY) >= 0)
+                    {
+                        s_worldBossActive = true;
+                        s_worldBossBanner = 4.0f;
+                    }
+                    s_worldBossTimer = 75.0f;
+                }
+            }
+            else if (!Boss_IsSlotAlive(0))
+            {
+                s_worldBossActive = false;
+                PlayerProfile *prof = PlayerProfile_GetGlobal();
+                prof->gold += 400;
+                prof->daTauPoints += 100;
+                prof->daTauTokens += 1;
+                prof->elementalStones[s_exploreRealm % 5] += 2;
+                const Agent *pa0 = Entity_GetAgent(player->agentId);
+                if (pa0 && pa0->equippedSkills[0] >= 0)
+                    PlayerProfile_AddSkillXp(pa0->equippedSkills[0], 250u);
+                DaTau_OnMonsterKilled(MONSTER_ELITE_GUARD, s_exploreRealm, true);
+                Net_HostNotifyKillReward(MONSTER_ELITE_GUARD, s_exploreRealm, true, 400, 250);
+                PlayerProfile_SaveGlobal();
+                s_worldBossBanner = 4.0f;
+            }
+
+            const Agent *pa = Entity_GetAgent(player->agentId);
+            if (s_failoverBannerTimer > 0.0f) s_failoverBannerTimer -= dt;
+            DaTau_TickZoneHold(dt, pa != NULL);
+            if (pa == NULL)
+            {
+                s_playerRespawnTimer += dt;
+                if (s_playerRespawnTimer >= 5.0f)
+                {
+                    s_playerRespawnTimer = 0.0f;
+                    Vector3 sp = MapManager_GetActiveSpawnPoint();
+                    player->agentId = Entity_SpawnAgent(sp, 100.0f, 0, TEAM_ALLY, ARCH_HERO);
+                    Control_Init(player->agentId);
+                    EquipDefaultLoadout(player->agentId);
+                    ApplyModeBalanceToPlayer(player->agentId);
+                }
+            }
+            else
+            {
+                NatureZoneType zone = Map_QueryZoneAt(pa->position);
+                Control_SetCastCooldownMult(GameRules_CooldownMult(pa->currentElement, zone));
+                Entity_SetStealth(player->agentId, GameRules_GrantsStealth(pa->currentElement, zone));
+
+                MonsterKillEvent kills[16];
+                int nk = AI_PollMonsterKills(kills, 16);
+                if (nk > 0)
+                {
+                    PlayerProfile *prof = PlayerProfile_GetGlobal();
+                    for (int k = 0; k < nk; k++)
+                    {
+                        int goldGain = (kills[k].kind == MONSTER_ELITE_GUARD) ? 80 : 25;
+                        uint32_t xpGain = (kills[k].kind == MONSTER_ELITE_GUARD) ? 90u : 35u;
+                        prof->gold += goldGain;
+                        if (kills[k].kind == MONSTER_ELITE_GUARD)
+                            prof->elementalStones[s_exploreRealm % 5] += 1;
+                        int skSlot = k % AGENT_SKILL_SLOTS;
+                        int skIdx = pa->equippedSkills[skSlot];
+                        if (skIdx >= 0) PlayerProfile_AddSkillXp(skIdx, xpGain);
+                        DaTau_OnMonsterKilled((int)kills[k].kind, kills[k].element, false);
+                        Net_HostNotifyKillReward((int)kills[k].kind, kills[k].element, false, goldGain, (int)xpGain);
+                    }
+                    PlayerProfile_SaveGlobal();
+                }
+            }
+        }
+        else if (s_mode == GAME_MODE_PVP_ESCORT_1V1 || s_mode == GAME_MODE_PVP_ESCORT_2V2)
+        {
+            s_pvpMatchTimer -= dt;
+            if (s_pvpMatchTimer < 0.0f) s_pvpMatchTimer = 0.0f;
+
+            const Agent *pa = Entity_GetAgent(player->agentId);
+            if (pa == NULL)
+            {
+                if (s_playerRespawnTimer == 0.0f)
+                {
+                    int allyBoss = Boss_GetSlotAgentId(0);
+                    const Agent *ba = Entity_GetAgent(allyBoss);
+                    if (ba)
+                    {
+                        Entity_ApplyDamage(allyBoss, ba->maxHealth * 0.05f, (Vector3){ 0 });
+                        Entity_ApplyStun(allyBoss, 2.0f);
+                    }
+                }
+                s_playerRespawnTimer += dt;
+                if (s_playerRespawnTimer >= 5.0f)
+                {
+                    s_playerRespawnTimer = 0.0f;
+                    Vector3 sp = TEAM_SPAWN[0];
+                    sp.y = MapManager_GetGroundHeightAt(sp.x, sp.z);
+                    player->agentId = Entity_SpawnAgent(sp, 100.0f, 0, TEAM_ALLY, ARCH_HERO);
+                    Control_Init(player->agentId);
+                    EquipDefaultLoadout(player->agentId);
+                    Entity_SetPvEBonuses(player->agentId, NULL);
+                    Entity_AddModifier(player->agentId, 1.5f, 4.0f);
+                }
+            }
+            else
+            {
+                NatureZoneType zone = Map_QueryZoneAt(pa->position);
+                Control_SetCastCooldownMult(GameRules_CooldownMult(pa->currentElement, zone));
+                Entity_SetStealth(player->agentId, GameRules_GrantsStealth(pa->currentElement, zone));
+            }
+
+            int nearIds[16];
+            int nc = Entity_GetNearbyTargets(MATCH_ARENA_CENTER, 8.0f, nearIds, 16);
+            int allyPresence = 0, enemyPresence = 0;
+            for (int i = 0; i < nc; i++)
+            {
+                const Agent *na = Entity_GetAgent(nearIds[i]);
+                if (!na) continue;
+                int w = (na->archetype == ARCH_BOSS) ? 3 : (na->archetype == ARCH_HERO ? 1 : 0);
+                if (na->team == TEAM_ALLY) allyPresence += w;
+                else if (na->team == TEAM_ENEMY) enemyPresence += w;
+            }
+            if (allyPresence > enemyPresence)
+                s_pillarCapture = fminf(100.0f, s_pillarCapture + 14.0f * dt);
+            else if (enemyPresence > allyPresence)
+                s_pillarCapture = fmaxf(-100.0f, s_pillarCapture - 14.0f * dt);
+
+            s_pillarPulseTimer += dt;
+            if (s_pillarPulseTimer >= 3.0f)
+            {
+                s_pillarPulseTimer = 0.0f;
+                if (s_pillarCapture >= 50.0f && Boss_IsSlotAlive(1))
+                    Entity_ApplyDamage(Boss_GetSlotAgentId(1), 18.0f, (Vector3){ 0 });
+                else if (s_pillarCapture <= -50.0f && Boss_IsSlotAlive(0))
+                    Entity_ApplyDamage(Boss_GetSlotAgentId(0), 18.0f, (Vector3){ 0 });
+            }
+
+            // Periodic minion waves from both Bosses every 18s
+            s_minionWaveTimer -= dt;
+            if (s_minionWaveTimer <= 0.0f)
+            {
+                s_minionWaveTimer = 18.0f;
+                if (Boss_IsSlotAlive(0)) AI_SpawnMinionWave(Boss_GetSlotAgentId(0), 2);
+                if (Boss_IsSlotAlive(1)) AI_SpawnMinionWave(Boss_GetSlotAgentId(1), 2);
+            }
+
+            // 45s Map Twist: Linh Châu (Spirit Orb) near center
+            if (s_spiritOrbBanner > 0.0f) s_spiritOrbBanner -= dt;
+            if (!s_spiritOrbActive)
+            {
+                s_spiritOrbTimer -= dt;
+                if (s_spiritOrbTimer <= 0.0f)
+                {
+                    s_spiritOrbActive = true;
+                    s_spiritOrbPos = (Vector3){
+                        MATCH_ARENA_CENTER.x + ((GetRandomValue(0, 1) == 0) ? 5.0f : -5.0f),
+                        0.0f,
+                        MATCH_ARENA_CENTER.z + ((GetRandomValue(0, 1) == 0) ? 5.0f : -5.0f)
+                    };
+                    s_spiritOrbPos.y = MapManager_GetGroundHeightAt(s_spiritOrbPos.x, s_spiritOrbPos.z);
+                    s_spiritOrbTimer = 45.0f;
+                }
+            }
+            else
+            {
+                int orbPickers[8];
+                int np = Entity_GetNearbyTargets(s_spiritOrbPos, 2.2f, orbPickers, 8);
+                for (int i = 0; i < np; i++)
+                {
+                    const Agent *picker = Entity_GetAgent(orbPickers[i]);
+                    if (!picker || picker->archetype != ARCH_HERO) continue;
+                    int bossSlot = (picker->team == TEAM_ALLY) ? 0 : 1;
+                    int bossId = Boss_GetSlotAgentId(bossSlot);
+                    const Agent *ba = Entity_GetAgent(bossId);
+                    if (ba) Entity_ApplyDamage(bossId, -ba->maxHealth * 0.10f, (Vector3){ 0 }); // heal 10%
+                    Entity_AddModifier(orbPickers[i], 1.35f, 8.0f);
+                    s_spiritOrbActive = false;
+                    s_spiritOrbBanner = 3.0f;
+                    break;
+                }
+            }
+
+            if (!Boss_IsSlotAlive(1))
+                s_state = GAME_VICTORY;
+            else if (!Boss_IsSlotAlive(0))
+                s_state = GAME_DEFEAT;
+            else if (s_pvpMatchTimer <= 0.0f)
+            {
+                const Agent *b0 = Entity_GetAgent(Boss_GetSlotAgentId(0));
+                const Agent *b1 = Entity_GetAgent(Boss_GetSlotAgentId(1));
+                float f0 = (b0 && b0->maxHealth > 0.0f) ? (b0->health / b0->maxHealth) : 0.0f;
+                float f1 = (b1 && b1->maxHealth > 0.0f) ? (b1->health / b1->maxHealth) : 0.0f;
+                float scoreAlly  = f0 + (s_pillarCapture * 0.002f);
+                float scoreEnemy = f1 - (s_pillarCapture * 0.002f);
+                s_state = (scoreAlly >= scoreEnemy) ? GAME_VICTORY : GAME_DEFEAT;
             }
         }
         else
@@ -536,7 +994,15 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
             else if (evs[i].outcome == CLASH_A_WINS ||
                      evs[i].outcome == CLASH_B_WINS ||
                      evs[i].outcome == CLASH_MUTUAL_DESTROY)
+            {
                 Audio_PlaySFXAt(SFX_CLASH, evs[i].clashPoint); // Đấu Pháp
+                if (evs[i].outcome == CLASH_A_WINS)
+                {
+                    Entity_RestoreMana(player->agentId, 15.0f);
+                    AddFloatingText(evs[i].clashPoint, "Dau Phap +15 MP!", GOLD, 16.0f, 0.8f);
+                    if (s_mode == GAME_MODE_EXPLORE) DaTau_OnClashWon();
+                }
+            }
         }
     }
 
@@ -563,7 +1029,7 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
     UITouchSkillSlot touchSlots[5];
     BuildGameTouchSlots(player, touchSlots);
     int touchExtraSkillIdx = -1;
-    if (s_state == GAME_FIGHTING && !UI_IsLoadoutOpen())
+    if (s_state == GAME_FIGHTING && !UI_IsLoadoutOpen() && !UI_Hub_IsModalOpen())
     {
         UI_PollTouchCombat(touchSlots, &s_gameTouchInput);
         if (s_gameTouchInput.joyActive)
@@ -598,7 +1064,7 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
 
     // Module 9 auto-targeting: an incoming enemy projectile (đối-đòn) or
     // the boss overrides the raw mouse aim — mobile-first UX (thiết kế §XI).
-    if (s_state == GAME_FIGHTING && !UI_IsLoadoutOpen())
+    if (s_state == GAME_FIGHTING && !UI_IsLoadoutOpen() && !UI_Hub_IsModalOpen())
     {
         bool hasAuto = false;
         Vector3 autoPt = UI_GetAutoAimPoint(player->agentId, &hasAuto);
@@ -610,6 +1076,8 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
         // "vừa đánh vừa chạy" root-motion feel without real root motion.
         if (s_swingSlowTimer > 0.0f)
             s_swingSlowTimer -= dt;
+        if (s_tuongSinhTimer > 0.0f)
+            s_tuongSinhTimer -= dt;
         Control_SetMoveSpeedMult(s_swingSlowTimer > 0.0f ? 0.35f : 1.0f);
 
         if (Net_ClientDrivesWorld())
@@ -653,6 +1121,26 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
                     Audio_PlaySFXAt(pc->taijiActive ? SFX_CAST_TAIJI
                                                     : Audio_CastSfxForElement(pc->currentElement),
                                     player->position);
+
+                // Ngũ Hành Tương Sinh 3-step combo -> Ngộ Đạo Thái Cực!
+                int castElem = GameSkillElementByName(GetRegisteredSkillName(castIdx));
+                if (s_tuongSinhTimer > 0.0f && s_tuongSinhLastElem >= 0 &&
+                    castElem == (s_tuongSinhLastElem + 1) % 5)
+                {
+                    s_tuongSinhChain++;
+                    if (s_tuongSinhChain >= 3 && pc && !pc->taijiActive)
+                    {
+                        Entity_SetTaijiActive(player->agentId, true);
+                        AddFloatingText(player->position, "NGO DAO THAI CUC!", ELEMENT_COLOR_TAIJI, 20.0f, 1.4f);
+                        s_tuongSinhChain = 0;
+                    }
+                }
+                else
+                {
+                    s_tuongSinhChain = 1;
+                }
+                s_tuongSinhLastElem = castElem;
+                s_tuongSinhTimer = 6.0f;
             }
         }
     }
@@ -716,6 +1204,7 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
     camera->target = (Vector3){
         player->position.x, player->position.y + SANDBOX_CAMERA_TARGET_HEIGHT, player->position.z};
     camera->position = SandboxCamera_OrbitPositionAtPitch(player->position, s_camAngle, s_camDist, s_camPitch);
+    s_hudCamera = *camera;
 }
 
 static Color MinionElementColor(int elem)
@@ -823,6 +1312,26 @@ void GameScreen_Draw3D(const PlayerEntity *player)
     {
         Environment_DrawSmartShadow(player->position, ENV_SHAPE_SPHERE, 0.5f, 0.9f);
     }
+    if (s_mode == GAME_MODE_PVP_ESCORT_1V1 || s_mode == GAME_MODE_PVP_ESCORT_2V2)
+    {
+        // Convergence Pillar (Trụ Long Mạch Thái Cực) at MATCH_ARENA_CENTER
+        Vector3 pBase = MATCH_ARENA_CENTER;
+        pBase.y = MapManager_GetGroundHeightAt(pBase.x, pBase.z);
+        Color pCol = (s_pillarCapture >= 20.0f) ? (Color){ 80, 190, 255, 255 }
+                   : (s_pillarCapture <= -20.0f) ? (Color){ 245, 95, 75, 255 }
+                   : (Color){ 235, 215, 130, 255 };
+        DrawCylinder((Vector3){ pBase.x, pBase.y + 1.8f, pBase.z }, 0.65f, 0.85f, 3.6f, 12, (Color){ 32, 34, 46, 255 });
+        DrawCylinderWires((Vector3){ pBase.x, pBase.y + 1.8f, pBase.z }, 0.68f, 0.88f, 3.6f, 12, pCol);
+        DrawCircle3D((Vector3){ pBase.x, pBase.y + 0.12f, pBase.z }, 8.0f, (Vector3){ 0, 1, 0 }, 0.0f, Fade(pCol, 0.45f));
+
+        if (s_spiritOrbActive)
+        {
+            float bob = 0.8f + 0.2f * sinf((float)GetTime() * 3.5f);
+            Vector3 op = { s_spiritOrbPos.x, s_spiritOrbPos.y + bob, s_spiritOrbPos.z };
+            DrawSphere(op, 0.42f, (Color){ 255, 225, 95, 255 });
+            DrawCircle3D(op, 0.75f, (Vector3){ 0, 1, 0 }, (float)GetTime() * 120.0f, GOLD);
+        }
+    }
     if (CharacterModel_IsLoaded())
     {
         CharacterModel_Draw(&player->anim, player->position, Control_GetYaw(), 1.0f, WHITE);
@@ -910,11 +1419,115 @@ void GameScreen_DrawHUD(const PlayerEntity *player)
     // Module 9 overlay: skill slot chips + auto-aim reticle.
     UI_DrawOverlay(player->agentId);
 
+    // Floating 2D HP bars for nearby enemies (monsters & bosses)
+    if (s_state == GAME_FIGHTING && (s_mode == GAME_MODE_EXPLORE || s_mode == GAME_MODE_PVP_ESCORT_1V1 || s_mode == GAME_MODE_PVP_ESCORT_2V2))
+    {
+        for (int i = 0; i < MAX_AGENTS; i++)
+        {
+            if (i == player->agentId) continue;
+            const Agent *ea = Entity_GetAgent(i);
+            if (!ea || ea->maxHealth <= 0.0f) continue;
+            if (ea->archetype == ARCH_HERO) continue;
+            float dx = ea->position.x - player->position.x;
+            float dz = ea->position.z - player->position.z;
+            if (dx * dx + dz * dz > 28.0f * 28.0f) continue;
+            Vector3 head = { ea->position.x, ea->position.y + (ea->archetype == ARCH_BOSS ? 2.2f : 1.1f), ea->position.z };
+            Vector2 sp = GetWorldToScreen(head, s_hudCamera);
+            if (sp.x < 0 || sp.x > GetScreenWidth() || sp.y < 0 || sp.y > GetScreenHeight()) continue;
+            int bw = (ea->archetype == ARCH_BOSS) ? 72 : 42;
+            int bh = (ea->archetype == ARCH_BOSS) ? 7 : 5;
+            float frac = ea->health / ea->maxHealth;
+            if (frac < 0.0f) frac = 0.0f;
+            if (frac > 1.0f) frac = 1.0f;
+            DrawRectangle((int)sp.x - bw / 2 - 1, (int)sp.y - 1, bw + 2, bh + 2, (Color){ 10, 10, 16, 200 });
+            Color barCol = (ea->team == TEAM_ALLY) ? (Color){ 70, 185, 255, 255 } : (Color){ 225, 65, 60, 255 };
+            DrawRectangle((int)sp.x - bw / 2, (int)sp.y, (int)(bw * frac), bh, barCol);
+        }
+    }
+
     int sw = GetScreenWidth();
     int sh = GetScreenHeight();
 
+    if (s_mode == GAME_MODE_PVP_ESCORT_1V1 || s_mode == GAME_MODE_PVP_ESCORT_2V2)
+    {
+        const Agent *b0 = Entity_GetAgent(Boss_GetSlotAgentId(0));
+        const Agent *b1 = Entity_GetAgent(Boss_GetSlotAgentId(1));
+        float f0 = (b0 && b0->maxHealth > 0.0f) ? b0->health / b0->maxHealth : 0.0f;
+        float f1 = (b1 && b1->maxHealth > 0.0f) ? b1->health / b1->maxHealth : 0.0f;
+        int mins = (int)s_pvpMatchTimer / 60;
+        int secs = (int)s_pvpMatchTimer % 60;
+        const char *hdr = TextFormat("THANH LONG %.0f%%   [%02d:%02d]   BACH HO %.0f%%",
+                                     f0 * 100.0f, mins, secs, f1 * 100.0f);
+        int hw = MeasureText(hdr, 18);
+        DrawRectangle(sw / 2 - hw / 2 - 16, 12, hw + 32, 50, (Color){ 14, 16, 24, 215 });
+        DrawRectangleLinesEx((Rectangle){ (float)(sw / 2 - hw / 2 - 16), 12.0f, (float)(hw + 32), 50.0f },
+                             1.5f, (Color){ 210, 180, 105, 210 });
+        DrawText(hdr, sw / 2 - hw / 2, 18, 18, (Color){ 240, 232, 210, 255 });
+        // Pillar capture bar
+        int barW = 240, barX = sw / 2 - barW / 2, barY = 44;
+        DrawRectangle(barX, barY, barW, 10, (Color){ 25, 25, 36, 240 });
+        int half = barW / 2;
+        int delta = (int)((s_pillarCapture / 100.0f) * half);
+        if (delta > 0) DrawRectangle(barX + half - delta, barY, delta, 10, (Color){ 75, 185, 255, 255 });
+        else if (delta < 0) DrawRectangle(barX + half, barY, -delta, 10, (Color){ 235, 85, 70, 255 });
+        DrawRectangle(barX + half - 1, barY - 1, 2, 12, WHITE);
+        if (s_playerRespawnTimer > 0.0f)
+        {
+            const char *rt = TextFormat("HOI SINH SAU %.1fs...", 5.0f - s_playerRespawnTimer);
+            DrawText(rt, sw / 2 - MeasureText(rt, 26) / 2, sh / 2 - 20, 26, (Color){ 255, 210, 100, 255 });
+        }
+        if (s_spiritOrbBanner > 0.0f)
+        {
+            const char *ob = "LINH CHAU HO PHAP! +10% MAU BOSS & TANG TOC!";
+            DrawText(ob, sw / 2 - MeasureText(ob, 20) / 2, 76, 20, GOLD);
+        }
+    }
+    else if (s_mode == GAME_MODE_EXPLORE)
+    {
+        const PlayerProfile *prof = PlayerProfile_GetGlobal();
+        const DaTauQuest *dq = DaTau_GetCurrent();
+        // Top-right Dã Tẩu Quest Tracker + Currencies
+        int qW = 310, qH = 104, qX = sw - qW - 16, qY = 14;
+        DrawRectangle(qX, qY, qW, qH, (Color){ 14, 16, 24, 215 });
+        DrawRectangleLinesEx((Rectangle){ (float)qX, (float)qY, (float)qW, (float)qH }, 1.5f, (Color){ 210, 180, 105, 210 });
+        DrawText(ExploreRealmTitle(s_exploreRealm), qX + 10, qY + 8, 13, (Color){ 155, 215, 255, 255 });
+        DrawText(TextFormat("Vang: %d | Diem: %d | Chuoi: %d", prof->gold, prof->daTauPoints, prof->daTauStreak),
+                 qX + 10, qY + 26, 12, (Color){ 245, 215, 120, 255 });
+        DrawText(dq->title, qX + 10, qY + 46, 13, WHITE);
+        DrawText(TextFormat("%s (%d/%d)", dq->desc, dq->currentCount, dq->targetCount),
+                 qX + 10, qY + 64, 12, (Color){ 200, 225, 200, 255 });
+        DrawText(TextFormat("[N] Doi nhiem vu (Lenh bai: %d)", prof->daTauTokens),
+                 qX + 10, qY + 84, 11, (Color){ 170, 175, 190, 230 });
+        if (DaTau_GetCompleteBannerTimer() > 0.0f)
+        {
+            const char *msg = DaTau_GetLastRewardText();
+            DrawText(msg, sw / 2 - MeasureText(msg, 22) / 2, 74, 22, (Color){ 255, 225, 110, 255 });
+        }
+        if (s_worldBossBanner > 0.0f)
+        {
+            const char *wb = s_worldBossActive ? "KY NGO GIANG HO: DAI TINH LINH XUAT THE!"
+                                               : "HA DAI TINH LINH! +400 VANG +100 DIEM +1 LENH BAI!";
+            DrawText(wb, sw / 2 - MeasureText(wb, 22) / 2, 104, 22, (Color){ 255, 130, 110, 255 });
+        }
+        if (s_failoverBannerTimer > 0.0f)
+        {
+            const char *fb = "CHU PHONG ROI DI - CHUYEN VE CHE DO TU CHU!";
+            DrawText(fb, sw / 2 - MeasureText(fb, 20) / 2, 134, 20, GOLD);
+        }
+        if (s_playerRespawnTimer > 0.0f)
+        {
+            const char *rt = TextFormat("HOI SINH SAU %.1fs...", 5.0f - s_playerRespawnTimer);
+            DrawText(rt, sw / 2 - MeasureText(rt, 26) / 2, sh / 2 - 20, 26, (Color){ 255, 210, 100, 255 });
+        }
+        if (s_spiritOrbBanner > 0.0f)
+        {
+            const char *ob = "LINH CHAU HO PHAP! +10% MAU BOSS & TANG TOC!";
+            DrawText(ob, sw / 2 - MeasureText(ob, 20) / 2, 76, 20, GOLD);
+        }
+    }
+
     // Boss HP bar (top center) while a boss lives.
-    if (Boss_IsAlive())
+    if (s_mode == GAME_MODE_BOSS && Boss_IsAlive())
     {
         const Agent *boss = Entity_GetAgent(Boss_GetAgentId());
         if (boss)
@@ -979,8 +1592,11 @@ void GameScreen_DrawHUD(const PlayerEntity *player)
     // beyond the exit key).
     if (s_state == GAME_ARENA_INTRO)
     {
-        const char *t = (s_mode == GAME_MODE_TEAM_BATTLE) ? "SONG DAU" : "HAC DIEN TON GIA";
-        DrawText(t, sw / 2 - MeasureText(t, 40) / 2, sh / 2 - 60, 40, (Color){235, 230, 245, 255});
+        const char *t = (s_mode == GAME_MODE_EXPLORE) ? ExploreRealmTitle(s_exploreRealm)
+                      : (s_mode == GAME_MODE_PVP_ESCORT_1V1 || s_mode == GAME_MODE_PVP_ESCORT_2V2) ? "SONG LINH HO PHAP"
+                      : (s_mode == GAME_MODE_TEAM_BATTLE) ? "SONG DAU"
+                      : "HAC DIEN TON GIA";
+        DrawText(t, sw / 2 - MeasureText(t, 36) / 2, sh / 2 - 60, 36, (Color){235, 230, 245, 255});
     }
     else if (s_state == GAME_VICTORY)
     {
@@ -1000,11 +1616,20 @@ void GameScreen_DrawHUD(const PlayerEntity *player)
     EndMode2D();
     EndBlendMode();
 
-    if (s_state == GAME_FIGHTING && !UI_IsLoadoutOpen())
+    if (s_state == GAME_FIGHTING && !UI_IsLoadoutOpen() && !UI_Hub_IsModalOpen())
     {
         UITouchSkillSlot touchSlots[5];
         BuildGameTouchSlots(player, touchSlots);
         UI_DrawTouchCombat(touchSlots, &s_gameTouchInput);
+    }
+    if (UI_Hub_IsModalOpen())
+    {
+        UI_Hub_UpdateDrawModal();
+        if (!UI_Hub_IsModalOpen())
+        {
+            EquipDefaultLoadout(player->agentId);
+            ApplyModeBalanceToPlayer(player->agentId);
+        }
     }
 }
 

@@ -22,8 +22,11 @@ static const float WAVE_RING_RADIUS     = 1.6f;  // spawn ring around the boss
 static MinionExplosion s_explosions[MAX_MINION_EXPLOSIONS];
 static int s_explosionCount = 0;
 
+static void UpdateCampMonsters(float dt);
+
 void AI_Init(void) {
     s_explosionCount = 0;
+    AI_ClearMonsterCamps();
 }
 
 // Nearest opposing agent; prefers ARCH_BOSS ("lầm lũi về boss địch"), falls
@@ -205,10 +208,12 @@ static void UpdateHeroBots(float dt) {
 
 void AI_Update(float dt) {
     UpdateHeroBots(dt);
+    UpdateCampMonsters(dt);
 
     for (int i = 0; i < MAX_AGENTS; i++) {
         const Agent *m = Entity_GetAgent(i);
         if (!m || m->archetype != ARCH_MINION) continue;
+        if (AI_IsCampMonster(i)) continue;
         if (m->vState != AGENT_GROUNDED || Entity_IsCrowdControlled(i)) continue;
 
         int targetId = FindMarchTarget(m);
@@ -275,4 +280,220 @@ int AI_PollHeroCasts(HeroBotCast *out, int max) {
     for (int i = 0; i < n; i++) out[i] = s_botCasts[i];
     s_botCastCount = 0;
     return n;
+}
+
+// =============================================================================
+// PvE Explore Monster Camps (Mode 1: Giang Hồ Ngũ Hành)
+// =============================================================================
+
+typedef struct {
+    bool        used;
+    int         agentId;
+    Vector3     homePos;
+    Vector3     lastKnownPos;
+    int         element;
+    MonsterKind kind;
+    float       respawnTimer;
+    float       attackTimer;
+    float       patrolAngle;
+} CampMonster;
+
+static CampMonster s_campMonsters[AI_MAX_CAMP_MONSTERS];
+static MonsterKillEvent s_killEvents[32];
+static int s_killEventCount = 0;
+
+static const float CAMP_AGGRO_RANGE    = 12.0f;
+static const float CAMP_LEASH_RANGE    = 22.0f;
+static const float CAMP_RESPAWN_SECS   = 15.0f;
+
+static float CampMonsterHP(MonsterKind kind) {
+    switch (kind) {
+        case MONSTER_RANGED_CASTER: return 45.0f;
+        case MONSTER_ELITE_GUARD:   return 180.0f;
+        default:                    return 55.0f;
+    }
+}
+
+static const char *CampMonsterSkillName(int element) {
+    switch (element) {
+        case 0:  return "GLACIAL_CANNON";
+        case 1:  return "LEAF_WHIRLWIND";
+        case 2:  return "FIRE";
+        case 3:  return "EARTH_DISC_VOLLEY";
+        case 4:  return "METAL_BLADE_STORM";
+        default: return "FIRE";
+    }
+}
+
+static void SpawnCampAgent(CampMonster *cm) {
+    Vector3 p = cm->homePos;
+    p.y = MapManager_GetGroundHeightAt(p.x, p.z);
+    int id = Entity_SpawnAgent(p, CampMonsterHP(cm->kind), cm->element, TEAM_ENEMY, ARCH_MINION);
+    cm->agentId = id;
+    cm->lastKnownPos = p;
+    cm->respawnTimer = 0.0f;
+    cm->attackTimer = 0.5f + 0.2f * (float)(rand() % 5);
+}
+
+int AI_SpawnMonsterCamp(Vector3 center, int count, int element, MonsterKind kind) {
+    int spawned = 0;
+    for (int k = 0; k < count; k++) {
+        int slot = -1;
+        for (int i = 0; i < AI_MAX_CAMP_MONSTERS; i++) {
+            if (!s_campMonsters[i].used) { slot = i; break; }
+        }
+        if (slot < 0) break;
+
+        float ang = (count > 1) ? ((float)k / (float)count) * 6.2831853f : 0.0f;
+        float rad = (count > 1) ? 2.2f : 0.0f;
+        CampMonster *cm = &s_campMonsters[slot];
+        *cm = (CampMonster){ 0 };
+        cm->used = true;
+        cm->homePos = (Vector3){ center.x + cosf(ang) * rad, center.y, center.z + sinf(ang) * rad };
+        cm->element = (element >= 0 && element <= 4) ? element : 0;
+        cm->kind = kind;
+        cm->patrolAngle = ang;
+        SpawnCampAgent(cm);
+        if (cm->agentId >= 0) spawned++;
+        else cm->used = false;
+    }
+    return spawned;
+}
+
+void AI_ClearMonsterCamps(void) {
+    for (int i = 0; i < AI_MAX_CAMP_MONSTERS; i++) {
+        if (s_campMonsters[i].used && s_campMonsters[i].agentId >= 0 &&
+            Entity_GetAgent(s_campMonsters[i].agentId) != NULL) {
+            Entity_ApplyDamage(s_campMonsters[i].agentId, 1e9f, (Vector3){ 0 });
+        }
+        s_campMonsters[i] = (CampMonster){ 0 };
+        s_campMonsters[i].agentId = -1;
+    }
+    s_killEventCount = 0;
+}
+
+bool AI_IsCampMonster(int agentId) {
+    if (agentId < 0) return false;
+    for (int i = 0; i < AI_MAX_CAMP_MONSTERS; i++) {
+        if (s_campMonsters[i].used && s_campMonsters[i].agentId == agentId) return true;
+    }
+    return false;
+}
+
+int AI_PollMonsterKills(MonsterKillEvent *out, int max) {
+    if (out == NULL || max <= 0) { s_killEventCount = 0; return 0; }
+    int n = (s_killEventCount < max) ? s_killEventCount : max;
+    for (int i = 0; i < n; i++) out[i] = s_killEvents[i];
+    s_killEventCount = 0;
+    return n;
+}
+
+static void UpdateCampMonsters(float dt) {
+    for (int i = 0; i < AI_MAX_CAMP_MONSTERS; i++) {
+        CampMonster *cm = &s_campMonsters[i];
+        if (!cm->used) continue;
+
+        const Agent *me = (cm->agentId >= 0) ? Entity_GetAgent(cm->agentId) : NULL;
+        if (me == NULL) {
+            if (cm->agentId >= 0) {
+                if (s_killEventCount < 32) {
+                    s_killEvents[s_killEventCount++] = (MonsterKillEvent){
+                        cm->lastKnownPos, cm->element, cm->kind
+                    };
+                }
+                cm->agentId = -1;
+                cm->respawnTimer = CAMP_RESPAWN_SECS;
+            } else {
+                cm->respawnTimer -= dt;
+                if (cm->respawnTimer <= 0.0f) {
+                    SpawnCampAgent(cm);
+                }
+            }
+            continue;
+        }
+
+        cm->lastKnownPos = me->position;
+        if (cm->attackTimer > 0.0f) cm->attackTimer -= dt;
+        if (me->vState != AGENT_GROUNDED || Entity_IsCrowdControlled(cm->agentId)) continue;
+
+        // Find nearest TEAM_ALLY hero within aggro range
+        int targetId = -1;
+        float bestDistSq = CAMP_AGGRO_RANGE * CAMP_AGGRO_RANGE;
+        for (int a = 0; a < MAX_AGENTS; a++) {
+            const Agent *cand = Entity_GetAgent(a);
+            if (!cand || cand->team != TEAM_ALLY || cand->archetype != ARCH_HERO) continue;
+            float dx = cand->position.x - me->position.x;
+            float dz = cand->position.z - me->position.z;
+            float dSq = dx * dx + dz * dz;
+            if (dSq < bestDistSq) {
+                bestDistSq = dSq;
+                targetId = a;
+            }
+        }
+
+        float homeDx = me->position.x - cm->homePos.x;
+        float homeDz = me->position.z - cm->homePos.z;
+        float homeDistSq = homeDx * homeDx + homeDz * homeDz;
+        if (homeDistSq > CAMP_LEASH_RANGE * CAMP_LEASH_RANGE) targetId = -1;
+
+        if (targetId >= 0) {
+            const Agent *t = Entity_GetAgent(targetId);
+            float dx = t->position.x - me->position.x;
+            float dz = t->position.z - me->position.z;
+            float dist = sqrtf(dx * dx + dz * dz);
+
+            float stopDist = (cm->kind == MONSTER_RANGED_CASTER) ? 6.5f : 1.7f;
+            float moveSpd  = (cm->kind == MONSTER_ELITE_GUARD) ? 2.6f : 2.9f;
+            moveSpd *= Entity_GetSpeedMult(cm->agentId);
+
+            if (dist > stopDist && dist > 0.001f) {
+                Vector3 pos = me->position;
+                pos.x += (dx / dist) * moveSpd * dt;
+                pos.z += (dz / dist) * moveSpd * dt;
+                pos.y = MapManager_GetGroundHeightAt(pos.x, pos.z);
+                Entity_SetPosition(cm->agentId, pos);
+                me = Entity_GetAgent(cm->agentId);
+            }
+
+            if (cm->attackTimer <= 0.0f && !Entity_IsStunned(cm->agentId)) {
+                if (cm->kind == MONSTER_RANGED_CASTER && dist <= 11.0f) {
+                    int skIdx = Skill_GetIndexByName(CampMonsterSkillName(cm->element));
+                    if (skIdx >= 0 && CastSkill(skIdx, cm->agentId, me->position, t->position,
+                                                (SkillParams){ .level = 1, .quantity = 1, .sizeScale = 0.85f })) {
+                        cm->attackTimer = 2.4f;
+                    }
+                } else if (dist <= 2.1f) {
+                    float dmg = (cm->kind == MONSTER_ELITE_GUARD) ? 14.0f : 6.0f;
+                    Vector3 kb = (dist > 0.01f)
+                        ? (Vector3){ (dx / dist) * 2.2f, 0.0f, (dz / dist) * 2.2f }
+                        : (Vector3){ 0 };
+                    Entity_ApplyDamage(targetId, dmg, kb);
+                    if (cm->kind == MONSTER_ELITE_GUARD) {
+                        Entity_ApplyLaunch(targetId, 3.2f, kb);
+                    }
+                    cm->attackTimer = (cm->kind == MONSTER_ELITE_GUARD) ? 1.8f : 1.4f;
+                }
+            }
+        } else {
+            // Gentle patrol near home camp
+            cm->patrolAngle += 0.6f * dt;
+            Vector3 goal = {
+                cm->homePos.x + cosf(cm->patrolAngle) * 1.8f,
+                0.0f,
+                cm->homePos.z + sinf(cm->patrolAngle) * 1.8f
+            };
+            float dx = goal.x - me->position.x;
+            float dz = goal.z - me->position.z;
+            float dist = sqrtf(dx * dx + dz * dz);
+            if (dist > 0.15f) {
+                Vector3 pos = me->position;
+                float step = 1.2f * dt;
+                if (step > dist) step = dist;
+                pos.x += (dx / dist) * step;
+                pos.z += (dz / dist) * step;
+                pos.y = MapManager_GetGroundHeightAt(pos.x, pos.z);
+                Entity_SetPosition(cm->agentId, pos);
+            }
+        }
+    }
 }

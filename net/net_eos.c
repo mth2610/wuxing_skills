@@ -707,3 +707,130 @@ bool Net_JoinOnline(const char *joinCode) {
     TraceLog(LOG_INFO, "[EOS] joined lobby for code %s — punching through to host", code);
     return true;
 }
+
+bool Net_JoinOrHostExploreRealm(int realmId, char *outJoinCode, int maxCodeLen) {
+    if (Net_GetMode() != NET_MODE_OFF) return false;
+    if (!EnsureLoggedIn()) return false;
+
+    static const char *kExploreBuckets[5] = {
+        "wuxing:explore:water", "wuxing:explore:wood", "wuxing:explore:fire",
+        "wuxing:explore:earth", "wuxing:explore:metal"
+    };
+    const char *bucket = kExploreBuckets[(realmId >= 0 && realmId < 5) ? realmId : 0];
+
+    // 1. Search for an existing public explore lobby in this realm's bucket
+    EOS_Lobby_CreateLobbySearchOptions cso = { 0 };
+    cso.ApiVersion = EOS_LOBBY_CREATELOBBYSEARCH_API_LATEST;
+    cso.MaxResults = 5;
+    EOS_HLobbySearch search = NULL;
+    if (EOS_Lobby_CreateLobbySearch(s_lobby, &cso, &search) == EOS_Success) {
+        EOS_Lobby_AttributeData attr = { 0 };
+        attr.ApiVersion   = EOS_LOBBY_ATTRIBUTEDATA_API_LATEST;
+        attr.Key          = "REALM";
+        attr.Value.AsUtf8 = bucket;
+        attr.ValueType    = EOS_AT_STRING;
+        EOS_LobbySearch_SetParameterOptions par = { 0 };
+        par.ApiVersion   = EOS_LOBBYSEARCH_SETPARAMETER_API_LATEST;
+        par.Parameter    = &attr;
+        par.ComparisonOp = EOS_CO_EQUAL;
+        EOS_LobbySearch_SetParameter(search, &par);
+
+        EOS_LobbySearch_FindOptions find = { 0 };
+        find.ApiVersion  = EOS_LOBBYSEARCH_FIND_API_LATEST;
+        find.LocalUserId = s_localPuid;
+        s_opStatus = 0;
+        EOS_LobbySearch_Find(search, &find, NULL, OnFindDone);
+        if (PumpUntilDone("ExploreSearch_Find")) {
+            EOS_LobbySearch_GetSearchResultCountOptions cnt = { 0 };
+            cnt.ApiVersion = EOS_LOBBYSEARCH_GETSEARCHRESULTCOUNT_API_LATEST;
+            uint32_t count = EOS_LobbySearch_GetSearchResultCount(search, &cnt);
+            for (uint32_t i = 0; i < count; i++) {
+                EOS_LobbySearch_CopySearchResultByIndexOptions cp = { 0 };
+                cp.ApiVersion = EOS_LOBBYSEARCH_COPYSEARCHRESULTBYINDEX_API_LATEST;
+                cp.LobbyIndex = i;
+                EOS_HLobbyDetails details = NULL;
+                if (EOS_LobbySearch_CopySearchResultByIndex(search, &cp, &details) != EOS_Success) continue;
+                EOS_LobbyDetails_GetLobbyOwnerOptions own = { 0 };
+                own.ApiVersion = EOS_LOBBYDETAILS_GETLOBBYOWNER_API_LATEST;
+                EOS_ProductUserId owner = EOS_LobbyDetails_GetLobbyOwner(details, &own);
+                if (owner != NULL && owner != s_localPuid) {
+                    EOS_Lobby_JoinLobbyOptions join = { 0 };
+                    join.ApiVersion         = EOS_LOBBY_JOINLOBBY_API_LATEST;
+                    join.LobbyDetailsHandle = details;
+                    join.LocalUserId        = s_localPuid;
+                    join.bPresenceEnabled   = EOS_FALSE;
+                    s_opStatus = 0; s_opLobbyId[0] = '\0';
+                    EOS_Lobby_JoinLobby(s_lobby, &join, NULL, OnJoinLobby);
+                    bool ok = PumpUntilDone("ExploreJoinLobby");
+                    EOS_LobbyDetails_Release(details);
+                    if (ok) {
+                        EOS_LobbySearch_Release(search);
+                        strncpy(s_lobbyId, s_opLobbyId, sizeof(s_lobbyId) - 1);
+                        s_isHost = false;
+                        s_hostPuid = owner;
+                        RegisterP2PNotifies();
+                        NetTransport_SetBackend(NET_MODE_CLIENT, EosSend, EosTick, EosStop);
+                        NetTransport_BackendConnected(NULL);
+                        if (outJoinCode && maxCodeLen > 0) outJoinCode[0] = '\0';
+                        TraceLog(LOG_INFO, "[EOS] auto-joined explore shard %s", bucket);
+                        return true;
+                    }
+                } else {
+                    EOS_LobbyDetails_Release(details);
+                }
+            }
+        }
+        EOS_LobbySearch_Release(search);
+    }
+
+    // 2. None available -> host a new public explore shard for this realm (0-cost server)
+    char code[EOS_JOINCODE_LEN + 1];
+    GenerateJoinCode(code);
+    EOS_Lobby_CreateLobbyOptions create = { 0 };
+    create.ApiVersion       = EOS_LOBBY_CREATELOBBY_API_LATEST;
+    create.LocalUserId      = s_localPuid;
+    create.MaxLobbyMembers  = NET_MAX_PLAYERS;
+    create.PermissionLevel  = EOS_LPL_PUBLICADVERTISED;
+    create.bPresenceEnabled = EOS_FALSE;
+    create.bAllowInvites    = EOS_TRUE;
+    create.BucketId         = bucket;
+    s_opStatus = 0; s_opLobbyId[0] = '\0';
+    EOS_Lobby_CreateLobby(s_lobby, &create, NULL, OnCreateLobby);
+    if (!PumpUntilDone("ExploreCreateLobby")) return false;
+    strncpy(s_lobbyId, s_opLobbyId, sizeof(s_lobbyId) - 1);
+
+    EOS_Lobby_UpdateLobbyModificationOptions modOpt = { 0 };
+    modOpt.ApiVersion  = EOS_LOBBY_UPDATELOBBYMODIFICATION_API_LATEST;
+    modOpt.LocalUserId = s_localPuid;
+    modOpt.LobbyId     = s_lobbyId;
+    EOS_HLobbyModification mod = NULL;
+    if (EOS_Lobby_UpdateLobbyModification(s_lobby, &modOpt, &mod) == EOS_Success) {
+        EOS_Lobby_AttributeData attr = { 0 };
+        attr.ApiVersion   = EOS_LOBBY_ATTRIBUTEDATA_API_LATEST;
+        attr.Key          = "REALM";
+        attr.Value.AsUtf8 = bucket;
+        attr.ValueType    = EOS_AT_STRING;
+        EOS_LobbyModification_AddAttributeOptions add = { 0 };
+        add.ApiVersion = EOS_LOBBYMODIFICATION_ADDATTRIBUTE_API_LATEST;
+        add.Attribute  = &attr;
+        add.Visibility = EOS_LAT_PUBLIC;
+        EOS_LobbyModification_AddAttribute(mod, &add);
+        EOS_Lobby_UpdateLobbyOptions upd = { 0 };
+        upd.ApiVersion              = EOS_LOBBY_UPDATELOBBY_API_LATEST;
+        upd.LobbyModificationHandle = mod;
+        s_opStatus = 0;
+        EOS_Lobby_UpdateLobby(s_lobby, &upd, NULL, OnGenericResult);
+        PumpUntilDone("ExploreUpdateLobby");
+        EOS_LobbyModification_Release(mod);
+    }
+
+    s_isHost = true;
+    RegisterP2PNotifies();
+    NetTransport_SetBackend(NET_MODE_HOST, EosSend, EosTick, EosStop);
+    if (outJoinCode && maxCodeLen > 0) {
+        strncpy(outJoinCode, code, (size_t)maxCodeLen - 1);
+        outJoinCode[maxCodeLen - 1] = '\0';
+    }
+    TraceLog(LOG_INFO, "[EOS] hosting explore shard %s (code %s)", bucket, code);
+    return true;
+}

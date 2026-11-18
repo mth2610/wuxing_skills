@@ -52,6 +52,24 @@ int  Boss_GetPhase(void);
 int  Boss_GetAgentId(void);
 bool Boss_IsAlive(void);
 
+// --- Dual-Boss & Waypoint Route API (PvP Escort 1v1 / 2v2) ---
+#define BOSS_MAX_INSTANCES 2
+#define BOSS_MAX_WAYPOINTS 8
+
+typedef struct {
+    Vector3 waypoints[BOSS_MAX_WAYPOINTS];
+    int     waypointCount;
+    float   marchSpeedMps; // Default 1.2 m/s if <= 0
+} BossRoute;
+
+int  Boss_SpawnSlot(int slot, const BossDef *def, Vector3 pos, AgentTeam team);
+void Boss_SetRoute(int slot, const BossRoute *route);
+bool Boss_HasReachedConvergence(int slot);
+int  Boss_GetSlotAgentId(int slot);
+int  Boss_GetSlotPhase(int slot);
+bool Boss_IsSlotAlive(int slot);
+void Boss_ClearAll(void);
+
 // --- Boss defs (one extern per boss/<name>_def.c data file) ---
 extern const BossDef BOSS_HAC_DIEN_TON_GIA;
 extern const BossDef BOSS_MOC_LINH;

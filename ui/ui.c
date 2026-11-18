@@ -124,7 +124,7 @@ Vector3 UI_GetAutoAimPoint(int agentId, bool *hasTarget) {
 
 // --- Loadout panel layout (shared by Update's hit-testing and Draw) ---
 static Rectangle LoadoutPanel(void) {
-    float w = 640, h = 400;
+    float w = 640, h = 460;
     return (Rectangle){ GetScreenWidth() / 2.0f - w / 2, GetScreenHeight() / 2.0f - h / 2, w, h };
 }
 static Rectangle LoadoutSlotRect(Rectangle p, int slot) {

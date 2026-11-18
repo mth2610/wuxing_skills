@@ -23,9 +23,19 @@ typedef enum { ARCH_HERO = 0, ARCH_MINION, ARCH_BOSS } AgentArchetype;
 
 // Equipped-skill loadout size — source of the Vô Hệ (elementless) rule:
 // currentElement = majority element across equipped slots.
-#define AGENT_SKILL_SLOTS 4
+#define AGENT_SKILL_SLOTS 5
 
 #define MAX_AGENT_MODIFIERS 4
+
+// PvE-only gear/attribute bonuses (disabled / normalized to 0 in PvP modes).
+typedef struct {
+    float bonusMaxHealth;   // Added to base maxHealth
+    float bonusMaxMana;     // Added to base maxMana
+    float moveSpeedMult;    // >= 0; <= 0 treated as 1.0f
+    float damageOutMult;    // >= 0; <= 0 treated as 1.0f
+    float damageTakenMult;  // >= 0; <= 0 treated as 1.0f
+    float manaRegenMult;    // >= 0; <= 0 treated as 1.0f
+} AgentPvEBonuses;
 
 // Minimal duration-based modifier slot (e.g. Buff speed multiplier).
 // speedMult: 1.0 = normal speed; multiplicative; <=0 or unset slot ignored.
@@ -89,6 +99,12 @@ typedef struct {
     // (Entity_Update). Entered via a balanced 2 Âm + 2 Dương loadout
     // (Entity_RecomputeElement) or forced by boss/ (<30% HP).
     bool    taijiActive;
+
+    // --- PvE-only gear bonuses (zeroed / inactive in PvP) ---
+    float          baseMaxHealth;
+    float          baseMaxMana;
+    bool           pveBonusesActive;
+    AgentPvEBonuses pveBonuses;
 } Agent;
 
 // Sized for the real target scale (up to 6 real players + a mixed pool of
@@ -144,6 +160,7 @@ bool Entity_IsCrowdControlled(int agentId);
 // Passive regen (5/sec) ticks in Entity_Update, capped at maxMana.
 // Returns false and leaves mana untouched if amount > current mana.
 bool Entity_TrySpendMana(int agentId, float amount);
+void Entity_RestoreMana(int agentId, float amount);
 
 // --- Basic attack (see ENTITIES_API.md §13) ---
 // Separate from the CastSkill/skill pipeline entirely — free, no cast time,
@@ -215,6 +232,13 @@ void Entity_SetAgentTeam(int agentId, AgentTeam team);
 // buff (Đợt A4): game/ applies GameRules_HandicapFor to the short side at
 // round start — mult > 1 only; this is not a general stat system.
 void Entity_ScaleMaxHealth(int agentId, float mult);
+
+// PvE vs PvP normalization: passing non-NULL activates gear bonuses for PvE
+// (scaling maxHealth/maxMana/speed/damage/regen); passing NULL resets to
+// normalized PvP base stats (100% fair-play).
+void  Entity_SetPvEBonuses(int agentId, const AgentPvEBonuses *bonuses);
+float Entity_GetDamageOutMult(int agentId);
+float Entity_GetDamageTakenMult(int agentId);
 
 // --- Thái Cực (Module 6) ---
 // Force the state on/off (boss/ at <30% HP; Entity_RecomputeElement sets it

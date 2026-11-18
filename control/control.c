@@ -22,6 +22,7 @@ static float s_yaw = 0.0f; // facing, radians
 static float s_cdMult = 1.0f; // zone-rule cooldown multiplier (game/ sets)
 static int   s_castFired = -1; // skillIndex of the cast that fired this frame
 static float s_moveMult = 1.0f; // swing damping (game/ sets per frame)
+static ControlSkillLevelFn s_skillLevelFn = NULL;
 
 void Control_Init(int agentId) {
     s_agentId = agentId;
@@ -56,6 +57,7 @@ PlayerIntent Control_ReadIntent(void) {
     else if (IsKeyPressed(KEY_TWO))   intent.castSkillSlot = 1;
     else if (IsKeyPressed(KEY_THREE)) intent.castSkillSlot = 2;
     else if (IsKeyPressed(KEY_FOUR))  intent.castSkillSlot = 3;
+    else if (IsKeyPressed(KEY_FIVE))  intent.castSkillSlot = 4;
 
     // Basic attack: random đấm/đá/chưởng per press (matches the pre-intent
     // behavior; a real combo system picks deliberately later).
@@ -142,7 +144,10 @@ void Control_Apply(const PlayerIntent *in, float dt) {
             skillIndex = a->equippedSkills[in->castSkillSlot];
         }
         if (skillIndex >= 0 && SkillManager_CanCast(skillIndex, s_agentId)) {
-            SkillParams params = { .level = 1, .quantity = 1, .sizeScale = 1.0f };
+            int lvl = s_skillLevelFn ? s_skillLevelFn(skillIndex) : 1;
+            if (lvl < 1) lvl = 1;
+            if (lvl > 10) lvl = 10;
+            SkillParams params = { .level = lvl, .quantity = 1, .sizeScale = 1.0f };
             // CastSkill returns false when the mana gate (Entity_TrySpendMana
             // inside skill_manager) or bounds check rejects it — only a real
             // cast starts the cooldown.
@@ -176,6 +181,10 @@ int Control_ConsumeCastFired(void) {
 
 void Control_SetMoveSpeedMult(float mult) {
     s_moveMult = (mult > 0.0f) ? mult : 1.0f;
+}
+
+void Control_SetSkillLevelProvider(ControlSkillLevelFn fn) {
+    s_skillLevelFn = fn;
 }
 
 void Control_FaceTowards(Vector3 point) {

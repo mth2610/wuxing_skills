@@ -36,10 +36,12 @@ static const Vector3 REMOTE_SPAWN = { 54.0f, 0.0f, 41.0f };
 #define NET_CTRL_HELLO 1  // value = client's hero agent id (host pool)
 #define NET_CTRL_STATE 2  // value = host's GameState (match outcome sync)
 #define NET_CTRL_START 3  // host pressed BẮT ĐẦU — leave the lobby together
-#define NET_CTRL_CAST    5 // host → clients: [5][ver][agentId][skillIdx][aim 12B] = 16B
-#define NET_CTRL_LOADOUT 6 // client → host:  [6][ver][slot][skillIdx][element] = 5B
-#define NET_CAST_PACKET_BYTES    16
-#define NET_LOADOUT_PACKET_BYTES 5
+#define NET_CTRL_CAST        5 // host → clients: [5][ver][agentId][skillIdx][aim 12B] = 16B
+#define NET_CTRL_LOADOUT     6 // client → host:  [6][ver][slot][skillIdx][element] = 5B
+#define NET_CTRL_KILL_REWARD 7 // host → clients: [7][ver][kind][elem][isBoss][gold 2B][xp 2B] = 9B
+#define NET_CAST_PACKET_BYTES        16
+#define NET_LOADOUT_PACKET_BYTES     5
+#define NET_KILL_REWARD_PACKET_BYTES 9
 #define NET_CTRL_JOIN  4  // client → host 1Hz knock/heartbeat: the first one
                           // initiates the EOS NAT punch (clients in the
                           // lobby send no gameplay traffic, and EOS only
@@ -79,6 +81,8 @@ static bool s_clientIntentValid = false;
 static int s_hostMatchState = -1;   // host: last state game/ reported
 static int s_hostStateSent  = -1;   // host: last state actually sent
 static int s_remoteMatchState = -1; // client: host's match state
+static NetKillReward s_killRewardQueue[32];
+static int           s_killRewardCount = 0;
 
 static NetRosterEntry s_clientRoster[NET_MAX_PLAYERS]; // client: last broadcast
 static int            s_clientRosterCount = 0;
@@ -361,6 +365,31 @@ void Net_ClientSendLoadout(int slot, int skillIndex, int element) {
     ClientSendToHost(NET_CH_CONTROL, buf, (int)sizeof(buf), true);
 }
 
+void Net_HostNotifyKillReward(int monsterKind, int element, bool isBoss, int gold, int xp) {
+    if (s_mode != NET_MODE_HOST) return;
+    if (gold < 0) gold = 0; if (gold > 65535) gold = 65535;
+    if (xp < 0) xp = 0;     if (xp > 65535) xp = 65535;
+    unsigned char buf[NET_KILL_REWARD_PACKET_BYTES] = {
+        NET_CTRL_KILL_REWARD, NET_PROTOCOL_VERSION,
+        (unsigned char)monsterKind,
+        (unsigned char)element,
+        (unsigned char)(isBoss ? 1 : 0),
+        (unsigned char)(gold & 0xFF),
+        (unsigned char)((gold >> 8) & 0xFF),
+        (unsigned char)(xp & 0xFF),
+        (unsigned char)((xp >> 8) & 0xFF),
+    };
+    HostBroadcast(NET_CH_CONTROL, buf, (int)sizeof(buf), true);
+}
+
+int Net_ClientPollKillRewards(NetKillReward *out, int max) {
+    if (out == NULL || max <= 0) { s_killRewardCount = 0; return 0; }
+    int n = (s_killRewardCount < max) ? s_killRewardCount : max;
+    for (int i = 0; i < n; i++) out[i] = s_killRewardQueue[i];
+    s_killRewardCount = 0;
+    return n;
+}
+
 // --- Host: peers join/leave, drive their heroes ------------------------------
 
 static int HostFindPeer(ENetPeer *ep, void *ref) {
@@ -395,7 +424,8 @@ static void HostSpawnPeerHero(int idx) {
     if (p->agentId < 0) return;
     // Same default loadout the local player gets (game/game_screen.c).
     static const struct { const char *name; int element; } kLoadout[AGENT_SKILL_SLOTS] = {
-        { "GLACIAL_CANNON", 0 }, { "FIRE", 2 }, { "STONE_PRISON", 3 }, { "LEAF_WHIRLWIND", 1 },
+        { "GLACIAL_CANNON", 0 }, { "FIRE", 2 }, { "STONE_PRISON", 3 },
+        { "LEAF_WHIRLWIND", 1 }, { "METAL_BLADE_STORM", 4 },
     };
     for (int slot = 0; slot < AGENT_SKILL_SLOTS; slot++) {
         int skillIdx = Skill_GetIndexByName(kLoadout[slot].name);
@@ -642,6 +672,16 @@ static void HandlePacket(ENetPeer *ep, void *ref, int channel,
                     SkillManager_SetFreeCast(false);
                     if (played)
                         TraceLog(LOG_INFO, "[NET] cast mirror agent=%d skill=%d", agentId, skillIndex);
+                }
+            } else if (len == NET_KILL_REWARD_PACKET_BYTES && data[0] == NET_CTRL_KILL_REWARD &&
+                       data[1] == NET_PROTOCOL_VERSION) {
+                if (s_killRewardCount < 32) {
+                    NetKillReward *kr = &s_killRewardQueue[s_killRewardCount++];
+                    kr->monsterKind = (int)data[2];
+                    kr->element     = (int)data[3];
+                    kr->isBoss      = (data[4] != 0);
+                    kr->gold        = (int)data[5] | ((int)data[6] << 8);
+                    kr->xp          = (int)data[7] | ((int)data[8] << 8);
                 }
             } else if (len == (int)sizeof(NetCtrl) && data[0] != 'W') {
                 NetCtrl ctrl;

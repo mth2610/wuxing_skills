@@ -39,9 +39,19 @@ GameState GameScreen_GetState(void);
 // with no living heroes loses, ENTER (host) rematches the whole room.
 // Set BEFORE GameScreen_Init — main.c picks per entry point (menu → BOSS,
 // lobby start → TEAM_BATTLE).
-typedef enum { GAME_MODE_BOSS = 0, GAME_MODE_TEAM_BATTLE } GameMode;
+typedef enum {
+    GAME_MODE_BOSS = 0,
+    GAME_MODE_TEAM_BATTLE,
+    GAME_MODE_EXPLORE,         // Mode 1: Khám Phá Thế Giới (5 Map Ngũ Hành, Quái, Dã Tẩu)
+    GAME_MODE_PVP_ESCORT_1V1,  // Mode 2A: Đấu Trường Song Linh Hộ Pháp 1vs1
+    GAME_MODE_PVP_ESCORT_2V2   // Mode 2B: Đấu Trường Song Linh Hộ Pháp 2vs2
+} GameMode;
 void GameScreen_SetMode(GameMode mode);
 GameMode GameScreen_GetMode(void);
+
+// Explore realm selector (0=Thủy, 1=Mộc, 2=Hỏa, 3=Thổ, 4=Kim)
+void GameScreen_SetExploreRealm(int realmId);
+int  GameScreen_GetExploreRealm(void);
 
 // Called once at startup (alongside InitSandbox) — does not re-run per
 // screen-switch, matching how InitSandbox itself is only called once.

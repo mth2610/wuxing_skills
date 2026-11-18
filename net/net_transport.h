@@ -96,6 +96,17 @@ void Net_HostNotifyCast(int agentId, int skillIndex, Vector3 aim);
 // resolved it from the registry), which recomputes Vô Hệ for everyone.
 void Net_ClientSendLoadout(int slot, int skillIndex, int element);
 
+// Co-op Explore kill reward broadcast (0-cost server shared loot):
+typedef struct {
+    int  monsterKind;
+    int  element;
+    bool isBoss;
+    int  gold;
+    int  xp;
+} NetKillReward;
+void Net_HostNotifyKillReward(int monsterKind, int element, bool isBoss, int gold, int xp);
+int  Net_ClientPollKillRewards(NetKillReward *out, int max);
+
 // --- Match outcome sync ---
 // HOST: game/ reports its GameState each frame; the transport sends it on
 // change (reliable). CLIENT: reads the host's last known state (-1 until
@@ -113,5 +124,8 @@ int  Net_GetRemoteMatchState(void);
 bool Net_OnlineAvailable(void);
 bool Net_StartHostOnline(char *outJoinCode, int maxCodeLen);
 bool Net_JoinOnline(const char *joinCode);
+// Mode 1 (Explore Co-op 0-cost server): searches EOS public lobby bucket
+// "wuxing:explore:<realm>" (<8 players); joins P2P if found, else hosts.
+bool Net_JoinOrHostExploreRealm(int realmId, char *outJoinCode, int maxCodeLen);
 
 #endif // NET_TRANSPORT_H

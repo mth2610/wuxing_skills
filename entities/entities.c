@@ -83,6 +83,9 @@ void Entity_Update(float dt) {
 
         if (a->mana < a->maxMana) {
             float regen = a->isMeditating ? MEDITATE_REGEN_PER_SEC : MANA_REGEN_PER_SEC;
+            if (a->pveBonusesActive && a->pveBonuses.manaRegenMult > 0.0f) {
+                regen *= a->pveBonuses.manaRegenMult;
+            }
             a->mana += regen * dt;
             if (a->mana > a->maxMana) a->mana = a->maxMana;
         }
@@ -179,6 +182,10 @@ void Entity_ApplyDamage(int agentId, float damage, Vector3 knockback) {
     if (agentId < 0 || agentId >= MAX_AGENTS) return;
     Agent *a = &agentPool[agentId];
     if (!a->active) return;
+
+    if (a->pveBonusesActive && a->pveBonuses.damageTakenMult > 0.0f) {
+        damage *= a->pveBonuses.damageTakenMult;
+    }
 
     CancelMeditate(a);
     a->health -= damage;
@@ -321,11 +328,11 @@ int Entity_RecomputeElement(int agentId) {
     if (filled == 0) return a->currentElement; // empty loadout — keep as-is
 
     // Thái Cực trigger (thiết kế Trụ cột 3): balanced 2 Âm (Thủy 0 / Mộc 1)
-    // + 2 Dương (Hỏa 2 / Kim 4) loadout enters the state; any other full
-    // loadout leaves it (boss/'s forced flag is reapplied by Boss_Update).
+    // + 2 Dương (Hỏa 2 / Kim 4) (+ optional 5th Earth/Thổ slot) enters the state;
+    // any other loadout leaves it (boss/'s forced flag is reapplied by Boss_Update).
     int yin  = counts[0] + counts[1];
     int yang = counts[2] + counts[4];
-    a->taijiActive = (filled == AGENT_SKILL_SLOTS && yin == 2 && yang == 2);
+    a->taijiActive = (filled >= 4 && yin == 2 && yang == 2);
 
     int best = 0;
     for (int e = 1; e < 5; e++) {
@@ -422,10 +429,67 @@ void Entity_ScaleMaxHealth(int agentId, float mult) {
     if (a->health < 1.0f) a->health = 1.0f;
 }
 
+void Entity_SetPvEBonuses(int agentId, const AgentPvEBonuses *bonuses) {
+    if (agentId < 0 || agentId >= MAX_AGENTS) return;
+    Agent *a = &agentPool[agentId];
+    if (!a->active) return;
+
+    float baseHp = (a->baseMaxHealth > 0.0f) ? a->baseMaxHealth : a->maxHealth;
+    float baseMp = (a->baseMaxMana > 0.0f) ? a->baseMaxMana : a->maxMana;
+
+    if (bonuses == NULL) {
+        a->pveBonusesActive = false;
+        a->pveBonuses = (AgentPvEBonuses){ 0 };
+        a->maxHealth = baseHp;
+        a->maxMana = baseMp;
+        if (a->health > a->maxHealth) a->health = a->maxHealth;
+        if (a->mana > a->maxMana) a->mana = a->maxMana;
+        return;
+    }
+
+    AgentPvEBonuses norm = *bonuses;
+    if (norm.moveSpeedMult <= 0.0f) norm.moveSpeedMult = 1.0f;
+    if (norm.damageOutMult <= 0.0f) norm.damageOutMult = 1.0f;
+    if (norm.damageTakenMult <= 0.0f) norm.damageTakenMult = 1.0f;
+    if (norm.manaRegenMult <= 0.0f) norm.manaRegenMult = 1.0f;
+
+    float prevMaxHp = a->maxHealth;
+    float prevMaxMp = a->maxMana;
+    a->pveBonusesActive = true;
+    a->pveBonuses = norm;
+    a->maxHealth = fmaxf(1.0f, baseHp + norm.bonusMaxHealth);
+    a->maxMana = fmaxf(1.0f, baseMp + norm.bonusMaxMana);
+    if (prevMaxHp > 0.0f) {
+        a->health = fminf(a->maxHealth, a->health * (a->maxHealth / prevMaxHp));
+    } else {
+        a->health = a->maxHealth;
+    }
+    if (prevMaxMp > 0.0f) {
+        a->mana = fminf(a->maxMana, a->mana * (a->maxMana / prevMaxMp));
+    } else {
+        a->mana = a->maxMana;
+    }
+}
+
+float Entity_GetDamageOutMult(int agentId) {
+    const Agent *a = Entity_GetAgent(agentId);
+    if (!a || !a->pveBonusesActive || a->pveBonuses.damageOutMult <= 0.0f) return 1.0f;
+    return a->pveBonuses.damageOutMult;
+}
+
+float Entity_GetDamageTakenMult(int agentId) {
+    const Agent *a = Entity_GetAgent(agentId);
+    if (!a || !a->pveBonusesActive || a->pveBonuses.damageTakenMult <= 0.0f) return 1.0f;
+    return a->pveBonuses.damageTakenMult;
+}
+
 float Entity_GetSpeedMult(int agentId) {
     const Agent *a = Entity_GetAgent(agentId);
     if (!a) return 1.0f;
     float mult = 1.0f;
+    if (a->pveBonusesActive && a->pveBonuses.moveSpeedMult > 0.0f) {
+        mult *= a->pveBonuses.moveSpeedMult;
+    }
     for (int m = 0; m < MAX_AGENT_MODIFIERS; m++) {
         if (a->modifiers[m].duration > 0.0f && a->modifiers[m].speedMult > 0.0f) {
             mult *= a->modifiers[m].speedMult;
@@ -448,6 +512,14 @@ bool Entity_TrySpendMana(int agentId, float amount) {
     if (a->mana < amount) return false;
     a->mana -= amount;
     return true;
+}
+
+void Entity_RestoreMana(int agentId, float amount) {
+    if (agentId < 0 || agentId >= MAX_AGENTS || amount <= 0.0f) return;
+    Agent *a = &agentPool[agentId];
+    if (!a->active) return;
+    a->mana += amount;
+    if (a->mana > a->maxMana) a->mana = a->maxMana;
 }
 
 float Entity_GetBasicAttackSeconds(BasicAttackType type) {
@@ -509,17 +581,18 @@ bool Entity_ExecuteBasicAttack(int attackerId, BasicAttackType type,
     // wall synergy is a free ranged substitute when the enemy is too far to
     // melee, so a wall bonus must still be able to fire even if the base
     // punch/kick/palm doesn't land.
+    float outMult = Entity_GetDamageOutMult(attackerId);
     if (distSq <= BASIC_ATTACK_RANGE * BASIC_ATTACK_RANGE) {
         switch (type) {
             case BASIC_ATTACK_PUNCH:
-                Entity_ApplyDamage(targetId, 5.0f, Vector3Scale(pushDir, 1.5f));
+                Entity_ApplyDamage(targetId, 5.0f * outMult, Vector3Scale(pushDir, 1.5f));
                 break;
             case BASIC_ATTACK_KICK:
-                Entity_ApplyDamage(targetId, 8.0f, Vector3Scale(pushDir, 3.0f));
+                Entity_ApplyDamage(targetId, 8.0f * outMult, Vector3Scale(pushDir, 3.0f));
                 break;
             case BASIC_ATTACK_PALM:
                 // "Chưởng" — highest damage, breaks guard, small pop into the air.
-                Entity_ApplyDamage(targetId, 12.0f, (Vector3){ 0 });
+                Entity_ApplyDamage(targetId, 12.0f * outMult, (Vector3){ 0 });
                 Entity_ApplyLaunch(targetId, 3.0f, Vector3Scale(pushDir, 2.0f));
                 break;
         }
@@ -531,7 +604,7 @@ bool Entity_ExecuteBasicAttack(int attackerId, BasicAttackType type,
         // Free elemental bonus hit — no mana cost, this whole path never
         // touches Entity_TrySpendMana. Applies regardless of melee range
         // (the rock/bolt is what closes the distance, not the fist).
-        Entity_ApplyDamage(targetId, 6.0f, Vector3Scale(pushDir, 2.0f));
+        Entity_ApplyDamage(targetId, 6.0f * outMult, Vector3Scale(pushDir, 2.0f));
         if (outWallPos) *outWallPos = wallPos;
         if (outWallElement) *outWallElement = wallElement;
         return true;
@@ -701,6 +774,10 @@ int Entity_SpawnAgent(Vector3 position, float maxHealth, int element,
             a->pullSpeed = 0.0f;
             a->maxMana = DEFAULT_MAX_MANA;
             a->mana = DEFAULT_MAX_MANA;
+            a->baseMaxHealth = maxHealth;
+            a->baseMaxMana = DEFAULT_MAX_MANA;
+            a->pveBonusesActive = false;
+            a->pveBonuses = (AgentPvEBonuses){ 0 };
             a->team = team;
             a->archetype = archetype;
             a->isMeditating = false;

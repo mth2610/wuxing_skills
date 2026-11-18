@@ -20,7 +20,7 @@ typedef struct {
     bool    jump;
     bool    dash;
     bool    meditate;
-    int     castSkillSlot; // -1 = none; 0..3 = Agent.equippedSkills slot
+    int     castSkillSlot; // -1 = none; 0..4 = Agent.equippedSkills slot
     // Basic attack (đấm/đá/chưởng): 0 = none, else BasicAttackType + 1
     // (offset so a zeroed intent means "no attack"). Carried in the intent
     // so net/ replicates melee; the EXECUTION stays outside control —
@@ -73,5 +73,10 @@ int Control_ConsumeCastFired(void);
 // through the animation. 1.0 = normal; reset every frame like the cooldown
 // mult.
 void Control_SetMoveSpeedMult(float mult);
+
+// Skill level provider hook (game/ sets it: PvE returns 1..10 from
+// PlayerProfile, PvP returns 1 for 100% fair-play normalization).
+typedef int (*ControlSkillLevelFn)(int skillIndex);
+void Control_SetSkillLevelProvider(ControlSkillLevelFn fn);
 
 #endif // CONTROL_H
