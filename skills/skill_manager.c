@@ -260,7 +260,7 @@ static void EnsureBuiltInRegistered(void)
 #endif
 
 #if HAS_SKILL_TUBE
-    RegisterSkill("TUBE", BLUE, InitTubeSkill, CastTubeWrapper,
+    RegisterSkill("TIDAL_STREAM", BLUE, InitTubeSkill, CastTubeWrapper,
                   UpdateTubeSkillWrapper, NULL, UnloadTubeSkill);
 #endif
 
@@ -270,7 +270,7 @@ static void EnsureBuiltInRegistered(void)
 #endif
 
 #if HAS_SKILL_FIRE
-    RegisterSkill("FIRE", ORANGE, InitFireSkill, CastFireWrapper,
+    RegisterSkill("INFERNO_SURGE", ORANGE, InitFireSkill, CastFireWrapper,
                   UpdateFireSkillWrapper, NULL, UnloadFireSkill);
 #endif
 

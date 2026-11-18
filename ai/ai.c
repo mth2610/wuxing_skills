@@ -317,12 +317,12 @@ static float CampMonsterHP(MonsterKind kind) {
 
 static const char *CampMonsterSkillName(int element) {
     switch (element) {
-        case 0:  return "GLACIAL_CANNON";
-        case 1:  return "LEAF_WHIRLWIND";
-        case 2:  return "FIRE";
+        case 0:  return "ICE_CRYSTAL_LANCE";
+        case 1:  return "VINE_SNARE";
+        case 2:  return "INFERNO_SURGE";
         case 3:  return "EARTH_DISC_VOLLEY";
         case 4:  return "METAL_BLADE_STORM";
-        default: return "FIRE";
+        default: return "INFERNO_SURGE";
     }
 }
 

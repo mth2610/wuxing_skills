@@ -22,6 +22,10 @@ void GranularGpu_SetTornadoFunnel(Vector3 basePos, float baseRadius, float topRa
 void GranularGpu_SetWaves(const GranularWaveDesc *waves, int waveCount);
 void GranularGpu_Update(float dt);
 void GranularGpu_DrawBody(Camera3D camera, const GranularMaterialProfile *mat);
+void GranularGpu_DrawShadowPass(void);
+void GranularGpu_UploadBed(const GranularGrainState *grains, int count);
+void GranularGpu_HideBedIndices(const int *indices, int count);
+void GranularGpu_ClearBed(void);
 int  GranularGpu_GetGrainCount(void);
 void GranularGpu_Clear(void);
 

@@ -4,6 +4,9 @@
 #include "core/motion/motion_fields.h"
 #include "core/vfx_render.h"
 #include "core/gfx_quality.h"
+#if !defined(CORE_GRANULAR_HEADLESS_TEST)
+#include "core/map_manager.h"
+#endif
 #include "rlgl.h"
 #include "raymath.h"
 #include <math.h>
@@ -40,6 +43,14 @@ static float s_cpuFunnelTopR = 1.65f;
 static float s_cpuFunnelH = 3.6f;
 static float s_cpuFunnelSwirl = 13.5f;
 static float s_cpuFunnelUpdraft = 3.4f;
+
+#define GRANULAR_BED_GRID_DIM 32
+static GranularGrainState s_mapBed[GRANULAR_MAP_BED_MAX];
+static unsigned char s_bedAwake[GRANULAR_MAP_BED_MAX];
+static int s_bedNext[GRANULAR_MAP_BED_MAX];
+static int s_bedCellHead[GRANULAR_BED_GRID_DIM * GRANULAR_BED_GRID_DIM];
+static int s_mapBedCount = 0;
+static float s_bedMinX = -20.0f, s_bedMinZ = -20.0f, s_bedCellSpan = 1.25f;
 
 static float GranularSim_Hash01(unsigned int x)
 {
@@ -221,6 +232,10 @@ void GranularSim_ClearWaves(void)
 void GranularSim_ApplyForceImpulse(Vector3 center, float radius,
                                    Vector3 forceAccel, float swirlRadPerSec)
 {
+    if (s_mapBedCount > 0 && radius > 0.01f) {
+        Vector3 wakeImp = {forceAccel.x * 0.12f, fmaxf(forceAccel.y * 0.12f, 1.4f), forceAccel.z * 0.12f};
+        GranularSim_WakeMapBedNear(center, radius, wakeImp);
+    }
     if (s_usingGpu && GranularGpu_IsAvailable()) {
         GranularGpu_SetImpulse(center, radius, forceAccel, swirlRadPerSec);
     } else {
@@ -235,6 +250,17 @@ void GranularSim_SetTornadoFunnel(Vector3 basePos, float baseRadius, float topRa
                                   float height, float swirlSpeed, float updraftSpeed,
                                   bool active)
 {
+    if (active) {
+        s_cpuFunnelActive = true;
+        s_cpuFunnelBase = basePos;
+        s_cpuFunnelTopR = topRadius;
+        s_cpuFunnelUpdraft = updraftSpeed;
+    } else if (!s_usingGpu || !GranularGpu_IsAvailable()) {
+        /* CPU spin-down handled below */
+    } else {
+        s_cpuFunnelActive = false;
+    }
+
     if (s_usingGpu && GranularGpu_IsAvailable()) {
         GranularGpu_SetTornadoFunnel(basePos, baseRadius, topRadius, height,
                                      swirlSpeed, updraftSpeed, active);
@@ -275,6 +301,22 @@ void GranularSim_Update(float dt)
 {
     if (!s_granularInit || dt <= 0.0f) return;
     s_simElapsedTime += dt;
+
+    if (s_mapBedCount > 0) {
+        if (s_cpuFunnelActive) {
+            GranularSim_WakeMapBedNear(s_cpuFunnelBase, fmaxf(s_cpuFunnelTopR * 1.1f, 1.8f),
+                                       (Vector3){0.0f, fmaxf(s_cpuFunnelUpdraft * 0.65f, 1.8f), 0.0f});
+        }
+        for (int i = 0; i < s_waveCount; i++) {
+            if (s_waves[i].kind != GRANULAR_WAVE_NONE) {
+                float wR = fmaxf(s_waves[i].radius, s_waves[i].topRadius);
+                if (wR > 0.1f) {
+                    GranularSim_WakeMapBedNear(s_waves[i].origin, wR,
+                                               (Vector3){0.0f, fmaxf(s_waves[i].liftAccel * 0.15f, 1.4f), 0.0f});
+                }
+            }
+        }
+    }
 
     for (int i = 0; i < s_waveCount; i++) {
         if (s_waves[i].kind != GRANULAR_WAVE_NONE && s_waves[i].elapsed >= s_waves[i].duration) {
@@ -596,14 +638,14 @@ static void GranularSim_DrawCpuFallback(Camera3D camera, const GranularMaterialP
 void GranularSim_DrawBody(Camera3D camera)
 {
     int active = GranularSim_GetActiveCount();
-    if (active <= 0) return;
+    if (active <= 0 && s_mapBedCount <= 0) return;
 
     const GranularMaterialProfile *mat = GranularSim_GetMaterialProfile(s_activeMatId);
     VFXRenderScope scope = VFXRender_BeginDraw(VFX_RENDER_PASS_BODY, VFX_SURFACE_ALPHA, true);
     if (scope.active) {
         if (s_usingGpu && GranularGpu_IsAvailable()) {
             GranularGpu_DrawBody(camera, mat);
-        } else {
+        } else if (active > 0) {
             GranularSim_DrawCpuFallback(camera, mat);
         }
         VFXRender_EndDraw(&scope);
@@ -612,7 +654,184 @@ void GranularSim_DrawBody(Camera3D camera)
 
 void GranularSim_DrawShadowPass(void)
 {
-    /* Reserved for shadow-pass grain impostors when static/dynamic shadow casters opt in. */
+    if (!s_granularInit) return;
+    if (s_usingGpu && GranularGpu_IsAvailable()) {
+        GranularGpu_DrawShadowPass();
+    }
+}
+
+void GranularSim_ClearMapBed(void)
+{
+    s_mapBedCount = 0;
+    for (int i = 0; i < GRANULAR_BED_GRID_DIM * GRANULAR_BED_GRID_DIM; i++) {
+        s_bedCellHead[i] = -1;
+    }
+    if (s_usingGpu && GranularGpu_IsAvailable()) {
+        GranularGpu_ClearBed();
+    }
+}
+
+int GranularSim_GetMapBedCount(void)
+{
+    return s_mapBedCount;
+}
+
+int GranularSim_SeedMapBedFromGrains(const GranularGrainState *grains, int count)
+{
+    if (!s_granularInit) GranularSim_Init();
+    if (!grains || count <= 0) {
+        GranularSim_ClearMapBed();
+        return 0;
+    }
+    if (count > GRANULAR_MAP_BED_MAX) count = GRANULAR_MAP_BED_MAX;
+
+    float minX = grains[0].position.x, maxX = grains[0].position.x;
+    float minZ = grains[0].position.z, maxZ = grains[0].position.z;
+    for (int i = 1; i < count; i++) {
+        float x = grains[i].position.x;
+        float z = grains[i].position.z;
+        if (x < minX) minX = x; else if (x > maxX) maxX = x;
+        if (z < minZ) minZ = z; else if (z > maxZ) maxZ = z;
+    }
+
+    float spanX = maxX - minX;
+    float spanZ = maxZ - minZ;
+    float maxSpan = (spanX > spanZ) ? spanX : spanZ;
+    s_bedMinX = minX - 0.5f;
+    s_bedMinZ = minZ - 0.5f;
+    s_bedCellSpan = (maxSpan + 1.0f) / (float)GRANULAR_BED_GRID_DIM;
+    if (s_bedCellSpan < 0.25f) s_bedCellSpan = 0.25f;
+
+    for (int i = 0; i < GRANULAR_BED_GRID_DIM * GRANULAR_BED_GRID_DIM; i++) {
+        s_bedCellHead[i] = -1;
+    }
+
+    for (int i = 0; i < count; i++) {
+        s_mapBed[i] = grains[i];
+        if (s_mapBed[i].lifetime <= 0.0f) s_mapBed[i].lifetime = 999.0f;
+        s_bedAwake[i] = 0;
+
+        int cx = (int)floorf((s_mapBed[i].position.x - s_bedMinX) / s_bedCellSpan);
+        int cz = (int)floorf((s_mapBed[i].position.z - s_bedMinZ) / s_bedCellSpan);
+        if (cx < 0) cx = 0; else if (cx >= GRANULAR_BED_GRID_DIM) cx = GRANULAR_BED_GRID_DIM - 1;
+        if (cz < 0) cz = 0; else if (cz >= GRANULAR_BED_GRID_DIM) cz = GRANULAR_BED_GRID_DIM - 1;
+        int cell = cz * GRANULAR_BED_GRID_DIM + cx;
+        s_bedNext[i] = s_bedCellHead[cell];
+        s_bedCellHead[cell] = i;
+    }
+
+    s_mapBedCount = count;
+    if (s_usingGpu && GranularGpu_IsAvailable()) {
+        GranularGpu_UploadBed(s_mapBed, s_mapBedCount);
+    }
+    return count;
+}
+
+int GranularSim_SeedMapBed(Vector3 center, float radius, int count,
+                            const GranularMaterialId *mats, int matCount,
+                            unsigned int seed)
+{
+    if (!s_granularInit) GranularSim_Init();
+    if (count <= 0 || radius <= 0.1f) return 0;
+    if (count > GRANULAR_MAP_BED_MAX) count = GRANULAR_MAP_BED_MAX;
+
+    static const GranularMaterialId kDefaultMats[5] = {
+        GRANULAR_MAT_DRY_LEAF,
+        GRANULAR_MAT_FRESH_LEAF,
+        GRANULAR_MAT_DRY_TWIG,
+        GRANULAR_MAT_COARSE_GRAVEL,
+        GRANULAR_MAT_LOESS_SOIL
+    };
+    const GranularMaterialId *useMats = (mats && matCount > 0) ? mats : kDefaultMats;
+    int useMatCount = (mats && matCount > 0) ? matCount : 5;
+
+    static GranularGrainState s_seedBuf[GRANULAR_MAP_BED_MAX];
+    for (int i = 0; i < count; i++) {
+        unsigned int h = (unsigned int)i * 747796405u + seed * 2891336453u + 17u;
+        float u0 = GranularSim_Hash01(h + 1u);
+        float u1 = GranularSim_Hash01(h + 2u);
+        float u2 = GranularSim_Hash01(h + 3u);
+        float u3 = GranularSim_Hash01(h + 4u);
+
+        float ang = u0 * 6.2831853f;
+        float r = sqrtf(u1) * radius;
+        float x = center.x + cosf(ang) * r;
+        float z = center.z + sinf(ang) * r;
+#if !defined(CORE_GRANULAR_HEADLESS_TEST)
+        float y = MapManager_GetGroundHeightAt(x, z) + 0.014f;
+#else
+        float y = center.y + 0.014f;
+#endif
+        GranularMaterialId mId = useMats[(int)(u2 * (float)useMatCount) % useMatCount];
+        float grainR = 0.024f + 0.016f * u3;
+
+        s_seedBuf[i] = (GranularGrainState){
+            .position = {x, y, z},
+            .velocity = {0.0f, 0.0f, 0.0f},
+            .radius = grainR,
+            .lifetime = 999.0f,
+            .seed = u3,
+            .materialId = (uint32_t)mId
+        };
+    }
+
+    return GranularSim_SeedMapBedFromGrains(s_seedBuf, count);
+}
+
+int GranularSim_WakeMapBedNear(Vector3 center, float radius, Vector3 impulse)
+{
+    if (s_mapBedCount <= 0 || radius <= 0.05f) return 0;
+
+    int minCx = (int)floorf((center.x - radius - s_bedMinX) / s_bedCellSpan);
+    int maxCx = (int)floorf((center.x + radius - s_bedMinX) / s_bedCellSpan);
+    int minCz = (int)floorf((center.z - radius - s_bedMinZ) / s_bedCellSpan);
+    int maxCz = (int)floorf((center.z + radius - s_bedMinZ) / s_bedCellSpan);
+    if (maxCx < 0 || minCx >= GRANULAR_BED_GRID_DIM || maxCz < 0 || minCz >= GRANULAR_BED_GRID_DIM) {
+        return 0;
+    }
+    if (minCx < 0) minCx = 0;
+    if (maxCx >= GRANULAR_BED_GRID_DIM) maxCx = GRANULAR_BED_GRID_DIM - 1;
+    if (minCz < 0) minCz = 0;
+    if (maxCz >= GRANULAR_BED_GRID_DIM) maxCz = GRANULAR_BED_GRID_DIM - 1;
+
+    enum { MAX_WAKE_BATCH = 64 };
+    GranularGrainState woken[MAX_WAKE_BATCH];
+    int wokenIdx[MAX_WAKE_BATCH];
+    int wokenCount = 0;
+    float r2 = radius * radius;
+
+    for (int cz = minCz; cz <= maxCz && wokenCount < MAX_WAKE_BATCH; cz++) {
+        for (int cx = minCx; cx <= maxCx && wokenCount < MAX_WAKE_BATCH; cx++) {
+            int idx = s_bedCellHead[cz * GRANULAR_BED_GRID_DIM + cx];
+            while (idx >= 0 && wokenCount < MAX_WAKE_BATCH) {
+                if (!s_bedAwake[idx]) {
+                    float dx = s_mapBed[idx].position.x - center.x;
+                    float dz = s_mapBed[idx].position.z - center.z;
+                    if (dx * dx + dz * dz <= r2) {
+                        s_bedAwake[idx] = 1;
+                        woken[wokenCount] = s_mapBed[idx];
+                        woken[wokenCount].velocity = (Vector3){
+                            impulse.x + (s_mapBed[idx].seed - 0.5f) * 1.4f,
+                            fmaxf(impulse.y, 1.4f) + s_mapBed[idx].seed * 1.2f,
+                            impulse.z + (0.5f - s_mapBed[idx].seed) * 1.4f
+                        };
+                        woken[wokenCount].lifetime = 5.0f;
+                        wokenIdx[wokenCount] = idx;
+                        wokenCount++;
+                    }
+                }
+                idx = s_bedNext[idx];
+            }
+        }
+    }
+
+    if (wokenCount > 0) {
+        if (s_usingGpu && GranularGpu_IsAvailable()) {
+            GranularGpu_HideBedIndices(wokenIdx, wokenCount);
+        }
+        GranularSim_AppendCluster(woken, wokenCount, center, (Vector3){0.0f, 1.0f, 0.0f});
+    }
+    return wokenCount;
 }
 
 int GranularSim_GetActiveCount(void)

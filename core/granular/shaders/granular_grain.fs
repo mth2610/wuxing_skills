@@ -5,6 +5,7 @@ in vec2 v_corner;
 in vec3 v_worldNormal;
 in vec3 v_worldPos;
 in vec3 v_localPos;
+in vec4 v_shadowCoord;
 in float v_life;
 in float v_seed;
 in float v_contactAO;
@@ -22,6 +23,29 @@ uniform float u_glintIntensity;
 uniform float u_glintSharpness;
 uniform vec3 u_lightDir;
 uniform vec3 u_camPos;
+uniform sampler2D u_shadowMap;
+uniform float u_shadowEnabled;
+uniform float u_shadowTexel;
+
+float Granular_SampleShadow(float ndl)
+{
+    if (u_shadowEnabled < 0.5) return 1.0;
+    vec3 proj = v_shadowCoord.xyz / max(v_shadowCoord.w, 1e-5);
+    proj = proj * 0.5 + 0.5;
+    if (proj.z > 1.0 || proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0) return 1.0;
+
+    float bias = max(0.0028 * (1.0 - ndl), 0.0008);
+    float z = proj.z - bias;
+    float res = 1.0 / max(u_shadowTexel, 1e-5);
+    vec2 t = proj.xy * res - 0.5;
+    vec2 f = fract(t);
+    vec2 base = (floor(t) + 0.5) * u_shadowTexel;
+    float s00 = step(z, texture(u_shadowMap, base).r);
+    float s10 = step(z, texture(u_shadowMap, base + vec2(u_shadowTexel, 0.0)).r);
+    float s01 = step(z, texture(u_shadowMap, base + vec2(0.0, u_shadowTexel)).r);
+    float s11 = step(z, texture(u_shadowMap, base + vec2(u_shadowTexel, u_shadowTexel)).r);
+    return mix(mix(s00, s10, f.x), mix(s01, s11, f.x), f.y);
+}
 
 // Sine-free 2D hash (Mali-safe per ENGINE_LANDMINES)
 float Granular_Hash21(vec2 p)
@@ -158,16 +182,17 @@ void main()
         if (dot(N, V) < 0.0) N = -N;
 
         float NdotL = max(dot(N, L), 0.0);
+        float sunVis = Granular_SampleShadow(NdotL);
         float skyBounce = 0.20 + 0.14 * clamp(N.y, -1.0, 1.0);
         float grainNoise = Granular_Hash21(floor(v_localPos.xz * 7.5 + v_seed * 23.0));
         float macroTone = mix(0.84, 1.16, fract(v_seed * 29.7));
 
         vec3 albedo = mix(opt.shadCol, opt.baseCol * macroTone * mix(0.84, 1.16, grainNoise), 0.36 + 0.64 * ao);
-        vec3 litBody = albedo * (skyBounce * ao + 0.88 * NdotL * ao);
+        vec3 litBody = albedo * (skyBounce * ao + 0.88 * NdotL * sunVis * ao);
 
         vec3 H = normalize(L + V);
         float spec = pow(max(dot(N, H), 0.0), opt.glintSharp);
-        litBody += opt.highCol * (spec * opt.glintInt * (0.4 + 0.6 * ao));
+        litBody += opt.highCol * (spec * opt.glintInt * sunVis * (0.4 + 0.6 * ao));
 
         finalColor = VFX_ResolveBody(litBody, 1.0, lifeFade);
         return;
@@ -186,8 +211,9 @@ void main()
         baseTone = mix(baseTone, opt.highCol, midrib * 0.38 + lateralVein * 0.12 + edgeTip * 0.18);
 
         float wrapDiff = max(0.0, (dot(N, L) + 0.55) / 1.55);
-        float backlitSSS = pow(max(dot(-L, V), 0.0), 2.5) * 0.55;
-        vec3 litBody = baseTone * (0.38 * ao + 0.72 * wrapDiff + backlitSSS) * v_tiltShade;
+        float sunVis = Granular_SampleShadow(max(dot(N, L), 0.0));
+        float backlitSSS = pow(max(dot(-L, V), 0.0), 2.5) * 0.55 * (0.30 + 0.70 * sunVis);
+        vec3 litBody = baseTone * (0.38 * ao + 0.72 * wrapDiff * sunVis + backlitSSS) * v_tiltShade;
 
         finalColor = VFX_ResolveBody(litBody, 1.0, lifeFade);
         return;
@@ -200,8 +226,9 @@ void main()
 
         float bark = Granular_Hash21(vec2(floor(v_localPos.x * 10.0), floor((v_localPos.y + v_localPos.z) * 18.0 + v_seed * 19.0)));
         float NdotL = max(dot(N, L), 0.0);
+        float sunVis = Granular_SampleShadow(NdotL);
         vec3 albedo = mix(opt.shadCol, opt.baseCol * mix(0.78, 1.22, bark), 0.32 + 0.68 * ao);
-        vec3 litBody = albedo * (0.30 * ao + 0.82 * NdotL);
+        vec3 litBody = albedo * (0.30 * ao + 0.82 * NdotL * sunVis);
 
         finalColor = VFX_ResolveBody(litBody, 1.0, lifeFade);
         return;
@@ -214,10 +241,11 @@ void main()
 
         float NoV = clamp(dot(N, V), 0.001, 1.0);
         float NdotL = max(dot(N, L), 0.0);
+        float sunVis = Granular_SampleShadow(NdotL);
         vec3 H = normalize(L + V);
         float spec = pow(max(dot(N, H), 0.0), opt.glintSharp);
         float fresnel = pow(1.0 - NoV, 2.4);
-        float backlit = pow(max(dot(-L, V), 0.0), 2.5) * 0.42;
+        float backlit = pow(max(dot(-L, V), 0.0), 2.5) * 0.42 * (0.30 + 0.70 * sunVis);
 
         // Beer-Lambert internal absorption + frosted bevels
         float pathLen = mix(0.35, 1.35, 1.0 - NoV);
@@ -225,8 +253,8 @@ void main()
         float bevel = 1.0 - smoothstep(0.0, 0.22, min(v_corner.x, 1.0 - v_corner.x));
 
         vec3 albedo = mix(opt.shadCol, opt.baseCol, 0.45 + 0.55 * ao) * mix(beer, vec3(1.0), 0.45);
-        vec3 litBody = albedo * (0.40 * ao + 0.72 * NdotL + backlit)
-                     + opt.highCol * (spec * opt.glintInt + fresnel * 0.65 + bevel * 0.35);
+        vec3 litBody = albedo * (0.40 * ao + 0.72 * NdotL * sunVis + backlit)
+                     + opt.highCol * (spec * opt.glintInt * sunVis + fresnel * 0.65 + bevel * 0.35);
 
         finalColor = VFX_ResolveBody(litBody, 1.0, lifeFade);
         return;
@@ -270,16 +298,17 @@ void main()
     N = normalize(N + microTilt);
 
     float NdotL = max(dot(N, L), 0.0);
+    float sunVis = Granular_SampleShadow(NdotL);
     float macroTone = mix(0.86, 1.14, fract(v_seed * 29.7));
     float speckleTone = mix(0.82, 1.18, microSpeckle);
 
     vec3 albedo = mix(opt.shadCol, opt.baseCol * macroTone * speckleTone, 0.42 + 0.58 * ao);
-    vec3 litBody = albedo * (0.56 * ao + 0.62 * NdotL * ao);
+    vec3 litBody = albedo * (0.56 * ao + 0.62 * NdotL * sunVis * ao);
 
     vec3 H = normalize(L + vec3(0.0, 0.0, 1.0));
     float glintMask = step(0.86, microSpeckle) * step(0.52, fract(v_seed * 53.1 + microSpeckle));
     float spec = pow(max(dot(N, H), 0.0), max(opt.glintSharp, 24.0));
-    litBody += opt.highCol * (spec * opt.glintInt * glintMask * (0.4 + 0.6 * ao));
+    litBody += opt.highCol * (spec * opt.glintInt * glintMask * sunVis * (0.4 + 0.6 * ao));
 
     float coverage = smoothstep(0.0, -0.32, dist) * 0.84 * lifeFade;
     finalColor = VFX_ResolveBody(litBody, 1.0, coverage);

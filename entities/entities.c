@@ -34,7 +34,7 @@ static const float   DASH_COOLDOWN = 1.0f;
 // Basic attack tuning (see Entity_ExecuteBasicAttack). Real-world-scaled —
 // see root CLAUDE.md scale rules; melee range/wall-check radius sized to
 // "arm's reach" and "standing next to your own wall" respectively.
-static const float   BASIC_ATTACK_RANGE = 1.5f;
+static const float   BASIC_ATTACK_RANGE = 2.8f;
 static const float   WALL_CHECK_RADIUS = 3.0f;
 // Auto-target search radius — how far Entity_ExecuteBasicAttack looks for
 // the nearest other agent, no explicit target needed.

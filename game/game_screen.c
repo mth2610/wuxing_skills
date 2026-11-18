@@ -241,12 +241,13 @@ static const float INTRO_SECONDS = 2.0f;
 static int GameSkillElementByName(const char *name)
 {
     if (!name) return 0;
-    if (strcmp(name, "FIRE") == 0) return 2;
-    if (strcmp(name, "GLACIAL_CANNON") == 0 || strcmp(name, "WATER_STREAM") == 0) return 0;
-    if (strcmp(name, "LEAF_WHIRLWIND") == 0) return 1;
-    if (strcmp(name, "EARTH_DISC_VOLLEY") == 0 || strcmp(name, "STONE_PRISON") == 0 ||
+    if (strcmp(name, "INFERNO_SURGE") == 0 || strcmp(name, "FIRE") == 0) return 2;
+    if (strcmp(name, "ICE_CRYSTAL_LANCE") == 0 || strcmp(name, "TIDAL_STREAM") == 0 ||
+        strcmp(name, "WATER_STREAM") == 0) return 0;
+    if (strcmp(name, "VINE_SNARE") == 0) return 1;
+    if (strcmp(name, "EARTH_DISC_VOLLEY") == 0 || strcmp(name, "EARTH_PILLAR_PRISON") == 0 ||
         strcmp(name, "SAND_STORM") == 0) return 3;
-    if (strcmp(name, "METAL_BLADE_STORM") == 0 || strcmp(name, "VOLUME_SMOKE") == 0) return 4;
+    if (strcmp(name, "METAL_BLADE_STORM") == 0) return 4;
     return 0;
 }
 
@@ -314,11 +315,11 @@ static void EquipDefaultLoadout(int agentId)
         const char *name;
         int element;
     } kLoadout[AGENT_SKILL_SLOTS] = {
-        {"GLACIAL_CANNON", 0},    // Thủy
-        {"FIRE", 2},              // Hỏa
-        {"EARTH_DISC_VOLLEY", 3}, // Thổ
-        {"METAL_BLADE_STORM", 4}, // Kim
-        {"SAND_STORM", 3},        // Thổ
+        {"ICE_CRYSTAL_LANCE", 0},  // Thủy
+        {"INFERNO_SURGE", 2},      // Hỏa
+        {"EARTH_DISC_VOLLEY", 3},  // Thổ
+        {"METAL_BLADE_STORM", 4},  // Kim
+        {"VINE_SNARE", 1},         // Mộc
     };
     const PlayerProfile *prof = PlayerProfile_GetGlobal();
     for (int slot = 0; slot < AGENT_SKILL_SLOTS; slot++)
@@ -1365,6 +1366,7 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
 
     float moveLen = sqrtf(intent.moveDir.x * intent.moveDir.x + intent.moveDir.y * intent.moveDir.y);
     CharacterModel_Update(&player->anim, dt, moveLen > 0.0001f);
+    SkillHelper_UpdateMeleeTrails(dt, &player->anim, player->position, Control_GetYaw());
 
     // Basic attack (đấm/đá/chưởng) — free, no cast time, spammable, auto-
     // targets via Entity_ExecuteBasicAttack (no enemy reference needed here
@@ -1387,6 +1389,8 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
                                                                                                                                         : CHAR_ANIM_PALM;
         float swingSecs = Entity_GetBasicAttackSeconds(basicAttackType);
         CharacterModel_TriggerAttackTimed(&player->anim, animSlot, swingSecs);
+        SkillHelper_StartMeleeTrails(player->agentId, &player->anim, player->position,
+                                     Control_GetYaw(), (int)basicAttackType, swingSecs);
         s_swingSlowTimer = swingSecs * 0.6f; // damp walking through the swing
         Audio_PlaySFXAt(SFX_MELEE_HIT, player->position);
 
@@ -1400,6 +1404,7 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
             if (targetPos.x != 0.0f || targetPos.y != 0.0f || targetPos.z != 0.0f)
             {
                 Control_FaceTowards(targetPos);
+                SkillHelper_SpawnMeleeImpact(player->agentId, targetPos);
             }
             if (gotWallBonus && wallElement == 3 /* Earth — only element with a real wall so far */)
             {

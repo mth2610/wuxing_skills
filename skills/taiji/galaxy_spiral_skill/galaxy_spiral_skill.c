@@ -68,8 +68,8 @@ void InitGalaxySpiralSkill(int screenWidth, int screenHeight)
 
 void CastGalaxySpiralSkill(int agentId, Vector3 startPos, Vector3 target, SkillParams params)
 {
-    (void)agentId;
     (void)startPos;
+    Skill_RequestAnim(agentId, "taiji_cloud_hands", 0.55f);
     float sizeScale = (params.sizeScale > 0.0f) ? params.sizeScale : 1.0f;
     float R = GALAXY_RADIUS * sizeScale;
 

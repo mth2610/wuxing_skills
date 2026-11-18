@@ -66,8 +66,8 @@ static int SkillElement(int skillIdx) {
         if (c.r == ec.r && c.g == ec.g && c.b == ec.b) return e;
     }
     const char *n = GetRegisteredSkillName(skillIdx);
-    if (strcmp(n, "FIRE") == 0) return 2;                                // legacy ORANGE
-    if (strcmp(n, "TUBE") == 0 || strcmp(n, "WATER") == 0 ||
+    if (strcmp(n, "INFERNO_SURGE") == 0 || strcmp(n, "FIRE") == 0) return 2; // legacy ORANGE
+    if (strcmp(n, "TIDAL_STREAM") == 0 || strcmp(n, "TUBE") == 0 || strcmp(n, "WATER") == 0 ||
         strcmp(n, "SHIELD") == 0) return 0;                              // legacy BLUE/SKYBLUE
     if (strcmp(n, "WOOD") == 0) return 1;
     if (strcmp(n, "METAL") == 0) return 4;

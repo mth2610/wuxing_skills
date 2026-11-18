@@ -2,6 +2,7 @@
 #include "assets/maps/ninh_thuan/ninh_thuan_generated_meta.h"
 #include "maps/worlds/ninh_thuan/ninh_thuan_rocks_generated.h"
 #include "core/gfx_quality.h"
+#include "core/granular/granular_sim.h"
 #include "core/resource_manager.h"
 #include "environment/atmosphere.h"
 #include "environment/env_shadow.h"
@@ -678,6 +679,47 @@ void InitNinhThuanMap(void)
     BuildNinhThuanRocks();
     BuildNinhThuanFlora();
 
+    // Seed interactive arid granular debris bed (loess clods, gravel, dry twigs, dry leaves) on dry land
+    {
+        enum { NINH_THUAN_BED_CAP = 2600 };
+        GranularGrainState *bedGrains = (GranularGrainState *)MemAlloc((size_t)NINH_THUAN_BED_CAP * sizeof(GranularGrainState));
+        if (bedGrains)
+        {
+            static const uint32_t kAridMats[4] = {
+                GRANULAR_MAT_LOESS_SOIL,
+                GRANULAR_MAT_COARSE_GRAVEL,
+                GRANULAR_MAT_DRY_TWIG,
+                GRANULAR_MAT_DRY_LEAF
+            };
+            int count = 0;
+            for (int i = 0; i < NINH_THUAN_BED_CAP * 2 && count < NINH_THUAN_BED_CAP; i++)
+            {
+                unsigned int h = (unsigned int)i * 747796405u + 2891336453u;
+                float u0 = (float)((h ^ (h >> 15)) & 0xFFFFu) / 65536.0f;
+                float u1 = (float)(((h * 1664525u + 1013904223u) >> 16) & 0xFFFFu) / 65536.0f;
+                float u2 = (float)(((h * 22695477u + 1u) >> 16) & 0xFFFFu) / 65536.0f;
+                float wx = 22.0f + u0 * (MAP_WIDTH - 44.0f);
+                float wz = 22.0f + u1 * (MAP_DEPTH - 44.0f);
+                Vector3 gPos = {0}, gNorm = {0};
+                if (MapProp_SampleGroundSurface(&s_ground, kMapCenter, wx, wz, &gPos, &gNorm) &&
+                    gNorm.y >= 0.68f && gPos.y > NINH_THUAN_SEA_Y + 0.18f)
+                {
+                    gPos.y += 0.014f;
+                    bedGrains[count++] = (GranularGrainState){
+                        .position = gPos,
+                        .velocity = {0.0f, 0.0f, 0.0f},
+                        .radius = 0.022f + 0.014f * u2,
+                        .lifetime = 999.0f,
+                        .seed = u2,
+                        .materialId = kAridMats[(int)(u2 * 4.0f) % 4]
+                    };
+                }
+            }
+            GranularSim_SeedMapBedFromGrains(bedGrains, count);
+            MemFree(bedGrains);
+        }
+    }
+
     s_ready = true;
     EnvShadow_SetMapCasterCallback(DrawNinhThuanShadowCasters, NULL);
     EnvShadow_InvalidateStaticCache();
@@ -790,6 +832,7 @@ void UnloadNinhThuanMap(void)
     MapProp_UnloadWaterSurface(&s_oasis);
     MapProp_UnloadWaterSurface(&s_coastalSea);
     MapProp_UnloadFloraSystem(&s_flora);
+    GranularSim_ClearMapBed();
     MapProp_UnloadRockSystem(&s_rocks);
     if (s_cliff.ready)
         MapProp_UnloadCliffSkirt(&s_cliff);

@@ -299,7 +299,7 @@ const BossDef BOSS_MOC_LINH = {
     .phaseHpThresholds = {1.0f, 0.75f, 0.50f, 0.25f},
     // Elements: Mộc (Wood) -> Thổ (Earth - Mộc khắc Thổ) -> Thủy (Water - Thủy sinh Mộc) -> Mộc (Enraged)
     .phaseElements = {ELEM_WOOD, ELEM_EARTH, ELEM_WATER, ELEM_WOOD},
-    .phaseSkillNames = {"LEAF_WHIRLWIND", "STONE_PRISON", "GLACIAL_CANNON", "LEAF_WHIRLWIND"},
+    .phaseSkillNames = {"VINE_SNARE", "EARTH_PILLAR_PRISON", "ICE_CRYSTAL_LANCE", "VINE_SNARE"},
     .castIntervalSeconds = 3.5f,
     .drawVisual = DrawMocLinh,
 };

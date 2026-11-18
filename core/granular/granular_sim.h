@@ -7,6 +7,7 @@
 
 #define GRANULAR_GPU_MAX_GRAINS 4096
 #define GRANULAR_CPU_MAX_GRAINS 768
+#define GRANULAR_MAP_BED_MAX    16384
 #define GRANULAR_MAX_ACTIVE_WAVES 4
 
 typedef enum {
@@ -132,6 +133,17 @@ void GranularSim_DrawBody(Camera3D camera);
 void GranularSim_DrawShadowPass(void);
 int  GranularSim_GetActiveCount(void);
 GranularSimStats GranularSim_GetStats(void);
+
+// High-performance resting map litter ("Sleep-Bed + Active-Vortex"):
+// Pre-scatters up to GRANULAR_MAP_BED_MAX resting debris items with 0 compute cost;
+// nearby items wake and promote into the live DEM pool when MotionFields/skills pass over.
+void GranularSim_ClearMapBed(void);
+int  GranularSim_SeedMapBedFromGrains(const GranularGrainState *grains, int count);
+int  GranularSim_SeedMapBed(Vector3 center, float radius, int count,
+                            const GranularMaterialId *mats, int matCount,
+                            unsigned int seed);
+int  GranularSim_WakeMapBedNear(Vector3 center, float radius, Vector3 impulse);
+int  GranularSim_GetMapBedCount(void);
 
 // Deterministic CPU DEM step entry point for headless unit tests (no GPU/window needed).
 float GranularSim_StepCpuDeterministic(GranularGrainState *grains, int count,

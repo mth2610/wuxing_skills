@@ -12,11 +12,11 @@ static char s_savePath[256] = PLAYER_PROFILE_DEFAULT_SAVE_PATH;
 static bool s_initialized = false;
 
 static const char *kDefaultStarterSkills[PROFILE_SKILL_SLOTS] = {
-    "GLACIAL_CANNON",
-    "FIRE",
+    "ICE_CRYSTAL_LANCE",
+    "INFERNO_SURGE",
     "EARTH_DISC_VOLLEY",
     "METAL_BLADE_STORM",
-    "SAND_STORM"
+    "VINE_SNARE"
 };
 
 static uint32_t ComputeProfileHash(const PlayerProfile *p) {
@@ -46,7 +46,7 @@ static void InitDefaultProfile(PlayerProfile *p) {
     for (int i = 0; i < MAX_PROFILE_SKILLS; i++) {
         p->skillLevel[i] = 1;
         p->skillXp[i] = 0;
-        p->skillUnlocked[i] = false;
+        p->skillUnlocked[i] = true;
     }
 
     for (int s = 0; s < PROFILE_SKILL_SLOTS; s++) {

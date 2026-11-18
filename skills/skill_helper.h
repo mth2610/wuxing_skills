@@ -329,4 +329,12 @@ void DamageVolume_GetStats(int *active, int *max);
 
 void InitHelperResources(void);
 
+// Melee basic attack hand/foot trails & impact VFX
+struct CharacterAnimState;
+void SkillHelper_StartMeleeTrails(int agentId, const struct CharacterAnimState *anim,
+                                  Vector3 charPos, float yaw, int attackType, float duration);
+void SkillHelper_UpdateMeleeTrails(float dt, const struct CharacterAnimState *anim,
+                                   Vector3 charPos, float yaw);
+void SkillHelper_SpawnMeleeImpact(int agentId, Vector3 hitPos);
+
 #endif // SKILL_HELPER_H

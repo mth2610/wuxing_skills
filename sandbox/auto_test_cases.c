@@ -21,7 +21,6 @@
 #include "net/net.h"
 #include "net/net_transport.h"
 #include "ui/ui.h"
-#include "skills/taiji/taiji_phong/taiji_phong_skill.h"
 #include "environment/environment_system.h"
 #include "character/character_model.h"
 #include "character/modular_character.h"
@@ -297,21 +296,12 @@ static AutoTestResult AutoTest_TaijiStep(int frameInCase, char *outReason, int o
   ok = ok && AutoTest_ExpectTrue(n == 1 && ev[0].skillInstanceId == 403 && ev[0].outcome == CLASH_B_WINS,
                                  "deflect event reached owner", outReason, outReasonSize);
 
-  // Phong cast (mana -30) exposes its center; Lôi (mana -45) strikes it and
-  // damages the enemy standing inside through the team-aware AoE.
-  int phongIdx = Skill_GetIndexByName("TAIJI_PHONG");
-  int loiIdx   = Skill_GetIndexByName("TAIJI_LOI");
-  ok = ok && AutoTest_ExpectTrue(phongIdx >= 0 && loiIdx >= 0, "taiji skills registered", outReason, outReasonSize);
+  // Taiji state remains active while mana > 0 and exits when mana is drained.
+  int galaxyIdx = Skill_GetIndexByName("GALAXY_SPIRAL");
+  ok = ok && AutoTest_ExpectTrue(galaxyIdx >= 0, "taiji skill registered", outReason, outReasonSize);
   Vector3 vortex = Entity_GetAgent(b)->position;
-  ok = ok && AutoTest_ExpectTrue(CastSkill(phongIdx, a, base, vortex, (SkillParams){ .level = 1 }),
-                                 "phong cast went through", outReason, outReasonSize);
-  Vector3 phongCenter;
-  ok = ok && AutoTest_ExpectTrue(TaijiPhong_GetActiveCenter(&phongCenter), "phong center exposed", outReason, outReasonSize);
-  float hpBefore = Entity_GetAgent(b)->health;
-  ok = ok && AutoTest_ExpectTrue(CastSkill(loiIdx, a, base, base, (SkillParams){ .level = 1 }),
-                                 "loi cast went through", outReason, outReasonSize);
-  ok = ok && AutoTest_ExpectTrue(Entity_GetAgent(b)->health < hpBefore, "loi damaged enemy at vortex", outReason, outReasonSize);
-  ok = ok && AutoTest_ExpectFloatNear(Entity_GetAgent(a)->mana, 25.0f, 0.1f, "phong+loi drained 75 mana", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectTrue(CastSkill(galaxyIdx, a, base, vortex, (SkillParams){ .level = 1 }),
+                                 "galaxy spiral cast went through", outReason, outReasonSize);
 
   // Dry pool exits the state.
   Entity_TrySpendMana(a, Entity_GetAgent(a)->mana);
@@ -387,7 +377,7 @@ static AutoTestResult AutoTest_SkillRegistryStep(int frameInCase, char *outReaso
     s_step0Foe  = Entity_SpawnAgent((Vector3){ 4.0f, 0, 0 }, 100.0f, 0, TEAM_ENEMY, ARCH_HERO);
     if (!AutoTest_ExpectTrue(s_step0Ally >= 0 && s_step0Foe >= 0, "spawned duel agents", outReason, outReasonSize)) return AUTOTEST_FAIL;
 
-    int fireIdx = Skill_GetIndexByName("FIRE");
+    int fireIdx = Skill_GetIndexByName("INFERNO_SURGE");
     if (!AutoTest_ExpectTrue(fireIdx >= 0, "FIRE registered", outReason, outReasonSize)) return AUTOTEST_FAIL;
     Vector3 from = { 0, 0.5f, 0 };
     if (!AutoTest_ExpectTrue(CastSkill(fireIdx, s_step0Ally, from, (Vector3){ 4.0f, 0.5f, 0 },
@@ -602,7 +592,7 @@ static AutoTestResult AutoTest_HeroBotHandicapStep(int frameInCase, char *outRea
   ok = ok && AutoTest_ExpectTrue(AI_GetHeroBotCount(TEAM_ENEMY) == 1, "bot counted", outReason, outReasonSize);
   {
     static const struct { const char *name; int element; } kBotLoad[2] = {
-      { "GLACIAL_CANNON", 0 }, { "FIRE", 2 },
+      { "ICE_CRYSTAL_LANCE", 0 }, { "INFERNO_SURGE", 2 },
     };
     for (int slot = 0; slot < 2; slot++) {
       int idx = Skill_GetIndexByName(kBotLoad[slot].name);
@@ -643,7 +633,7 @@ static AutoTestResult AutoTest_HeroBotHandicapStep(int frameInCase, char *outRea
   // and turning it off restores the gate.
   {
     int caster = Entity_SpawnAgent((Vector3){ 1.0f, 0, 1.0f }, 100.0f, 2, TEAM_ALLY, ARCH_HERO);
-    int fire = Skill_GetIndexByName("FIRE");
+    int fire = Skill_GetIndexByName("INFERNO_SURGE");
     const Agent *ca = Entity_GetAgent(caster);
     if (ca != NULL) Entity_TrySpendMana(caster, ca->mana); // drain exactly
     SkillParams sp = { .level = 1, .quantity = 1, .sizeScale = 1.0f };
@@ -844,7 +834,7 @@ static AutoTestResult AutoTest_BossStep(int frameInCase, char *outReason, int ou
 
   // AI cast: STONE_PRISON (phase 2 skill) cooldown must be engaged after an
   // update tick with a target in range — i.e. the boss actually cast.
-  int phaseSkill = Skill_GetIndexByName("STONE_PRISON");
+  int phaseSkill = Skill_GetIndexByName("EARTH_PILLAR_PRISON");
   ok = ok && AutoTest_ExpectTrue(phaseSkill >= 0, "phase skill registered", outReason, outReasonSize);
   ok = ok && AutoTest_ExpectTrue(!SkillManager_CanCast(phaseSkill, bossId), "boss cast engaged cooldown", outReason, outReasonSize);
 

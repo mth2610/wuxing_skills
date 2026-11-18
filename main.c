@@ -51,7 +51,6 @@
 #include "maps/toolkit/ground_shadow.h"
 #include "maps/toolkit/map_props.h"
 #include "maps/map_manager.h"
-#include "skills/taiji/core_test/core_test_skill.h"
 #include "sandbox/auto_test.h"
 #include "sandbox/auto_test_cases.h"
 #include "sandbox/visual_verify.h"
@@ -64,7 +63,6 @@
 #include "combat/combat.h"
 #include "control/control.h"
 #include "boss/boss_system.h"
-#include "skills/taiji/taiji_phong/taiji_phong_skill.h"
 #include "game/game_rules.h"
 #include "ai/ai.h"
 #include "ui/ui.h"
@@ -85,11 +83,11 @@ static float s_vfxAnimBannerTimer = 0.0f;
 
 static void BuildVfxTouchSlots(UITouchSkillSlot outSlots[5]) {
     static const char *kTouchSkills[5] = {
-        "GLACIAL_CANNON",
-        "FIRE",
+        "ICE_CRYSTAL_LANCE",
+        "INFERNO_SURGE",
         "EARTH_DISC_VOLLEY",
         "METAL_BLADE_STORM",
-        "LEAF_WHIRLWIND"
+        "VINE_SNARE"
     };
     for (int k = 0; k < 5; k++) {
         int idx = Skill_GetIndexByName(kTouchSkills[k]);
@@ -1119,6 +1117,10 @@ int main(int argc, char **argv) {
             }
         } else if (hubAct == UI_HUB_ACT_SANDBOX) {
             currentScreen = SCREEN_SKILL_SANDBOX;
+            if (Entity_GetAgent(player.agentId) == NULL) {
+                player.agentId = Entity_SpawnAgent(player.position, 100.0f, 0, TEAM_ALLY, ARCH_HERO);
+            }
+            Entity_RestoreMana(player.agentId, 1000.0f);
         } else if (hubAct == UI_HUB_ACT_VFX_TESTER) {
             currentScreen = SCREEN_VFX_TESTER;
         }
@@ -1193,6 +1195,12 @@ int main(int argc, char **argv) {
     static Color s_vfxSavedAmbient, s_vfxSavedSun;
 
     if (currentScreen == SCREEN_SKILL_SANDBOX) {
+        if (!autoTestMode) {
+            if (Entity_GetAgent(player.agentId) == NULL) {
+                player.agentId = Entity_SpawnAgent(player.position, 100.0f, 0, TEAM_ALLY, ARCH_HERO);
+            }
+            Entity_RestoreMana(player.agentId, 1000.0f);
+        }
         UpdateUIPanel(GetMousePosition(), &uiState);
         if (uiState.requestedBackToMenu) currentScreen = SCREEN_MAIN_MENU;
 
@@ -1823,6 +1831,7 @@ int main(int argc, char **argv) {
             VC_Tsunami_DrawShadowPass();
             VC_Crystal_DrawShadowPass();
             VC_IceCrystal_DrawShadowPass();
+            GranularSim_DrawShadowPass();
             EndShaderMode();
         }
         if (CharacterModel_IsLoaded()) {
@@ -2084,7 +2093,6 @@ int main(int argc, char **argv) {
     if (currentScreen != SCREEN_GAME &&
         !(currentScreen == SCREEN_VFX_TESTER && VFXTest_ShouldHideDebugOverlays())) {
         DrawSkillManagerOverlay();
-        DrawCoreTestSkillDebugHUD();
         PoolStats_DrawOverlay(); // CORE_ISSUES.md Item 3 test — on-screen depth readback (press L)
     }
 

@@ -60,7 +60,7 @@ const BossDef BOSS_HAC_DIEN_TON_GIA = {
     .phaseHpThresholds = { 1.0f, 0.75f, 0.50f, 0.25f },
     // Biến hệ order: Thủy → Hỏa → Thổ → Mộc.
     .phaseElements = { ELEM_WATER, ELEM_FIRE, ELEM_EARTH, ELEM_WOOD },
-    .phaseSkillNames = { "GLACIAL_CANNON", "FIRE", "STONE_PRISON", "LEAF_WHIRLWIND" },
+    .phaseSkillNames = { "ICE_CRYSTAL_LANCE", "INFERNO_SURGE", "EARTH_PILLAR_PRISON", "VINE_SNARE" },
     .castIntervalSeconds = 3.0f,
     .drawVisual = DrawHacDien,
 };

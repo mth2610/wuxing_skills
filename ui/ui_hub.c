@@ -146,7 +146,7 @@ void UI_Hub_UpdateDrawModal(void) {
             int col = vis % 2;
             int row = vis / 2;
             Rectangle kr = { p.x + 305 + col * 265, p.y + 130 + row * 56, 255, 48 };
-            bool unl = prof->skillUnlocked[i];
+            bool unl = true; // Temporarily unlock all martial arts for free selection
             const char *name = GetRegisteredSkillName(i);
             Color c = unl ? GetRegisteredSkillColor(i) : DARKGRAY;
             if (DrawWuxiaBtn(kr, TextFormat("%s%s", name, unl ? TextFormat(" [Lv.%d]", prof->skillLevel[i]) : " [KHOA]"),

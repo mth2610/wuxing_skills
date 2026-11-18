@@ -37,11 +37,11 @@ static UITouchCombatInput s_sandboxTouchInput = { 0 };
 
 static int GetSandboxTouchSkillIndex(int slot) {
     static const char *kTouchSkills[5] = {
-        "GLACIAL_CANNON",
-        "FIRE",
+        "ICE_CRYSTAL_LANCE",
+        "INFERNO_SURGE",
         "EARTH_DISC_VOLLEY",
         "METAL_BLADE_STORM",
-        "LEAF_WHIRLWIND"
+        "VINE_SNARE"
     };
     if (slot < 0 || slot >= 5) return -1;
     int idx = Skill_GetIndexByName(kTouchSkills[slot]);
@@ -367,13 +367,17 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
             int swordType = GetRandomValue(0, 1);
             CharacterAnimSlot animSlot = (swordType == 0) ? CHAR_ANIM_SWORD_SLASH : CHAR_ANIM_SWORD_THRUST;
             CharacterModel_TriggerAttackTimed(&player->anim, animSlot, 0.82f);
+            SkillHelper_StartMeleeTrails(player->agentId, &player->anim, player->position,
+                                         g_playerModelYaw, BASIC_ATTACK_PUNCH, 0.45f);
             gotWallBonus = Entity_ExecuteBasicAttack(player->agentId, BASIC_ATTACK_PUNCH, &targetPos, &wallPos, &wallElement);
         } else {
             randomType = (BasicAttackType)GetRandomValue(0, 2);
             CharacterAnimSlot animSlot = (randomType == BASIC_ATTACK_PUNCH) ? CHAR_ANIM_PUNCH :
                                          (randomType == BASIC_ATTACK_KICK)  ? CHAR_ANIM_KICK : CHAR_ANIM_PALM;
-            CharacterModel_TriggerAttackTimed(&player->anim, animSlot,
-                                              Entity_GetBasicAttackSeconds(randomType));
+            float swingSecs = Entity_GetBasicAttackSeconds(randomType);
+            CharacterModel_TriggerAttackTimed(&player->anim, animSlot, swingSecs);
+            SkillHelper_StartMeleeTrails(player->agentId, &player->anim, player->position,
+                                         g_playerModelYaw, (int)randomType, swingSecs);
             gotWallBonus = Entity_ExecuteBasicAttack(player->agentId, randomType, &targetPos, &wallPos, &wallElement);
         }
 
@@ -381,6 +385,7 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
         // giữ (0,0,0)) — có mục tiêu thì quay mặt về hướng đánh.
         if (targetPos.x != 0.0f || targetPos.y != 0.0f || targetPos.z != 0.0f) {
             Sandbox_FacePlayerToward(player, targetPos);
+            SkillHelper_SpawnMeleeImpact(player->agentId, targetPos);
         }
 
         // =========================================================================
@@ -498,6 +503,7 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
     }
 
     CharacterModel_Update(&player->anim, dt, inputX != 0.0f || inputZ != 0.0f);
+    SkillHelper_UpdateMeleeTrails(dt, &player->anim, player->position, g_playerModelYaw);
 
     // Modular Wardrobe Customization Hotkeys
     {

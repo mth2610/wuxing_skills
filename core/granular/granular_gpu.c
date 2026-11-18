@@ -3,6 +3,7 @@
 #include "core/motion/motion_gpu.h"
 #include "core/resource_manager.h"
 #include "core/shading/shader_preprocessor.h"
+#include "environment/env_shadow.h"
 #include "rlgl.h"
 #include "raymath.h"
 #include <math.h>
@@ -31,16 +32,18 @@ typedef struct {
 } GranularGpuWave;
 
 static unsigned int s_stateA = 0, s_stateB = 0, s_heads = 0, s_next = 0, s_program = 0;
-static unsigned int s_waveSsbo = 0, s_motionSceneSsbo = 0, s_motionBodySsbo = 0;
+static unsigned int s_waveSsbo = 0, s_motionSceneSsbo = 0, s_motionBodySsbo = 0, s_bedSsbo = 0;
 static MotionGpuScene s_motionScene;
 static GranularGpuWave s_waveUpload[GRANULAR_MAX_ACTIVE_WAVES];
 static int s_waveCount = 0;
 static float s_elapsedTime = 0.0f;
 static unsigned int s_vao = 0, s_vbo = 0;
 static Shader s_renderShader = {0};
+static Shader s_shadowShader = {0};
 static bool s_available = false;
 static bool s_initAttempted = false;
 static int s_grainCount = 0;
+static int s_bedCount = 0;
 static int s_gridStamp = 1;
 static float s_cellSize = 0.06f;
 static Vector3 s_receiverPoint = {0.0f, 0.0f, 0.0f};
@@ -79,10 +82,15 @@ static struct {
 } s_compUni;
 
 static struct {
-    int view, projection, aspectRatio, time;
+    int view, projection, lightVP, aspectRatio, time, maxDrawDist;
     int baseColor, shadowColor, highlightColor;
     int glintIntensity, glintSharpness, lightDir, camPos;
+    int shadowMap, shadowEnabled, shadowTexel;
 } s_drawUni;
+
+static struct {
+    int lightVP, camPos, maxDrawDist;
+} s_shadowUni;
 
 static unsigned int GranularGpu_LoadCompute(void)
 {
@@ -133,6 +141,9 @@ bool GranularGpu_Init(void)
     s_renderShader = ResourceManager_LoadShader(
         "core/granular/shaders/granular_grain.vs",
         "core/granular/shaders/granular_grain.fs");
+    s_shadowShader = ResourceManager_LoadShader(
+        "core/granular/shaders/granular_shadow.vs",
+        "core/granular/shaders/granular_shadow.fs");
 
     // Unified 36-vertex (12-triangle) template VBO:
     // First 6 verts carry standard [-1..1]^2 quad corners in .xy (for fine continuum splats)
@@ -196,8 +207,10 @@ bool GranularGpu_Init(void)
 
     s_drawUni.view           = GetShaderLocation(s_renderShader, "u_view");
     s_drawUni.projection     = GetShaderLocation(s_renderShader, "u_projection");
+    s_drawUni.lightVP        = GetShaderLocation(s_renderShader, "u_lightVP");
     s_drawUni.aspectRatio    = GetShaderLocation(s_renderShader, "u_aspectRatio");
     s_drawUni.time           = GetShaderLocation(s_renderShader, "u_time");
+    s_drawUni.maxDrawDist    = GetShaderLocation(s_renderShader, "u_maxDrawDist");
     s_drawUni.baseColor      = GetShaderLocation(s_renderShader, "u_baseColor");
     s_drawUni.shadowColor    = GetShaderLocation(s_renderShader, "u_shadowColor");
     s_drawUni.highlightColor = GetShaderLocation(s_renderShader, "u_highlightColor");
@@ -205,6 +218,17 @@ bool GranularGpu_Init(void)
     s_drawUni.glintSharpness = GetShaderLocation(s_renderShader, "u_glintSharpness");
     s_drawUni.lightDir       = GetShaderLocation(s_renderShader, "u_lightDir");
     s_drawUni.camPos         = GetShaderLocation(s_renderShader, "u_camPos");
+    s_drawUni.shadowMap      = GetShaderLocation(s_renderShader, "u_shadowMap");
+    s_drawUni.shadowEnabled  = GetShaderLocation(s_renderShader, "u_shadowEnabled");
+    s_drawUni.shadowTexel    = GetShaderLocation(s_renderShader, "u_shadowTexel");
+
+    if (s_shadowShader.id > 0 && s_shadowShader.id != rlGetShaderIdDefault()) {
+        s_shadowUni.lightVP     = GetShaderLocation(s_shadowShader, "u_lightVP");
+        s_shadowUni.camPos      = GetShaderLocation(s_shadowShader, "u_camPos");
+        s_shadowUni.maxDrawDist = GetShaderLocation(s_shadowShader, "u_maxDrawDist");
+    } else {
+        s_shadowUni.lightVP = s_shadowUni.camPos = s_shadowUni.maxDrawDist = -1;
+    }
 
     s_available = true;
     return true;
@@ -219,13 +243,15 @@ void GranularGpu_Unload(void)
     if (s_waveSsbo)        rlUnloadShaderBuffer(s_waveSsbo);
     if (s_motionSceneSsbo) rlUnloadShaderBuffer(s_motionSceneSsbo);
     if (s_motionBodySsbo)  rlUnloadShaderBuffer(s_motionBodySsbo);
+    if (s_bedSsbo)         rlUnloadShaderBuffer(s_bedSsbo);
     if (s_program) rlUnloadShaderProgram(s_program);
     if (s_vbo)     rlUnloadVertexBuffer(s_vbo);
     if (s_vao)     rlUnloadVertexArray(s_vao);
-    s_stateA = s_stateB = s_heads = s_next = s_waveSsbo = s_motionSceneSsbo = s_motionBodySsbo = s_program = s_vbo = s_vao = 0;
+    s_stateA = s_stateB = s_heads = s_next = s_waveSsbo = s_motionSceneSsbo = s_motionBodySsbo = s_bedSsbo = s_program = s_vbo = s_vao = 0;
     s_available = false;
     s_initAttempted = false;
     s_grainCount = 0;
+    s_bedCount = 0;
     s_maxLifeRemaining = 0.0f;
 }
 
@@ -528,7 +554,7 @@ void GranularGpu_Update(float dt)
 
 void GranularGpu_DrawBody(Camera3D camera, const GranularMaterialProfile *mat)
 {
-    if (!s_available || s_grainCount <= 0) return;
+    if (!s_available || (s_grainCount <= 0 && s_bedCount <= 0)) return;
     const GranularMaterialProfile *m = mat ? mat : &s_activeMat;
 
     Matrix view = MatrixLookAt(camera.position, camera.target, camera.up);
@@ -547,9 +573,15 @@ void GranularGpu_DrawBody(Camera3D camera, const GranularMaterialProfile *mat)
     float highCol[3] = {m->highlightColor.r / 255.0f, m->highlightColor.g / 255.0f, m->highlightColor.b / 255.0f};
     float lightDir[3] = {0.42f, 0.82f, 0.39f};
 
+    float shadowEnabled = (EnvShadow_IsEnabled() && GfxQuality_Get() > GFX_UNLIT) ? 1.0f : 0.0f;
+    Matrix lightVP = EnvShadow_GetLightVP();
+    Texture2D shadowMap = EnvShadow_GetShadowMap();
+    float shadowTexel = (shadowMap.width > 0) ? (1.0f / (float)shadowMap.width) : (1.0f / 1024.0f);
+
     BeginShaderMode(s_renderShader);
     if (s_drawUni.view >= 0) SetShaderValueMatrix(s_renderShader, s_drawUni.view, view);
     if (s_drawUni.projection >= 0) SetShaderValueMatrix(s_renderShader, s_drawUni.projection, projection);
+    if (s_drawUni.lightVP >= 0) SetShaderValueMatrix(s_renderShader, s_drawUni.lightVP, lightVP);
     if (s_drawUni.aspectRatio >= 0) SetShaderValue(s_renderShader, s_drawUni.aspectRatio, &m->grainAspect, SHADER_UNIFORM_FLOAT);
     if (s_drawUni.time >= 0) SetShaderValue(s_renderShader, s_drawUni.time, &s_elapsedTime, SHADER_UNIFORM_FLOAT);
     if (s_drawUni.baseColor >= 0) SetShaderValue(s_renderShader, s_drawUni.baseColor, baseCol, SHADER_UNIFORM_VEC3);
@@ -559,11 +591,102 @@ void GranularGpu_DrawBody(Camera3D camera, const GranularMaterialProfile *mat)
     if (s_drawUni.glintSharpness >= 0) SetShaderValue(s_renderShader, s_drawUni.glintSharpness, &m->glintSharpness, SHADER_UNIFORM_FLOAT);
     if (s_drawUni.lightDir >= 0) SetShaderValue(s_renderShader, s_drawUni.lightDir, lightDir, SHADER_UNIFORM_VEC3);
     if (s_drawUni.camPos >= 0) SetShaderValue(s_renderShader, s_drawUni.camPos, &camera.position.x, SHADER_UNIFORM_VEC3);
+    if (s_drawUni.shadowEnabled >= 0) SetShaderValue(s_renderShader, s_drawUni.shadowEnabled, &shadowEnabled, SHADER_UNIFORM_FLOAT);
+    if (shadowEnabled > 0.5f) {
+        if (s_drawUni.shadowMap >= 0 && shadowMap.id > 0) SetShaderValueTexture(s_renderShader, s_drawUni.shadowMap, shadowMap);
+        if (s_drawUni.shadowTexel >= 0) SetShaderValue(s_renderShader, s_drawUni.shadowTexel, &shadowTexel, SHADER_UNIFORM_FLOAT);
+    }
 
-    rlBindShaderBuffer(s_stateA, 0);
     rlEnableShader(s_renderShader.id);
     rlEnableVertexArray(s_vao);
-    rlDrawVertexArrayInstanced(0, 36, s_grainCount);
+    if (s_grainCount > 0) {
+        float noCull = 0.0f;
+        if (s_drawUni.maxDrawDist >= 0) SetShaderValue(s_renderShader, s_drawUni.maxDrawDist, &noCull, SHADER_UNIFORM_FLOAT);
+        rlBindShaderBuffer(s_stateA, 0);
+        rlDrawVertexArrayInstanced(0, 36, s_grainCount);
+    }
+    if (s_bedCount > 0 && s_bedSsbo > 0) {
+        float bedCull = 30.0f;
+        if (s_drawUni.maxDrawDist >= 0) SetShaderValue(s_renderShader, s_drawUni.maxDrawDist, &bedCull, SHADER_UNIFORM_FLOAT);
+        rlBindShaderBuffer(s_bedSsbo, 0);
+        rlDrawVertexArrayInstanced(0, 36, s_bedCount);
+    }
+    rlDisableVertexArray();
+    rlDisableShader();
+    EndShaderMode();
+}
+
+void GranularGpu_UploadBed(const GranularGrainState *grains, int count)
+{
+    if (!s_available || !grains || count <= 0) {
+        s_bedCount = 0;
+        return;
+    }
+    if (count > GRANULAR_MAP_BED_MAX) count = GRANULAR_MAP_BED_MAX;
+    if (!s_bedSsbo) {
+        s_bedSsbo = rlLoadShaderBuffer(sizeof(GranularGpuGrain) * GRANULAR_MAP_BED_MAX, NULL, RL_DYNAMIC_DRAW);
+        if (!s_bedSsbo) return;
+    }
+
+    static GranularGpuGrain s_bedUpload[GRANULAR_MAP_BED_MAX];
+    for (int i = 0; i < count; i++) {
+        const GranularGrainState *g = &grains[i];
+        s_bedUpload[i] = (GranularGpuGrain){
+            g->position.x, g->position.y, g->position.z, g->radius,
+            0.0f, 0.0f, 0.0f, g->lifetime,
+            g->seed, (float)g->materialId, 0.25f, 1.0f,
+            0.0f, g->seed * 6.2831853f, 0.0f, 0.0f
+        };
+    }
+    rlUpdateShaderBuffer(s_bedSsbo, s_bedUpload, (unsigned int)(sizeof(GranularGpuGrain) * count), 0);
+    s_bedCount = count;
+}
+
+void GranularGpu_HideBedIndices(const int *indices, int count)
+{
+    if (!s_available || !s_bedSsbo || !indices || count <= 0) return;
+    static const GranularGpuGrain kZeroGrain = {0};
+    for (int i = 0; i < count; i++) {
+        int idx = indices[i];
+        if (idx >= 0 && idx < s_bedCount) {
+            rlUpdateShaderBuffer(s_bedSsbo, &kZeroGrain, sizeof(GranularGpuGrain),
+                                 (unsigned int)(idx * (int)sizeof(GranularGpuGrain)));
+        }
+    }
+}
+
+void GranularGpu_ClearBed(void)
+{
+    s_bedCount = 0;
+}
+
+void GranularGpu_DrawShadowPass(void)
+{
+    if (!s_available || !EnvShadow_IsEnabled() || GfxQuality_Get() < GFX_MED) return;
+    if (s_shadowShader.id == 0 || s_shadowShader.id == rlGetShaderIdDefault()) return;
+    if (s_grainCount <= 0 && s_bedCount <= 0) return;
+
+    Matrix lightVP = EnvShadow_GetLightVP();
+    Vector3 focus = EnvShadow_GetFocus();
+
+    BeginShaderMode(s_shadowShader);
+    if (s_shadowUni.lightVP >= 0) SetShaderValueMatrix(s_shadowShader, s_shadowUni.lightVP, lightVP);
+    if (s_shadowUni.camPos >= 0) SetShaderValue(s_shadowShader, s_shadowUni.camPos, &focus.x, SHADER_UNIFORM_VEC3);
+
+    rlEnableShader(s_shadowShader.id);
+    rlEnableVertexArray(s_vao);
+    if (s_grainCount > 0) {
+        float noCull = 0.0f;
+        if (s_shadowUni.maxDrawDist >= 0) SetShaderValue(s_shadowShader, s_shadowUni.maxDrawDist, &noCull, SHADER_UNIFORM_FLOAT);
+        rlBindShaderBuffer(s_stateA, 0);
+        rlDrawVertexArrayInstanced(0, 36, s_grainCount);
+    }
+    if (s_bedCount > 0 && s_bedSsbo > 0) {
+        float bedShadowCull = 20.0f;
+        if (s_shadowUni.maxDrawDist >= 0) SetShaderValue(s_shadowShader, s_shadowUni.maxDrawDist, &bedShadowCull, SHADER_UNIFORM_FLOAT);
+        rlBindShaderBuffer(s_bedSsbo, 0);
+        rlDrawVertexArrayInstanced(0, 36, s_bedCount);
+    }
     rlDisableVertexArray();
     rlDisableShader();
     EndShaderMode();

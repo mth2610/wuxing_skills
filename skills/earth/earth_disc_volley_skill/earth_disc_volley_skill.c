@@ -99,7 +99,7 @@ static int SpawnStonePillarStep(Vector3 pillarPos, float height, float radius,
     cfg.emitDebris        = withBurstVfx;
     cfg.debrisChips       = withBurstVfx ? 14 : 0;
     cfg.spawnGroundCrack  = withBurstVfx;
-    cfg.groundWaveBurst   = withBurstVfx;
+    cfg.groundWaveBurst   = false;
     cfg.screenShake       = withBurstVfx;
     cfg.traumaAmount      = withBurstVfx ? 0.22f : 0.0f;
     cfg.windImpulse       = withBurstVfx;
@@ -232,6 +232,7 @@ void InitEarthDiscVolleySkill(int screenWidth, int screenHeight) {
 
     s_skillIndex = Skill_GetIndexByName("EARTH_DISC_VOLLEY");
     if (s_skillIndex >= 0) {
+        RegisterSkillManaCost(s_skillIndex, 20.0f);
         RegisterSkillCastAnimSeconds(s_skillIndex, EDV_STOMP_RISE_TIME);
         RegisterSkillAbort(s_skillIndex, AbortEarthDiscVolley);
         RegisterSkillLifecycleQuery(s_skillIndex, HasActiveEarthDiscVolley);
@@ -283,7 +284,7 @@ void CastEarthDiscVolleySkill(int agentId, Vector3 startPos, Vector3 target, Ski
     inst->damagePerDisc   = (totalDmg > 0.0f ? totalDmg : 45.0f) / (float)inst->totalSlices;
     inst->knockback       = Skill_CalculateKnockback(SKILL_CAT_PROJECTILE, params) * 0.45f;
 
-    Skill_RequestAnim(agentId, "kick_axe_stomp", EDV_STOMP_RISE_TIME);
+    Skill_RequestAnim(agentId, "mma_kick", EDV_STOMP_RISE_TIME);
 
     // Raise shadowed stone pillar using core EarthSpike VFX
     inst->spikeHandle = SpawnStonePillarStep(inst->pillarPos, inst->pillarMaxHeight,
@@ -312,7 +313,7 @@ void UpdateEarthDiscVolleySkill(float dt, Vector3 enemyPos, float enemyRadius) {
             if (inst->slicesFired < inst->totalSlices && inst->sliceTimer >= EDV_SLICE_INTERVAL) {
                 inst->sliceTimer -= EDV_SLICE_INTERVAL;
 
-                Skill_RequestAnim(inst->ownerAgentId, "fist_straight_punch", EDV_SLICE_INTERVAL);
+                Skill_RequestAnim(inst->ownerAgentId, "hook_punch", EDV_SLICE_INTERVAL);
 
                 float sliceStep = inst->pillarMaxHeight / (float)inst->totalSlices;
                 float topY = inst->pillarPos.y + inst->currentHeight - sliceStep * 0.45f;
@@ -372,16 +373,7 @@ void UpdateEarthDiscVolleySkill(float dt, Vector3 enemyPos, float enemyRadius) {
 }
 
 void DrawEarthDiscVolleySkill(void) {
-    for (int i = 0; i < MAX_EDV_INSTANCES; i++) {
-        const EdvInstance *inst = &s_instances[i];
-        if (!inst->active) continue;
-
-        if (inst->state == EDV_SINK_EXIT) {
-            float t01 = Clamp(inst->timer / EDV_SINK_TIME, 0.0f, 1.0f);
-            Vector3 dissPos = { inst->pillarPos.x, inst->pillarPos.y + 0.12f, inst->pillarPos.z };
-            VFX_ComposeDissolveExit(dissPos, VC_MAT_EARTH, 0.90f * inst->sizeScale, t01);
-        }
-    }
+    // Visuals are driven by VC_EarthSpike + VC_GuidedEarth (no white dissolve overlay).
 }
 
 void UnloadEarthDiscVolleySkill(void) {

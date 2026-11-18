@@ -109,6 +109,7 @@ void InitMetalBladeStormSkill(int screenWidth, int screenHeight)
 
     s_skillIndex = Skill_GetIndexByName("METAL_BLADE_STORM");
     if (s_skillIndex >= 0) {
+        RegisterSkillManaCost(s_skillIndex, 24.0f);
         RegisterSkillCastAnimSeconds(s_skillIndex, MBS_SUMMON_TIME);
         RegisterSkillAbort(s_skillIndex, AbortMetalBladeStorm);
         RegisterSkillLifecycleQuery(s_skillIndex, HasActiveMetalBladeStorm);
@@ -159,7 +160,7 @@ void CastMetalBladeStormSkill(int agentId, Vector3 startPos, Vector3 target, Ski
     inst->knockback      = Skill_CalculateKnockback(SKILL_CAT_PROJECTILE, params) * 0.45f;
 
     // 1. Draw sword / Kiếm Quyết summon stance
-    Skill_RequestAnim(agentId, "sword_draw_gather", MBS_SUMMON_TIME);
+    Skill_RequestAnim(agentId, "withdrawing_sword", MBS_SUMMON_TIME);
 
     // 2. Summon 5 Bát Diện Hán Kiếm in a crescent fan in front of caster
     VFX_MetalBladesConfig mcfg = VFX_MetalBlades_DefaultConfig();
@@ -202,7 +203,7 @@ void UpdateMetalBladeStormSkill(float dt, Vector3 enemyPos, float enemyRadius)
                 inst->state = MBS_LAUNCH;
                 inst->timer = 0.0f;
                 inst->launchTimer = MBS_LAUNCH_INTERVAL;
-                Skill_RequestAnim(inst->ownerAgentId, "sword_lunge_thrust", 0.55f);
+                Skill_RequestAnim(inst->ownerAgentId, "thrust_slash", 0.55f);
             }
         } else if (inst->state == MBS_LAUNCH) {
             inst->launchTimer += dt;
@@ -228,9 +229,20 @@ void UpdateMetalBladeStormSkill(float dt, Vector3 enemyPos, float enemyRadius)
             inst->bladePos[b] = bPos;
 
             if (bLaunched) {
+                int hitIds[8];
+                int hits = Entity_GetNearbyTargets(bPos, 1.25f * inst->sizeScale, hitIds, 8);
+                bool anyEnemy = false;
+                for (int h = 0; h < hits; h++) {
+                    const Agent *ag = Entity_GetAgent(hitIds[h]);
+                    if (ag != NULL && ag->team != inst->casterTeam) {
+                        anyEnemy = true;
+                        break;
+                    }
+                }
                 float hitDist = MBS_HIT_RADIUS * inst->sizeScale + enemyRadius;
-                if (Vector3Distance(bPos, enemyPos) <= hitDist) {
-                    Entity_ApplyAoEDamage(bPos, 1.15f * inst->sizeScale,
+                Vector3 enemyChest = { enemyPos.x, bPos.y, enemyPos.z };
+                if (anyEnemy || (enemyRadius > 0.0f && Vector3Distance(bPos, enemyChest) <= hitDist)) {
+                    Entity_ApplyAoEDamage(bPos, 1.35f * inst->sizeScale,
                                           inst->damagePerBlade, inst->knockback, inst->casterTeam);
                     VFX_MetalBlades_ImpactBlade(inst->bladesHandle, b, bPos);
                     PlayImpactSound(EFFECT_PRESET_METAL_SHARD);

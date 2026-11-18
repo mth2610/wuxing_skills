@@ -9,6 +9,7 @@
 #include "post_process/color_grade_lut.h"
 #include "post_process/post_fx.h"
 #include "maps/map_manager.h"
+#include "core/granular/granular_sim.h"
 #include "core/resource_manager.h"
 #include "environment/volumetric/volumetric_fog.h"
 #include "environment/wind/wind_system.h"
@@ -62,7 +63,6 @@ static const MapZone SONG_QUAO_ZONES[] = {
 static MapDemIsland s_dem;
 static MapGroundSurface s_ground;
 static MapRockSystem s_rocks;
-static MapDebrisSystem s_debris;
 static MapFloraSystem s_flora;
 static MapSkyDome s_sky;
 static MapCloudSea s_cloudSea;
@@ -820,14 +820,47 @@ void InitSongQuaoMap(void)
         }
         TraceLog(LOG_INFO, "SONG_QUAO_RIVER_PEBBLES: added=%d total=%d capacity=%d",
                  debrisCount - SONG_QUAO_DEBRIS_ITEM_COUNT, debrisCount, totalDebrisCapacity);
-        s_debris = MapProp_CreateDebrisSystem(allDebris, debrisCount, &s_ground, kMapCenter, 28.0f);
+
+        int grainCap = debrisCount < GRANULAR_MAP_BED_MAX ? debrisCount : GRANULAR_MAP_BED_MAX;
+        GranularGrainState *bedGrains = (GranularGrainState *)MemAlloc((size_t)grainCap * sizeof(GranularGrainState));
+        if (bedGrains)
+        {
+            for (int i = 0; i < grainCap; i++)
+            {
+                const MapDebrisPlacement *d = &allDebris[i];
+                Vector3 pos = d->position;
+                Vector3 norm = {0.0f, 1.0f, 0.0f};
+                if (MapProp_SampleGroundSurface(&s_ground, kMapCenter, pos.x, pos.z, &pos, &norm))
+                {
+                    pos.y += 0.014f;
+                }
+                uint32_t mId = GRANULAR_MAT_COARSE_GRAVEL;
+                if (d->type == MAP_DEBRIS_LEAF)
+                {
+                    mId = ((i % 3) == 0) ? GRANULAR_MAT_FRESH_LEAF : GRANULAR_MAT_DRY_LEAF;
+                }
+                else if (d->type == MAP_DEBRIS_TWIG)
+                {
+                    mId = GRANULAR_MAT_DRY_TWIG;
+                }
+                float seed = fmodf(fabsf(d->rotationDeg) / 360.0f + (float)(i % 97) * 0.0103f, 1.0f);
+                bedGrains[i] = (GranularGrainState){
+                    .position = pos,
+                    .velocity = {0.0f, 0.0f, 0.0f},
+                    .radius = fmaxf(0.018f, 0.024f * d->scale),
+                    .lifetime = 999.0f,
+                    .seed = seed,
+                    .materialId = mId
+                };
+            }
+            GranularSim_SeedMapBedFromGrains(bedGrains, grainCap);
+            MemFree(bedGrains);
+        }
         MemFree(allDebris);
     }
     else
     {
-        s_debris = MapProp_CreateDebrisSystem(
-            SONG_QUAO_DEBRIS_ITEMS, SONG_QUAO_DEBRIS_ITEM_COUNT,
-            &s_ground, kMapCenter, 28.0f);
+        GranularSim_SeedMapBed(kMapCenter, 32.0f, 1500, NULL, 0, 101u);
     }
 
     BuildFloraPlacements();
@@ -941,8 +974,6 @@ void DrawSongQuaoMap(void)
             MapProp_DrawGround(&s_ground, kMapCenter);
         if (!(s_skipMask & MAP_SKIP_CLIFF))
             MapProp_DrawCliffSkirt(&s_cliff, camera);
-        if (!(s_skipMask & MAP_SKIP_DEBRIS))
-            MapProp_DrawDebrisSystem(&s_debris, camera.position);
         if (!(s_skipMask & MAP_SKIP_FLORA))
             MapProp_DrawFloraSystem(&s_flora);
     }
@@ -954,8 +985,6 @@ void DrawSongQuaoMap(void)
             MapProp_DrawCliffSkirt(&s_cliff, camera);
         if (!(s_skipMask & MAP_SKIP_ROCKS))
             MapProp_DrawRockSystem(&s_rocks, true);
-        if (!(s_skipMask & MAP_SKIP_DEBRIS))
-            MapProp_DrawDebrisSystem(&s_debris, camera.position);
         if (!(s_skipMask & MAP_SKIP_FLORA))
             MapProp_DrawFloraSystem(&s_flora);
     }
@@ -1001,7 +1030,7 @@ void UnloadSongQuaoMap(void)
 
     MapProp_UnloadWaterSurface(&s_river);
     MapProp_UnloadFloraSystem(&s_flora);
-    MapProp_UnloadDebrisSystem(&s_debris);
+    GranularSim_ClearMapBed();
     MapProp_UnloadRockSystem(&s_rocks);
     if (s_cliff.ready)
         MapProp_UnloadCliffSkirt(&s_cliff);

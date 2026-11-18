@@ -12,6 +12,10 @@
 #include "core/resource_manager.h"
 #include "core/trails/trail_system.h"
 #include "core/ribbon_strip.h"
+#include "entities/entities.h"
+#include "character/character_model.h"
+#include "core/composition/visual_composer.h"
+#include "environment/wind/wind_system.h"
 #include "raymath.h"
 #include "rlgl.h"
 #include <stdlib.h>
@@ -910,4 +914,122 @@ void DamageVolume_GetStats(int *active, int *max)
             n++;
     *active = n;
     *max = MAX_VOLUMES;
+}
+
+// ============================================================
+// Melee basic attack hand/foot trails & impact VFX
+// ============================================================
+#define MELEE_TRAIL_LIMBS 2
+
+typedef struct {
+    bool active;
+    float timer;
+    float duration;
+    int handles[MELEE_TRAIL_LIMBS];
+    Matrix matrices[MELEE_TRAIL_LIMBS];
+    const char *bones[MELEE_TRAIL_LIMBS];
+} MeleeTrailState;
+
+static MeleeTrailState s_meleeTrail = {
+    .active = false,
+    .handles = { -1, -1 }
+};
+
+static VC_MaterialId ResolveAgentTrailMaterial(int agentId)
+{
+    const Agent *ag = Entity_GetAgent(agentId);
+    if (!ag) return VC_MAT_WATER;
+    if (ag->taijiActive) return VC_MAT_TAIJI;
+    switch (ag->currentElement) {
+        case 0:  return VC_MAT_WATER;
+        case 1:  return VC_MAT_WOOD;
+        case 2:  return VC_MAT_FIRE;
+        case 3:  return VC_MAT_EARTH;
+        case 4:  return VC_MAT_METAL;
+        default: return VC_MAT_WATER;
+    }
+}
+
+static Matrix ComputeLimbWorldMatrix(const char *boneName, const CharacterAnimState *anim,
+                                     Vector3 charPos, float yaw)
+{
+    Matrix boneLocal = MatrixIdentity();
+    if (anim != NULL && boneName != NULL) {
+        CharacterModel_GetBoneTransform(boneName, anim, &boneLocal);
+    }
+    Matrix worldXf = MatrixMultiply(MatrixRotateY(yaw), MatrixTranslate(charPos.x, charPos.y, charPos.z));
+    return MatrixMultiply(boneLocal, worldXf);
+}
+
+void SkillHelper_StartMeleeTrails(int agentId, const struct CharacterAnimState *anim,
+                                  Vector3 charPos, float yaw, int attackType, float duration)
+{
+    for (int i = 0; i < MELEE_TRAIL_LIMBS; i++) {
+        if (s_meleeTrail.handles[i] >= 0) {
+            VFX_TrailSetWidth(s_meleeTrail.handles[i], 0.0f);
+            s_meleeTrail.handles[i] = -1;
+        }
+    }
+
+    bool isKick = (attackType == BASIC_ATTACK_KICK);
+    s_meleeTrail.bones[0] = isKick ? "mixamorig:RightFoot" : "mixamorig:RightHand";
+    s_meleeTrail.bones[1] = isKick ? "mixamorig:LeftFoot"  : "mixamorig:LeftHand";
+    s_meleeTrail.timer    = 0.0f;
+    s_meleeTrail.duration = (duration > 0.12f) ? duration : 0.35f;
+    s_meleeTrail.active   = true;
+
+    VC_MaterialId mat = ResolveAgentTrailMaterial(agentId);
+    for (int i = 0; i < MELEE_TRAIL_LIMBS; i++) {
+        s_meleeTrail.matrices[i] = ComputeLimbWorldMatrix(s_meleeTrail.bones[i], anim, charPos, yaw);
+        s_meleeTrail.handles[i] = VFX_ComposeTrail(&s_meleeTrail.matrices[i], mat,
+                                                   0.18f, 0.22f, TRAIL_PRESET_BLADE);
+        if (s_meleeTrail.handles[i] >= 0) {
+            VFX_TrailSetHdrGain(s_meleeTrail.handles[i], 1.75f);
+        }
+    }
+}
+
+void SkillHelper_UpdateMeleeTrails(float dt, const struct CharacterAnimState *anim,
+                                   Vector3 charPos, float yaw)
+{
+    if (!s_meleeTrail.active) return;
+
+    s_meleeTrail.timer += dt;
+    float t01 = s_meleeTrail.timer / s_meleeTrail.duration;
+
+    for (int i = 0; i < MELEE_TRAIL_LIMBS; i++) {
+        if (s_meleeTrail.handles[i] < 0) continue;
+        s_meleeTrail.matrices[i] = ComputeLimbWorldMatrix(s_meleeTrail.bones[i], anim, charPos, yaw);
+        if (t01 >= 0.72f) {
+            float fade = 1.0f - (t01 - 0.72f) / 0.28f;
+            if (fade < 0.0f) fade = 0.0f;
+            VFX_TrailSetWidth(s_meleeTrail.handles[i], fade);
+        }
+    }
+
+    if (t01 >= 1.0f) {
+        for (int i = 0; i < MELEE_TRAIL_LIMBS; i++) {
+            if (s_meleeTrail.handles[i] >= 0) {
+                VFX_TrailSetWidth(s_meleeTrail.handles[i], 0.0f);
+                s_meleeTrail.handles[i] = -1;
+            }
+        }
+        s_meleeTrail.active = false;
+    }
+}
+
+void SkillHelper_SpawnMeleeImpact(int agentId, Vector3 hitPos)
+{
+    VC_MaterialId mat = ResolveAgentTrailMaterial(agentId);
+    Vector3 chestPos = { hitPos.x, hitPos.y + 0.90f, hitPos.z };
+    Vector3 groundPos = {
+        hitPos.x,
+        VFX_GroundHeightFromMap(hitPos.x, hitPos.z, NULL) + 0.06f,
+        hitPos.z
+    };
+
+    VFX_ComposeContactSpark(chestPos, mat, 1.15f, 0.85f);
+    VFX_ComposeImpactDust(groundPos, mat, 0.85f, 0.60f);
+    VFX_ComposeGroundWave(groundPos, mat, 1.45f, 0.55f, VFX_GroundHeightFromMap, NULL);
+    Wind_SpawnRadialBlast(chestPos, 4.5f, 4.5f, 0.45f);
 }

@@ -146,6 +146,7 @@ void InitSandStormSkill(int screenWidth, int screenHeight)
     }
     s_sandSkillIndex = Skill_GetIndexByName("SAND_STORM");
     if (s_sandSkillIndex >= 0) {
+        RegisterSkillManaCost(s_sandSkillIndex, 24.0f);
         RegisterSkillCastAnimSeconds(s_sandSkillIndex, SAND_SPINUP_DURATION);
         RegisterSkillAbort(s_sandSkillIndex, AbortSandStorm);
         RegisterSkillLifecycleQuery(s_sandSkillIndex, HasActiveSandStorm);
@@ -184,6 +185,7 @@ void CastSandStormSkill(int agentId, Vector3 startPos, Vector3 target, SkillPara
     }
 
     inst->sizeScale = params.sizeScale > 0.05f ? params.sizeScale : 1.0f;
+    Skill_RequestAnim(agentId, "hurricane_kick", SAND_SPINUP_DURATION);
     inst->speed = SAND_TORNADO_SPEED;
     inst->hitRadius = 1.45f * inst->sizeScale;
     inst->damage = params.damage > 0.0f ? params.damage : 26.0f;

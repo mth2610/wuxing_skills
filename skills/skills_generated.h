@@ -4,32 +4,22 @@
 
 #include "skills/skill_manager.h"
 
-#include "skills/wood/leaf_whirlwind_skill/leaf_whirlwind_skill.h"
-#include "skills/water/glacial_cannon_skill/glacial_cannon_skill.h"
+#include "skills/wood/vine_snare_skill/vine_snare_skill.h"
+#include "skills/water/ice_crystal_lance_skill/ice_crystal_lance_skill.h"
 #include "skills/metal/metal_blade_storm_skill/metal_blade_storm_skill.h"
-#include "skills/metal/volume_smoke_skill/volume_smoke_skill.h"
-#include "skills/taiji/core_test/core_test_skill.h"
-#include "skills/taiji/taiji_phong/taiji_phong_skill.h"
 #include "skills/taiji/galaxy_spiral_skill/galaxy_spiral_skill.h"
-#include "skills/taiji/qi_convergence_skill/qi_convergence_skill.h"
-#include "skills/taiji/taiji_loi/taiji_loi_skill.h"
 #include "skills/earth/earth_disc_volley_skill/earth_disc_volley_skill.h"
+#include "skills/earth/earth_pillar_prison_skill/earth_pillar_prison_skill.h"
 #include "skills/earth/sand_storm_skill/sand_storm_skill.h"
-#include "skills/earth/stone_prison_skill/stone_prison_skill.h"
 
 static inline void RegisterGeneratedSkills(void) {
-    RegisterSkill("LEAF_WHIRLWIND", ELEMENT_COLOR_WOOD, InitLeafWhirlwindSkill, CastLeafWhirlwindSkill, UpdateLeafWhirlwindSkill, DrawLeafWhirlwindSkill, UnloadLeafWhirlwindSkill);
-    RegisterSkill("GLACIAL_CANNON", ELEMENT_COLOR_WATER, InitGlacialCannonSkill, CastGlacialCannonSkill, UpdateGlacialCannonSkill, DrawGlacialCannonSkill, UnloadGlacialCannonSkill);
+    RegisterSkill("VINE_SNARE", ELEMENT_COLOR_WOOD, InitVineSnareSkill, CastVineSnareSkill, UpdateVineSnareSkill, DrawVineSnareSkill, UnloadVineSnareSkill);
+    RegisterSkill("ICE_CRYSTAL_LANCE", ELEMENT_COLOR_WATER, InitIceCrystalLanceSkill, CastIceCrystalLanceSkill, UpdateIceCrystalLanceSkill, DrawIceCrystalLanceSkill, UnloadIceCrystalLanceSkill);
     RegisterSkill("METAL_BLADE_STORM", ELEMENT_COLOR_METAL, InitMetalBladeStormSkill, CastMetalBladeStormSkill, UpdateMetalBladeStormSkill, DrawMetalBladeStormSkill, UnloadMetalBladeStormSkill);
-    RegisterSkill("VOLUME_SMOKE", ELEMENT_COLOR_METAL, InitVolumeSmokeSkill, CastVolumeSmokeSkill, UpdateVolumeSmokeSkill, DrawVolumeSmokeSkill, UnloadVolumeSmokeSkill);
-    RegisterSkill("CORE_TEST", ELEMENT_COLOR_TAIJI, InitCoreTestSkill, CastCoreTestSkill, UpdateCoreTestSkill, DrawCoreTestSkill, UnloadCoreTestSkill);
-    RegisterSkill("TAIJI_PHONG", ELEMENT_COLOR_TAIJI, InitTaijiPhongSkill, CastTaijiPhongSkill, UpdateTaijiPhongSkill, DrawTaijiPhongSkill, UnloadTaijiPhongSkill);
     RegisterSkill("GALAXY_SPIRAL", ELEMENT_COLOR_TAIJI, InitGalaxySpiralSkill, CastGalaxySpiralSkill, UpdateGalaxySpiralSkill, DrawGalaxySpiralSkill, UnloadGalaxySpiralSkill);
-    RegisterSkill("QI_CONVERGENCE", ELEMENT_COLOR_TAIJI, InitQiConvergenceSkill, CastQiConvergenceSkill, UpdateQiConvergenceSkill, DrawQiConvergenceSkill, UnloadQiConvergenceSkill);
-    RegisterSkill("TAIJI_LOI", ELEMENT_COLOR_TAIJI, InitTaijiLoiSkill, CastTaijiLoiSkill, UpdateTaijiLoiSkill, DrawTaijiLoiSkill, UnloadTaijiLoiSkill);
     RegisterSkill("EARTH_DISC_VOLLEY", ELEMENT_COLOR_EARTH, InitEarthDiscVolleySkill, CastEarthDiscVolleySkill, UpdateEarthDiscVolleySkill, DrawEarthDiscVolleySkill, UnloadEarthDiscVolleySkill);
+    RegisterSkill("EARTH_PILLAR_PRISON", ELEMENT_COLOR_EARTH, InitEarthPillarPrisonSkill, CastEarthPillarPrisonSkill, UpdateEarthPillarPrisonSkill, DrawEarthPillarPrisonSkill, UnloadEarthPillarPrisonSkill);
     RegisterSkill("SAND_STORM", ELEMENT_COLOR_EARTH, InitSandStormSkill, CastSandStormSkill, UpdateSandStormSkill, DrawSandStormSkill, UnloadSandStormSkill);
-    RegisterSkill("STONE_PRISON", ELEMENT_COLOR_EARTH, InitStonePrisonSkill, CastStonePrisonSkill, UpdateStonePrisonSkill, DrawStonePrisonSkill, UnloadStonePrisonSkill);
 }
 
 #endif // SKILLS_GENERATED_H
