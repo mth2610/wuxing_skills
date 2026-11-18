@@ -268,6 +268,7 @@ add_executable(wuxing
 
     # --- UI (HUD + auto-targeting — Module 9) ---
     ui/ui.c
+    ui/ui_theme.c
     ui/ui_lobby.c
     ui/ui_wardrobe.c
     ui/ui_hub.c

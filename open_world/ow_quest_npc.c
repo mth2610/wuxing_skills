@@ -2,6 +2,7 @@
 #include "open_world/ow_quest_npc.h"
 #include "open_world/ow_loot.h"
 #include "ui/ui.h"
+#include "ui/ui_theme.h"
 #include "entities/entities.h"
 #include "game/quest_datau.h"
 #include "maps/map_manager.h"
@@ -388,35 +389,29 @@ void OWQuestNpc_DrawHUD(const Agent *pa, Camera3D cam) {
     DrawText(atag, (int)asp.x - atw / 2, (int)asp.y - 7, 12, (Color){ 140, 240, 175, 255 });
 
     if (s_npcDialogOpen && q) {
-        Rectangle db = { (float)sw / 2 - 230.0f, 130.0f, 460.0f, 198.0f };
-        DrawRectangleRec(db, (Color){ 16, 20, 28, 245 });
-        DrawRectangleLinesEx(db, 2.0f, GOLD);
-        DrawText("SU GIA DA TAU — NHIEM VU", (int)db.x + 18, (int)db.y + 14, 16, GOLD);
+        Rectangle db = { (float)sw / 2 - 250.0f, 126.0f, 500.0f, 212.0f };
+        WuxiaUI_DrawPanel(db, WUXIA_GOLD, true);
+        WuxiaUI_DrawDiamond((Vector2){ db.x + 22.0f, db.y + 24.0f }, 6.0f, WUXIA_GOLD, WUXIA_GOLD_BRIGHT);
+        WuxiaUI_DrawText("SU GIA DA TAU — GIANG HO KY NGO", db.x + 36.0f, db.y + 15.0f, 17.0f, WUXIA_GOLD);
+        DrawLineEx((Vector2){ db.x + 18.0f, db.y + 44.0f }, (Vector2){ db.x + db.width - 18.0f, db.y + 44.0f },
+                   1.0f, ColorAlpha(WUXIA_GOLD, 0.35f));
 
-        Rectangle closeBtn = { db.x + db.width - 80.0f, db.y + 10.0f, 66.0f, 28.0f };
-        DrawRectangleRec(closeBtn, (Color){ 88, 30, 30, 240 });
-        DrawRectangleLinesEx(closeBtn, 1.2f, (Color){ 235, 130, 120, 235 });
-        DrawText("DONG", (int)closeBtn.x + 14, (int)closeBtn.y + 7, 13, WHITE);
-        if (CheckCollisionPointRec(GetMousePosition(), closeBtn) && IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+        Rectangle closeBtn = { db.x + db.width - 84.0f, db.y + 10.0f, 70.0f, 28.0f };
+        if (WuxiaUI_DrawButton(closeBtn, "DONG", WUXIA_CRIMSON, false, 13.0f)) {
             s_npcDialogOpen = false;
         }
 
-        DrawText(q->title, (int)db.x + 18, (int)db.y + 48, 16, WHITE);
-        DrawText(q->desc, (int)db.x + 18, (int)db.y + 74, 13, LIGHTGRAY);
-        DrawText(TextFormat("Thuong: %d Vang | %d Diem | +1 Khoang | +1 Thao",
-                            q->rewardGold, q->rewardPoints),
-                 (int)db.x + 18, (int)db.y + 102, 13, (Color){ 145, 240, 175, 255 });
+        WuxiaUI_DrawText(q->title, db.x + 20.0f, db.y + 54.0f, 18.0f, WUXIA_TEXT_PRIMARY);
+        WuxiaUI_DrawText(q->desc, db.x + 20.0f, db.y + 80.0f, 14.0f, WUXIA_TEXT_MUTED);
+        WuxiaUI_DrawText(TextFormat("Phan thuong: +%d Vang   |   +%d Diem   |   +1 Khoang   |   +1 Thao",
+                                    q->rewardGold, q->rewardPoints),
+                         db.x + 20.0f, db.y + 110.0f, 13.5f, WUXIA_JADE);
 
-        const char *btnTxt = (q->phase == DATAU_PHASE_WAIT_ACCEPT)  ? "NHAN NHIEM VU NAY!" :
-                             (q->phase == DATAU_PHASE_READY_RETURN) ? "TRA NHIEM VU & NHAN THUONG!" :
-                                                                      "DANG THUC HIEN (THEO GIO)";
-        Rectangle btn = { db.x + 18, db.y + 136, db.width - 36, 46 };
-        bool hov = CheckCollisionPointRec(GetMousePosition(), btn);
-        DrawRectangleRec(btn, hov ? (Color){ 64, 56, 32, 255 } : (Color){ 42, 38, 24, 255 });
-        DrawRectangleLinesEx(btn, 1.5f, GOLD);
-        int bw = MeasureText(btnTxt, 15);
-        DrawText(btnTxt, (int)(btn.x + btn.width * 0.5f - bw * 0.5f), (int)btn.y + 15, 15, GOLD);
-        if (pa && hov && IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+        const char *btnTxt = (q->phase == DATAU_PHASE_WAIT_ACCEPT)  ? "NHAN NHIEM VU NAY" :
+                             (q->phase == DATAU_PHASE_READY_RETURN) ? "TRA NHIEM VU & NHAN THUONG" :
+                                                                      "DANG THUC HIEN (THEO GIO DAN LOI)";
+        Rectangle btn = { db.x + 20.0f, db.y + 146.0f, db.width - 40.0f, 48.0f };
+        if (WuxiaUI_DrawButton(btn, btnTxt, WUXIA_GOLD, q->phase != DATAU_PHASE_IN_PROGRESS, 16.0f) && pa) {
             OWQuestNpc_TryInteract(pa->position);
         }
     }

@@ -19,6 +19,7 @@
 #include "open_world/realms/ow_desert_earth.h"
 #include "ai/ai.h"
 #include "ui/ui.h"
+#include "ui/ui_theme.h"
 #include "ui/ui_hub.h"
 #include "net/net_transport.h"
 #include "combat/combat.h"
@@ -1624,38 +1625,37 @@ void GameScreen_DrawHUD(const PlayerEntity *player)
     if (manaRatio < 0.0f) manaRatio = 0.0f;
     if (manaRatio > 1.0f) manaRatio = 1.0f;
 
-    // --- Top-left Player Status Card (Wuxia style, crisp quad borders) ---
-    const int cardX = 16, cardY = 14, cardW = 248, cardH = 62;
+    // --- Top-left Player Status Card (Where Winds Meet ink-wash & gold corners) ---
+    const int cardX = 16, cardY = 14, cardW = 264, cardH = 64;
     Rectangle cardRec = {(float)cardX, (float)cardY, (float)cardW, (float)cardH};
-    DrawRectangleRec(cardRec, (Color){14, 16, 24, 210});
-    DrawRectangleLinesEx(cardRec, 1.5f, (agent && agent->taijiActive)
-                                             ? (Color){245, 215, 115, 240}
-                                             : (Color){165, 140, 85, 200});
+    Color cardAccent = (agent && agent->taijiActive) ? WUXIA_GOLD_BRIGHT : WUXIA_GOLD;
+    WuxiaUI_DrawPanel(cardRec, cardAccent, true);
 
-    const int barX = cardX + 12, barY = cardY + 12, barW = 224, barH = 16;
+    // Elemental diamond crest on left
+    Color elemBadgeCol = WUXIA_JADE;
+    if (agent) {
+        if (agent->currentElement == 0) elemBadgeCol = WUXIA_AZURE;
+        else if (agent->currentElement == 1) elemBadgeCol = (Color){ 95, 205, 115, 255 };
+        else if (agent->currentElement == 2) elemBadgeCol = (Color){ 235, 95, 65, 255 };
+        else if (agent->currentElement == 3) elemBadgeCol = WUXIA_GOLD;
+        else if (agent->currentElement == 4) elemBadgeCol = (Color){ 210, 220, 235, 255 };
+    }
+    WuxiaUI_DrawDiamond((Vector2){ (float)cardX + 22.0f, (float)cardY + 32.0f }, 12.0f, elemBadgeCol, WUXIA_GOLD_BRIGHT);
+
+    const int barX = cardX + 42, barY = cardY + 13, barW = 208, barH = 18;
     Rectangle hpRec = {(float)barX, (float)barY, (float)barW, (float)barH};
-    DrawRectangleRec(hpRec, (Color){24, 18, 22, 235});
-    if (ratio > 0.0f)
-    {
-        int fillW = (int)(barW * ratio);
-        DrawRectangle(barX, barY, fillW, barH, (Color){195, 48, 52, 255});
-        DrawRectangle(barX, barY, fillW, 4, (Color){235, 95, 95, 190});
-    }
-    DrawRectangleLinesEx(hpRec, 1.0f, (Color){185, 160, 110, 175});
-    DrawText(TextFormat("HP %d/%d", (int)hp, (int)maxHp), barX + 6, barY + 3, 10, (Color){245, 240, 235, 245});
+    WuxiaUI_DrawResourceBar(hpRec, ratio,
+                            (Color){ 215, 62, 62, 255 }, (Color){ 148, 28, 32, 255 },
+                            WUXIA_GOLD_DIM,
+                            TextFormat("SINH LUC  %d/%d", (int)hp, (int)maxHp), 11.5f);
 
-    const int manaBarY = barY + barH + 8, manaH = 12;
+    const int manaBarY = barY + barH + 8, manaH = 14;
     Rectangle mpRec = {(float)barX, (float)manaBarY, (float)barW, (float)manaH};
-    DrawRectangleRec(mpRec, (Color){18, 22, 34, 235});
-    if (manaRatio > 0.0f)
-    {
-        int fillW = (int)(barW * manaRatio);
-        Color mpCol = (agent && agent->taijiActive) ? (Color){230, 185, 70, 255} : (Color){55, 125, 225, 255};
-        DrawRectangle(barX, manaBarY, fillW, manaH, mpCol);
-        DrawRectangle(barX, manaBarY, fillW, 3, (Color){145, 205, 255, 140});
-    }
-    DrawRectangleLinesEx(mpRec, 1.0f, (Color){125, 150, 195, 175});
-    DrawText(TextFormat("MP %d/%d", (int)mana, (int)maxMana), barX + 6, manaBarY + 1, 10, (Color){225, 235, 250, 240});
+    Color mpTop = (agent && agent->taijiActive) ? WUXIA_GOLD_BRIGHT : (Color){ 78, 162, 245, 255 };
+    Color mpBot = (agent && agent->taijiActive) ? (Color){ 175, 130, 40, 255 } : (Color){ 36, 92, 185, 255 };
+    WuxiaUI_DrawResourceBar(mpRec, manaRatio, mpTop, mpBot,
+                            (Color){ 125, 155, 205, 190 },
+                            TextFormat("CHAN KHI  %d/%d", (int)mana, (int)maxMana), 10.5f);
 
     // Module 9 overlay: skill slot chips + auto-aim reticle.
     UI_DrawOverlay(player->agentId);
@@ -1727,30 +1727,27 @@ void GameScreen_DrawHUD(const PlayerEntity *player)
     {
         const PlayerProfile *prof = PlayerProfile_GetGlobal();
         const DaTauQuest *dq = DaTau_GetCurrent();
-        // Top-right Dã Tẩu Quest Tracker + Currencies
-        int qW = 310, qH = 104, qX = sw - qW - 16, qY = 14;
-        DrawRectangle(qX, qY, qW, qH, (Color){ 14, 16, 24, 215 });
-        DrawRectangleLinesEx((Rectangle){ (float)qX, (float)qY, (float)qW, (float)qH }, 1.5f, (Color){ 210, 180, 105, 210 });
-        DrawText(ExploreRealmTitle(s_exploreRealm), qX + 10, qY + 8, 13, (Color){ 155, 215, 255, 255 });
-        DrawText(TextFormat("Vang: %d | Diem: %d | Chuoi: %d", prof->gold, prof->daTauPoints, prof->daTauStreak),
-                 qX + 10, qY + 26, 12, (Color){ 245, 215, 120, 255 });
-        DrawText(dq->title, qX + 10, qY + 46, 13, WHITE);
-        DrawText(TextFormat("%s (%d/%d)", dq->desc, dq->currentCount, dq->targetCount),
-                 qX + 10, qY + 64, 12, (Color){ 200, 225, 200, 255 });
+        // Top-right Dã Tẩu Quest Scroll Card + Currencies
+        int qW = 326, qH = 108, qX = sw - qW - 16, qY = 14;
+        Rectangle qRec = { (float)qX, (float)qY, (float)qW, (float)qH };
+        WuxiaUI_DrawPanel(qRec, WUXIA_GOLD, true);
+        WuxiaUI_DrawDiamond((Vector2){ (float)qX + 16.0f, (float)qY + 16.0f }, 5.0f, WUXIA_AZURE, WUXIA_GOLD_BRIGHT);
+        WuxiaUI_DrawText(ExploreRealmTitle(s_exploreRealm), (float)(qX + 28), (float)(qY + 8), 14.0f, WUXIA_AZURE);
+        WuxiaUI_DrawText(TextFormat("Vang: %d   ·   Diem: %d   ·   Chuoi: %d", prof->gold, prof->daTauPoints, prof->daTauStreak),
+                         (float)(qX + 12), (float)(qY + 28), 12.5f, WUXIA_GOLD_BRIGHT);
+        WuxiaUI_DrawText(dq->title, (float)(qX + 12), (float)(qY + 48), 14.0f, WUXIA_TEXT_PRIMARY);
+        WuxiaUI_DrawText(TextFormat("%s (%d/%d)", dq->desc, dq->currentCount, dq->targetCount),
+                         (float)(qX + 12), (float)(qY + 67), 12.5f, WUXIA_JADE);
         if (UI_IsTouchControlsEnabled())
         {
-            Rectangle skipBtn = { (float)(qX + 10), (float)(qY + 80), 130.0f, 20.0f };
-            bool hov = CheckCollisionPointRec(GetMousePosition(), skipBtn);
-            DrawRectangleRec(skipBtn, hov ? (Color){ 54, 48, 28, 240 } : (Color){ 28, 32, 44, 225 });
-            DrawRectangleLinesEx(skipBtn, 1.0f, GOLD);
-            DrawText(TextFormat("DOI NV (LB:%d)", prof->daTauTokens), (int)skipBtn.x + 8, (int)skipBtn.y + 4, 11, GOLD);
-            if (hov && IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
+            Rectangle skipBtn = { (float)(qX + 12), (float)(qY + 84), 136.0f, 20.0f };
+            if (WuxiaUI_DrawButton(skipBtn, TextFormat("DOI NV (LB:%d)", prof->daTauTokens), WUXIA_GOLD, false, 11.5f))
                 DaTau_SkipWithToken();
         }
         else
         {
-            DrawText(TextFormat("[N] Doi nhiem vu (Lenh bai: %d)", prof->daTauTokens),
-                     qX + 10, qY + 84, 11, (Color){ 170, 175, 190, 230 });
+            WuxiaUI_DrawText(TextFormat("[N] Doi nhiem vu (Lenh bai: %d)", prof->daTauTokens),
+                             (float)(qX + 12), (float)(qY + 86), 11.5f, WUXIA_TEXT_MUTED);
         }
         if (DaTau_GetCompleteBannerTimer() > 0.0f)
         {
@@ -1830,27 +1827,29 @@ void GameScreen_DrawHUD(const PlayerEntity *player)
     if (Net_GetMode() == NET_MODE_HOST && !Net_IsPeerConnected() && s_onlineCode[0] != '\0')
     {
         const char *t = TextFormat("MA PHONG: %s", s_onlineCode);
-        int tw = MeasureText(t, 30);
-        DrawRectangle(sw / 2 - tw / 2 - 14, 52, tw + 28, 66, (Color){15, 15, 25, 200});
-        DrawText(t, sw / 2 - tw / 2, 60, 30, (Color){240, 220, 120, 255});
-        const char *w = "DANG CHO DOI THU VAO PHONG...";
-        DrawText(w, sw / 2 - MeasureText(w, 16) / 2, 96, 16, (Color){200, 200, 210, 255});
+        float tw = WuxiaUI_MeasureText(t, 24.0f);
+        float bw = tw + 48.0f;
+        if (bw < 270.0f) bw = 270.0f;
+        Rectangle mp = { (float)sw * 0.5f - bw * 0.5f, 12.0f, bw, 56.0f };
+        WuxiaUI_DrawPanel(mp, WUXIA_GOLD, true);
+        WuxiaUI_DrawTextCentered(t, (Rectangle){ mp.x, mp.y + 6.0f, mp.width, 26.0f }, 24.0f, WUXIA_GOLD_BRIGHT);
+        WuxiaUI_DrawTextCentered("DANG CHO DONG DAO VAO PHONG...",
+                                 (Rectangle){ mp.x, mp.y + 34.0f, mp.width, 18.0f }, 12.5f, WUXIA_TEXT_MUTED);
     }
     else if (Net_GetMode() == NET_MODE_CLIENT && Net_GetLocalHeroAgentId() < 0)
     {
         const char *w = "DANG KET NOI DEN HOST...";
-        DrawText(w, sw / 2 - MeasureText(w, 22) / 2, 60, 22, (Color){240, 220, 120, 255});
+        WuxiaUI_DrawText(w, (float)sw * 0.5f - WuxiaUI_MeasureText(w, 20.0f) * 0.5f, 24.0f, 20.0f, WUXIA_GOLD_BRIGHT);
     }
 
-    // Match-state overlays (No Tutorial — one line each, no instructions
-    // beyond the exit key).
+    // Match-state overlays
     if (s_mode == GAME_MODE_EXPLORE && s_exploreRealm == 3 && s_state == GAME_FIGHTING)
     {
         OW_DrawHUD(player, s_hudCamera);
         int peerCount = (Net_GetMode() != NET_MODE_OFF) ? (Net_GetPeerCount() + 1) : 1;
         if (peerCount > NET_EXPLORE_MAX_PLAYERS) peerCount = NET_EXPLORE_MAX_PLAYERS;
-        DrawText(TextFormat("CO-OP EOS P2P: %d/%d", peerCount, NET_EXPLORE_MAX_PLAYERS),
-                 20, 86, 13, (Color){ 140, 235, 195, 255 });
+        WuxiaUI_DrawText(TextFormat("CO-OP EOS P2P: %d/%d", peerCount, NET_EXPLORE_MAX_PLAYERS),
+                         20.0f, 86.0f, 13.0f, WUXIA_JADE);
     }
 
     if (s_state == GAME_ARENA_INTRO)
@@ -1878,24 +1877,20 @@ void GameScreen_DrawHUD(const PlayerEntity *player)
 
     if (UI_IsTouchControlsEnabled() && s_state == GAME_FIGHTING && !UI_IsLoadoutOpen() && !UI_Hub_IsModalOpen())
     {
-        float ty = (s_mode == GAME_MODE_EXPLORE) ? 124.0f : 14.0f;
+        float ty = (s_mode == GAME_MODE_EXPLORE) ? 128.0f : 14.0f;
         float tx = (float)sw - 16.0f;
         struct { const char *lbl; Color col; int action; } topBtns[3] = {
-            { "MENU",  (Color){ 235, 115, 110, 235 }, 2 },
-            { "TU DO", (Color){ 135, 205, 255, 235 }, 1 },
-            { "CHIEU", (Color){ 235, 200, 115, 235 }, 0 }
+            { "MENU",  WUXIA_CRIMSON, 2 },
+            { "TU DO", WUXIA_AZURE, 1 },
+            { "CHIEU", WUXIA_GOLD, 0 }
         };
         for (int b = 0; b < 3; b++)
         {
             if (b == 1 && s_mode != GAME_MODE_EXPLORE) continue;
-            float bw = (float)(MeasureText(topBtns[b].lbl, 12) + 20);
+            float bw = WuxiaUI_MeasureText(topBtns[b].lbl, 12.5f) + 24.0f;
             tx -= bw;
             Rectangle br = { tx, ty, bw, 28.0f };
-            bool hov = CheckCollisionPointRec(GetMousePosition(), br);
-            DrawRectangleRec(br, hov ? (Color){ 40, 46, 62, 240 } : (Color){ 18, 22, 32, 215 });
-            DrawRectangleLinesEx(br, 1.3f, topBtns[b].col);
-            DrawText(topBtns[b].lbl, (int)br.x + 10, (int)br.y + 8, 12, WHITE);
-            if (hov && IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
+            if (WuxiaUI_DrawButton(br, topBtns[b].lbl, topBtns[b].col, false, 12.5f))
             {
                 if (topBtns[b].action == 0) UI_ToggleLoadout();
                 else if (topBtns[b].action == 1) UI_Hub_OpenModal(0);

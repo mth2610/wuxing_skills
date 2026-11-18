@@ -1,5 +1,6 @@
 // ui/ui.c — Module 9: minimal HUD + auto-targeting.
 #include "ui/ui.h"
+#include "ui/ui_theme.h"
 #include "net/net_transport.h" // lobby roster + loadout sync
 #include "entities/entities.h"
 #include "combat/combat.h"
@@ -27,6 +28,7 @@ static bool s_loadoutOpen = false;
 static int  s_selSlot = 0;
 
 void UI_Init(void) {
+    WuxiaUI_Init();
     s_camera = NULL;
     s_hasTarget = false;
     s_aimAgentId = -1;
@@ -276,11 +278,10 @@ void UI_DrawOverlay(int agentId) {
 
     // --- Loadout panel (TAB) ---
     if (s_loadoutOpen && self != NULL) {
-        DrawRectangle(0, 0, sw, sh, (Color){ 0, 0, 0, 140 }); // dim the fight
+        DrawRectangle(0, 0, sw, sh, (Color){ 0, 0, 0, 155 }); // dim the fight
         Rectangle p = LoadoutPanel();
-        DrawRectangleRec(p, (Color){ 16, 16, 22, 245 });
-        DrawRectangleLinesEx(p, 2, (Color){ 200, 200, 215, 200 });
-        DrawText("TRANG BI", (int)p.x + 18, (int)p.y + 14, 24, (Color){ 235, 230, 245, 255 });
+        WuxiaUI_DrawPanel(p, WUXIA_GOLD, true);
+        WuxiaUI_DrawText("TRANG BI VO HOC", p.x + 20.0f, p.y + 15.0f, 22.0f, WUXIA_GOLD);
         const char *elemNames[5] = { "THUY", "MOC", "HOA", "THO", "KIM" };
         int ce = self->currentElement;
         if (ce >= 0 && ce <= 4) {
@@ -573,33 +574,34 @@ void UI_PollTouchCombat(const UITouchSkillSlot slots[5], UITouchCombatInput *out
 static void DrawWuxiaTouchCircleBtn(Vector2 center, float radius, Color accent, bool active,
                                     bool ready, const char *topTag, const char *mainLabel,
                                     float scale) {
-    Color fill = active
+    Color inner = active
         ? (Color){ (unsigned char)(accent.r / 3 + 35), (unsigned char)(accent.g / 3 + 35), (unsigned char)(accent.b / 3 + 35), 225 }
-        : (ready ? (Color){ 16, 20, 30, 195 } : (Color){ 12, 12, 16, 175 });
-    Color ring = active ? WHITE : (ready ? accent : (Color){ 75, 80, 92, 160 });
+        : (ready ? (Color){ 16, 20, 30, 205 } : (Color){ 10, 12, 16, 185 });
+    Color outer = (Color){ (unsigned char)(inner.r * 0.65f), (unsigned char)(inner.g * 0.65f), (unsigned char)(inner.b * 0.65f), inner.a };
+    Color ring = active ? WUXIA_GOLD_BRIGHT : (ready ? accent : (Color){ 78, 84, 96, 160 });
 
-    DrawCircleV(center, radius, fill);
-    DrawRing(center, radius - 2.4f * scale, radius, 0.0f, 360.0f, 32, ring);
-    DrawRing(center, radius - 5.0f * scale, radius - 4.0f * scale, 0.0f, 360.0f, 32, ColorAlpha(ring, 0.28f));
+    DrawCircleGradient(center, radius, inner, outer);
+    DrawRing(center, radius - 2.2f * scale, radius, 0.0f, 360.0f, 36, ring);
+    DrawRing(center, radius - 5.2f * scale, radius - 4.2f * scale, 0.0f, 360.0f, 36, ColorAlpha(WUXIA_GOLD, ready ? 0.35f : 0.14f));
 
     if (topTag && topTag[0]) {
-        int tagSize = (int)(10.0f * scale);
-        if (tagSize < 9) tagSize = 9;
-        int tw = MeasureText(topTag, tagSize);
-        DrawText(topTag, (int)(center.x - tw * 0.5f), (int)(center.y - radius * 0.62f),
-                 tagSize, ColorAlpha(ready ? (Color){ 235, 225, 185, 255 } : GRAY, 0.9f));
+        float tagSize = 11.0f * scale;
+        if (tagSize < 10.0f) tagSize = 10.0f;
+        float tw = WuxiaUI_MeasureText(topTag, tagSize);
+        WuxiaUI_DrawText(topTag, center.x - tw * 0.5f, center.y - radius * 0.68f,
+                         tagSize, ColorAlpha(ready ? WUXIA_GOLD_BRIGHT : GRAY, 0.92f));
     }
     if (mainLabel && mainLabel[0]) {
-        int fontSize = (int)(12.0f * scale);
-        if (fontSize < 10) fontSize = 10;
-        int lw = MeasureText(mainLabel, fontSize);
-        while (lw > (int)(radius * 1.75f) && fontSize > 8) {
-            fontSize--;
-            lw = MeasureText(mainLabel, fontSize);
+        float fontSize = 13.5f * scale;
+        if (fontSize < 11.0f) fontSize = 11.0f;
+        float lw = WuxiaUI_MeasureText(mainLabel, fontSize);
+        while (lw > radius * 1.72f && fontSize > 9.0f) {
+            fontSize -= 0.5f;
+            lw = WuxiaUI_MeasureText(mainLabel, fontSize);
         }
-        int ty = (topTag && topTag[0]) ? (int)(center.y - fontSize * 0.25f) : (int)(center.y - fontSize * 0.5f);
-        DrawText(mainLabel, (int)(center.x - lw * 0.5f), ty, fontSize,
-                 ready ? WHITE : (Color){ 140, 145, 155, 200 });
+        float ty = (topTag && topTag[0]) ? (center.y - fontSize * 0.25f) : (center.y - fontSize * 0.5f);
+        WuxiaUI_DrawText(mainLabel, center.x - lw * 0.5f, ty, fontSize,
+                         ready ? WUXIA_TEXT_PRIMARY : (Color){ 155, 160, 172, 220 });
     }
 }
 

@@ -12,6 +12,7 @@
 #include "net/net_transport.h"
 #include "skills/skill_manager.h"
 #include "ui/ui.h"
+#include "ui/ui_theme.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -435,60 +436,50 @@ void OW_DrawHUD(const PlayerEntity *player, Camera3D cam) {
     bool touchMode = UI_IsTouchControlsEnabled();
     if (pa) {
         int z = OW_GetZoneAt(pa->position);
-        int zw = touchMode ? 330 : 450;
-        int zy = touchMode ? 78 : 44;
-        DrawRectangle(sw / 2 - zw / 2, zy, zw, 28, (Color){ 16, 18, 26, 210 });
-        DrawRectangleLines(sw / 2 - zw / 2, zy, zw, 28, (Color){ 215, 178, 95, 190 });
+        float zw = touchMode ? 360.0f : 460.0f;
+        float zy = touchMode ? 76.0f : 44.0f;
+        Rectangle zr = { (float)sw * 0.5f - zw * 0.5f, zy, zw, 28.0f };
+        WuxiaUI_DrawRibbon(zr, pa->duelFlag ? WUXIA_CRIMSON : WUXIA_GOLD);
         const char *hudLine = touchMode
-            ? TextFormat("%s  |  %s", OW_GetZoneName(z), pa->duelFlag ? "PK: BAT" : "HOA BINH")
-            : TextFormat("%s  |  [C] Gio Dan Loi  |  %s", OW_GetZoneName(z), pa->duelFlag ? "PK: BAT" : "HOA BINH");
-        int tw = MeasureText(hudLine, 12);
-        DrawText(hudLine, sw / 2 - tw / 2, zy + 8, 12, pa->duelFlag ? (Color){ 255, 130, 120, 255 } : GOLD);
+            ? TextFormat("%s   ·   %s", OW_GetZoneName(z), pa->duelFlag ? "PK: BAT" : "HOA BINH")
+            : TextFormat("%s   ·   [C] Gio Dan Loi   ·   %s", OW_GetZoneName(z), pa->duelFlag ? "PK: BAT" : "HOA BINH");
+        WuxiaUI_DrawTextCentered(hudLine, zr, 13.0f, pa->duelFlag ? (Color){ 255, 145, 135, 255 } : WUXIA_GOLD_BRIGHT);
 
         const char *prompt = OWQuestNpc_GetNearbyPrompt(pa->position);
         if (!prompt) prompt = OWLoot_GetNearbyPrompt(pa->position);
         if (prompt) {
             if (touchMode) {
                 const char *clean = (strncmp(prompt, "[F] ", 4) == 0) ? prompt + 4 : prompt;
-                int lw = MeasureText(clean, 15);
-                float bw = (float)(lw + 40);
-                if (bw < 240.0f) bw = 240.0f;
-                Rectangle ib = { (float)sw * 0.5f - bw * 0.5f, (float)GetScreenHeight() - 100.0f, bw, 46.0f };
-                bool hov = CheckCollisionPointRec(GetMousePosition(), ib);
-                DrawRectangleRec(ib, hov ? (Color){ 68, 56, 24, 245 } : (Color){ 32, 28, 18, 238 });
-                DrawRectangleLinesEx(ib, 2.0f, GOLD);
-                DrawText(clean, (int)(ib.x + (ib.width - lw) * 0.5f), (int)ib.y + 15, 15, GOLD);
-                if (hov && IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+                float lw = WuxiaUI_MeasureText(clean, 15.5f);
+                float bw = lw + 48.0f;
+                if (bw < 250.0f) bw = 250.0f;
+                Rectangle ib = { (float)sw * 0.5f - bw * 0.5f, (float)GetScreenHeight() - 102.0f, bw, 46.0f };
+                if (WuxiaUI_DrawButton(ib, clean, WUXIA_GOLD, true, 15.5f)) {
                     s_touchInteractReq = true;
                 }
             } else {
-                int lw = MeasureText(prompt, 15);
-                DrawRectangle(sw / 2 - lw / 2 - 14, GetScreenHeight() - 148, lw + 28, 30, (Color){ 20, 24, 34, 230 });
-                DrawRectangleLines(sw / 2 - lw / 2 - 14, GetScreenHeight() - 148, lw + 28, 30, GOLD);
-                DrawText(prompt, sw / 2 - lw / 2, GetScreenHeight() - 141, 15, GOLD);
+                float lw = WuxiaUI_MeasureText(prompt, 15.0f);
+                Rectangle ib = { (float)sw * 0.5f - lw * 0.5f - 18.0f, (float)GetScreenHeight() - 148.0f, lw + 36.0f, 32.0f };
+                WuxiaUI_DrawPanel(ib, WUXIA_GOLD, true);
+                WuxiaUI_DrawTextCentered(prompt, ib, 15.0f, WUXIA_GOLD_BRIGHT);
             }
         }
     }
 
     if (touchMode) {
-        // Clean mobile quick-action pills tucked right below the top-left HP/MP bar (leaves joystick 100% clear)
+        // Clean mobile quick-action pills tucked right below the top-left HP/MP card
         struct { const char *lbl; Color border; bool *flag; } pills[4] = {
-            { TextFormat("MAU (%d)", prof->potions[POTION_HEAL_HP]), (Color){ 225, 85, 85, 235 }, &s_touchHealReq },
-            { TextFormat("MANA (%d)", prof->potions[POTION_RESTORE_MANA]), (Color){ 80, 160, 245, 235 }, &s_touchManaReq },
-            { "GIO", (Color){ 105, 225, 200, 235 }, &s_touchWindReq },
-            { "GIAO LUU", (Color){ 165, 205, 255, 235 }, NULL }
+            { TextFormat("MAU (%d)", prof->potions[POTION_HEAL_HP]), WUXIA_CRIMSON, &s_touchHealReq },
+            { TextFormat("MANA (%d)", prof->potions[POTION_RESTORE_MANA]), WUXIA_AZURE, &s_touchManaReq },
+            { "GIO", WUXIA_JADE, &s_touchWindReq },
+            { "GIAO LUU", WUXIA_GOLD, NULL }
         };
         float px = 16.0f;
-        float py = 110.0f;
+        float py = 112.0f;
         for (int i = 0; i < 4; i++) {
-            int tw = MeasureText(pills[i].lbl, 12);
-            float pw = (float)(tw + 20);
+            float pw = WuxiaUI_MeasureText(pills[i].lbl, 12.5f) + 22.0f;
             Rectangle pr = { px, py, pw, 30.0f };
-            bool hov = CheckCollisionPointRec(GetMousePosition(), pr);
-            DrawRectangleRec(pr, hov ? (Color){ 36, 42, 58, 240 } : (Color){ 18, 22, 32, 215 });
-            DrawRectangleLinesEx(pr, 1.3f, pills[i].border);
-            DrawText(pills[i].lbl, (int)pr.x + 10, (int)pr.y + 9, 12, WHITE);
-            if (hov && IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+            if (WuxiaUI_DrawButton(pr, pills[i].lbl, pills[i].border, (i == 3 && s_emoteMenuOpen), 12.5f)) {
                 if (pills[i].flag) *pills[i].flag = true;
                 else s_emoteMenuOpen = !s_emoteMenuOpen;
             }
@@ -537,28 +528,21 @@ void OW_DrawHUD(const PlayerEntity *player, Camera3D cam) {
     }
 
     if (s_emoteMenuOpen && player) {
-        Rectangle eb = { (float)sw / 2 - 220.0f, 125.0f, 440.0f, 108.0f };
-        DrawRectangleRec(eb, (Color){ 16, 20, 30, 240 });
-        DrawRectangleLinesEx(eb, 1.5f, SKYBLUE);
-        DrawText("GIAO LUU & TY VO", (int)eb.x + 14, (int)eb.y + 10, 14, SKYBLUE);
+        Rectangle eb = { (float)sw / 2 - 230.0f, 125.0f, 460.0f, 114.0f };
+        WuxiaUI_DrawPanel(eb, WUXIA_AZURE, true);
+        WuxiaUI_DrawText("GIAO LUU & TY VO", eb.x + 16.0f, eb.y + 12.0f, 15.0f, WUXIA_GOLD);
 
-        Rectangle eClose = { eb.x + eb.width - 74.0f, eb.y + 8.0f, 62.0f, 24.0f };
-        DrawRectangleRec(eClose, (Color){ 88, 30, 30, 240 });
-        DrawText("DONG", (int)eClose.x + 12, (int)eClose.y + 5, 12, WHITE);
-        if (CheckCollisionPointRec(GetMousePosition(), eClose) && IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
+        Rectangle eClose = { eb.x + eb.width - 78.0f, eb.y + 8.0f, 64.0f, 26.0f };
+        if (WuxiaUI_DrawButton(eClose, "DONG", WUXIA_CRIMSON, false, 12.0f))
             s_emoteMenuOpen = false;
 
         const char *eLbls[5] = { "Chao Hoi", "Goi Boss", "Moi Ty Vo", "Giao Dich",
                                  (pa && pa->duelFlag) ? "Tat PK" : "Bat PK" };
         for (int i = 0; i < 5; i++) {
-            float bx = eb.x + 12.0f + i * 84.0f;
-            Rectangle br = { bx, eb.y + 44.0f, 78.0f, 46.0f };
-            bool hov = CheckCollisionPointRec(GetMousePosition(), br);
-            DrawRectangleRec(br, hov ? (Color){ 42, 54, 72, 255 } : (Color){ 26, 32, 46, 255 });
-            DrawRectangleLinesEx(br, 1.2f, (i == 4 && pa && pa->duelFlag) ? RED : SKYBLUE);
-            int tw = MeasureText(eLbls[i], 11);
-            DrawText(eLbls[i], (int)(br.x + (br.width - tw) * 0.5f), (int)br.y + 17, 11, WHITE);
-            if (hov && IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+            float bx = eb.x + 14.0f + i * 87.0f;
+            Rectangle br = { bx, eb.y + 46.0f, 81.0f, 50.0f };
+            Color bc = (i == 4 && pa && pa->duelFlag) ? WUXIA_CRIMSON : WUXIA_AZURE;
+            if (WuxiaUI_DrawButton(br, eLbls[i], bc, (i == 4 && pa && pa->duelFlag), 12.5f)) {
                 if (i < 4) {
                     RecordEmote(player->agentId, i + 1);
                     Net_SendSocialState(player->agentId, i + 1, Entity_GetDuelFlag(player->agentId));
@@ -572,18 +556,15 @@ void OW_DrawHUD(const PlayerEntity *player, Camera3D cam) {
     }
 
     if (s_tradeMenuOpen && pa) {
-        Rectangle tb = { (float)sw / 2 - 190.0f, 195.0f, 380.0f, 220.0f };
-        DrawRectangleRec(tb, (Color){ 18, 22, 32, 245 });
-        DrawRectangleLinesEx(tb, 1.5f, GOLD);
-        DrawText("GIAO DICH / TANG VAT PHAM (P2P)", (int)tb.x + 14, (int)tb.y + 12, 14, GOLD);
+        Rectangle tb = { (float)sw / 2 - 200.0f, 195.0f, 400.0f, 226.0f };
+        WuxiaUI_DrawPanel(tb, WUXIA_GOLD, true);
+        WuxiaUI_DrawText("GIAO DICH / TANG VAT PHAM", tb.x + 16.0f, tb.y + 12.0f, 15.0f, WUXIA_GOLD);
 
-        Rectangle tClose = { tb.x + tb.width - 74.0f, tb.y + 8.0f, 62.0f, 24.0f };
-        DrawRectangleRec(tClose, (Color){ 88, 30, 30, 240 });
-        DrawText("DONG", (int)tClose.x + 12, (int)tClose.y + 5, 12, WHITE);
-        if (CheckCollisionPointRec(GetMousePosition(), tClose) && IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
+        Rectangle tClose = { tb.x + tb.width - 78.0f, tb.y + 8.0f, 64.0f, 26.0f };
+        if (WuxiaUI_DrawButton(tClose, "DONG", WUXIA_CRIMSON, false, 12.0f))
             s_tradeMenuOpen = false;
 
-        DrawText("Cham de gui qua cho dong dao trong phong:", (int)tb.x + 14, (int)tb.y + 36, 11, LIGHTGRAY);
+        WuxiaUI_DrawText("Cham de gui qua cho dong dao trong phong:", tb.x + 16.0f, tb.y + 38.0f, 12.5f, WUXIA_TEXT_MUTED);
 
         struct { const char *lbl; int kind; int amt; } opts[4] = {
             { "Gui 100 Vang", 0, 100 },
@@ -592,12 +573,8 @@ void OW_DrawHUD(const PlayerEntity *player, Camera3D cam) {
             { "Gui 1 Hoi Sinh Dan", 3, 1 }
         };
         for (int i = 0; i < 4; i++) {
-            Rectangle br = { tb.x + 14, tb.y + 58 + i * 38, tb.width - 28, 32 };
-            bool hov = CheckCollisionPointRec(GetMousePosition(), br);
-            DrawRectangleRec(br, hov ? (Color){ 48, 44, 30, 255 } : (Color){ 28, 32, 44, 255 });
-            DrawRectangleLinesEx(br, 1.0f, hov ? GOLD : GRAY);
-            DrawText(opts[i].lbl, (int)br.x + 10, (int)br.y + 5, 12, WHITE);
-            if (hov && IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+            Rectangle br = { tb.x + 16.0f, tb.y + 62.0f + i * 38.0f, tb.width - 32.0f, 32.0f };
+            if (WuxiaUI_DrawButton(br, opts[i].lbl, WUXIA_GOLD, false, 13.0f)) {
                 bool ok = false;
                 if (opts[i].kind == 0 && prof->gold >= 100) { prof->gold -= 100; ok = true; }
                 else if (opts[i].kind == 1 && prof->elementalStones[s_realm.realmId % 5] >= 1) {

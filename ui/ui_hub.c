@@ -1,5 +1,6 @@
 // ui/ui_hub.c
 #include "ui/ui_hub.h"
+#include "ui/ui_theme.h"
 #include "ui/ui_wardrobe.h"
 #include "character/player_profile.h"
 #include "character/wardrobe_system.h"
@@ -39,14 +40,9 @@ static bool IsSkillSelectable(int skillIdx) {
 }
 
 static bool DrawWuxiaBtn(Rectangle r, const char *label, Color border, Color fill, Color textCol, int fontSize) {
-    Vector2 m = GetMousePosition();
-    bool hov = CheckCollisionPointRec(m, r);
-    Color bg = hov ? (Color){ (unsigned char)(fill.r + 18), (unsigned char)(fill.g + 18), (unsigned char)(fill.b + 24), fill.a } : fill;
-    DrawRectangleRec(r, bg);
-    DrawRectangleLinesEx(r, hov ? 2.0f : 1.5f, hov ? (Color){ 255, 225, 130, 255 } : border);
-    int tw = MeasureText(label, fontSize);
-    DrawText(label, (int)(r.x + r.width * 0.5f - tw * 0.5f), (int)(r.y + r.height * 0.5f - fontSize * 0.5f), fontSize, textCol);
-    return hov && IsMouseButtonReleased(MOUSE_BUTTON_LEFT);
+    (void)fill;
+    (void)textCol;
+    return WuxiaUI_DrawButton(r, label, border, false, (float)fontSize);
 }
 
 void UI_Hub_Init(void) {
@@ -280,40 +276,40 @@ UIHubAction UI_Hub_UpdateDrawMain(int *outParam, char *joinCodeBuf, int joinCode
         return UI_HUB_ACT_NONE;
     }
 
-    ClearBackground((Color){ 12, 14, 22, 255 });
+    ClearBackground((Color){ 10, 12, 18, 255 });
 
-    // Top Header Bar
-    DrawRectangle(0, 0, sw, 72, (Color){ 18, 20, 30, 245 });
-    DrawLine(0, 72, sw, 72, (Color){ 195, 165, 90, 200 });
-    DrawText("NGU HANH TY VO", 28, 16, 28, (Color){ 245, 215, 120, 255 });
-    DrawText(TextFormat("Vang: %d  |  Diem Da Tau: %d  |  Chuoi: %d",
-                        prof->gold, prof->daTauPoints, prof->daTauStreak),
-             28, 48, 14, (Color){ 195, 220, 195, 255 });
+    // Top Header Bar (Where Winds Meet Ink-Wash & Gold)
+    DrawRectangleGradientV(0, 0, sw, 74, (Color){ 20, 24, 34, 250 }, (Color){ 12, 15, 22, 240 });
+    DrawLineEx((Vector2){ 0, 74 }, (Vector2){ (float)sw, 74 }, 1.5f, ColorAlpha(WUXIA_GOLD, 0.72f));
+    WuxiaUI_DrawDiamond((Vector2){ 34.0f, 30.0f }, 8.0f, WUXIA_GOLD, WUXIA_GOLD_BRIGHT);
+    WuxiaUI_DrawText("NGU HANH TY VO", 52.0f, 14.0f, 28.0f, WUXIA_GOLD_BRIGHT);
+    WuxiaUI_DrawText(TextFormat("Vang: %d   ·   Diem Da Tau: %d   ·   Chuoi: %d",
+                                prof->gold, prof->daTauPoints, prof->daTauStreak),
+                     52.0f, 48.0f, 14.0f, WUXIA_JADE);
 
     // Global Prep Buttons (Top Right)
     if (DrawWuxiaBtn((Rectangle){ (float)sw - 580, 16, 175, 42 }, "TU DO 3D (MAC DO)",
-                     (Color){ 120, 180, 230, 230 }, (Color){ 26, 36, 50, 255 }, WHITE, 13)) {
+                     WUXIA_AZURE, (Color){ 26, 36, 50, 255 }, WHITE, 13)) {
         UI_Wardrobe_Open(Wardrobe_GetGlobalPlayer(), Wardrobe_GetGlobalModularInstance());
         return UI_HUB_ACT_NONE;
     }
     if (DrawWuxiaBtn((Rectangle){ (float)sw - 395, 16, 185, 42 }, "VO HOC (CHON 5 SKILL)",
-                     GOLD, (Color){ 42, 36, 22, 255 }, (Color){ 255, 230, 140, 255 }, 13)) {
+                     WUXIA_GOLD, (Color){ 42, 36, 22, 255 }, WUXIA_GOLD_BRIGHT, 13)) {
         UI_Hub_OpenModal(0);
         return UI_HUB_ACT_NONE;
     }
     if (DrawWuxiaBtn((Rectangle){ (float)sw - 200, 16, 175, 42 }, "TIEM DA TAU",
-                     (Color){ 180, 145, 85, 230 }, (Color){ 32, 28, 24, 255 }, WHITE, 13)) {
+                     WUXIA_JADE, (Color){ 32, 28, 24, 255 }, WHITE, 13)) {
         UI_Hub_OpenModal(1);
         return UI_HUB_ACT_NONE;
     }
 
     // Left Column: Mode 1 — Explore World (5 Ngũ Hành Maps)
     Rectangle leftPanel = { 28, 94, (float)sw * 0.48f - 38, (float)sh - 160 };
-    DrawRectangleRec(leftPanel, (Color){ 18, 22, 32, 235 });
-    DrawRectangleLinesEx(leftPanel, 1.5f, (Color){ 90, 165, 130, 200 });
-    DrawText("CHE DO 1: KHAM PHA THE GIOI (PvE)", (int)leftPanel.x + 18, (int)leftPanel.y + 14, 18, (Color){ 140, 235, 175, 255 });
-    DrawText("Danh quai, lam nhiem vu Da Tau, luyen cap Vo Hoc & kiem do",
-             (int)leftPanel.x + 18, (int)leftPanel.y + 38, 12, LIGHTGRAY);
+    WuxiaUI_DrawPanel(leftPanel, WUXIA_JADE, true);
+    WuxiaUI_DrawText("CHE DO 1: KHAM PHA THE GIOI (PvE)", leftPanel.x + 20.0f, leftPanel.y + 14.0f, 18.0f, WUXIA_JADE);
+    WuxiaUI_DrawText("Danh quai, lam nhiem vu Da Tau, luyen cap Vo Hoc & kiem do",
+                     leftPanel.x + 20.0f, leftPanel.y + 39.0f, 13.0f, WUXIA_TEXT_MUTED);
 
     for (int r = 0; r < 5; r++) {
         Rectangle btn = { leftPanel.x + 18, leftPanel.y + 68 + r * 72, leftPanel.width - 36, 58 };
@@ -325,11 +321,10 @@ UIHubAction UI_Hub_UpdateDrawMain(int *outParam, char *joinCodeBuf, int joinCode
 
     // Right Column: Mode 2 — PvP Dual-Boss Escort (1v1 & 2v2)
     Rectangle rightPanel = { (float)sw * 0.50f + 10, 94, (float)sw * 0.48f - 38, (float)sh - 160 };
-    DrawRectangleRec(rightPanel, (Color){ 22, 18, 28, 235 });
-    DrawRectangleLinesEx(rightPanel, 1.5f, (Color){ 215, 120, 95, 200 });
-    DrawText("CHE DO 2: DAU TRUONG HO PHAP (PvP CONG BANG)", (int)rightPanel.x + 18, (int)rightPanel.y + 14, 18, (Color){ 255, 165, 130, 255 });
-    DrawText("Tat toan bo chi so do & Lv skill! Ho tong Boss + Chiem Tru Long Mach",
-             (int)rightPanel.x + 18, (int)rightPanel.y + 38, 12, LIGHTGRAY);
+    WuxiaUI_DrawPanel(rightPanel, WUXIA_CRIMSON, true);
+    WuxiaUI_DrawText("CHE DO 2: DAU TRUONG HO PHAP (PvP CONG BANG)", rightPanel.x + 20.0f, rightPanel.y + 14.0f, 18.0f, (Color){ 255, 165, 130, 255 });
+    WuxiaUI_DrawText("Tat toan bo chi so do & Lv skill! Ho tong Boss + Chiem Tru Long Mach",
+                     rightPanel.x + 20.0f, rightPanel.y + 39.0f, 13.0f, WUXIA_TEXT_MUTED);
 
     if (DrawWuxiaBtn((Rectangle){ rightPanel.x + 18, rightPanel.y + 72, rightPanel.width - 36, 68 },
                      "DAU 1vs1 (SONG LINH HO PHAP)",
