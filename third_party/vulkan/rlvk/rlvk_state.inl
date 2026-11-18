@@ -208,9 +208,9 @@ typedef struct rlvkPipelineEntry
 #define RLVK_MAX_RENDER_PASSES 32
 #define RLVK_MAX_CACHED_FRAMEBUFFERS 64
 #define RLVK_MAX_SCOPE_ATTACHMENTS 11   // 8 colors + colour resolve + depth + depth resolve
-#define RLVK_DESC_SETS_PER_FRAME 1024   // pool-ring fallback: snapshot sets per frame slot
+#define RLVK_DESC_SETS_PER_FRAME 4096   // pool-ring fallback: snapshot sets per frame slot
 #define RLVK_COMPUTE_SETS_PER_FRAME 256 // compute dispatch snapshot sets per frame slot
-#define RLVK_SET0_CACHE_SIZE 128        // pool-ring fallback: distinct set-0 snapshots reused within one frame
+#define RLVK_SET0_CACHE_SIZE 256        // pool-ring fallback: distinct set-0 snapshots reused within one frame
 
 typedef struct rlvkRenderPassKey
 {
