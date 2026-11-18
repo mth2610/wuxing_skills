@@ -79,4 +79,10 @@ void Control_SetMoveSpeedMult(float mult);
 typedef int (*ControlSkillLevelFn)(int skillIndex);
 void Control_SetSkillLevelProvider(ControlSkillLevelFn fn);
 
+// Full skill scaling provider (level, milestone, quantity, sizeScale, dmgMult, cdMult).
+typedef void (*ControlSkillScalingFn)(int skillIndex, int *outLevel, int *outMilestone,
+                                      int *outQuantity, float *outSizeScale,
+                                      float *outDamageMult, float *outCooldownMult);
+void Control_SetSkillScalingProvider(ControlSkillScalingFn fn);
+
 #endif // CONTROL_H

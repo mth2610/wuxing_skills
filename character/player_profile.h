@@ -18,10 +18,20 @@
 #define PROFILE_SKILL_NAME_LEN 48
 #define PLAYER_PROFILE_DEFAULT_SAVE_PATH "assets/saves/player_profile.json"
 
+typedef enum {
+    POTION_HEAL_HP = 0,      // Hồi Sinh Đan (+45 HP)
+    POTION_RESTORE_MANA,     // Tụ Khí Linh Dịch (+60 Mana)
+    POTION_EARTH_MIGHT,      // Hoàng Thổ Hộ Thể Đan (+35% PvE Dmg, -30% PvE Dmg Taken)
+    POTION_SKILL_XP_BOOST,   // Ngộ Đạo Linh Trà (x2 EXP Skill)
+    POTION_TYPE_COUNT
+} PotionType;
+
 typedef struct {
     int      gold;
     int      daTauPoints;
     int      daTauTokens;                          // Lệnh Bài Dã Tẩu (đổi nhiệm vụ giữ chuỗi)
+    int      herbs;                                // Linh Thảo Sa Mạc (nguyên liệu Đan Dược)
+    int      potions[POTION_TYPE_COUNT];           // Túi Đan Dược
     int      elementalStones[5];                   // 0=Water,1=Wood,2=Fire,3=Earth,4=Metal
     int      daTauStreak;
     int      daTauTotalCompleted;
@@ -48,5 +58,17 @@ void PlayerProfile_EquipSkillSlot(int slot, int skillIndex);
 // Fair-play normalization: returns 1 in PvP regardless of mastery,
 // or the unlocked mastery level (1..10) in PvE.
 int  PlayerProfile_GetEffectiveSkillLevel(int skillIndex, bool isPvP);
+
+// Computes skill scaling for PvE vs PvP:
+// PvE scales level (1..10), milestone (0..3), quantity (1..4), sizeScale (1..1.5),
+// damageMult (1.0..2.62), cooldownMult (1.0..0.7). PvP locks all to Lv.1 base.
+void PlayerProfile_GetSkillScaling(int skillIndex, bool isPvP,
+                                   int *outLevel, int *outMilestone,
+                                   int *outQuantity, float *outSizeScale,
+                                   float *outDamageMult, float *outCooldownMult);
+
+// Potion inventory helpers
+void PlayerProfile_AddPotion(PotionType type, int count);
+bool PlayerProfile_ConsumePotion(PotionType type);
 
 #endif // PLAYER_PROFILE_H

@@ -23,6 +23,9 @@
 #include "eos_connect.h"
 #include "eos_lobby.h"
 #include "eos_p2p.h"
+#ifdef __ANDROID__
+#include "Android/eos_Android.h"
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -100,22 +103,31 @@ static bool PumpUntilDone(const char *what) {
 }
 
 static bool LoadKeys(void) {
-    FILE *f = fopen(EOS_KEYS_FILE, "r");
-    if (f == NULL) {
+    char *text = LoadFileText(EOS_KEYS_FILE);
+    if (text == NULL) {
         TraceLog(LOG_WARNING, "[EOS] missing %s — see EOS_SETUP.md", EOS_KEYS_FILE);
         return false;
     }
-    char line[512];
-    while (fgets(line, sizeof(line), f) != NULL) {
+    const char *p = text;
+    while (*p != '\0') {
+        const char *nl = strchr(p, '\n');
+        char line[512];
+        size_t len = nl ? (size_t)(nl - p) : strlen(p);
+        if (len >= sizeof(line)) len = sizeof(line) - 1;
+        memcpy(line, p, len);
+        line[len] = '\0';
         char key[64], val[256];
-        if (sscanf(line, " %63[a-z_] = %255s", key, val) != 2) continue;
-        if      (strcmp(key, "product_id")    == 0) strncpy(s_productId,    val, sizeof(s_productId) - 1);
-        else if (strcmp(key, "sandbox_id")    == 0) strncpy(s_sandboxId,    val, sizeof(s_sandboxId) - 1);
-        else if (strcmp(key, "deployment_id") == 0) strncpy(s_deploymentId, val, sizeof(s_deploymentId) - 1);
-        else if (strcmp(key, "client_id")     == 0) strncpy(s_clientId,     val, sizeof(s_clientId) - 1);
-        else if (strcmp(key, "client_secret") == 0) strncpy(s_clientSecret, val, sizeof(s_clientSecret) - 1);
+        if (sscanf(line, " %63[a-z_] = %255s", key, val) == 2) {
+            if      (strcmp(key, "product_id")    == 0) strncpy(s_productId,    val, sizeof(s_productId) - 1);
+            else if (strcmp(key, "sandbox_id")    == 0) strncpy(s_sandboxId,    val, sizeof(s_sandboxId) - 1);
+            else if (strcmp(key, "deployment_id") == 0) strncpy(s_deploymentId, val, sizeof(s_deploymentId) - 1);
+            else if (strcmp(key, "client_id")     == 0) strncpy(s_clientId,     val, sizeof(s_clientId) - 1);
+            else if (strcmp(key, "client_secret") == 0) strncpy(s_clientSecret, val, sizeof(s_clientSecret) - 1);
+        }
+        if (!nl) break;
+        p = nl + 1;
     }
-    fclose(f);
+    UnloadFileText(text);
     if (!s_productId[0] || !s_sandboxId[0] || !s_deploymentId[0] ||
         !s_clientId[0] || !s_clientSecret[0]) {
         TraceLog(LOG_WARNING, "[EOS] %s incomplete — need product/sandbox/deployment/client id + secret",
@@ -176,6 +188,13 @@ static bool EnsureLoggedIn(void) {
         init.ApiVersion     = EOS_INITIALIZE_API_LATEST;
         init.ProductName    = "wuxing_skills";
         init.ProductVersion = "0.1";
+#ifdef __ANDROID__
+        static EOS_Android_InitializeOptions s_androidInit = { 0 };
+        s_androidInit.ApiVersion = EOS_ANDROID_INITIALIZEOPTIONS_API_LATEST;
+        s_androidInit.OptionalInternalDirectory = "/data/data/com.mth2610.wuxing/files";
+        s_androidInit.OptionalExternalDirectory = NULL;
+        init.SystemInitializeOptions = &s_androidInit;
+#endif
         EOS_EResult r = EOS_Initialize(&init);
         if (r != EOS_Success && r != EOS_AlreadyConfigured) {
             TraceLog(LOG_WARNING, "[EOS] EOS_Initialize: %s", EOS_EResult_ToString(r));
@@ -789,7 +808,7 @@ bool Net_JoinOrHostExploreRealm(int realmId, char *outJoinCode, int maxCodeLen) 
     EOS_Lobby_CreateLobbyOptions create = { 0 };
     create.ApiVersion       = EOS_LOBBY_CREATELOBBY_API_LATEST;
     create.LocalUserId      = s_localPuid;
-    create.MaxLobbyMembers  = NET_MAX_PLAYERS;
+    create.MaxLobbyMembers  = NET_EXPLORE_MAX_PLAYERS; // 5 players/host for low-latency Open World P2P
     create.PermissionLevel  = EOS_LPL_PUBLICADVERTISED;
     create.bPresenceEnabled = EOS_FALSE;
     create.bAllowInvites    = EOS_TRUE;

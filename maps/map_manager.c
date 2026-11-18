@@ -249,9 +249,12 @@ Vector3 MapManager_GetActiveSpawnPoint(void) {
     if (s_mapCount == 0) return (Vector3){ 6.0f, 0.0f, 4.4f };
     const char *name = s_maps[s_activeMapIndex].name;
     Vector3 pt;
-    if (strcmp(name, "SONG_QUAO") == 0 || strcmp(name, "NINH_THUAN") == 0) {
+    if (strcmp(name, "SONG_QUAO") == 0) {
         // Island center is (94.15f, 150.0f). Spawn near the main plateau.
         pt = (Vector3){ 94.15f, 0.0f, 150.0f };
+    } else if (strcmp(name, "NINH_THUAN") == 0) {
+        // Oasis Safe Sanctum shore (looking toward Starter Dunes & Relic Canyon).
+        pt = (Vector3){ 160.0f, 0.0f, 222.0f };
     } else {
         // DEFAULT_ARENA and default fallback
         pt = (Vector3){ 6.0f, 0.0f, 4.4f };

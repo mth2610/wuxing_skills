@@ -153,6 +153,11 @@ void CharacterModel_DrawCustomClothEx(Model customModel, const CharacterAnimStat
                                       bool deflateTorso, bool deflateLegs,
                                       const struct SpringBoneSystem *spring);
 
+// Clones a skinned Model's GPU VBOs and CPU anim buffers (sharing materials/skeleton/textures)
+// so each remote hero has independent GPU vertex buffers on Vulkan (no pose overwrite).
+Model CharacterModel_CloneSkinnedModel(Model src);
+void  CharacterModel_UnloadSkinnedClone(Model *m);
+
 // Getters for integration with visual composer / skill effects
 struct MeshAdjacency;
 Model CharacterModel_GetModel(void);

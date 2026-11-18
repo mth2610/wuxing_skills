@@ -14,6 +14,8 @@
 #include "maps/toolkit/map_props.h"
 #include "game/game_rules.h"
 #include "game/quest_datau.h"
+#include "open_world/ow_world.h"
+#include "open_world/realms/ow_desert_earth.h"
 #include "ai/ai.h"
 #include "ui/ui.h"
 #include "ui/ui_hub.h"
@@ -119,6 +121,125 @@ static CharacterAnimState s_remoteAnim[MAX_AGENTS];
 static Vector3 s_remotePrevPos[MAX_AGENTS];
 static float s_remoteYaw[MAX_AGENTS];
 static bool s_remoteAnimInit[MAX_AGENTS];
+static ModularInstance s_remoteModular[MAX_AGENTS];
+static bool s_remoteModularInit[MAX_AGENTS];
+
+static void EnsureRemoteModularInit(int agentId)
+{
+    if (agentId < 0 || agentId >= MAX_AGENTS || s_remoteModularInit[agentId])
+        return;
+    ModularInstance_Init(&s_remoteModular[agentId], MODULAR_TIER_HERO);
+    s_remoteModular[agentId].useUniqueGpuBuffers = true;
+    PlayerWardrobe rw;
+    PlayerWardrobe_Init(&rw, "Remote_Hero");
+    PlayerWardrobe_ApplyToInstance(&rw, &s_remoteModular[agentId]);
+    s_remoteModularInit[agentId] = true;
+}
+
+static uint32_t ComputeWardrobeHash(const PlayerWardrobe *pw)
+{
+    uint32_t h = 2166136261u;
+    if (!pw) return h;
+    for (int s = 0; s < MODULAR_SLOT_COUNT; s++)
+    {
+        for (const char *p = pw->equippedIds[s]; *p; p++)
+        {
+            h ^= (uint8_t)*p;
+            h *= 16777619u;
+        }
+        h ^= (uint32_t)(s + 1) * 31u;
+    }
+    return h;
+}
+
+static void SyncRemoteWardrobeAndCasts(int localAgentId)
+{
+    if (Net_GetMode() == NET_MODE_OFF)
+        return;
+
+    static uint32_t s_lastSentHash = 0;
+    static int s_lastPeerCount = -1;
+    static int s_lastAgentId = -1;
+    const PlayerWardrobe *localPw = Wardrobe_GetGlobalPlayer();
+    int peers = Net_GetPeerCount();
+    if (localPw && localAgentId >= 0)
+    {
+        uint32_t h = ComputeWardrobeHash(localPw);
+        if (h != s_lastSentHash || peers != s_lastPeerCount || localAgentId != s_lastAgentId)
+        {
+            uint8_t indices[NET_WARDROBE_SLOTS];
+            memset(indices, 0xFF, sizeof(indices));
+            int catCount = Wardrobe_GetCatalogCount();
+            for (int s = 0; s < MODULAR_SLOT_COUNT && s < NET_WARDROBE_SLOTS; s++)
+            {
+                const char *id = localPw->equippedIds[s];
+                if (!id || !id[0]) continue;
+                for (int c = 0; c < catCount && c < 255; c++)
+                {
+                    const WardrobeCatalogItem *ci = Wardrobe_GetCatalogItemByIndex(c);
+                    if (ci && strcmp(ci->id, id) == 0)
+                    {
+                        indices[s] = (uint8_t)c;
+                        break;
+                    }
+                }
+            }
+            Net_SendWardrobe(localAgentId, indices, MODULAR_SLOT_COUNT);
+            s_lastSentHash = h;
+            s_lastPeerCount = peers;
+            s_lastAgentId = localAgentId;
+        }
+    }
+
+    NetWardrobeUpdate wUpdates[8];
+    int wn = Net_PollWardrobeUpdates(wUpdates, 8);
+    for (int k = 0; k < wn; k++)
+    {
+        int aid = wUpdates[k].agentId;
+        if (aid < 0 || aid >= MAX_AGENTS || aid == localAgentId)
+            continue;
+        EnsureRemoteModularInit(aid);
+        PlayerWardrobe rpw = {0};
+        snprintf(rpw.playerId, sizeof(rpw.playerId), "Remote_%d", aid);
+        for (int s = 0; s < wUpdates[k].slotCount && s < MODULAR_SLOT_COUNT; s++)
+        {
+            uint8_t cidx = wUpdates[k].catalogIndices[s];
+            if (cidx == 0xFF) continue;
+            const WardrobeCatalogItem *ci = Wardrobe_GetCatalogItemByIndex((int)cidx);
+            if (ci)
+            {
+                strncpy(rpw.equippedIds[s], ci->id, WARDROBE_ID_MAX_LEN - 1);
+                rpw.equippedIds[s][WARDROBE_ID_MAX_LEN - 1] = '\0';
+            }
+        }
+        PlayerWardrobe_ApplyToInstance(&rpw, &s_remoteModular[aid]);
+    }
+
+    NetCastEvent casts[16];
+    int cn = Net_PollCastEvents(casts, 16);
+    for (int k = 0; k < cn; k++)
+    {
+        int aid = casts[k].agentId;
+        if (aid < 0 || aid >= MAX_AGENTS || aid == localAgentId)
+            continue;
+        if (!s_remoteAnimInit[aid])
+        {
+            CharacterModel_ResetState(&s_remoteAnim[aid]);
+            s_remoteAnimInit[aid] = true;
+        }
+        const Agent *ca = Entity_GetAgent(aid);
+        if (ca)
+        {
+            float dx = casts[k].aim.x - ca->position.x;
+            float dz = casts[k].aim.z - ca->position.z;
+            if (dx * dx + dz * dz > 0.001f)
+                s_remoteYaw[aid] = atan2f(dx, dz);
+        }
+        bool hasSword = s_remoteModularInit[aid] &&
+                        (s_remoteModular[aid].loadout.itemIndices[MODULAR_SLOT_WEAPON_R] >= 0);
+        CharacterModel_Trigger(&s_remoteAnim[aid], hasSword ? CHAR_ANIM_SWORD_SLASH : CHAR_ANIM_CAST);
+    }
+}
 
 // The match runs on SONG_QUAO — the celestial floating island. Ring-out
 // bounds + player placement are applied in the INTRO tick (only while this
@@ -155,6 +276,15 @@ static int GameSkillLevelProvider(int skillIndex)
     return PlayerProfile_GetEffectiveSkillLevel(skillIndex, IsModePvP(s_mode));
 }
 
+static void GameSkillScalingProvider(int skillIndex, int *outLevel, int *outMilestone,
+                                     int *outQuantity, float *outSizeScale,
+                                     float *outDamageMult, float *outCooldownMult)
+{
+    PlayerProfile_GetSkillScaling(skillIndex, IsModePvP(s_mode),
+                                  outLevel, outMilestone, outQuantity,
+                                  outSizeScale, outDamageMult, outCooldownMult);
+}
+
 static void ApplyModeBalanceToPlayer(int agentId)
 {
     if (IsModePvP(s_mode)) {
@@ -167,12 +297,18 @@ static void ApplyModeBalanceToPlayer(int agentId)
         return;
     }
     WardrobeItemStats ws = PlayerWardrobe_GetTotalStats(pw);
+    float dmgOut = 1.0f + fmaxf(0.0f, ws.elementalBonus);
+    float dmgTaken = fmaxf(0.25f, 1.0f - fmaxf(0.0f, ws.elementalResist));
+    if (s_mode == GAME_MODE_EXPLORE && s_exploreRealm == 3 && OW_GetMightTimer() > 0.0f) {
+        dmgOut += 0.35f;
+        dmgTaken = fmaxf(0.25f, dmgTaken - 0.30f);
+    }
     AgentPvEBonuses b = {
         .bonusMaxHealth  = ws.bonusHealth,
         .bonusMaxMana    = ws.bonusMana,
         .moveSpeedMult   = (ws.speedMultiplier > 0.0f) ? ws.speedMultiplier : 1.0f,
-        .damageOutMult   = 1.0f + fmaxf(0.0f, ws.elementalBonus),
-        .damageTakenMult = fmaxf(0.25f, 1.0f - fmaxf(0.0f, ws.elementalResist)),
+        .damageOutMult   = dmgOut,
+        .damageTakenMult = dmgTaken,
         .manaRegenMult   = 1.0f + fmaxf(0.0f, ws.manaRegenBonus),
     };
     Entity_SetPvEBonuses(agentId, &b);
@@ -255,6 +391,7 @@ static void ResetMatch(PlayerEntity *player)
     s_tuongSinhTimer = 0.0f;
     s_wasExploreClient = false;
     s_failoverBannerTimer = 0.0f;
+    Net_SetExploreMode(s_mode == GAME_MODE_EXPLORE);
     if (UI_IsLoadoutOpen())
         UI_ToggleLoadout();
     if (UI_Hub_IsModalOpen())
@@ -265,7 +402,10 @@ static void ResetMatch(PlayerEntity *player)
         s_mode == GAME_MODE_PVP_ESCORT_2V2)
         AI_ClearHeroBots();
     for (int i = 0; i < MAX_AGENTS; i++)
+    {
         s_remoteAnimInit[i] = false;
+        s_remoteModularInit[i] = false;
+    }
 
     if (Entity_GetAgent(player->agentId) == NULL)
     {
@@ -288,6 +428,7 @@ static void ResetMatch(PlayerEntity *player)
     }
     Control_Init(player->agentId);
     Control_SetSkillLevelProvider(GameSkillLevelProvider);
+    Control_SetSkillScalingProvider(GameSkillScalingProvider);
 
     EquipDefaultLoadout(player->agentId);
     ApplyModeBalanceToPlayer(player->agentId);
@@ -377,6 +518,15 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
     }
 
     // --- Match state machine (Module 7) ---
+    if (s_mode == GAME_MODE_EXPLORE && s_exploreRealm == 3 && s_state == GAME_FIGHTING)
+    {
+        OW_DrawHUD(player, s_hudCamera);
+        int peerCount = (Net_GetMode() != NET_MODE_OFF) ? (Net_GetPeerCount() + 1) : 1;
+        if (peerCount > NET_EXPLORE_MAX_PLAYERS) peerCount = NET_EXPLORE_MAX_PLAYERS;
+        DrawText(TextFormat("CO-OP EOS P2P: %d/%d", peerCount, NET_EXPLORE_MAX_PLAYERS),
+                 20, 86, 13, (Color){ 140, 235, 195, 255 });
+    }
+
     if (s_state == GAME_ARENA_INTRO)
     {
         const char *targetMap = (s_mode == GAME_MODE_EXPLORE)
@@ -491,15 +641,19 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
                 else MapProp_SetGrassState(MAP_GRASS_STATE_LUSH, 0.0f);
 
                 Vector3 sp = MapManager_GetActiveSpawnPoint();
-                Vector3 ac = {0};
-                float ar = 20.0f;
-                MapManager_GetActiveBounds(&ac, &ar);
-                float campDist = (ar > 25.0f) ? 11.0f : 7.0f;
-                AI_SpawnMonsterCamp((Vector3){ sp.x + campDist, 0, sp.z }, 3, s_exploreRealm, MONSTER_SWARM_MELEE);
-                AI_SpawnMonsterCamp((Vector3){ sp.x - campDist, 0, sp.z }, 3, s_exploreRealm, MONSTER_SWARM_MELEE);
-                AI_SpawnMonsterCamp((Vector3){ sp.x, 0, sp.z + campDist }, 2, s_exploreRealm, MONSTER_RANGED_CASTER);
-                AI_SpawnMonsterCamp((Vector3){ sp.x, 0, sp.z - campDist }, 1, s_exploreRealm, MONSTER_ELITE_GUARD);
                 DaTau_Init(s_exploreRealm);
+                if (s_exploreRealm == 3) {
+                    OW_Init(OWRealm_GetDesertEarth(), !Net_ClientDrivesWorld());
+                } else {
+                    Vector3 ac = {0};
+                    float ar = 20.0f;
+                    MapManager_GetActiveBounds(&ac, &ar);
+                    float campDist = (ar > 25.0f) ? 11.0f : 7.0f;
+                    AI_SpawnMonsterCamp((Vector3){ sp.x + campDist, 0, sp.z }, 3, s_exploreRealm, MONSTER_SWARM_MELEE);
+                    AI_SpawnMonsterCamp((Vector3){ sp.x - campDist, 0, sp.z }, 3, s_exploreRealm, MONSTER_SWARM_MELEE);
+                    AI_SpawnMonsterCamp((Vector3){ sp.x, 0, sp.z + campDist }, 2, s_exploreRealm, MONSTER_RANGED_CASTER);
+                    AI_SpawnMonsterCamp((Vector3){ sp.x, 0, sp.z - campDist }, 1, s_exploreRealm, MONSTER_ELITE_GUARD);
+                }
             }
             else if (s_mode == GAME_MODE_PVP_ESCORT_1V1 || s_mode == GAME_MODE_PVP_ESCORT_2V2)
             {
@@ -687,6 +841,11 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
         else if (s_mode == GAME_MODE_EXPLORE)
         {
             DaTau_Update(dt);
+            if (s_exploreRealm == 3) {
+                OW_Update(player, dt);
+                if (Entity_GetAgent(player->agentId))
+                    ApplyModeBalanceToPlayer(player->agentId);
+            }
             if (s_worldBossBanner > 0.0f) s_worldBossBanner -= dt;
             if (IsKeyPressed(KEY_N)) {
                 DaTau_SkipWithToken();
@@ -699,7 +858,8 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
                 if (s_worldBossTimer <= 0.0f)
                 {
                     Vector3 sp = MapManager_GetActiveSpawnPoint();
-                    Vector3 wbPos = { sp.x + 8.0f, 0.0f, sp.z + 6.0f };
+                    Vector3 wbPos = (s_exploreRealm == 3) ? (Vector3){ 65.0f, 0.0f, 95.0f }
+                                                          : (Vector3){ sp.x + 8.0f, 0.0f, sp.z + 6.0f };
                     wbPos.y = MapManager_GetGroundHeightAt(wbPos.x, wbPos.z);
                     if (Boss_SpawnSlot(0, &BOSS_HAC_DIEN_TON_GIA, wbPos, TEAM_ENEMY) >= 0)
                     {
@@ -1080,6 +1240,8 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
             s_tuongSinhTimer -= dt;
         Control_SetMoveSpeedMult(s_swingSlowTimer > 0.0f ? 0.35f : 1.0f);
 
+        SyncRemoteWardrobeAndCasts(player->agentId);
+
         if (Net_ClientDrivesWorld())
         {
             // The host simulates our hero; snapshots move it back to us.
@@ -1285,7 +1447,8 @@ void GameScreen_Draw3D(const PlayerEntity *player)
                 if (moved > 0.001f)
                     s_remoteYaw[i] = atan2f(dx, dz);
                 CharacterModel_Update(&s_remoteAnim[i], frameDt, moved > 0.02f * frameDt * 60.0f);
-                CharacterModel_Draw(&s_remoteAnim[i], a->position, s_remoteYaw[i], 1.0f, tint);
+                EnsureRemoteModularInit(i);
+                ModularInstance_DrawWithState(&s_remoteModular[i], &s_remoteAnim[i], a->position, s_remoteYaw[i], 1.0f, tint);
                 s_remotePrevPos[i] = a->position;
             }
             else
@@ -1312,6 +1475,11 @@ void GameScreen_Draw3D(const PlayerEntity *player)
     {
         Environment_DrawSmartShadow(player->position, ENV_SHAPE_SPHERE, 0.5f, 0.9f);
     }
+    if (s_mode == GAME_MODE_EXPLORE && s_exploreRealm == 3 && s_state == GAME_FIGHTING)
+    {
+        OW_Draw3D(player, s_hudCamera);
+    }
+
     if (s_mode == GAME_MODE_PVP_ESCORT_1V1 || s_mode == GAME_MODE_PVP_ESCORT_2V2)
     {
         // Convergence Pillar (Trụ Long Mạch Thái Cực) at MATCH_ARENA_CENTER
@@ -1590,6 +1758,15 @@ void GameScreen_DrawHUD(const PlayerEntity *player)
 
     // Match-state overlays (No Tutorial — one line each, no instructions
     // beyond the exit key).
+    if (s_mode == GAME_MODE_EXPLORE && s_exploreRealm == 3 && s_state == GAME_FIGHTING)
+    {
+        OW_DrawHUD(player, s_hudCamera);
+        int peerCount = (Net_GetMode() != NET_MODE_OFF) ? (Net_GetPeerCount() + 1) : 1;
+        if (peerCount > NET_EXPLORE_MAX_PLAYERS) peerCount = NET_EXPLORE_MAX_PLAYERS;
+        DrawText(TextFormat("CO-OP EOS P2P: %d/%d", peerCount, NET_EXPLORE_MAX_PLAYERS),
+                 20, 86, 13, (Color){ 140, 235, 195, 255 });
+    }
+
     if (s_state == GAME_ARENA_INTRO)
     {
         const char *t = (s_mode == GAME_MODE_EXPLORE) ? ExploreRealmTitle(s_exploreRealm)

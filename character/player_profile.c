@@ -35,6 +35,11 @@ static void InitDefaultProfile(PlayerProfile *p) {
     p->gold = 500;
     p->daTauPoints = 0;
     p->daTauTokens = 2;
+    p->herbs = 0;
+    p->potions[POTION_HEAL_HP] = 2;
+    p->potions[POTION_RESTORE_MANA] = 1;
+    p->potions[POTION_EARTH_MIGHT] = 0;
+    p->potions[POTION_SKILL_XP_BOOST] = 0;
     p->daTauStreak = 0;
     p->daTauTotalCompleted = 0;
 
@@ -96,8 +101,15 @@ bool PlayerProfile_LoadFromFile(PlayerProfile *out, const char *filePath) {
     ParseJsonInt(text, "gold", &out->gold);
     ParseJsonInt(text, "daTauPoints", &out->daTauPoints);
     ParseJsonInt(text, "daTauTokens", &out->daTauTokens);
+    ParseJsonInt(text, "herbs", &out->herbs);
     ParseJsonInt(text, "daTauStreak", &out->daTauStreak);
     ParseJsonInt(text, "daTauTotalCompleted", &out->daTauTotalCompleted);
+
+    for (int pt = 0; pt < POTION_TYPE_COUNT; pt++) {
+        char key[32];
+        snprintf(key, sizeof(key), "potion_%d", pt);
+        ParseJsonInt(text, key, &out->potions[pt]);
+    }
 
     for (int e = 0; e < 5; e++) {
         char key[32];
@@ -150,8 +162,12 @@ bool PlayerProfile_SaveToFile(const PlayerProfile *p, const char *filePath) {
     fprintf(f, "  \"gold\": %d,\n", p->gold);
     fprintf(f, "  \"daTauPoints\": %d,\n", p->daTauPoints);
     fprintf(f, "  \"daTauTokens\": %d,\n", p->daTauTokens);
+    fprintf(f, "  \"herbs\": %d,\n", p->herbs);
     fprintf(f, "  \"daTauStreak\": %d,\n", p->daTauStreak);
     fprintf(f, "  \"daTauTotalCompleted\": %d,\n", p->daTauTotalCompleted);
+    for (int pt = 0; pt < POTION_TYPE_COUNT; pt++) {
+        fprintf(f, "  \"potion_%d\": %d,\n", pt, p->potions[pt]);
+    }
     for (int e = 0; e < 5; e++) {
         fprintf(f, "  \"stone_%d\": %d,\n", e, p->elementalStones[e]);
     }
@@ -264,4 +280,50 @@ int PlayerProfile_GetEffectiveSkillLevel(int skillIndex, bool isPvP) {
     if (lvl < 1) lvl = 1;
     if (lvl > 10) lvl = 10;
     return lvl;
+}
+
+void PlayerProfile_GetSkillScaling(int skillIndex, bool isPvP,
+                                   int *outLevel, int *outMilestone,
+                                   int *outQuantity, float *outSizeScale,
+                                   float *outDamageMult, float *outCooldownMult) {
+    int lvl = PlayerProfile_GetEffectiveSkillLevel(skillIndex, isPvP);
+    int milestone = 0;
+    int qty = 1;
+    float size = 1.0f;
+    float dmgMult = 1.0f;
+    float cdMult = 1.0f;
+
+    if (!isPvP && lvl > 1) {
+        dmgMult = 1.0f + 0.18f * (float)(lvl - 1);
+        if (lvl >= 10) {
+            milestone = 3; qty = 4; size = 1.50f; cdMult = 0.70f;
+        } else if (lvl >= 7) {
+            milestone = 2; qty = 3; size = 1.35f; cdMult = 0.80f;
+        } else if (lvl >= 4) {
+            milestone = 1; qty = 2; size = 1.20f; cdMult = 0.90f;
+        }
+    }
+
+    if (outLevel)        *outLevel = lvl;
+    if (outMilestone)    *outMilestone = milestone;
+    if (outQuantity)     *outQuantity = qty;
+    if (outSizeScale)    *outSizeScale = size;
+    if (outDamageMult)   *outDamageMult = dmgMult;
+    if (outCooldownMult) *outCooldownMult = cdMult;
+}
+
+void PlayerProfile_AddPotion(PotionType type, int count) {
+    if (type < 0 || type >= POTION_TYPE_COUNT || count <= 0) return;
+    PlayerProfile *p = PlayerProfile_GetGlobal();
+    p->potions[type] += count;
+    p->integrityHash = ComputeProfileHash(p);
+}
+
+bool PlayerProfile_ConsumePotion(PotionType type) {
+    if (type < 0 || type >= POTION_TYPE_COUNT) return false;
+    PlayerProfile *p = PlayerProfile_GetGlobal();
+    if (p->potions[type] <= 0) return false;
+    p->potions[type]--;
+    p->integrityHash = ComputeProfileHash(p);
+    return true;
 }

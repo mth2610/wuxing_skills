@@ -23,6 +23,7 @@ static float s_cdMult = 1.0f; // zone-rule cooldown multiplier (game/ sets)
 static int   s_castFired = -1; // skillIndex of the cast that fired this frame
 static float s_moveMult = 1.0f; // swing damping (game/ sets per frame)
 static ControlSkillLevelFn s_skillLevelFn = NULL;
+static ControlSkillScalingFn s_skillScalingFn = NULL;
 
 void Control_Init(int agentId) {
     s_agentId = agentId;
@@ -145,15 +146,31 @@ void Control_Apply(const PlayerIntent *in, float dt) {
         }
         if (skillIndex >= 0 && SkillManager_CanCast(skillIndex, s_agentId)) {
             int lvl = s_skillLevelFn ? s_skillLevelFn(skillIndex) : 1;
-            if (lvl < 1) lvl = 1;
-            if (lvl > 10) lvl = 10;
-            SkillParams params = { .level = lvl, .quantity = 1, .sizeScale = 1.0f };
+            int milestone = 0;
+            int quantity = 1;
+            float sizeScale = 1.0f;
+            float dmgMult = 1.0f;
+            float skillCdMult = 1.0f;
+            if (s_skillScalingFn) {
+                s_skillScalingFn(skillIndex, &lvl, &milestone, &quantity, &sizeScale, &dmgMult, &skillCdMult);
+            } else {
+                if (lvl < 1) lvl = 1;
+                if (lvl > 10) lvl = 10;
+                if (lvl > 1) dmgMult = 1.0f + 0.18f * (float)(lvl - 1);
+            }
+            SkillParams params = {
+                .level = lvl,
+                .milestone = milestone,
+                .quantity = quantity,
+                .sizeScale = sizeScale
+            };
+            Entity_SetLastCast(s_agentId, skillIndex, dmgMult);
             // CastSkill returns false when the mana gate (Entity_TrySpendMana
             // inside skill_manager) or bounds check rejects it — only a real
             // cast starts the cooldown.
             if (CastSkill(skillIndex, s_agentId, a->position, in->aimPoint, params)) {
                 SkillManager_TriggerCooldown(skillIndex, s_agentId,
-                                             DEFAULT_CAST_COOLDOWN * s_cdMult);
+                                             DEFAULT_CAST_COOLDOWN * s_cdMult * skillCdMult);
                 // Face the cast direction — the character turning toward its
                 // target is the read that a skill actually fired.
                 float fdx = in->aimPoint.x - a->position.x;
@@ -185,6 +202,10 @@ void Control_SetMoveSpeedMult(float mult) {
 
 void Control_SetSkillLevelProvider(ControlSkillLevelFn fn) {
     s_skillLevelFn = fn;
+}
+
+void Control_SetSkillScalingProvider(ControlSkillScalingFn fn) {
+    s_skillScalingFn = fn;
 }
 
 void Control_FaceTowards(Vector3 point) {

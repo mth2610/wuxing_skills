@@ -13,6 +13,79 @@ static ModularItemDef s_itemRegistry[MODULAR_MAX_ITEMS];
 static int s_itemCount = 0;
 static bool s_systemInitialized = false;
 
+#define MODULAR_MAX_UNIQUE_INSTANCES 16
+typedef struct {
+    const ModularInstance *owner;
+    int    slotSourceIdx[MODULAR_SLOT_COUNT];
+    Model  slotClones[MODULAR_SLOT_COUNT];
+    bool   hasBaseBodyFallback;
+    Model  baseBodyFallback;
+} ModularInstanceVboCache;
+
+static ModularInstanceVboCache s_vboCache[MODULAR_MAX_UNIQUE_INSTANCES];
+
+static void ModularVboCache_ClearAll(void)
+{
+    for (int i = 0; i < MODULAR_MAX_UNIQUE_INSTANCES; i++)
+    {
+        for (int s = 0; s < MODULAR_SLOT_COUNT; s++)
+        {
+            if (s_vboCache[i].slotClones[s].meshCount > 0)
+                CharacterModel_UnloadSkinnedClone(&s_vboCache[i].slotClones[s]);
+            s_vboCache[i].slotSourceIdx[s] = -1;
+        }
+        if (s_vboCache[i].hasBaseBodyFallback)
+        {
+            CharacterModel_UnloadSkinnedClone(&s_vboCache[i].baseBodyFallback);
+            s_vboCache[i].hasBaseBodyFallback = false;
+        }
+        s_vboCache[i].owner = NULL;
+    }
+}
+
+static Model ModularVboCache_GetSlotModel(const ModularInstance *inst, int slot, int itemIdx, Model srcModel)
+{
+    if (!inst || !inst->useUniqueGpuBuffers || srcModel.meshCount <= 0)
+        return srcModel;
+
+    int slotIdx = -1;
+    for (int i = 0; i < MODULAR_MAX_UNIQUE_INSTANCES; i++)
+    {
+        if (s_vboCache[i].owner == inst) { slotIdx = i; break; }
+        if (s_vboCache[i].owner == NULL && slotIdx < 0) slotIdx = i;
+    }
+    if (slotIdx < 0)
+        return srcModel;
+
+    ModularInstanceVboCache *c = &s_vboCache[slotIdx];
+    if (c->owner != inst)
+    {
+        c->owner = inst;
+        for (int s = 0; s < MODULAR_SLOT_COUNT; s++)
+            c->slotSourceIdx[s] = -1;
+        c->hasBaseBodyFallback = false;
+    }
+
+    if (slot < 0)
+    {
+        if (!c->hasBaseBodyFallback)
+        {
+            c->baseBodyFallback = CharacterModel_CloneSkinnedModel(srcModel);
+            c->hasBaseBodyFallback = (c->baseBodyFallback.meshCount > 0);
+        }
+        return c->hasBaseBodyFallback ? c->baseBodyFallback : srcModel;
+    }
+
+    if (c->slotSourceIdx[slot] != itemIdx || c->slotClones[slot].meshCount <= 0)
+    {
+        if (c->slotClones[slot].meshCount > 0)
+            CharacterModel_UnloadSkinnedClone(&c->slotClones[slot]);
+        c->slotClones[slot] = CharacterModel_CloneSkinnedModel(srcModel);
+        c->slotSourceIdx[slot] = itemIdx;
+    }
+    return (c->slotClones[slot].meshCount > 0) ? c->slotClones[slot] : srcModel;
+}
+
 void ModularSystem_Init(void)
 {
     if (s_systemInitialized)
@@ -25,6 +98,7 @@ void ModularSystem_Init(void)
 
 void ModularSystem_Shutdown(void)
 {
+    ModularVboCache_ClearAll();
     s_itemCount = 0;
     memset(s_itemRegistry, 0, sizeof(s_itemRegistry));
     s_systemInitialized = false;
@@ -59,8 +133,8 @@ int ModularSystem_RegisterItem(const char *id, ModularSlot slot, bool isSkinned,
     Matrix trans = MatrixTranslate(offsetPos.x, offsetPos.y, offsetPos.z);
     item->localOffset = MatrixMultiply(rot, trans);
 
-    // Load 3D model if path is valid
-    if (modelGlbPath[0] != '\0' && FileExists(modelGlbPath))
+    // Load 3D model if path is valid (do not gate with FileExists: fails on Android APK assets)
+    if (modelGlbPath[0] != '\0')
     {
         item->model = ResourceManager_LoadModel(modelGlbPath);
         if (item->model.meshCount > 0)
@@ -349,11 +423,11 @@ void ModularInstance_Draw(ModularInstance *inst)
         Model masterModel;
         if (bodyIdx >= 0 && bodyIdx < s_itemCount && s_itemRegistry[bodyIdx].loaded)
         {
-            masterModel = s_itemRegistry[bodyIdx].model;
+            masterModel = ModularVboCache_GetSlotModel(inst, MODULAR_SLOT_BASE_BODY, bodyIdx, s_itemRegistry[bodyIdx].model);
         }
         else
         {
-            masterModel = CharacterModel_GetModel();
+            masterModel = ModularVboCache_GetSlotModel(inst, -1, -1, CharacterModel_GetModel());
         }
 
         if (masterModel.meshCount > 0 && masterModel.meshes != NULL)
@@ -375,7 +449,8 @@ void ModularInstance_Draw(ModularInstance *inst)
         ModularItemDef *foItem = &s_itemRegistry[fullOutfitIdx];
         if (foItem->model.meshCount > 0 && foItem->model.meshes != NULL)
         {
-            CharacterModel_DrawCustomCloth(foItem->model, &inst->animState,
+            Model foModel = ModularVboCache_GetSlotModel(inst, MODULAR_SLOT_FULL_OUTFIT, fullOutfitIdx, foItem->model);
+            CharacterModel_DrawCustomCloth(foModel, &inst->animState,
                                            inst->position, inst->yaw, inst->scale, inst->tint,
                                            cloth);
         }
@@ -407,7 +482,8 @@ void ModularInstance_Draw(ModularInstance *inst)
             {
                 bool deflateUnderRobe = (s == MODULAR_SLOT_LEGS) &&
                                         ((inst->loadout.itemIndices[MODULAR_SLOT_TORSO] >= 0) || hasFullOutfit);
-                CharacterModel_DrawCustomClothEx(item->model, &inst->animState,
+                Model drawModel = ModularVboCache_GetSlotModel(inst, s, itemIdx, item->model);
+                CharacterModel_DrawCustomClothEx(drawModel, &inst->animState,
                                                  inst->position, inst->yaw, inst->scale, inst->tint,
                                                  false, deflateUnderRobe, cloth);
             }
@@ -443,6 +519,21 @@ void ModularInstance_Draw(ModularInstance *inst)
         WeaponTrail_Fade(&inst->weaponTrail, dt);
     }
     WeaponTrail_Draw(&inst->weaponTrail);
+}
+
+void ModularInstance_DrawWithState(ModularInstance *inst, const CharacterAnimState *state,
+                                   Vector3 position, float yawRadians, float scale, Color tint)
+{
+    if (!inst || !inst->active)
+        return;
+    inst->position = position;
+    inst->yaw = yawRadians;
+    inst->scale = scale;
+    inst->tint = tint;
+    if (state)
+        inst->animState = *state;
+    ModularInstance_UpdateCloth(inst, GetFrameTime());
+    ModularInstance_Draw(inst);
 }
 
 void ModularSystem_DrawMinionBatch(int baseBodyItemIndex, int weaponItemIndex,

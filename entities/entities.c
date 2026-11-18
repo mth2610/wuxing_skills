@@ -214,6 +214,90 @@ void Entity_ApplyDamage(int agentId, float damage, Vector3 knockback) {
     }
 }
 
+bool Entity_CanDamageTarget(int attackerId, int targetId) {
+    if (attackerId == targetId) return false;
+    const Agent *att = Entity_GetAgent(attackerId);
+    const Agent *tgt = Entity_GetAgent(targetId);
+    if (!att || !tgt) return false;
+
+    if (att->archetype == ARCH_HERO && tgt->archetype == ARCH_HERO) {
+        if (att->inSafeZone || tgt->inSafeZone) return false;
+        if (att->team != tgt->team) return true;
+        return att->duelFlag && tgt->duelFlag;
+    }
+    return att->team != tgt->team;
+}
+
+void Entity_ApplyDamageFrom(int targetId, int attackerId, float baseDamage,
+                            float skillScale, Vector3 knockback) {
+    if (targetId < 0 || targetId >= MAX_AGENTS) return;
+    Agent *tgt = &agentPool[targetId];
+    if (!tgt->active) return;
+
+    const Agent *att = (attackerId >= 0) ? Entity_GetAgent(attackerId) : NULL;
+    if (att != NULL && !Entity_CanDamageTarget(attackerId, targetId)) return;
+
+    float dmg = baseDamage;
+    bool isHeroVsHero = (tgt->archetype == ARCH_HERO) && (att == NULL || att->archetype == ARCH_HERO);
+    if (!isHeroVsHero && att != NULL && dmg > 0.0f) {
+        float lvlMult = (skillScale > 0.0f) ? skillScale :
+                        ((att->lastCastDamageScale > 0.0f) ? att->lastCastDamageScale : 1.0f);
+        dmg *= lvlMult * Entity_GetDamageOutMult(attackerId);
+    }
+
+    if (!isHeroVsHero && tgt->pveBonusesActive && tgt->pveBonuses.damageTakenMult > 0.0f && dmg > 0.0f) {
+        dmg *= tgt->pveBonuses.damageTakenMult;
+    }
+
+    CancelMeditate(tgt);
+    tgt->health -= dmg;
+    if (tgt->health > tgt->maxHealth) tgt->health = tgt->maxHealth;
+    tgt->velocity.x += knockback.x;
+    tgt->velocity.y += knockback.y;
+    tgt->velocity.z += knockback.z;
+
+    float kbSq = knockback.x * knockback.x + knockback.z * knockback.z;
+    if (kbSq > 0.25f && tgt->vState == AGENT_GROUNDED) {
+        float pop = sqrtf(kbSq);
+        if (pop < 1.2f) pop = 1.2f;
+        if (pop > 4.0f) pop = 4.0f;
+        if (tgt->velocity.y < pop) tgt->velocity.y = pop;
+        tgt->vState = AGENT_JUMPING;
+    }
+
+    if (tgt->health <= 0.0f) {
+        tgt->health = 0.0f;
+        tgt->active = false;
+    }
+}
+
+void Entity_SetDuelFlag(int agentId, bool on) {
+    if (agentId < 0 || agentId >= MAX_AGENTS || !agentPool[agentId].active) return;
+    agentPool[agentId].duelFlag = on;
+}
+
+bool Entity_GetDuelFlag(int agentId) {
+    const Agent *a = Entity_GetAgent(agentId);
+    return a ? a->duelFlag : false;
+}
+
+void Entity_SetSafeZone(int agentId, bool inSafe) {
+    if (agentId < 0 || agentId >= MAX_AGENTS || !agentPool[agentId].active) return;
+    agentPool[agentId].inSafeZone = inSafe;
+    if (inSafe) agentPool[agentId].duelFlag = false;
+}
+
+bool Entity_IsInSafeZone(int agentId) {
+    const Agent *a = Entity_GetAgent(agentId);
+    return a ? a->inSafeZone : false;
+}
+
+void Entity_SetLastCast(int agentId, int skillIndex, float pveDamageScale) {
+    if (agentId < 0 || agentId >= MAX_AGENTS || !agentPool[agentId].active) return;
+    agentPool[agentId].lastCastSkillIndex = skillIndex;
+    agentPool[agentId].lastCastDamageScale = (pveDamageScale > 0.0f) ? pveDamageScale : 1.0f;
+}
+
 void Entity_Jump(int agentId, float force) {
     if (agentId < 0 || agentId >= MAX_AGENTS) return;
     Agent *a = &agentPool[agentId];
@@ -371,7 +455,7 @@ void Entity_NetSyncBegin(void) {
 void Entity_NetSyncAgent(int agentId, Vector3 pos, float health, float maxHealth,
                          float mana, float maxMana, int element,
                          AgentTeam team, AgentArchetype archetype,
-                         bool taiji, bool meditating, bool stealthed) {
+                         bool taiji, bool meditating, bool stealthed, bool duelFlag) {
     if (agentId < 0 || agentId >= MAX_AGENTS) return;
     Agent *a = &agentPool[agentId];
     if (!a->active) {
@@ -395,6 +479,7 @@ void Entity_NetSyncAgent(int agentId, Vector3 pos, float health, float maxHealth
     a->taijiActive = taiji;
     a->isMeditating = meditating;
     a->isStealthed = stealthed;
+    a->duelFlag = duelFlag;
     s_netMark[agentId] = true;
 }
 
@@ -550,8 +635,8 @@ bool Entity_ExecuteBasicAttack(int attackerId, BasicAttackType type,
     float bestDistSq = 0.0f;
     for (int i = 0; i < nearbyCount; i++) {
         if (nearbyIds[i] == attackerId) continue;
+        if (!Entity_CanDamageTarget(attackerId, nearbyIds[i])) continue;
         Agent *candidate = &agentPool[nearbyIds[i]];
-        if (candidate->team == attacker->team) continue;
         float cdx = candidate->position.x - attacker->position.x;
         float cdz = candidate->position.z - attacker->position.z;
         float cDistSq = cdx * cdx + cdz * cdz;
@@ -581,18 +666,17 @@ bool Entity_ExecuteBasicAttack(int attackerId, BasicAttackType type,
     // wall synergy is a free ranged substitute when the enemy is too far to
     // melee, so a wall bonus must still be able to fire even if the base
     // punch/kick/palm doesn't land.
-    float outMult = Entity_GetDamageOutMult(attackerId);
     if (distSq <= BASIC_ATTACK_RANGE * BASIC_ATTACK_RANGE) {
         switch (type) {
             case BASIC_ATTACK_PUNCH:
-                Entity_ApplyDamage(targetId, 5.0f * outMult, Vector3Scale(pushDir, 1.5f));
+                Entity_ApplyDamageFrom(targetId, attackerId, 5.0f, 1.0f, Vector3Scale(pushDir, 1.5f));
                 break;
             case BASIC_ATTACK_KICK:
-                Entity_ApplyDamage(targetId, 8.0f * outMult, Vector3Scale(pushDir, 3.0f));
+                Entity_ApplyDamageFrom(targetId, attackerId, 8.0f, 1.0f, Vector3Scale(pushDir, 3.0f));
                 break;
             case BASIC_ATTACK_PALM:
                 // "Chưởng" — highest damage, breaks guard, small pop into the air.
-                Entity_ApplyDamage(targetId, 12.0f * outMult, (Vector3){ 0 });
+                Entity_ApplyDamageFrom(targetId, attackerId, 12.0f, 1.0f, (Vector3){ 0 });
                 Entity_ApplyLaunch(targetId, 3.0f, Vector3Scale(pushDir, 2.0f));
                 break;
         }
@@ -604,7 +688,7 @@ bool Entity_ExecuteBasicAttack(int attackerId, BasicAttackType type,
         // Free elemental bonus hit — no mana cost, this whole path never
         // touches Entity_TrySpendMana. Applies regardless of melee range
         // (the rock/bolt is what closes the distance, not the fist).
-        Entity_ApplyDamage(targetId, 6.0f * outMult, Vector3Scale(pushDir, 2.0f));
+        Entity_ApplyDamageFrom(targetId, attackerId, 6.0f, 1.0f, Vector3Scale(pushDir, 2.0f));
         if (outWallPos) *outWallPos = wallPos;
         if (outWallElement) *outWallElement = wallElement;
         return true;
@@ -778,6 +862,10 @@ int Entity_SpawnAgent(Vector3 position, float maxHealth, int element,
             a->baseMaxMana = DEFAULT_MAX_MANA;
             a->pveBonusesActive = false;
             a->pveBonuses = (AgentPvEBonuses){ 0 };
+            a->duelFlag = false;
+            a->inSafeZone = false;
+            a->lastCastSkillIndex = -1;
+            a->lastCastDamageScale = 1.0f;
             a->team = team;
             a->archetype = archetype;
             a->isMeditating = false;

@@ -5,6 +5,7 @@
 // polling (the side thread lands with the jitter pass), no client-side
 // prediction.
 #include "net/net_transport.h"
+#include "net/net_prediction.h"
 #include "net/net_transport_internal.h"
 #include "net/net.h"
 #include "entities/entities.h"
@@ -38,10 +39,16 @@ static const Vector3 REMOTE_SPAWN = { 54.0f, 0.0f, 41.0f };
 #define NET_CTRL_START 3  // host pressed BẮT ĐẦU — leave the lobby together
 #define NET_CTRL_CAST        5 // host → clients: [5][ver][agentId][skillIdx][aim 12B] = 16B
 #define NET_CTRL_LOADOUT     6 // client → host:  [6][ver][slot][skillIdx][element] = 5B
-#define NET_CTRL_KILL_REWARD 7 // host → clients: [7][ver][kind][elem][isBoss][gold 2B][xp 2B] = 9B
-#define NET_CAST_PACKET_BYTES        16
-#define NET_LOADOUT_PACKET_BYTES     5
-#define NET_KILL_REWARD_PACKET_BYTES 9
+#define NET_CTRL_KILL_REWARD  7 // host → clients: [7][ver][kind][elem][isBoss][gold 2B][xp 2B] = 9B
+#define NET_CTRL_SOCIAL_EMOTE 8 // bidirectional: [8][ver][agentId][emoteId][duelFlag][0] = 6B
+#define NET_CTRL_TRADE_GIFT   9 // bidirectional: [9][ver][senderAgentId][itemKind][amt 2B] = 6B
+#define NET_CTRL_WARDROBE     10 // bidirectional: [10][ver][agentId][slotCount][16B indices] = 20B
+#define NET_CAST_PACKET_BYTES         16
+#define NET_LOADOUT_PACKET_BYTES      5
+#define NET_KILL_REWARD_PACKET_BYTES  9
+#define NET_SOCIAL_PACKET_BYTES       6
+#define NET_TRADE_PACKET_BYTES        6
+#define NET_WARDROBE_PACKET_BYTES     (4 + NET_WARDROBE_SLOTS)
 #define NET_CTRL_JOIN  4  // client → host 1Hz knock/heartbeat: the first one
                           // initiates the EOS NAT punch (clients in the
                           // lobby send no gameplay traffic, and EOS only
@@ -84,17 +91,22 @@ static int s_remoteMatchState = -1; // client: host's match state
 static NetKillReward s_killRewardQueue[32];
 static int           s_killRewardCount = 0;
 
+static NetSocialEvent s_socialQueue[32];
+static int            s_socialCount = 0;
+static NetTradeGift      s_tradeQueue[32];
+static int               s_tradeCount = 0;
+static NetWardrobeUpdate s_wardrobeQueue[32];
+static int               s_wardrobeCount = 0;
+static NetWardrobeUpdate s_storedWardrobes[MAX_AGENTS];
+static bool              s_storedWardrobeValid[MAX_AGENTS];
+static NetCastEvent      s_castEventQueue[32];
+static int               s_castEventCount = 0;
+
 static NetRosterEntry s_clientRoster[NET_MAX_PLAYERS]; // client: last broadcast
 static int            s_clientRosterCount = 0;
 
-// Snapshot interpolation (Đợt A5): the client renders ~one snapshot behind,
-// lerping each agent from its currently DISPLAYED position toward the newest
-// snapshot over the snapshot interval — no prediction, no extrapolation.
 static NetAgentState s_snapLatest[MAX_AGENTS];
-static int           s_snapCount = 0;
-static double        s_snapRecvTime = 0.0;
-static Vector3       s_renderPos[MAX_AGENTS]; // what's currently on screen
-static bool          s_renderValid[MAX_AGENTS];
+static bool          s_exploreMode = false;
 
 static unsigned char s_hostTeam = 0;     // lobby: the host player's own side
 static int           s_botCount[2] = { 0, 0 }; // lobby: bots per side
@@ -197,9 +209,12 @@ void Net_Stop(void) {
     s_hostTeam = 0;
     s_botCount[0] = s_botCount[1] = 0;
     s_matchStart = false;
-    s_snapCount = 0;
-    memset(s_renderValid, 0, sizeof(s_renderValid));
+    s_exploreMode = false;
+    NetPred_Reset();
 }
+
+void Net_SetExploreMode(bool on) { s_exploreMode = on; }
+bool Net_IsExploreMode(void) { return s_exploreMode; }
 
 NetMode Net_GetMode(void) { return s_mode; }
 bool Net_IsPeerConnected(void) { return s_connected; }
@@ -390,6 +405,134 @@ int Net_ClientPollKillRewards(NetKillReward *out, int max) {
     return n;
 }
 
+static void PushSocialEvent(int agentId, int emoteId, bool duelFlag) {
+    if (s_socialCount < 32) {
+        s_socialQueue[s_socialCount++] = (NetSocialEvent){
+            .agentId = agentId, .emoteId = emoteId, .duelFlag = duelFlag
+        };
+    }
+}
+
+static void PushTradeGift(int senderAgentId, int itemKind, int amount) {
+    if (s_tradeCount < 32) {
+        s_tradeQueue[s_tradeCount++] = (NetTradeGift){
+            .senderAgentId = senderAgentId, .itemKind = itemKind, .amount = amount
+        };
+    }
+}
+
+void Net_SendSocialState(int agentId, int emoteId, bool duelFlag) {
+    if (agentId < 0 || agentId > 255) return;
+    unsigned char buf[NET_SOCIAL_PACKET_BYTES] = {
+        NET_CTRL_SOCIAL_EMOTE, NET_PROTOCOL_VERSION,
+        (unsigned char)agentId, (unsigned char)emoteId, (unsigned char)(duelFlag ? 1 : 0), 0
+    };
+    if (s_mode == NET_MODE_HOST) {
+        Entity_SetDuelFlag(agentId, duelFlag);
+        HostBroadcast(NET_CH_CONTROL, buf, (int)sizeof(buf), true);
+    } else if (s_mode == NET_MODE_CLIENT && s_connected) {
+        ClientSendToHost(NET_CH_CONTROL, buf, (int)sizeof(buf), true);
+    }
+}
+
+int Net_PollSocialEvents(NetSocialEvent *out, int max) {
+    if (out == NULL || max <= 0) { s_socialCount = 0; return 0; }
+    int n = (s_socialCount < max) ? s_socialCount : max;
+    for (int i = 0; i < n; i++) out[i] = s_socialQueue[i];
+    s_socialCount = 0;
+    return n;
+}
+
+void Net_SendTradeGift(int senderAgentId, int itemKind, int amount) {
+    if (senderAgentId < 0 || senderAgentId > 255 || amount <= 0) return;
+    if (amount > 65535) amount = 65535;
+    unsigned char buf[NET_TRADE_PACKET_BYTES] = {
+        NET_CTRL_TRADE_GIFT, NET_PROTOCOL_VERSION,
+        (unsigned char)senderAgentId, (unsigned char)itemKind,
+        (unsigned char)(amount & 0xFF), (unsigned char)((amount >> 8) & 0xFF)
+    };
+    if (s_mode == NET_MODE_HOST) {
+        HostBroadcast(NET_CH_CONTROL, buf, (int)sizeof(buf), true);
+    } else if (s_mode == NET_MODE_CLIENT && s_connected) {
+        ClientSendToHost(NET_CH_CONTROL, buf, (int)sizeof(buf), true);
+    }
+}
+
+int Net_PollTradeGifts(NetTradeGift *out, int max) {
+    if (out == NULL || max <= 0) { s_tradeCount = 0; return 0; }
+    int n = (s_tradeCount < max) ? s_tradeCount : max;
+    for (int i = 0; i < n; i++) out[i] = s_tradeQueue[i];
+    s_tradeCount = 0;
+    return n;
+}
+
+static void PushWardrobeUpdate(int agentId, int slotCount, const uint8_t *indices) {
+    if (agentId < 0 || agentId >= MAX_AGENTS || !indices) return;
+    if (slotCount < 0) slotCount = 0;
+    if (slotCount > NET_WARDROBE_SLOTS) slotCount = NET_WARDROBE_SLOTS;
+    NetWardrobeUpdate u = { 0 };
+    u.agentId = agentId;
+    u.slotCount = slotCount;
+    memset(u.catalogIndices, 0xFF, sizeof(u.catalogIndices));
+    if (slotCount > 0) memcpy(u.catalogIndices, indices, (size_t)slotCount);
+    s_storedWardrobes[agentId] = u;
+    s_storedWardrobeValid[agentId] = true;
+    if (s_wardrobeCount < 32) s_wardrobeQueue[s_wardrobeCount++] = u;
+}
+
+static void PackWardrobePacket(unsigned char *buf, int agentId, int slotCount, const uint8_t *indices) {
+    buf[0] = NET_CTRL_WARDROBE;
+    buf[1] = NET_PROTOCOL_VERSION;
+    buf[2] = (unsigned char)agentId;
+    buf[3] = (unsigned char)slotCount;
+    memset(buf + 4, 0xFF, NET_WARDROBE_SLOTS);
+    int n = (slotCount < NET_WARDROBE_SLOTS) ? slotCount : NET_WARDROBE_SLOTS;
+    if (n > 0 && indices) memcpy(buf + 4, indices, (size_t)n);
+}
+
+void Net_SendWardrobe(int agentId, const uint8_t *catalogIndices, int slotCount) {
+    if (agentId < 0 || agentId >= MAX_AGENTS || !catalogIndices || slotCount <= 0) return;
+    if (slotCount > NET_WARDROBE_SLOTS) slotCount = NET_WARDROBE_SLOTS;
+    unsigned char buf[NET_WARDROBE_PACKET_BYTES];
+    PackWardrobePacket(buf, agentId, slotCount, catalogIndices);
+    if (s_mode == NET_MODE_HOST) {
+        NetWardrobeUpdate u = { 0 };
+        u.agentId = agentId;
+        u.slotCount = slotCount;
+        memset(u.catalogIndices, 0xFF, sizeof(u.catalogIndices));
+        memcpy(u.catalogIndices, catalogIndices, (size_t)slotCount);
+        s_storedWardrobes[agentId] = u;
+        s_storedWardrobeValid[agentId] = true;
+        HostBroadcast(NET_CH_CONTROL, buf, (int)sizeof(buf), true);
+    } else if (s_mode == NET_MODE_CLIENT && s_connected) {
+        ClientSendToHost(NET_CH_CONTROL, buf, (int)sizeof(buf), true);
+    }
+}
+
+int Net_PollWardrobeUpdates(NetWardrobeUpdate *out, int max) {
+    if (out == NULL || max <= 0) { s_wardrobeCount = 0; return 0; }
+    int n = (s_wardrobeCount < max) ? s_wardrobeCount : max;
+    for (int i = 0; i < n; i++) out[i] = s_wardrobeQueue[i];
+    s_wardrobeCount = 0;
+    return n;
+}
+
+static void PushCastEvent(int agentId, int skillIndex, Vector3 aim) {
+    if (s_castEventCount < 32) {
+        s_castEventQueue[s_castEventCount++] = (NetCastEvent){
+            .agentId = agentId, .skillIndex = skillIndex, .aim = aim
+        };
+    }
+}
+
+int Net_PollCastEvents(NetCastEvent *out, int max) {
+    if (out == NULL || max <= 0) { s_castEventCount = 0; return 0; }
+    int n = (s_castEventCount < max) ? s_castEventCount : max;
+    for (int i = 0; i < n; i++) out[i] = s_castEventQueue[i];
+    s_castEventCount = 0;
+    return n;
+}
+
 // --- Host: peers join/leave, drive their heroes ------------------------------
 
 static int HostFindPeer(ENetPeer *ep, void *ref) {
@@ -414,10 +557,12 @@ static unsigned char HostAutoBalanceTeam(void) {
 
 static void HostSpawnPeerHero(int idx) {
     HostPeer *p = &s_peers[idx];
-    // Fan slots out around the base spawn so heroes never stack.
-    Vector3 pos = REMOTE_SPAWN;
+    if (s_exploreMode) p->team = 0; // Explore Co-op: all players share TEAM_ALLY
+    // Fan slots out around the active map's spawn point so heroes never stack.
+    Vector3 pos = MapManager_GetActiveSpawnPoint();
     pos.x += (float)(idx % 4) * 1.6f - 2.4f;
     pos.z += (float)(idx / 4) * 1.6f;
+    pos.y = MapManager_GetGroundHeightAt(pos.x, pos.z);
     p->agentId = Entity_SpawnAgent(pos, 100.0f, 0,
                                    (p->team == 0) ? TEAM_ALLY : TEAM_ENEMY,
                                    ARCH_HERO);
@@ -434,6 +579,14 @@ static void HostSpawnPeerHero(int idx) {
     // Tell the client which agent is theirs (reliable channel).
     NetCtrl hello = { NET_CTRL_HELLO, NET_PROTOCOL_VERSION, (unsigned char)p->agentId };
     SendToPeer(p, NET_CH_CONTROL, &hello, (int)sizeof(hello), true);
+    // Send all known player wardrobes so the newly joined peer sees everyone's outfit.
+    for (int a = 0; a < MAX_AGENTS; a++) {
+        if (s_storedWardrobeValid[a]) {
+            unsigned char wbuf[NET_WARDROBE_PACKET_BYTES];
+            PackWardrobePacket(wbuf, a, s_storedWardrobes[a].slotCount, s_storedWardrobes[a].catalogIndices);
+            SendToPeer(p, NET_CH_CONTROL, wbuf, (int)sizeof(wbuf), true);
+        }
+    }
 }
 
 static void HostPeerJoined(ENetPeer *ep, void *ref) {
@@ -516,6 +669,7 @@ static void HostApplyRemoteEdges(int idx, const PlayerIntent *in) {
                     a->currentElement, Map_QueryZoneAt(a->position));
                 SkillManager_TriggerCooldown(skillIndex, agentId, 1.0f * cdMult);
                 Net_HostNotifyCast(agentId, skillIndex, in->aimPoint);
+                PushCastEvent(agentId, skillIndex, in->aimPoint);
             }
         }
     }
@@ -538,6 +692,7 @@ static void HostMoveRemotes(float dt) {
             Vector3 pos = a->position;
             pos.x += (in->moveDir.x / len) * speed * dt;
             pos.z += (in->moveDir.y / len) * speed * dt;
+            pos.y = MapManager_GetGroundHeightAt(pos.x, pos.z);
             Entity_SetPosition(s_peers[i].agentId, pos);
         }
     }
@@ -559,45 +714,11 @@ static void ClientStoreSnapshot(const unsigned char *data, int len) {
     static bool s_loggedFirst = false;
     int n = Net_UnpackAgentSnapshot(s_snapLatest, MAX_AGENTS, data, len);
     if (n < 0) return;
-    s_snapCount = n;
-    s_snapRecvTime = GetTime();
+    NetPred_OnSnapshot(s_snapLatest, n, s_localHeroId);
     if (!s_loggedFirst) {
         s_loggedFirst = true;
         TraceLog(LOG_INFO, "[NET] first snapshot: %d agents", n);
     }
-}
-
-// Runs every client frame: push the latest snapshot into the pool with each
-// agent's position eased from where it is ON SCREEN toward the snapshot,
-// finishing in one snapshot interval. Non-positional fields snap (HP bars
-// shouldn't lag).
-static void ClientApplyInterpolated(void) {
-    if (s_snapCount <= 0) return;
-    float t = (float)((GetTime() - s_snapRecvTime) * NET_SNAPSHOT_HZ);
-    if (t > 1.0f) t = 1.0f;
-    Entity_NetSyncBegin();
-    for (int i = 0; i < s_snapCount; i++) {
-        const NetAgentState *a = &s_snapLatest[i];
-        Vector3 pos = a->position;
-        if (s_renderValid[a->agentId]) {
-            Vector3 from = s_renderPos[a->agentId];
-            pos.x = from.x + (a->position.x - from.x) * t;
-            pos.y = from.y + (a->position.y - from.y) * t;
-            pos.z = from.z + (a->position.z - from.z) * t;
-        }
-        s_renderPos[a->agentId] = pos;
-        s_renderValid[a->agentId] = true;
-        Entity_NetSyncAgent(a->agentId, pos,
-                            a->health, a->maxHealth,
-                            a->mana, a->maxMana,
-                            a->element,
-                            (AgentTeam)a->team,
-                            (AgentArchetype)a->archetype,
-                            (a->flags & 0x1) != 0,
-                            (a->flags & 0x2) != 0,
-                            (a->flags & 0x4) != 0);
-    }
-    Entity_NetSyncEnd();
 }
 
 // --- Shared event core (ENet events and backend callbacks both land here) ---
@@ -654,6 +775,40 @@ static void HandlePacket(ENetPeer *ep, void *ref, int channel,
             int agentId = s_peers[idx].agentId;
             if (agentId >= 0 && data[2] < AGENT_SKILL_SLOTS)
                 Entity_SetEquippedSkill(agentId, data[2], data[3], data[4]);
+        } else if (channel == NET_CH_CONTROL &&
+                   len == NET_SOCIAL_PACKET_BYTES &&
+                   data[0] == NET_CTRL_SOCIAL_EMOTE &&
+                   data[1] == NET_PROTOCOL_VERSION) {
+            int agentId = s_peers[idx].agentId;
+            if (agentId >= 0) {
+                bool duel = (data[4] != 0);
+                Entity_SetDuelFlag(agentId, duel);
+                PushSocialEvent(agentId, (int)data[3], duel);
+                unsigned char fwd[NET_SOCIAL_PACKET_BYTES] = {
+                    NET_CTRL_SOCIAL_EMOTE, NET_PROTOCOL_VERSION,
+                    (unsigned char)agentId, data[3], data[4], 0
+                };
+                HostBroadcast(NET_CH_CONTROL, fwd, (int)sizeof(fwd), true);
+            }
+        } else if (channel == NET_CH_CONTROL &&
+                   len == NET_TRADE_PACKET_BYTES &&
+                   data[0] == NET_CTRL_TRADE_GIFT &&
+                   data[1] == NET_PROTOCOL_VERSION) {
+            int amt = (int)data[4] | ((int)data[5] << 8);
+            PushTradeGift(s_peers[idx].agentId, (int)data[3], amt);
+            HostBroadcast(NET_CH_CONTROL, data, len, true);
+        } else if (channel == NET_CH_CONTROL &&
+                   len == NET_WARDROBE_PACKET_BYTES &&
+                   data[0] == NET_CTRL_WARDROBE &&
+                   data[1] == NET_PROTOCOL_VERSION) {
+            int agentId = s_peers[idx].agentId;
+            if (agentId >= 0) {
+                int slotCount = (int)data[3];
+                PushWardrobeUpdate(agentId, slotCount, data + 4);
+                unsigned char fwd[NET_WARDROBE_PACKET_BYTES];
+                PackWardrobePacket(fwd, agentId, slotCount, data + 4);
+                HostBroadcast(NET_CH_CONTROL, fwd, (int)sizeof(fwd), true);
+            }
         } // other NET_CH_CONTROL from a client = the JOIN knock — no payload
     } else if (s_mode == NET_MODE_CLIENT) {
         if (channel == NET_CH_CONTROL) {
@@ -670,8 +825,10 @@ static void HandlePacket(ENetPeer *ep, void *ref, int channel,
                     bool played = CastSkill(skillIndex, agentId, caster->position, aim,
                                             (SkillParams){ .level = 1, .quantity = 1, .sizeScale = 1.0f });
                     SkillManager_SetFreeCast(false);
-                    if (played)
+                    if (played) {
+                        PushCastEvent(agentId, skillIndex, aim);
                         TraceLog(LOG_INFO, "[NET] cast mirror agent=%d skill=%d", agentId, skillIndex);
+                    }
                 }
             } else if (len == NET_KILL_REWARD_PACKET_BYTES && data[0] == NET_CTRL_KILL_REWARD &&
                        data[1] == NET_PROTOCOL_VERSION) {
@@ -682,6 +839,25 @@ static void HandlePacket(ENetPeer *ep, void *ref, int channel,
                     kr->isBoss      = (data[4] != 0);
                     kr->gold        = (int)data[5] | ((int)data[6] << 8);
                     kr->xp          = (int)data[7] | ((int)data[8] << 8);
+                }
+            } else if (len == NET_SOCIAL_PACKET_BYTES && data[0] == NET_CTRL_SOCIAL_EMOTE &&
+                       data[1] == NET_PROTOCOL_VERSION) {
+                int aid = (int)data[2];
+                bool duel = (data[4] != 0);
+                Entity_SetDuelFlag(aid, duel);
+                PushSocialEvent(aid, (int)data[3], duel);
+            } else if (len == NET_TRADE_PACKET_BYTES && data[0] == NET_CTRL_TRADE_GIFT &&
+                       data[1] == NET_PROTOCOL_VERSION) {
+                int sender = (int)data[2];
+                int amt = (int)data[4] | ((int)data[5] << 8);
+                if (sender != s_localHeroId) {
+                    PushTradeGift(sender, (int)data[3], amt);
+                }
+            } else if (len == NET_WARDROBE_PACKET_BYTES && data[0] == NET_CTRL_WARDROBE &&
+                       data[1] == NET_PROTOCOL_VERSION) {
+                int aid = (int)data[2];
+                if (aid != s_localHeroId) {
+                    PushWardrobeUpdate(aid, (int)data[3], data + 4);
                 }
             } else if (len == (int)sizeof(NetCtrl) && data[0] != 'W') {
                 NetCtrl ctrl;
@@ -781,11 +957,25 @@ void Net_Tick(float dt) {
         if (s_sendAccum >= 1.0f / NET_SNAPSHOT_HZ) {
             s_sendAccum = 0.0f;
             static unsigned char buf[16 * 1024];
-            int bytes = Net_PackAgentSnapshot(buf, (int)sizeof(buf));
-            if (bytes > 0) HostBroadcast(NET_CH_STREAM, buf, bytes, false);
+            if (s_exploreMode) {
+                // Per-client interest-culled snapshot (55m around each player)
+                for (int i = 0; i < NET_MAX_PLAYERS - 1; i++) {
+                    if (!s_peers[i].used) continue;
+                    const Agent *pa = (s_peers[i].agentId >= 0) ? Entity_GetAgent(s_peers[i].agentId) : NULL;
+                    Vector3 focus = pa ? pa->position : (Vector3){ 0 };
+                    int bytes = Net_PackAgentSnapshotFor(focus, NET_INTEREST_RADIUS, buf, (int)sizeof(buf));
+                    if (bytes > 0) SendToPeer(&s_peers[i], NET_CH_STREAM, buf, bytes, false);
+                }
+            } else {
+                int bytes = Net_PackAgentSnapshot(buf, (int)sizeof(buf));
+                if (bytes > 0) HostBroadcast(NET_CH_STREAM, buf, bytes, false);
+            }
         }
     } else { // client
-        ClientApplyInterpolated(); // ease displayed positions every frame
+        if (s_clientIntentValid) {
+            NetPred_ApplyLocalPreview(s_localHeroId, &s_clientIntent, dt);
+        }
+        NetPred_Tick(dt, s_localHeroId); // 60 FPS smooth interpolation & prediction reconciliation
         // 1Hz knock/heartbeat: the first packet opens the EOS P2P
         // connection (nothing else flows while everyone idles in the
         // lobby); afterwards it keeps the host's liveness sweep fed.

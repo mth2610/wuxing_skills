@@ -5,6 +5,7 @@
 #include "core/surface_material.h"
 #include "core/mesh_adjacency.h"
 #include "raymath.h"
+#include "rlgl.h"
 #include <string.h>
 #include <ctype.h>
 #include <stdio.h>
@@ -196,7 +197,7 @@ static bool AddSlotIndex(CharacterAnimSlot slot, int animIdx)
 // Lightweight JSON manifest parser for assets/characters/player_anims.json
 static void LoadAnimManifest(const char *manifestPath)
 {
-    if (!FileExists(manifestPath))
+    if (!manifestPath || !manifestPath[0])
         return;
     char *text = LoadFileText(manifestPath);
     if (!text)
@@ -1365,6 +1366,78 @@ void CharacterModel_Draw(const CharacterAnimState *state, Vector3 position, floa
         return;
     }
     CharacterModel_DrawCustom(s_model, state, position, yawRadians, scale, tint);
+}
+
+Model CharacterModel_CloneSkinnedModel(Model src)
+{
+    if (src.meshCount <= 0 || src.meshes == NULL)
+        return (Model){0};
+
+    Model dst = src;
+    dst.meshes = (Mesh *)calloc((size_t)src.meshCount, sizeof(Mesh));
+    if (!dst.meshes)
+        return (Model){0};
+
+    for (int i = 0; i < src.meshCount; i++)
+    {
+        dst.meshes[i] = src.meshes[i];
+        dst.meshes[i].vaoId = 0;
+        dst.meshes[i].vboId = NULL;
+
+        int vc = dst.meshes[i].vertexCount;
+        if (vc > 0)
+        {
+            if (src.meshes[i].animVertices)
+            {
+                dst.meshes[i].animVertices = (float *)malloc((size_t)vc * 3 * sizeof(float));
+                if (dst.meshes[i].animVertices && src.meshes[i].vertices)
+                    memcpy(dst.meshes[i].animVertices, src.meshes[i].vertices, (size_t)vc * 3 * sizeof(float));
+            }
+            if (src.meshes[i].animNormals)
+            {
+                dst.meshes[i].animNormals = (float *)malloc((size_t)vc * 3 * sizeof(float));
+                if (dst.meshes[i].animNormals && src.meshes[i].normals)
+                    memcpy(dst.meshes[i].animNormals, src.meshes[i].normals, (size_t)vc * 3 * sizeof(float));
+            }
+        }
+        UploadMesh(&dst.meshes[i], true);
+    }
+
+    if (src.boneMatrices && src.skeleton.boneCount > 0)
+    {
+        dst.boneMatrices = (Matrix *)malloc((size_t)src.skeleton.boneCount * sizeof(Matrix));
+        if (dst.boneMatrices)
+            memcpy(dst.boneMatrices, src.boneMatrices, (size_t)src.skeleton.boneCount * sizeof(Matrix));
+    }
+
+    return dst;
+}
+
+void CharacterModel_UnloadSkinnedClone(Model *m)
+{
+    if (!m || m->meshCount <= 0 || !m->meshes)
+        return;
+
+    for (int i = 0; i < m->meshCount; i++)
+    {
+        Mesh *mesh = &m->meshes[i];
+        if (mesh->vaoId > 0)
+            rlUnloadVertexArray(mesh->vaoId);
+        if (mesh->vboId)
+        {
+            for (int b = 0; b < 7; b++)
+            {
+                if (mesh->vboId[b] > 0)
+                    rlUnloadVertexBuffer(mesh->vboId[b]);
+            }
+            RL_FREE(mesh->vboId);
+        }
+        free(mesh->animVertices);
+        free(mesh->animNormals);
+    }
+    free(m->meshes);
+    free(m->boneMatrices);
+    *m = (Model){0};
 }
 
 Model CharacterModel_GetModel(void)

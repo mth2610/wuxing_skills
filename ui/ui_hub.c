@@ -126,7 +126,16 @@ void UI_Hub_UpdateDrawModal(void) {
             DrawRectangleLinesEx(sr, sel ? 2.5f : 1.0f, sel ? GOLD : (Color){ 90, 95, 115, 200 });
             DrawText(TextFormat("O [%d] (PvE Lv.%d | PvP Lv.1)", s + 1, lvl),
                      (int)sr.x + 10, (int)sr.y + 8, 12, (Color){ 200, 195, 165, 255 });
-            DrawText(sname, (int)sr.x + 10, (int)sr.y + 30, 15, sc);
+            DrawText(sname, (int)sr.x + 10, (int)sr.y + 26, 15, sc);
+            if (idx >= 0 && lvl < 10) {
+                uint32_t req = PlayerProfile_XpForNextLevel(lvl);
+                float xpFrac = (req > 0) ? ((float)prof->skillXp[idx] / (float)req) : 0.0f;
+                if (xpFrac > 1.0f) xpFrac = 1.0f;
+                DrawRectangle((int)sr.x + 10, (int)sr.y + 48, 236, 7, (Color){ 12, 14, 20, 240 });
+                DrawRectangle((int)sr.x + 10, (int)sr.y + 48, (int)(236.0f * xpFrac), 7, (Color){ 110, 220, 245, 240 });
+            } else if (idx >= 0) {
+                DrawText("HOA CANH (MAX)", (int)sr.x + 10, (int)sr.y + 46, 10, GOLD);
+            }
             if (CheckCollisionPointRec(GetMousePosition(), sr) && IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
                 s_selectedSlot = s;
             }
@@ -168,8 +177,8 @@ void UI_Hub_UpdateDrawModal(void) {
             if (!IsSkillSelectable(i) || prof->skillUnlocked[i]) continue;
             int col = vis % 2;
             int row = vis / 2;
-            if (row >= 4) break;
-            Rectangle kr = { p.x + 20 + col * 405, p.y + 146 + row * 56, 390, 48 };
+            if (row >= 3) break;
+            Rectangle kr = { p.x + 20 + col * 405, p.y + 146 + row * 54, 390, 46 };
             int costGold = 200;
             int costPts  = 40;
             const char *lbl = TextFormat("Hoc: %s (%d Vang + %d Diem)", GetRegisteredSkillName(i), costGold, costPts);
@@ -185,6 +194,33 @@ void UI_Hub_UpdateDrawModal(void) {
         }
         if (vis == 0) {
             DrawText("Da mo khoa toan bo Vo Hoc hien co!", (int)p.x + 24, (int)p.y + 160, 16, (Color){ 150, 230, 150, 255 });
+        }
+
+        // Alchemy / Potion Counter (Linh Thảo & Hoàng Thổ Khoáng)
+        DrawText(TextFormat("LUYEN DAN DUOC (Linh Thao: %d | Hoang Tho Khoang: %d):",
+                            prof->herbs, prof->elementalStones[3]),
+                 (int)p.x + 22, (int)p.y + 314, 12, (Color){ 140, 240, 175, 255 });
+        struct { const char *lbl; PotionType type; int gold; int herbs; int stone; Color col; } pots[4] = {
+            { "Hoi Sinh Dan (40V/2Thao)", POTION_HEAL_HP, 40, 2, 0, (Color){ 235, 110, 110, 255 } },
+            { "Tu Khi Dich (40V/2Thao)",  POTION_RESTORE_MANA, 40, 2, 0, SKYBLUE },
+            { "Hoang Tho Dan (100V+1K)",  POTION_EARTH_MIGHT, 100, 0, 1, ORANGE },
+            { "Ngo Dao Tra x2 (120V+1K)", POTION_SKILL_XP_BOOST, 120, 0, 1, (Color){ 120, 245, 200, 255 } },
+        };
+        for (int k = 0; k < 4; k++) {
+            Rectangle pr = { p.x + 20 + k * 204, p.y + 332, 196, 46 };
+            const char *btnLbl = TextFormat("%s [%d]", pots[k].lbl, prof->potions[pots[k].type]);
+            if (DrawWuxiaBtn(pr, btnLbl, pots[k].col, (Color){ 24, 28, 38, 255 }, WHITE, 10)) {
+                if (pots[k].herbs > 0 && prof->herbs >= pots[k].herbs) {
+                    prof->herbs -= pots[k].herbs;
+                    PlayerProfile_AddPotion(pots[k].type, 1);
+                    PlayerProfile_SaveGlobal();
+                } else if (prof->gold >= pots[k].gold && prof->elementalStones[3] >= pots[k].stone) {
+                    prof->gold -= pots[k].gold;
+                    prof->elementalStones[3] -= pots[k].stone;
+                    PlayerProfile_AddPotion(pots[k].type, 1);
+                    PlayerProfile_SaveGlobal();
+                }
+            }
         }
 
         // Convert 2 Elemental Stones -> +1 Lenh Bai & +80 Diem

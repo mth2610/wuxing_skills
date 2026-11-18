@@ -11,6 +11,9 @@
 #include "game/game_screen.h"
 #include "game/game_rules.h"
 #include "game/quest_datau.h"
+#include "open_world/ow_world.h"
+#include "open_world/realms/ow_desert_earth.h"
+#include "net/net_prediction.h"
 #include "ai/ai.h"
 #include "formations/formation_system.h"
 #include "net/net.h"
@@ -1583,8 +1586,15 @@ static AutoTestResult AutoTest_DaTauQuestStep(int frameInCase, char *outReason, 
   int needed = q->targetCount;
   bool completed = false;
   for (int i = 0; i < needed + 5 && !completed; i++) {
-    completed = DaTau_OnMonsterKilled(MONSTER_RANGED_CASTER, 0, true);
-    if (!completed) completed = DaTau_OnMonsterKilled(MONSTER_ELITE_GUARD, 0, true);
+    if (q->type == DATAU_FORAGE_COLLECT) {
+      completed = DaTau_OnForageCollected(1);
+    } else if (q->type == DATAU_ZONE_HOLD) {
+      DaTau_TickZoneHold(1.0f, true);
+      completed = (prof->daTauStreak > savedStreak);
+    } else {
+      completed = DaTau_OnMonsterKilled(MONSTER_RANGED_CASTER, 0, true);
+      if (!completed) completed = DaTau_OnMonsterKilled(MONSTER_ELITE_GUARD, 0, true);
+    }
   }
   ok &= AutoTest_ExpectTrue(completed, "datau quest completed", outReason, outReasonSize);
   ok &= AutoTest_ExpectTrue(prof->daTauStreak == savedStreak + 1, "streak incremented", outReason, outReasonSize);
@@ -1627,6 +1637,173 @@ static AutoTestResult AutoTest_DualBossEscortStep(int frameInCase, char *outReas
   return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
 }
 
+static AutoTestResult AutoTest_SkillXpAndPvpNullificationStep(int frameInCase, char *outReason, int outReasonSize) {
+  if (frameInCase > 0) return AUTOTEST_PASS;
+
+  PlayerProfile *prof = PlayerProfile_GetGlobal();
+  int testSkill = 0;
+  uint8_t savedLv = prof->skillLevel[testSkill];
+  uint32_t savedXp = prof->skillXp[testSkill];
+
+  prof->skillLevel[testSkill] = 10;
+  prof->skillXp[testSkill] = 0;
+
+  int lvlPve = 0, qtyPve = 0, lvlPvp = 0, qtyPvp = 0;
+  float dmgPve = 0.0f, dmgPvp = 0.0f;
+  PlayerProfile_GetSkillScaling(testSkill, false, &lvlPve, NULL, &qtyPve, NULL, &dmgPve, NULL);
+  PlayerProfile_GetSkillScaling(testSkill, true,  &lvlPvp, NULL, &qtyPvp, NULL, &dmgPvp, NULL);
+
+  bool ok = AutoTest_ExpectTrue(lvlPve == 10 && qtyPve == 4 && fabsf(dmgPve - 2.62f) < 0.01f,
+                                "PvE Lv.10 scaling active", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(lvlPvp == 1 && qtyPvp == 1 && fabsf(dmgPvp - 1.0f) < 0.01f,
+                            "PvP normalized to Lv.1", outReason, outReasonSize);
+
+  int attacker = Entity_SpawnAgent((Vector3){ 6.0f, 0.0f, 4.4f }, 100.0f, 3, TEAM_ALLY, ARCH_HERO);
+  int minion   = Entity_SpawnAgent((Vector3){ 8.0f, 0.0f, 4.4f }, 100.0f, 0, TEAM_ENEMY, ARCH_MINION);
+  int heroTgt  = Entity_SpawnAgent((Vector3){ 7.0f, 0.0f, 4.4f }, 100.0f, 2, TEAM_ALLY, ARCH_HERO);
+  ok &= AutoTest_ExpectTrue(attacker >= 0 && minion >= 0 && heroTgt >= 0, "agents spawned", outReason, outReasonSize);
+
+  AgentPvEBonuses bonus = { .damageOutMult = 1.5f, .damageTakenMult = 0.5f };
+  Entity_SetPvEBonuses(attacker, &bonus);
+  Entity_SetPvEBonuses(heroTgt, &bonus);
+  Entity_SetLastCast(attacker, testSkill, dmgPve);
+
+  // 1) Vs Monster: receives full skill level (2.62x) * gear (1.5x) = 39.3 dmg
+  Entity_ApplyDamageFrom(minion, attacker, 10.0f, 0.0f, (Vector3){ 0 });
+  float minionLost = 100.0f - Entity_GetAgent(minion)->health;
+  ok &= AutoTest_ExpectTrue(fabsf(minionLost - 39.3f) < 0.1f, "monster takes full PvE skill+gear dmg", outReason, outReasonSize);
+
+  // 2) Vs Real Player with Duel Flag ON: normalized to base 10.0 dmg
+  Entity_SetDuelFlag(attacker, true);
+  Entity_SetDuelFlag(heroTgt, true);
+  Entity_ApplyDamageFrom(heroTgt, attacker, 10.0f, 0.0f, (Vector3){ 0 });
+  float heroLost = 100.0f - Entity_GetAgent(heroTgt)->health;
+  ok &= AutoTest_ExpectTrue(fabsf(heroLost - 10.0f) < 0.01f, "PK target ignores PvE skill+gear dmg", outReason, outReasonSize);
+
+  // 3) Safe Zone blocks PK damage completely
+  Entity_SetSafeZone(heroTgt, true);
+  Entity_ApplyDamageFrom(heroTgt, attacker, 10.0f, 0.0f, (Vector3){ 0 });
+  ok &= AutoTest_ExpectTrue(fabsf(Entity_GetAgent(heroTgt)->health - 90.0f) < 0.01f,
+                            "safe zone blocks PK damage", outReason, outReasonSize);
+
+  Entity_ApplyDamage(attacker, 1e9f, (Vector3){ 0 });
+  Entity_ApplyDamage(minion, 1e9f, (Vector3){ 0 });
+  Entity_ApplyDamage(heroTgt, 1e9f, (Vector3){ 0 });
+  prof->skillLevel[testSkill] = savedLv;
+  prof->skillXp[testSkill] = savedXp;
+  return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
+}
+
+static AutoTestResult AutoTest_DesertOpenWorldLoopStep(int frameInCase, char *outReason, int outReasonSize) {
+  if (frameInCase > 0) return AUTOTEST_PASS;
+
+  OW_Init(OWRealm_GetDesertEarth(), false);
+  bool ok = AutoTest_ExpectTrue(OW_GetZoneAt((Vector3){ 170.68f, 0, 230.41f }) == 0,
+                                "oasis safe zone detected", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(OW_GetZoneAt((Vector3){ 135.0f, 0, 195.0f }) == 1,
+                            "starter dunes zone detected", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(OW_GetZoneAt((Vector3){ 94.1f, 0, 150.0f }) == 2,
+                            "relic canyon zone detected", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(OW_GetZoneAt((Vector3){ 65.0f, 0, 95.0f }) == 3,
+                            "boss badlands zone detected", outReason, outReasonSize);
+
+  int before = OW_GetActiveNodeCount();
+  ok &= AutoTest_ExpectTrue(before >= 10, "desert nodes initialized", outReason, outReasonSize);
+
+  bool harvested = OW_TryInteractNearest((Vector3){ 122.0f, 0.0f, 178.0f });
+  ok &= AutoTest_ExpectTrue(harvested && OW_GetActiveNodeCount() == before - 1,
+                            "buried chest harvested", outReason, outReasonSize);
+
+  OW_TriggerSandstormEvent();
+  ok &= AutoTest_ExpectTrue(OW_GetActiveNodeCount() == before,
+                            "sandstorm revealed golden chest", outReason, outReasonSize);
+
+  return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
+}
+
+static AutoTestResult AutoTest_DaTauNpcCycleAndWispStep(int frameInCase, char *outReason, int outReasonSize) {
+  if (frameInCase > 0) return AUTOTEST_PASS;
+
+  PlayerProfile *prof = PlayerProfile_GetGlobal();
+  int savedGold = prof->gold;
+  int savedPts = prof->daTauPoints;
+  int savedStreak = prof->daTauStreak;
+  int savedTotal = prof->daTauTotalCompleted;
+
+  OW_Init(OWRealm_GetDesertEarth(), false);
+  const DaTauQuest *q = DaTau_GetCurrent();
+  bool ok = AutoTest_ExpectTrue(q->npcFlowEnabled && q->phase == DATAU_PHASE_WAIT_ACCEPT,
+                                "starts waiting for NPC accept", outReason, outReasonSize);
+
+  Vector3 npcPos = OW_GetDaTauNpcPos();
+  Vector3 guide1 = OW_GetGuideTarget((Vector3){ 150.0f, 0.0f, 210.0f });
+  ok &= AutoTest_ExpectTrue(fabsf(guide1.x - npcPos.x) < 0.2f && fabsf(guide1.z - npcPos.z) < 0.2f,
+                            "wisp points to Da Tau NPC when WAIT_ACCEPT", outReason, outReasonSize);
+
+  ok &= AutoTest_ExpectTrue(DaTau_AcceptFromNPC() && DaTau_GetCurrent()->phase == DATAU_PHASE_IN_PROGRESS,
+                            "NPC accept transitions to IN_PROGRESS", outReason, outReasonSize);
+  OW_SyncQuestEncounter();
+
+  Vector3 guide2 = OW_GetGuideTarget((Vector3){ 160.0f, 0.0f, 222.0f });
+  ok &= AutoTest_ExpectTrue(hypotf(guide2.x - npcPos.x, guide2.z - npcPos.z) > 10.0f,
+                            "wisp points away from NPC to quest objective", outReason, outReasonSize);
+
+  bool ready = DaTau_AdvanceObjective(DaTau_GetCurrent()->targetCount);
+  ok &= AutoTest_ExpectTrue(ready && DaTau_GetCurrent()->phase == DATAU_PHASE_READY_RETURN,
+                            "completing objective transitions to READY_RETURN", outReason, outReasonSize);
+
+  Vector3 guide3 = OW_GetGuideTarget((Vector3){ 120.0f, 0.0f, 170.0f });
+  ok &= AutoTest_ExpectTrue(fabsf(guide3.x - npcPos.x) < 0.2f && fabsf(guide3.z - npcPos.z) < 0.2f,
+                            "wisp points back to Da Tau NPC for turn-in", outReason, outReasonSize);
+
+  ok &= AutoTest_ExpectTrue(DaTau_TurnInToNPC() && DaTau_GetCurrent()->phase == DATAU_PHASE_WAIT_ACCEPT,
+                            "NPC turn-in grants reward and rolls next WAIT_ACCEPT quest", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(prof->gold > savedGold && prof->daTauStreak == savedStreak + 1,
+                            "gold & streak updated on turn-in", outReason, outReasonSize);
+
+  prof->gold = savedGold;
+  prof->daTauPoints = savedPts;
+  prof->daTauStreak = savedStreak;
+  prof->daTauTotalCompleted = savedTotal;
+  return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
+}
+
+static AutoTestResult AutoTest_NetP2PExploreOptStep(int frameInCase, char *outReason, int outReasonSize) {
+  if (frameInCase > 0) return AUTOTEST_PASS;
+
+  int h  = Entity_SpawnAgent((Vector3){ 10.0f, 0.0f, 10.0f }, 100.0f, 3, TEAM_ALLY, ARCH_HERO);
+  int m1 = Entity_SpawnAgent((Vector3){ 25.0f, 0.0f, 10.0f }, 50.0f,  3, TEAM_ENEMY, ARCH_MINION);
+  int m2 = Entity_SpawnAgent((Vector3){ 120.0f, 0.0f, 10.0f }, 50.0f, 3, TEAM_ENEMY, ARCH_MINION); // > 55m
+  int b1 = Entity_SpawnAgent((Vector3){ 140.0f, 0.0f, 10.0f }, 500.0f, 3, TEAM_ENEMY, ARCH_BOSS);   // > 55m but BOSS!
+  Entity_SetDuelFlag(h, true);
+
+  unsigned char buf[1024];
+  int bytes = Net_PackAgentSnapshotFor((Vector3){ 10.0f, 0.0f, 10.0f }, NET_INTEREST_RADIUS, buf, (int)sizeof(buf));
+  bool ok = AutoTest_ExpectTrue(bytes > 0 && bytes <= 4 + 4 * 18, "quantized packet <= 18B/agent", outReason, outReasonSize);
+
+  NetAgentState out[16];
+  int n = Net_UnpackAgentSnapshot(out, 16, buf, bytes);
+  bool hasHero = false, hasNearMinion = false, hasFarMinion = false, hasFarBoss = false, duelPreserved = false;
+  for (int i = 0; i < n; i++) {
+    if (out[i].agentId == h) {
+      hasHero = true;
+      duelPreserved = (out[i].flags & 8) != 0;
+    }
+    if (out[i].agentId == m1) hasNearMinion = true;
+    if (out[i].agentId == m2) hasFarMinion = true;
+    if (out[i].agentId == b1) hasFarBoss = true;
+  }
+  ok &= AutoTest_ExpectTrue(hasHero && duelPreserved, "hero & duelFlag synced", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(hasNearMinion && !hasFarMinion, "interest culling filters >55m minions", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(hasFarBoss, "distant boss always synced", outReason, outReasonSize);
+
+  Entity_ApplyDamage(h, 1e9f, (Vector3){ 0 });
+  Entity_ApplyDamage(m1, 1e9f, (Vector3){ 0 });
+  Entity_ApplyDamage(m2, 1e9f, (Vector3){ 0 });
+  Entity_ApplyDamage(b1, 1e9f, (Vector3){ 0 });
+  return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
+}
+
 void AutoTestCases_Register(PlayerEntity *player)
 {
   s_player = player;
@@ -1656,5 +1833,9 @@ void AutoTestCases_Register(PlayerEntity *player)
   AutoTest_Register("loadout_five_slots", AutoTest_LoadoutFiveSlotsStep, 5);
   AutoTest_Register("datau_quest_chain", AutoTest_DaTauQuestStep, 5);
   AutoTest_Register("pvp_dual_boss_escort", AutoTest_DualBossEscortStep, 5);
+  AutoTest_Register("skill_use_xp_and_pvp_nullification", AutoTest_SkillXpAndPvpNullificationStep, 5);
+  AutoTest_Register("desert_open_world_loop", AutoTest_DesertOpenWorldLoopStep, 5);
+  AutoTest_Register("datau_npc_cycle_and_guiding_wisp", AutoTest_DaTauNpcCycleAndWispStep, 5);
+  AutoTest_Register("net_p2p_explore_optimization", AutoTest_NetP2PExploreOptStep, 5);
 }
 

@@ -731,13 +731,18 @@ static bool FindEnclosingJsonObject(char *jsonText, char *cursor, char **outStar
 
 bool Wardrobe_LoadCatalogFromFile(const char *jsonPath)
 {
-    if (!jsonPath || !FileExists(jsonPath))
+    if (!jsonPath || !jsonPath[0])
     {
         TraceLog(LOG_INFO, "WARDROBE: Catalog file '%s' not found, using built-ins.", jsonPath ? jsonPath : "null");
         return false;
     }
 
     char *jsonText = LoadFileText(jsonPath);
+    if (!jsonText)
+    {
+        TraceLog(LOG_INFO, "WARDROBE: Catalog file '%s' not found, using built-ins.", jsonPath);
+        return false;
+    }
     if (!jsonText)
         return false;
 

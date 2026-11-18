@@ -89,6 +89,7 @@ typedef struct {
     SpringBoneSystem   springBones;       // Secondary bone-driven motion for cloth/robes/sleeves
     double             lastClothStepTime; // Guards against stepping the same instance twice a frame
     WeaponTrail        weaponTrail;       // Real-time blade ribbon trail (Sweep slash aesthetic)
+    bool               useUniqueGpuBuffers; // True for remote heroes so Vulkan VBOs never collide
 } ModularInstance;
 
 // Clustered minion render item
@@ -145,6 +146,8 @@ void ModularInstance_RebuildCloth(ModularInstance *inst);
 
 // Draws a Hero or Boss instance with all equipped clothing and socketed attachments
 void ModularInstance_Draw(ModularInstance *inst);
+void ModularInstance_DrawWithState(ModularInstance *inst, const CharacterAnimState *state,
+                                   Vector3 position, float yawRadians, float scale, Color tint);
 
 // Calculates world transform for rigid socket attachment (fallback to calibrated socket anchors)
 bool ModularSystem_GetSocketMatrix(Vector3 charPos, float charYaw, float charScale,

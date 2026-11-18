@@ -16,13 +16,13 @@
 #include "entities/entities.h" // Agent snapshot fields
 #include <stdbool.h>
 
-#define NET_PROTOCOL_VERSION 3 // v3: multi-peer — roster packet, 8 players
+#define NET_PROTOCOL_VERSION 4 // v4: quantized 18B/agent + interest culling + duelFlag
 
 // Team-battle vision (KE_HOACH_TIEP_THEO.md Đợt A): up to 4v4 = 7 remote
-// players + the host. The roster is the host-owned room list — who occupies
-// which slot, on which team, driving which hero agent. Broadcast (reliable)
-// whenever it changes; clients render lobby/team UI from it.
-#define NET_MAX_PLAYERS 8
+// players + the host. Explore mode caps at 5 players/host for low-latency P2P.
+#define NET_MAX_PLAYERS         8
+#define NET_EXPLORE_MAX_PLAYERS 5
+#define NET_INTEREST_RADIUS     55.0f
 
 #define NET_ROSTER_NONE      255  // agentId value: no hero spawned yet
 #define NET_ROSTER_OCCUPIED  0x1  // flags
@@ -60,11 +60,16 @@ typedef struct {
     Vector3        position;
     float          health, maxHealth;
     float          mana, maxMana;
-    unsigned char  flags;       // bit0 taijiActive, bit1 isMeditating, bit2 isStealthed
+    float          yaw;         // facing angle in radians
+    unsigned char  flags;       // bit0 taiji, bit1 meditating, bit2 stealthed, bit3 duelFlag
 } NetAgentState;
 
-// Packs every ACTIVE agent. Returns bytes written (0 on undersized buffer).
+// Packs every ACTIVE agent (all-arena). Returns bytes written (0 on undersized buffer).
 int Net_PackAgentSnapshot(unsigned char *buf, int maxBytes);
+// Bandwidth-optimized snapshot for Open World: packs all HERO/BOSS agents plus
+// MINION agents within interestRadius of focusPos (<=0 sends all).
+int Net_PackAgentSnapshotFor(Vector3 focusPos, float interestRadius,
+                             unsigned char *buf, int maxBytes);
 // Parses a snapshot into out (up to maxAgents). Returns agent count, or -1
 // on malformed/version-mismatched input. Pure parse — applying it to the
 // local pool ships with the transport layer (needs client-side prediction

@@ -117,7 +117,14 @@ void Combat_Update(float dt) {
             if (s_projs[j].dead) continue; // j already resolved elsewhere
             CombatProjectile *a = &s_projs[i];
             CombatProjectile *b = &s_projs[j];
-            if (a->team == b->team) continue; // same team: pass through, no event
+            if (a->ownerAgentId == b->ownerAgentId) continue;
+            if (a->team == b->team) {
+                const Agent *oa = Entity_GetAgent(a->ownerAgentId);
+                const Agent *ob = Entity_GetAgent(b->ownerAgentId);
+                bool duelClash = (oa && ob && oa->duelFlag && ob->duelFlag &&
+                                  !oa->inSafeZone && !ob->inSafeZone);
+                if (!duelClash) continue;
+            }
             if (!CheckCollisionSpheres(a->pos, a->radius, b->pos, b->radius)) continue;
 
             Vector3 mid = { (a->pos.x + b->pos.x) * 0.5f,
@@ -167,8 +174,9 @@ void Combat_Update(float dt) {
         for (int k = 0; k < count; k++) {
             int id = ids[k];
             if (id == p->ownerAgentId) continue;
+            if (!Entity_CanDamageTarget(p->ownerAgentId, id)) continue;
             const Agent *victim = Entity_GetAgent(id);
-            if (!victim || victim->team == p->team) continue;
+            if (!victim) continue;
 
             float dmg = p->damage;
             // Cân bằng Thổ (thiết kế §XI): đạn Thổ bay vào Rừng mất 50% damage.
@@ -187,7 +195,7 @@ void Combat_Update(float dt) {
 
             Vector3 hitPoint = victim->position;
             CombatElement victimElem = (CombatElement)victim->currentElement;
-            Entity_ApplyDamage(id, dmg, kb);
+            Entity_ApplyDamageFrom(id, p->ownerAgentId, dmg, 0.0f, kb);
             PushEvent(p->skillInstanceId, CLASH_HIT_AGENT, hitPoint, victimElem, id);
             p->dead = true;
             break; // one victim per projectile per frame

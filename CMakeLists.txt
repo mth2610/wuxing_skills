@@ -279,6 +279,7 @@ add_executable(wuxing
 
     # --- Net (wire-format core — Module 11; ENet transport gated on PvP) ---
     net/net.c
+    net/net_prediction.c
     net/net_transport.c
 
     # --- Character (model + animation rendering, counterpart to entities/'s
@@ -290,10 +291,14 @@ add_executable(wuxing
     character/spring_bone.c
     character/weapon_trail.c
 
-    # --- Game Screen (production-bound; sandbox/ stays the dev harness) ---
+    # --- Game Screen & Open World (production-bound; sandbox/ stays the dev harness) ---
     game/game_screen.c
     game/game_rules.c
     game/quest_datau.c
+    open_world/ow_world.c
+    open_world/ow_loot.c
+    open_world/ow_quest_npc.c
+    open_world/realms/ow_desert_earth.c
 
     # --- Sandbox & Test Simulator ---
     sandbox/sandbox_core.c

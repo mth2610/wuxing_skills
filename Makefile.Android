@@ -87,6 +87,9 @@ PROJECT_SOURCE_FILES   := main.c \
                           core/liquid/liquid_capture_cpu.c \
                           core/liquid/liquid_surface.c \
                           core/liquid/liquid_metaball3d.c \
+                          core/liquid/liquid_swe.c \
+                          core/granular/granular_sim.c \
+                          core/granular/granular_gpu.c \
                           core/gas/gas_sim.c \
                           core/gas/gas_system.c \
                           core/path_spline.c \
@@ -144,10 +147,12 @@ PROJECT_SOURCE_FILES   := main.c \
                           $(wildcard character/*.c) \
                           $(wildcard formations/*.c) \
                           $(wildcard game/*.c) \
+                          $(wildcard open_world/*.c) \
+                          $(wildcard open_world/realms/*.c) \
                           $(wildcard ui/*.c) \
                           net/net.c \
+                          net/net_prediction.c \
                           net/net_transport.c \
-                          net/net_eos_stub.c \
                           $(wildcard $(ENET_PATH)/*.c) \
                           $(wildcard skills/*/*/*.c) \
                           $(wildcard skills/*/*/*/*.c) \
@@ -156,6 +161,16 @@ PROJECT_SOURCE_FILES   := main.c \
 
 ifeq ($(USE_VULKAN), 1)
     PROJECT_SOURCE_FILES += core/vulkan/wuxing_vulkan.c
+endif
+
+EOS_ANDROID_UNPACKED = third_party/eos-sdk/SDK/Bin/Android/unpacked
+EOS_ANDROID_SO       = $(EOS_ANDROID_UNPACKED)/jni/$(ANDROID_ARCH_NAME)/libEOSSDK.so
+EOS_ANDROID_JAR      = $(EOS_ANDROID_UNPACKED)/classes.jar
+USE_EOS_ANDROID     := $(if $(wildcard $(EOS_ANDROID_SO)),1,0)
+ifeq ($(USE_EOS_ANDROID), 1)
+    PROJECT_SOURCE_FILES += net/net_eos.c
+else
+    PROJECT_SOURCE_FILES += net/net_eos_stub.c
 endif
 
 PROJECT_SOURCE_FILES   := $(sort $(PROJECT_SOURCE_FILES))
@@ -222,11 +237,10 @@ CFLAGS += -DHAS_SOCKLEN_T=1 -DHAS_FCNTL=1 -DHAS_POLL=1 -DHAS_GETADDRINFO=1 \
 # Include paths
 INCLUDE_PATHS = -I. -Ipost_process -Icore/geometry -Icore/material -Icore/composition -Icore/presets -I$(RAYLIB_PATH)/src -I$(NATIVE_APP_GLUE_PATH) -I$(ENET_PATH)/include
 ifeq ($(USE_VULKAN), 1)
-    # third_party/vulkan/rlvk.h - Vulkan headers themselves come from the NDK sysroot
-    # (auto-included via the NDK clang wrapper, same as <android/native_window.h>/<EGL/egl.h>).
-    # third_party/vulkan/include - vendored shaderc.h (NDK's own copy lacks
-    # set_vulkan_rules_relaxed; see COMPUTE_API.md / RLVK_HANDOFF.md §8.4 shaderc-on-device).
     INCLUDE_PATHS += -Ithird_party/vulkan -Ithird_party/vulkan/include
+endif
+ifeq ($(USE_EOS_ANDROID), 1)
+    INCLUDE_PATHS += -Ithird_party/eos-sdk/SDK/Include
 endif
 
 # Linker flags
@@ -251,13 +265,10 @@ ifeq ($(USE_VULKAN), 1)
     # ships it on Vulkan-capable devices). EGL/GLESv2/v3 above stay linked too: rlvk only
     # replaces the rendering backend, not the platform's EGL-adjacent surface bootstrap that
     # raylib's own Android platform file still references at compile time either way.
-    LDLIBS += -lvulkan
-    # Statically-linked shaderc (compile_shaderc_android) + the C++ runtime it needs
-    # (APP_STL=c++_shared) - libshaderc_combined.a is C++ (glslang/SPIRV-Tools/shaderc), our
-    # own sources are C, so clang won't pull in libc++ automatically the way clang++ would.
-    # Order matters: shaderc's undefined C++ symbols are resolved by c++_shared, which must
-    # come after it on the link line.
-    LDLIBS += -lshaderc_combined -lc++_shared
+    LDLIBS += -lvulkan -lshaderc_combined -lc++_shared
+endif
+ifeq ($(USE_EOS_ANDROID), 1)
+    LDLIBS += -L$(EOS_ANDROID_UNPACKED)/jni/$(ANDROID_ARCH_NAME) -lEOSSDK
 endif
 
 # Object files
@@ -473,9 +484,16 @@ generate_android_manifest: create_temp_project_dirs
 	@echo "        package=\"com.$(APP_COMPANY_NAME).$(APP_PRODUCT_NAME)\" " >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
 	@echo "        android:versionCode=\"$(APP_VERSION_CODE)\" android:versionName=\"$(APP_VERSION_NAME)\" >" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
 	@echo "    <uses-sdk android:minSdkVersion=\"24\" android:targetSdkVersion=\"$(ANDROID_API_VERSION)\" />" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
+	@echo "    <uses-permission android:name=\"android.permission.INTERNET\" />" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
+	@echo "    <uses-permission android:name=\"android.permission.ACCESS_NETWORK_STATE\" />" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
 	@echo "    <uses-feature android:glEsVersion=\"0x00020000\" android:required=\"true\" />" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
+ifeq ($(USE_EOS_ANDROID), 1)
+	@echo "    <application android:allowBackup=\"false\" android:hasCode=\"true\" android:extractNativeLibs=\"true\" android:label=\"@string/app_name\" android:icon=\"@drawable/icon\" >" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
+	@echo "        <activity android:name=\"com.mth2610.wuxing.WuxingActivity\"" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
+else
 	@echo "    <application android:allowBackup=\"false\" android:hasCode=\"false\" android:extractNativeLibs=\"true\" android:label=\"@string/app_name\" android:icon=\"@drawable/icon\" >" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
 	@echo "        <activity android:name=\"android.app.NativeActivity\"" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
+endif
 	@echo "            android:exported=\"true\"" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
 	@echo "            android:theme=\"@android:style/Theme.NoTitleBar.Fullscreen\"" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
 	@echo "             android:configChanges=\"orientation|keyboardHidden|screenSize\"" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
@@ -526,6 +544,13 @@ $(PROJECT_BUILD_PATH)/obj/%.o:%.c
 -include $(OBJS:.o=.d)
 
 create_project_apk_package: compile_project_code
+ifeq ($(USE_EOS_ANDROID), 1)
+	@if [ -f "eos_keys.cfg" ]; then cp -f eos_keys.cfg $(PROJECT_BUILD_PATH)/assets/eos_keys.cfg; fi
+	cp -f $(EOS_ANDROID_SO) $(PROJECT_BUILD_PATH)/lib/$(ANDROID_ARCH_NAME)/libEOSSDK.so
+	mkdir -p $(PROJECT_BUILD_PATH)/java_classes $(PROJECT_BUILD_PATH)/dex_out
+	$(JAVA_HOME)/bin/javac -source 1.8 -target 1.8 -classpath "$(ANDROID_HOME)/platforms/android-$(ANDROID_API_VERSION)/android.jar:$(EOS_ANDROID_JAR)" -d $(PROJECT_BUILD_PATH)/java_classes net/android/WuxingActivity.java net/android/androidx/browser/customtabs/*.java net/android/androidx/security/crypto/*.java
+	$(ANDROID_BUILD_TOOLS)/d8 --min-api 24 --lib "$(ANDROID_HOME)/platforms/android-$(ANDROID_API_VERSION)/android.jar" --output $(PROJECT_BUILD_PATH)/dex_out $$(find $(PROJECT_BUILD_PATH)/java_classes -name "*.class") $(EOS_ANDROID_JAR)
+endif
 	$(ANDROID_BUILD_TOOLS)/aapt package -f \
 		-M $(PROJECT_BUILD_PATH)/AndroidManifest.xml \
 		-S $(PROJECT_BUILD_PATH)/res \
@@ -534,6 +559,12 @@ create_project_apk_package: compile_project_code
 		-F $(PROJECT_BUILD_PATH)/$(PROJECT_NAME).unsigned.apk $(PROJECT_BUILD_PATH)/bin
 	cd $(PROJECT_BUILD_PATH) && $(ANDROID_BUILD_TOOLS)/aapt add \
 		$(PROJECT_NAME).unsigned.apk lib/$(ANDROID_ARCH_NAME)/lib$(PROJECT_LIBRARY_NAME).so
+ifeq ($(USE_EOS_ANDROID), 1)
+	cd $(PROJECT_BUILD_PATH) && $(ANDROID_BUILD_TOOLS)/aapt add \
+		$(PROJECT_NAME).unsigned.apk lib/$(ANDROID_ARCH_NAME)/libEOSSDK.so
+	cd $(PROJECT_BUILD_PATH)/dex_out && $(ANDROID_BUILD_TOOLS)/aapt add \
+		../$(PROJECT_NAME).unsigned.apk classes.dex
+endif
 ifeq ($(USE_VULKAN), 1)
 	@# libc++_shared.so: runtime dependency of the statically-linked shaderc archive
 	@# (compile_shaderc_android, APP_STL=c++_shared) - must ship in the APK or dlopen of our

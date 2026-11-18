@@ -48,8 +48,10 @@ static bool s_shadowWasEnabled = false;
 static bool s_ready = false;
 
 static const MapZone NINH_THUAN_ZONES[] = {
-    {.center = {94.10f, 150.0f}, .radius = 24.0f, .type = NAT_DESERT_ZONE},
-    {.center = {NINH_THUAN_LAKE_CENTER_X, NINH_THUAN_LAKE_CENTER_Z}, .radius = 22.0f, .type = NAT_DESERT_ZONE},
+    {.center = {NINH_THUAN_LAKE_CENTER_X, NINH_THUAN_LAKE_CENTER_Z}, .radius = 22.0f, .type = NAT_RIVER},
+    {.center = {135.0f, 195.0f}, .radius = 32.0f, .type = NAT_DESERT_ZONE},
+    {.center = {94.10f, 150.0f}, .radius = 45.0f, .type = NAT_DESERT_ZONE},
+    {.center = {65.0f, 95.0f},   .radius = 40.0f, .type = NAT_DESERT_ZONE},
 };
 #define NINH_THUAN_ZONE_COUNT ((int)(sizeof(NINH_THUAN_ZONES) / sizeof(NINH_THUAN_ZONES[0])))
 

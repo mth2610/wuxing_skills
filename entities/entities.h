@@ -105,6 +105,12 @@ typedef struct {
     float          baseMaxMana;
     bool           pveBonusesActive;
     AgentPvEBonuses pveBonuses;
+
+    // --- Open-world PK & Skill-Mastery tracking ---
+    bool           duelFlag;            // True when player toggles PK/Duel mode outside Safe Zone
+    bool           inSafeZone;          // True inside Safe Sanctum (e.g. Oasis) — immune to PK
+    int            lastCastSkillIndex;  // Last skill cast by this agent (for direct use-based XP)
+    float          lastCastDamageScale; // PvE skill-level damage multiplier (ignored vs ARCH_HERO)
 } Agent;
 
 // Sized for the real target scale (up to 6 real players + a mixed pool of
@@ -122,6 +128,14 @@ void Entity_Unload(void);
 
 // --- Damage ---
 void Entity_ApplyDamage(int agentId, float damage, Vector3 knockback);
+void Entity_ApplyDamageFrom(int targetId, int attackerId, float baseDamage,
+                            float skillScale, Vector3 knockback);
+bool Entity_CanDamageTarget(int attackerId, int targetId);
+void Entity_SetDuelFlag(int agentId, bool on);
+bool Entity_GetDuelFlag(int agentId);
+void Entity_SetSafeZone(int agentId, bool inSafe);
+bool Entity_IsInSafeZone(int agentId);
+void Entity_SetLastCast(int agentId, int skillIndex, float pveDamageScale);
 
 // --- Vertical physics ---
 void Entity_Jump(int agentId, float force);
@@ -260,7 +274,7 @@ void Entity_NetSyncBegin(void);
 void Entity_NetSyncAgent(int agentId, Vector3 pos, float health, float maxHealth,
                          float mana, float maxMana, int element,
                          AgentTeam team, AgentArchetype archetype,
-                         bool taiji, bool meditating, bool stealthed);
+                         bool taiji, bool meditating, bool stealthed, bool duelFlag);
 void Entity_NetSyncEnd(void);
 
 // --- Speed multiplier read (Module 1) ---

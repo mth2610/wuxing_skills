@@ -18,6 +18,7 @@
 #include "control/control.h" // PlayerIntent
 #include "net/net.h"         // NetRosterEntry, NET_MAX_PLAYERS
 #include <stdbool.h>
+#include <stdint.h>
 
 typedef enum { NET_MODE_OFF = 0, NET_MODE_HOST, NET_MODE_CLIENT } NetMode;
 
@@ -35,6 +36,10 @@ bool    Net_IsPeerConnected(void);
 //   CLIENT: send the local intent @30Hz, apply arriving snapshots to the
 //         local pool (Entity_Net* sync — deactivates unmirrored agents).
 void Net_Tick(float dt);
+
+// Explore mode toggle: enables 55m interest-culled snapshots & 5-player cap.
+void Net_SetExploreMode(bool on);
+bool Net_IsExploreMode(void);
 
 // CLIENT: queue the local PlayerIntent for the next send (game/ calls this
 // INSTEAD of Control_Apply while connected — the host applies it).
@@ -106,6 +111,43 @@ typedef struct {
 } NetKillReward;
 void Net_HostNotifyKillReward(int monsterKind, int element, bool isBoss, int gold, int xp);
 int  Net_ClientPollKillRewards(NetKillReward *out, int max);
+
+// Open-world social emote, duel-flag (PK) & peer-to-peer trade gift sync:
+typedef struct {
+    int  agentId;
+    int  emoteId;  // 0=none/flag-only, 1=Greet, 2=CallBoss, 3=InviteDuel, 4=InviteTrade
+    bool duelFlag;
+} NetSocialEvent;
+
+typedef struct {
+    int senderAgentId;
+    int itemKind; // 0=Gold, 1=EarthStone, 2=Herb, 3=HealPotion, 4=ManaPotion, 5=DaTauToken
+    int amount;
+} NetTradeGift;
+
+void Net_SendSocialState(int agentId, int emoteId, bool duelFlag);
+int  Net_PollSocialEvents(NetSocialEvent *out, int max);
+
+void Net_SendTradeGift(int senderAgentId, int itemKind, int amount);
+int  Net_PollTradeGifts(NetTradeGift *out, int max);
+
+// Wardrobe sync: [10][ver][agentId][slotCount][slotCount x uint8 catalogIdx (0xFF=empty)]
+#define NET_WARDROBE_SLOTS 16
+typedef struct {
+    int     agentId;
+    int     slotCount;
+    uint8_t catalogIndices[NET_WARDROBE_SLOTS];
+} NetWardrobeUpdate;
+void Net_SendWardrobe(int agentId, const uint8_t *catalogIndices, int slotCount);
+int  Net_PollWardrobeUpdates(NetWardrobeUpdate *out, int max);
+
+// Cast animation sync: emitted when a remote hero casts a skill (host + client)
+typedef struct {
+    int     agentId;
+    int     skillIndex;
+    Vector3 aim;
+} NetCastEvent;
+int  Net_PollCastEvents(NetCastEvent *out, int max);
 
 // --- Match outcome sync ---
 // HOST: game/ reports its GameState each frame; the transport sends it on
