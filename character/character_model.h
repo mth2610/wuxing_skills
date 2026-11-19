@@ -30,6 +30,7 @@ typedef enum {
     // Agility / Airborne / Mobility
     CHAR_ANIM_JUMP,
     CHAR_ANIM_JUMP_DOWN, // Landing / jumping down from height (e.g. Mixamo Jumping Down)
+    CHAR_ANIM_FALL,      // Mid-air falling loop (e.g. fall_a_loop)
     CHAR_ANIM_DODGE,
 
     // Unarmed Martial Arts (Quyền / Cước / Chưởng / Thủ)
@@ -85,6 +86,7 @@ void CharacterModel_ResetState(CharacterAnimState *state);
 // Advances playback. isMoving picks IDLE vs WALK/RUN when no one-shot is active;
 // a one-shot plays through once and then reverts to IDLE/WALK automatically.
 void CharacterModel_Update(CharacterAnimState *state, float dt, bool isMoving);
+void CharacterModel_UpdateLocomotion(CharacterAnimState *state, float dt, CharacterAnimSlot baseSlot);
 
 // Starts a one-shot animation on a slot (variant 0 by default).
 // A new trigger interrupts and replaces any one-shot still playing.

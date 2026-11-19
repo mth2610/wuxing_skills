@@ -78,6 +78,13 @@ typedef struct {
     float   mana;
     float   maxMana;
 
+    // --- Stamina (run vs exhausted walk) & Khinh Công double-jump ---
+    float   stamina;
+    float   maxStamina;
+    bool    staminaExhausted;
+    bool    isRunning;
+    int     airJumpsUsed;
+
     // --- Team / archetype (Module 1) ---
     AgentTeam      team;
     AgentArchetype archetype;
@@ -119,6 +126,7 @@ typedef struct {
     bool           sparDefeated;        // Set when HP hits 1.0f floor during non-lethal SPAR
     int            lastAttackerId;      // Last Hero/Agent who damaged this agent
     bool           inSafeZone;          // True inside Safe Sanctum (e.g. Oasis) — immune to PK
+    bool           isStatic;            // Immobile prop/dummy agent (e.g. Training Stele): no AI march, no knockback, no minion render
     int            lastCastSkillIndex;  // Last skill cast by this agent (for direct use-based XP)
     float          lastCastDamageScale; // PvE skill-level damage multiplier (ignored vs ARCH_HERO)
     float          hitFlashTimer;       // Brief white hit-flash feedback (seconds remaining)
@@ -143,6 +151,7 @@ void Entity_ApplyDamageFrom(int targetId, int attackerId, float baseDamage,
                             float skillScale, Vector3 knockback);
 bool Entity_CanDamageTarget(int attackerId, int targetId);
 void Entity_SetDuelFlag(int agentId, bool on);
+void Entity_SetStatic(int agentId, bool isStatic);
 bool Entity_GetDuelFlag(int agentId);
 void Entity_SetPkMode(int agentId, AgentPkMode mode);
 AgentPkMode Entity_GetPkMode(int agentId);
@@ -155,6 +164,9 @@ void Entity_SetLastCast(int agentId, int skillIndex, float pveDamageScale);
 
 // --- Vertical physics ---
 void Entity_Jump(int agentId, float force);
+bool Entity_PerformJump(int agentId, float verticalForce, Vector3 horizontalVelocity);
+void Entity_SetRunning(int agentId, bool running);
+bool Entity_IsRunning(int agentId);
 void Entity_Dash(int agentId, Vector3 direction, float speed);
 bool Entity_CheckRingOut(int agentId);
 

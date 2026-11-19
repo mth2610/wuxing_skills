@@ -8,8 +8,9 @@
 
 // Brisk walk, real-world-scaled (1 unit = 1 meter) — same value the interim
 // game_screen controller used.
-static const float MOVE_SPEED_MPS = 3.5f;
-static const float JUMP_FORCE     = 4.0f;
+static const float RUN_SPEED_MPS  = 5.4f;
+static const float WALK_SPEED_MPS = 3.0f;
+static const float JUMP_FORCE     = 4.6f;
 static const float DASH_SPEED_MPS = 10.0f;
 // Fallback cooldown when a skill exposes no per-category params here yet —
 // keeps 1-4 from being spammable until game/ wires real per-skill data.
@@ -21,6 +22,7 @@ static const Camera3D *s_camera = NULL;
 static float s_yaw = 0.0f; // facing, radians
 static float s_cdMult = 1.0f; // zone-rule cooldown multiplier (game/ sets)
 static int   s_castFired = -1; // skillIndex of the cast that fired this frame
+static int   s_jumpFired = 0;  // 1 = first jump, 2 = mid-air khinh công jump, 0 = none
 static float s_moveMult = 1.0f; // swing damping (game/ sets per frame)
 static ControlSkillLevelFn s_skillLevelFn = NULL;
 static ControlSkillScalingFn s_skillScalingFn = NULL;
@@ -94,28 +96,38 @@ void Control_Apply(const PlayerIntent *in, float dt) {
     // stun/pull, dash burst); Entity_SetPosition cancels meditate on a real
     // move, which is exactly the Thiền Định break rule.
     float len = sqrtf(in->moveDir.x * in->moveDir.x + in->moveDir.y * in->moveDir.y);
+    bool canRun = !a->staminaExhausted && a->stamina > 0.0f;
+    float baseMoveSpeed = canRun ? RUN_SPEED_MPS : WALK_SPEED_MPS;
     if (len > 0.0001f && a->vState == AGENT_GROUNDED &&
         !Entity_IsCrowdControlled(s_agentId) && a->dashTimer <= 0.0f) {
-        float speed = MOVE_SPEED_MPS * Entity_GetSpeedMult(s_agentId) * s_moveMult;
+        float speed = baseMoveSpeed * Entity_GetSpeedMult(s_agentId) * s_moveMult;
         Vector3 pos = a->position;
         pos.x += (in->moveDir.x / len) * speed * dt;
         pos.z += (in->moveDir.y / len) * speed * dt;
         pos.y = MapManager_GetGroundHeightAt(pos.x, pos.z);
         Entity_SetPosition(s_agentId, pos);
+        Entity_SetRunning(s_agentId, canRun);
         s_yaw = atan2f(in->moveDir.x, in->moveDir.y);
     }
 
-    if (in->jump && a->vState == AGENT_GROUNDED && !Entity_IsCrowdControlled(s_agentId)) {
-        // Khinh công carries the run: launch with the CURRENT horizontal
-        // intent as velocity so holding W + Space arcs forward instead of
-        // hopping in place (Entity_Jump only sets velocity.y).
+    if (in->jump) {
+        // Khinh công supports 2 jumps (ground + mid-air double jump), carrying
+        // current horizontal intent as velocity.
         Vector3 hv = { 0 };
         if (len > 0.0001f) {
-            float speed = MOVE_SPEED_MPS * Entity_GetSpeedMult(s_agentId);
+            float speed = baseMoveSpeed * Entity_GetSpeedMult(s_agentId);
             hv.x = (in->moveDir.x / len) * speed;
             hv.z = (in->moveDir.y / len) * speed;
+            s_yaw = atan2f(in->moveDir.x, in->moveDir.y);
+        } else if (a->vState == AGENT_JUMPING) {
+            hv.x = a->velocity.x;
+            hv.z = a->velocity.z;
         }
-        Entity_ApplyLaunch(s_agentId, JUMP_FORCE, hv);
+        float vForce = (a->vState == AGENT_JUMPING) ? (JUMP_FORCE * 1.05f) : JUMP_FORCE;
+        if (Entity_PerformJump(s_agentId, vForce, hv)) {
+            const Agent *updated = Entity_GetAgent(s_agentId);
+            s_jumpFired = updated ? updated->airJumpsUsed : 1;
+        }
     }
 
     if (in->dash) {
@@ -181,6 +193,12 @@ int Control_ConsumeCastFired(void) {
     int idx = s_castFired;
     s_castFired = -1;
     return idx;
+}
+
+int Control_ConsumeJumpFired(void) {
+    int j = s_jumpFired;
+    s_jumpFired = 0;
+    return j;
 }
 
 void Control_SetMoveSpeedMult(float mult) {

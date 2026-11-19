@@ -887,7 +887,7 @@ void HordeRenderer_Draw3D(Camera3D cam) {
     int wCount = 0;
     for (int i = 0; i < MAX_AGENTS && wCount < 64; i++) {
         const Agent *a = Entity_GetAgent(i);
-        if (!a || a->archetype != ARCH_MINION || AI_IsCampMonster(i)) continue;
+        if (!a || a->archetype != ARCH_MINION || a->isStatic || AI_IsCampMonster(i)) continue;
         waveMinions[wCount++] = (AIMonsterRenderInfo){
             .agentId       = i,
             .pos           = a->position,

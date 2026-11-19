@@ -393,10 +393,7 @@ static void ResetMatch(PlayerEntity *player)
     if (UI_Hub_IsModalOpen())
         UI_Hub_CloseModal();
     AI_ClearMonsterCamps();
-    if (s_mode == GAME_MODE_TEAM_BATTLE ||
-        s_mode == GAME_MODE_PVP_ESCORT_1V1 ||
-        s_mode == GAME_MODE_PVP_ESCORT_2V2)
-        AI_ClearHeroBots();
+    AI_ClearHeroBots();
     for (int i = 0; i < MAX_AGENTS; i++)
     {
         s_remoteAnimInit[i] = false;
@@ -520,7 +517,7 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
         int peerCount = (Net_GetMode() != NET_MODE_OFF) ? (Net_GetPeerCount() + 1) : 1;
         if (peerCount > NET_EXPLORE_MAX_PLAYERS) peerCount = NET_EXPLORE_MAX_PLAYERS;
         DrawText(TextFormat("CO-OP EOS P2P: %d/%d", peerCount, NET_EXPLORE_MAX_PLAYERS),
-                 20, 86, 13, (Color){ 140, 235, 195, 255 });
+                 20, 98, 13, (Color){ 140, 235, 195, 255 });
     }
 
     if (s_state == GAME_ARENA_INTRO)
@@ -1402,13 +1399,14 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
                 // Đợt A5: connected clients replay this cast as pure VFX.
                 Net_HostNotifyCast(player->agentId, castIdx, intent.aimPoint);
                 const Agent *pc = Entity_GetAgent(player->agentId);
-                if (pc != NULL)
-                    Audio_PlaySFXAt(pc->taijiActive ? SFX_CAST_TAIJI
-                                                    : Audio_CastSfxForElement(pc->currentElement),
-                                    player->position);
-
                 // Ngũ Hành Tương Sinh 3-step combo -> Ngộ Đạo Thái Cực!
                 int castElem = GameSkillElementByName(GetRegisteredSkillName(castIdx));
+                if (pc != NULL) {
+                    int sfxElem = (castElem >= 0) ? castElem : pc->currentElement;
+                    Audio_PlaySFXAt(pc->taijiActive ? SFX_CAST_TAIJI
+                                                    : Audio_CastSfxForElement(sfxElem),
+                                    player->position);
+                }
                 if (s_tuongSinhTimer > 0.0f && s_tuongSinhLastElem >= 0 &&
                     castElem == (s_tuongSinhLastElem + 1) % 5)
                 {
@@ -1441,8 +1439,23 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
             CharacterModel_TriggerByName(&player->anim, animClip, animSecs);
     }
 
+    int jumpFired = Control_ConsumeJumpFired();
+    if (jumpFired == 1)
+        CharacterModel_TriggerVariant(&player->anim, CHAR_ANIM_JUMP, 0);
+    else if (jumpFired == 2)
+        CharacterModel_TriggerVariant(&player->anim, CHAR_ANIM_JUMP, 1);
+
     float moveLen = sqrtf(intent.moveDir.x * intent.moveDir.x + intent.moveDir.y * intent.moveDir.y);
-    CharacterModel_Update(&player->anim, dt, moveLen > 0.0001f);
+    CharacterAnimSlot locoSlot = CHAR_ANIM_IDLE;
+    if (selfAgent && (selfAgent->vState == AGENT_JUMPING || selfAgent->vState == AGENT_RING_OUT_FALLING))
+    {
+        locoSlot = (selfAgent->velocity.y > 0.25f) ? CHAR_ANIM_JUMP : CHAR_ANIM_FALL;
+    }
+    else if (moveLen > 0.0001f)
+    {
+        locoSlot = (selfAgent && !selfAgent->staminaExhausted) ? CHAR_ANIM_RUN : CHAR_ANIM_WALK;
+    }
+    CharacterModel_UpdateLocomotion(&player->anim, dt, locoSlot);
     SkillHelper_UpdateMeleeTrails(dt, &player->anim, player->position, Control_GetYaw());
 
     // Basic attack (đấm/đá/chưởng) — free, no cast time, spammable, auto-
@@ -1674,8 +1687,14 @@ void GameScreen_DrawHUD(const PlayerEntity *player)
     if (manaRatio < 0.0f) manaRatio = 0.0f;
     if (manaRatio > 1.0f) manaRatio = 1.0f;
 
+    float stam = agent ? agent->stamina : 0.0f;
+    float maxStam = agent ? agent->maxStamina : 1.0f;
+    float stamRatio = (maxStam > 0.0f) ? (stam / maxStam) : 0.0f;
+    if (stamRatio < 0.0f) stamRatio = 0.0f;
+    if (stamRatio > 1.0f) stamRatio = 1.0f;
+
     // --- Top-left Player Status Card (Where Winds Meet ink-wash & gold corners) ---
-    const int cardX = 16, cardY = 14, cardW = 264, cardH = 64;
+    const int cardX = 16, cardY = 14, cardW = 264, cardH = 78;
     Rectangle cardRec = {(float)cardX, (float)cardY, (float)cardW, (float)cardH};
     Color cardAccent = (agent && agent->taijiActive) ? WUXIA_GOLD_BRIGHT : WUXIA_GOLD;
     WuxiaUI_DrawPanel(cardRec, cardAccent, true);
@@ -1706,6 +1725,14 @@ void GameScreen_DrawHUD(const PlayerEntity *player)
                             (Color){ 125, 155, 205, 190 },
                             TextFormat("CHAN KHI  %d/%d", (int)mana, (int)maxMana), 10.5f);
 
+    const int stamBarY = manaBarY + manaH + 6, stamH = 10;
+    Rectangle stamRec = {(float)barX, (float)stamBarY, (float)barW, (float)stamH};
+    Color stamTop = (agent && agent->staminaExhausted) ? (Color){ 185, 115, 55, 255 } : (Color){ 95, 215, 145, 255 };
+    Color stamBot = (agent && agent->staminaExhausted) ? (Color){ 120, 65, 30, 255 } : (Color){ 45, 140, 85, 255 };
+    WuxiaUI_DrawResourceBar(stamRec, stamRatio, stamTop, stamBot,
+                            (Color){ 120, 185, 145, 180 },
+                            (agent && agent->staminaExhausted) ? "THE LUC (KIET SUC)" : TextFormat("THE LUC  %d/%d", (int)stam, (int)maxStam), 9.0f);
+
     // Module 9 overlay: skill slot chips + auto-aim reticle.
     UI_DrawOverlay(player->agentId);
 
@@ -1717,7 +1744,7 @@ void GameScreen_DrawHUD(const PlayerEntity *player)
             if (i == player->agentId) continue;
             const Agent *ea = Entity_GetAgent(i);
             if (!ea || ea->maxHealth <= 0.0f) continue;
-            if (ea->archetype == ARCH_HERO) continue;
+            if (ea->archetype == ARCH_HERO || ea->isStatic) continue;
             float dx = ea->position.x - player->position.x;
             float dz = ea->position.z - player->position.z;
             if (dx * dx + dz * dz > 28.0f * 28.0f) continue;

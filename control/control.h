@@ -68,6 +68,7 @@ void Control_SetCastCooldownMult(float mult);
 // or -1. game/ consumes it to play the character's cast animation —
 // control is pure logic and cannot touch character/VFX itself.
 int Control_ConsumeCastFired(void);
+int Control_ConsumeJumpFired(void);
 
 // Temporary movement damping (game/ sets it per frame): scales walk speed,
 // e.g. 0.35 while an attack/cast swing plays so the feet stop sliding

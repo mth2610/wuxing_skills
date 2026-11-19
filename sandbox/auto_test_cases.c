@@ -203,19 +203,19 @@ static AutoTestResult AutoTest_ControlStep(int frameInCase, char *outReason, int
   bool ok = AutoTest_ExpectTrue(agent >= 0, "spawned control agent", outReason, outReasonSize);
   Control_Init(agent);
 
-  // Movement: 1s at 3.5 m/s.
+  // Movement: 1s at 5.4 m/s (normal run speed).
   PlayerIntent intent = { 0 };
   intent.castSkillSlot = -1;
   intent.moveDir = (Vector2){ 1.0f, 0.0f };
   Control_Apply(&intent, 1.0f);
-  ok = ok && AutoTest_ExpectFloatNear(Entity_GetAgent(agent)->position.x, base.x + 3.5f, 0.01f,
-                                      "moved 3.5m in 1s", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectFloatNear(Entity_GetAgent(agent)->position.x, base.x + 5.4f, 0.01f,
+                                      "moved 5.4m in 1s", outReason, outReasonSize);
 
-  // speedMult respected: 2x modifier → 7m in 1s.
+  // speedMult respected: 2x modifier → 10.8m in 1s.
   Entity_AddModifier(agent, 2.0f, 5.0f);
   float xBefore = Entity_GetAgent(agent)->position.x;
   Control_Apply(&intent, 1.0f);
-  ok = ok && AutoTest_ExpectFloatNear(Entity_GetAgent(agent)->position.x - xBefore, 7.0f, 0.01f,
+  ok = ok && AutoTest_ExpectFloatNear(Entity_GetAgent(agent)->position.x - xBefore, 10.8f, 0.01f,
                                       "speedMult doubles move speed", outReason, outReasonSize);
 
   // Meditate starts when idle, breaks on a real move.

@@ -58,6 +58,10 @@ static const float   GRAVITY = 5.0f; // below real 9.81 m/s² by design (floatie
 static const float   RING_OUT_KILL_Y = -2.0f;
 static const float   DEFAULT_MAX_MANA = 100.0f;
 static const float   MANA_REGEN_PER_SEC = 5.0f;
+static const float   DEFAULT_MAX_STAMINA = 100.0f;
+static const float   STAMINA_RUN_DRAIN_SEC = 10.0f;
+static const float   STAMINA_REGEN_SEC = 18.0f;
+static const float   STAMINA_RECOVER_THRESH = 15.0f;
 // Thiền Định: 3s immobile channel; regen sized so an empty default pool
 // (100) refills within the 3s window (34 * 3 > 100).
 static const float   MEDITATE_DURATION = 3.0f;
@@ -133,6 +137,24 @@ void Entity_Update(float dt) {
             if (a->mana > a->maxMana) a->mana = a->maxMana;
         }
 
+        if (a->isRunning) {
+            a->stamina -= STAMINA_RUN_DRAIN_SEC * dt;
+            if (a->stamina <= 0.0f) {
+                a->stamina = 0.0f;
+                a->staminaExhausted = true;
+            }
+        } else if (a->stamina < a->maxStamina) {
+            float sRegen = a->isMeditating ? (STAMINA_REGEN_SEC * 1.8f) : STAMINA_REGEN_SEC;
+            a->stamina += sRegen * dt;
+            if (a->stamina > a->maxStamina) a->stamina = a->maxStamina;
+            if (a->staminaExhausted && a->stamina >= STAMINA_RECOVER_THRESH) {
+                a->staminaExhausted = false;
+            }
+        } else {
+            a->staminaExhausted = false;
+        }
+        a->isRunning = false;
+
         if (a->isMeditating) {
             a->meditateTimer -= dt;
             if (a->meditateTimer <= 0.0f) {
@@ -206,6 +228,7 @@ void Entity_Update(float dt) {
                 a->position.y = groundY;
                 a->velocity = (Vector3){ 0 };
                 a->vState = AGENT_GROUNDED;
+                a->airJumpsUsed = 0;
             }
         }
     }
@@ -240,23 +263,25 @@ void Entity_ApplyDamage(int agentId, float damage, Vector3 knockback) {
     CancelMeditate(a);
     a->health -= damage;
     if (damage > 0.0f) a->hitFlashTimer = 0.12f;
-    a->velocity.x += knockback.x;
-    a->velocity.y += knockback.y;
-    a->velocity.z += knockback.z;
+    if (!a->isStatic) {
+        a->velocity.x += knockback.x;
+        a->velocity.y += knockback.y;
+        a->velocity.z += knockback.z;
 
-    // A real shove must enter the airborne state — the horizontal velocity
-    // only integrates while AGENT_JUMPING (grounded knockback would be a
-    // silent no-op). The pop height scales with the shove's strength so a
-    // hard hit (Fire ~2.5 m/s) arcs long enough to be VISIBLY knocked back,
-    // while a light nudge barely leaves the ground. Capped so nothing
-    // launches to the moon.
-    float kbSq = knockback.x * knockback.x + knockback.z * knockback.z;
-    if (kbSq > 0.25f && a->vState == AGENT_GROUNDED) {
-        float pop = sqrtf(kbSq);           // arc height ∝ horizontal impulse
-        if (pop < 1.2f) pop = 1.2f;
-        if (pop > 4.0f) pop = 4.0f;
-        if (a->velocity.y < pop) a->velocity.y = pop;
-        a->vState = AGENT_JUMPING;
+        // A real shove must enter the airborne state — the horizontal velocity
+        // only integrates while AGENT_JUMPING (grounded knockback would be a
+        // silent no-op). The pop height scales with the shove's strength so a
+        // hard hit (Fire ~2.5 m/s) arcs long enough to be VISIBLY knocked back,
+        // while a light nudge barely leaves the ground. Capped so nothing
+        // launches to the moon.
+        float kbSq = knockback.x * knockback.x + knockback.z * knockback.z;
+        if (kbSq > 0.25f && a->vState == AGENT_GROUNDED) {
+            float pop = sqrtf(kbSq);           // arc height ∝ horizontal impulse
+            if (pop < 1.2f) pop = 1.2f;
+            if (pop > 4.0f) pop = 4.0f;
+            if (a->velocity.y < pop) a->velocity.y = pop;
+            a->vState = AGENT_JUMPING;
+        }
     }
 
     if (a->health <= 0.0f) {
@@ -318,17 +343,19 @@ void Entity_ApplyDamageFrom(int targetId, int attackerId, float baseDamage,
         tgt->health -= dmg;
     }
     if (tgt->health > tgt->maxHealth) tgt->health = tgt->maxHealth;
-    tgt->velocity.x += knockback.x;
-    tgt->velocity.y += knockback.y;
-    tgt->velocity.z += knockback.z;
+    if (!tgt->isStatic) {
+        tgt->velocity.x += knockback.x;
+        tgt->velocity.y += knockback.y;
+        tgt->velocity.z += knockback.z;
 
-    float kbSq = knockback.x * knockback.x + knockback.z * knockback.z;
-    if (kbSq > 0.25f && tgt->vState == AGENT_GROUNDED) {
-        float pop = sqrtf(kbSq);
-        if (pop < 1.2f) pop = 1.2f;
-        if (pop > 4.0f) pop = 4.0f;
-        if (tgt->velocity.y < pop) tgt->velocity.y = pop;
-        tgt->vState = AGENT_JUMPING;
+        float kbSq = knockback.x * knockback.x + knockback.z * knockback.z;
+        if (kbSq > 0.25f && tgt->vState == AGENT_GROUNDED) {
+            float pop = sqrtf(kbSq);
+            if (pop < 1.2f) pop = 1.2f;
+            if (pop > 4.0f) pop = 4.0f;
+            if (tgt->velocity.y < pop) tgt->velocity.y = pop;
+            tgt->vState = AGENT_JUMPING;
+        }
     }
 
     if (tgt->health <= 0.0f) {
@@ -396,6 +423,11 @@ bool Entity_IsInSafeZone(int agentId) {
     return a ? a->inSafeZone : false;
 }
 
+void Entity_SetStatic(int agentId, bool isStatic) {
+    if (agentId < 0 || agentId >= MAX_AGENTS || !agentPool[agentId].active) return;
+    agentPool[agentId].isStatic = isStatic;
+}
+
 void Entity_SetLastCast(int agentId, int skillIndex, float pveDamageScale) {
     if (agentId < 0 || agentId >= MAX_AGENTS || !agentPool[agentId].active) return;
     agentPool[agentId].lastCastSkillIndex = skillIndex;
@@ -410,7 +442,37 @@ void Entity_Jump(int agentId, float force) {
         CancelMeditate(a);
         a->velocity.y = force;
         a->vState = AGENT_JUMPING;
+        a->airJumpsUsed = 1;
     }
+}
+
+bool Entity_PerformJump(int agentId, float verticalForce, Vector3 horizontalVelocity) {
+    if (agentId < 0 || agentId >= MAX_AGENTS) return false;
+    Agent *a = &agentPool[agentId];
+    if (!a->active || a->stunTimer > 0.0f || a->pullTimer > 0.0f) return false;
+    if (a->vState == AGENT_RING_OUT_FALLING) return false;
+
+    if (a->vState == AGENT_GROUNDED) {
+        a->airJumpsUsed = 1;
+    } else if (a->vState == AGENT_JUMPING && a->airJumpsUsed < 2) {
+        a->airJumpsUsed++;
+    } else {
+        return false;
+    }
+    CancelMeditate(a);
+    a->velocity = (Vector3){ horizontalVelocity.x, verticalForce, horizontalVelocity.z };
+    a->vState = AGENT_JUMPING;
+    return true;
+}
+
+void Entity_SetRunning(int agentId, bool running) {
+    if (agentId < 0 || agentId >= MAX_AGENTS || !agentPool[agentId].active) return;
+    agentPool[agentId].isRunning = running;
+}
+
+bool Entity_IsRunning(int agentId) {
+    const Agent *a = Entity_GetAgent(agentId);
+    return a ? (a->isRunning && !a->staminaExhausted) : false;
 }
 
 void Entity_Dash(int agentId, Vector3 direction, float speed) {
@@ -1011,12 +1073,18 @@ int Entity_SpawnAgent(Vector3 position, float maxHealth, int element,
             a->pullSpeed = 0.0f;
             a->maxMana = DEFAULT_MAX_MANA;
             a->mana = DEFAULT_MAX_MANA;
+            a->maxStamina = DEFAULT_MAX_STAMINA;
+            a->stamina = DEFAULT_MAX_STAMINA;
+            a->staminaExhausted = false;
+            a->isRunning = false;
+            a->airJumpsUsed = 0;
             a->baseMaxHealth = maxHealth;
             a->baseMaxMana = DEFAULT_MAX_MANA;
             a->pveBonusesActive = false;
             a->pveBonuses = (AgentPvEBonuses){ 0 };
             a->duelFlag = false;
             a->inSafeZone = false;
+            a->isStatic = false;
             a->lastCastSkillIndex = -1;
             a->lastCastDamageScale = 1.0f;
             a->hitFlashTimer = 0.0f;

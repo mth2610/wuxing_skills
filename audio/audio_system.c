@@ -5,6 +5,7 @@
 #include "core/resource_manager.h"
 #include <math.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -19,6 +20,7 @@ static int      s_lastTrackIdx = -1;
 #define AUDIO_SFX_MAX_DIST 26.0f
 // Voice polyphony per SfxId via raylib LoadSoundAlias (0 extra wave memory).
 #define AUDIO_SFX_ALIASES 4
+#define AUDIO_SFX_MAX_VARIANTS 6
 
 // One path per SfxId (index-aligned with the enum). Drop the WAVs here and
 // they play — no code change. Kept .wav for low-latency one-shots.
@@ -61,8 +63,9 @@ static bool     s_musicLoaded = false;
 // Per-SfxId "we already tried and it's missing" flag, so a missing file
 // warns once (via the resource manager) and then costs nothing.
 static bool  s_sfxMissing[SFX_COUNT] = { false };
-static Sound s_sfx[SFX_COUNT];        // cached handles (also live in RM cache)
-static Sound s_sfxAliases[SFX_COUNT][AUDIO_SFX_ALIASES - 1];
+static Sound s_sfx[SFX_COUNT][AUDIO_SFX_MAX_VARIANTS];
+static Sound s_sfxAliases[SFX_COUNT][AUDIO_SFX_MAX_VARIANTS][AUDIO_SFX_ALIASES - 1];
+static int   s_sfxVariantCount[SFX_COUNT] = { 0 };
 static int   s_sfxVoiceCursor[SFX_COUNT] = { 0 };
 static bool  s_sfxLoaded[SFX_COUNT] = { false };
 
@@ -124,9 +127,12 @@ void Audio_Shutdown(void) {
     s_lastTrackIdx = -1;
     for (int i = 0; i < SFX_COUNT; i++) {
         if (!s_sfxLoaded[i] || s_sfxMissing[i]) continue;
-        for (int v = 0; v < AUDIO_SFX_ALIASES - 1; v++) {
-            if (IsSoundValid(s_sfxAliases[i][v])) UnloadSoundAlias(s_sfxAliases[i][v]);
+        for (int var = 0; var < s_sfxVariantCount[i]; var++) {
+            for (int v = 0; v < AUDIO_SFX_ALIASES - 1; v++) {
+                if (IsSoundValid(s_sfxAliases[i][var][v])) UnloadSoundAlias(s_sfxAliases[i][var][v]);
+            }
         }
+        s_sfxVariantCount[i] = 0;
         s_sfxLoaded[i] = false;
     }
     // Base SFX Sounds are owned by ResourceManager's cache — it unloads them.
@@ -187,24 +193,51 @@ SfxId Audio_CastSfxForElement(int element) {
     }
 }
 
-// Fetch (lazy-load) the next round-robin Sound voice for id, or NULL if missing.
+// Fetch (lazy-load) a random variant + round-robin Sound voice for id, or NULL if missing.
 static Sound *ResolveSfx(SfxId id) {
     if (id < 0 || id >= SFX_COUNT || s_sfxMissing[id]) return NULL;
     if (!s_sfxLoaded[id]) {
-        s_sfx[id] = ResourceManager_LoadSound(kSfxPath[id]);
         s_sfxLoaded[id] = true;
-        if (!IsSoundValid(s_sfx[id])) {
-            s_sfxMissing[id] = true; // file absent — stop retrying
+        s_sfxVariantCount[id] = 0;
+        if (kSfxPath[id] && FileExists(kSfxPath[id])) {
+            Sound base = ResourceManager_LoadSound(kSfxPath[id]);
+            if (IsSoundValid(base)) {
+                s_sfx[id][0] = base;
+                for (int v = 0; v < AUDIO_SFX_ALIASES - 1; v++) {
+                    s_sfxAliases[id][0][v] = LoadSoundAlias(base);
+                }
+                s_sfxVariantCount[id] = 1;
+            }
+        }
+        if (kSfxPath[id] && s_sfxVariantCount[id] > 0) {
+            const char *dot = strrchr(kSfxPath[id], '.');
+            size_t stemLen = dot ? (size_t)(dot - kSfxPath[id]) : strlen(kSfxPath[id]);
+            if (stemLen < 220) {
+                char varPath[256];
+                for (int k = 1; k < AUDIO_SFX_MAX_VARIANTS; k++) {
+                    snprintf(varPath, sizeof(varPath), "%.*s_%d.wav", (int)stemLen, kSfxPath[id], k);
+                    if (!FileExists(varPath)) break;
+                    Sound vs = ResourceManager_LoadSound(varPath);
+                    if (IsSoundValid(vs)) {
+                        int idx = s_sfxVariantCount[id]++;
+                        s_sfx[id][idx] = vs;
+                        for (int v = 0; v < AUDIO_SFX_ALIASES - 1; v++) {
+                            s_sfxAliases[id][idx][v] = LoadSoundAlias(vs);
+                        }
+                    }
+                }
+            }
+        }
+        if (s_sfxVariantCount[id] == 0) {
+            s_sfxMissing[id] = true;
             return NULL;
         }
-        for (int v = 0; v < AUDIO_SFX_ALIASES - 1; v++) {
-            s_sfxAliases[id][v] = LoadSoundAlias(s_sfx[id]);
-        }
     }
+    int var = (s_sfxVariantCount[id] > 1) ? (rand() % s_sfxVariantCount[id]) : 0;
     int slot = s_sfxVoiceCursor[id];
     s_sfxVoiceCursor[id] = (slot + 1) % AUDIO_SFX_ALIASES;
-    Sound *voice = (slot == 0) ? &s_sfx[id] : &s_sfxAliases[id][slot - 1];
-    return IsSoundValid(*voice) ? voice : (IsSoundValid(s_sfx[id]) ? &s_sfx[id] : NULL);
+    Sound *voice = (slot == 0) ? &s_sfx[id][var] : &s_sfxAliases[id][var][slot - 1];
+    return IsSoundValid(*voice) ? voice : (IsSoundValid(s_sfx[id][var]) ? &s_sfx[id][var] : NULL);
 }
 
 // Tiny pitch jitter keeps repeated hits/casts from sounding robotic.

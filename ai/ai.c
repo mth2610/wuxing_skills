@@ -215,7 +215,7 @@ void AI_Update(float dt) {
     for (int i = 0; i < MAX_AGENTS; i++) {
         const Agent *m = Entity_GetAgent(i);
         if (!m || m->archetype != ARCH_MINION) continue;
-        if (AI_IsCampMonster(i)) continue;
+        if (m->isStatic || AI_IsCampMonster(i)) continue;
         if (m->vState != AGENT_GROUNDED || Entity_IsCrowdControlled(i)) continue;
 
         int targetId = FindMarchTarget(m);

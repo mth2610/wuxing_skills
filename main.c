@@ -1695,9 +1695,12 @@ int main(int argc, char **argv) {
     {
         HeroBotCast botCasts[16];
         int nCasts = AI_PollHeroCasts(botCasts, 16);
-        for (int ci = 0; ci < nCasts; ci++)
+        for (int ci = 0; ci < nCasts; ci++) {
+            const Agent *ba = Entity_GetAgent(botCasts[ci].agentId);
+            if (ba) Audio_PlaySFXAt(SFX_AI_CAST, ba->position);
             Net_HostNotifyCast(botCasts[ci].agentId, botCasts[ci].skillIndex,
                                botCasts[ci].aim);
+        }
     }
 
     // Minion self-destructs remain gameplay/audio events.

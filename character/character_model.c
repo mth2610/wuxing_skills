@@ -116,6 +116,7 @@ static const char *s_slotNames[CHAR_ANIM_COUNT] = {
     [CHAR_ANIM_RUN] = "RUN",
     [CHAR_ANIM_JUMP] = "JUMP",
     [CHAR_ANIM_JUMP_DOWN] = "JUMP_DOWN",
+    [CHAR_ANIM_FALL] = "FALL",
     [CHAR_ANIM_DODGE] = "DODGE",
     [CHAR_ANIM_PUNCH] = "PUNCH",
     [CHAR_ANIM_KICK] = "KICK",
@@ -139,7 +140,8 @@ static const char *s_keywords[CHAR_ANIM_COUNT][6] = {
     [CHAR_ANIM_WALK] = {"walk", "jog", NULL},
     [CHAR_ANIM_RUN] = {"run", "sprint", NULL},
     [CHAR_ANIM_JUMP] = {"jump", "leap", NULL},
-    [CHAR_ANIM_JUMP_DOWN] = {"jumping_down", "jump_down", "jumpdown", "land", NULL},
+    [CHAR_ANIM_JUMP_DOWN] = {"jumping_down", "jump_down", "jumpdown", "landing", NULL},
+    [CHAR_ANIM_FALL] = {"fall_a_loop", "fall", "falling", NULL},
     [CHAR_ANIM_DODGE] = {"dodge", "evade", "roll", "dash", NULL},
     [CHAR_ANIM_PUNCH] = {"punch", "jab", "cross", "hook", NULL},
     [CHAR_ANIM_KICK] = {"kick", NULL},
@@ -403,6 +405,10 @@ bool CharacterModel_LoadEx(const char *meshPath, const char *animBankPath)
     {
         AddSlotIndex(CHAR_ANIM_JUMP_DOWN, s_slots[CHAR_ANIM_JUMP].indices[0]);
     }
+    if (s_slots[CHAR_ANIM_FALL].count == 0 && s_slots[CHAR_ANIM_JUMP_DOWN].count > 0)
+    {
+        AddSlotIndex(CHAR_ANIM_FALL, s_slots[CHAR_ANIM_JUMP_DOWN].indices[0]);
+    }
     if (s_slots[CHAR_ANIM_DODGE].count == 0)
     {
         if (s_slots[CHAR_ANIM_RUN].count > 0)
@@ -472,19 +478,21 @@ void CharacterModel_ResetState(CharacterAnimState *state)
     state->oneShotSpeed = 1.0f;
 }
 
-void CharacterModel_Update(CharacterAnimState *state, float dt, bool isMoving)
+void CharacterModel_UpdateLocomotion(CharacterAnimState *state, float dt, CharacterAnimSlot baseSlot)
 {
     if (!state || !s_loaded)
         return;
 
+    if (baseSlot < 0 || baseSlot >= CHAR_ANIM_COUNT)
+        baseSlot = CHAR_ANIM_IDLE;
+
     if (!state->oneShotActive)
     {
-        CharacterAnimSlot desired = isMoving ? CHAR_ANIM_WALK : CHAR_ANIM_IDLE;
-        if (desired != state->currentSlot)
+        if (baseSlot != state->currentSlot)
         {
-            state->currentSlot = desired;
+            state->currentSlot = baseSlot;
             state->activeVariant = 0;
-            state->activeAnimIndex = (s_slots[desired].count > 0) ? s_slots[desired].indices[0] : -1;
+            state->activeAnimIndex = (s_slots[baseSlot].count > 0) ? s_slots[baseSlot].indices[0] : -1;
             state->frame = 0;
             state->frameTimer = 0.0f;
         }
@@ -507,9 +515,9 @@ void CharacterModel_Update(CharacterAnimState *state, float dt, bool isMoving)
             if (state->oneShotActive)
             {
                 state->oneShotActive = false;
-                state->currentSlot = isMoving ? CHAR_ANIM_WALK : CHAR_ANIM_IDLE;
+                state->currentSlot = baseSlot;
                 state->activeVariant = 0;
-                state->activeAnimIndex = (s_slots[state->currentSlot].count > 0) ? s_slots[state->currentSlot].indices[0] : -1;
+                state->activeAnimIndex = (s_slots[baseSlot].count > 0) ? s_slots[baseSlot].indices[0] : -1;
                 state->frame = 0;
             }
             else
@@ -518,6 +526,11 @@ void CharacterModel_Update(CharacterAnimState *state, float dt, bool isMoving)
             }
         }
     }
+}
+
+void CharacterModel_Update(CharacterAnimState *state, float dt, bool isMoving)
+{
+    CharacterModel_UpdateLocomotion(state, dt, isMoving ? CHAR_ANIM_WALK : CHAR_ANIM_IDLE);
 }
 
 void CharacterModel_Trigger(CharacterAnimState *state, CharacterAnimSlot slot)

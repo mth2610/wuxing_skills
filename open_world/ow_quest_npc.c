@@ -95,6 +95,7 @@ void OWQuestNpc_Init(const OWRealmDef *realm, bool spawnStele) {
     if (spawnStele) {
         Vector3 spStele = { s_stelePos.x, MapManager_GetGroundHeightAt(s_stelePos.x, s_stelePos.z), s_stelePos.z };
         s_steleAgentId = Entity_SpawnAgent(spStele, 10000.0f, s_realmId, TEAM_ENEMY, ARCH_MINION);
+        Entity_SetStatic(s_steleAgentId, true);
     }
 }
 
