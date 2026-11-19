@@ -7,6 +7,7 @@ in vec3 v_normal;
 
 uniform vec3 u_skyAmbient, u_hazeColor;
 uniform int u_cloudBankEnabled;
+uniform float u_nightFactor;
 
 uniform sampler2D texture0;
 uniform vec4 colDiffuse;
@@ -45,7 +46,7 @@ void main()
 
     // Bầu trời nền tại chân trời
     vec3 skyRay = vec3(v_viewVec.x, max(v_viewVec.y, 0.14), v_viewVec.z);
-    vec3 sky = MapSkyRadiance(skyRay, L, u_skyAmbient, u_hazeColor, cloudSunLight);
+    vec3 sky = MapSkyRadianceEx(skyRay, L, u_skyAmbient, u_hazeColor, cloudSunLight, u_nightFactor);
 
     // Chân trời hòa nhập 100% vào ánh sáng vòm trời xa ở dist >= 540m
     float horizon = smoothstep(130.0, 540.0, dist);
@@ -83,7 +84,9 @@ void main()
         float dScaled = density * 2.6;
         float powderEffect = 1.0 - 1.0 / (1.0 + dScaled + 0.48 * dScaled * dScaled);
         float cloudShading = clamp(edge * verticalAO * mix(0.84, 1.12, powderEffect), 0.0, 1.0);
-        vec3 cloudBase = mix(CLOUD_DARK, CLOUD_LIGHT, cloudShading);
+        vec3 cloudDarkTint = mix(CLOUD_DARK, vec3(0.08, 0.12, 0.24), u_nightFactor);
+        vec3 cloudLightTint = mix(CLOUD_LIGHT, vec3(0.62, 0.74, 0.96), u_nightFactor);
+        vec3 cloudBase = mix(cloudDarkTint, cloudLightTint, cloudShading);
 
         float NdotL = max((dot(N, L) + 0.38) * 0.72, 0.0);
 

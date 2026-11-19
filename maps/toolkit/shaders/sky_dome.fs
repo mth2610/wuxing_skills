@@ -7,6 +7,7 @@ uniform vec3 u_sunDirection;
 uniform vec3 u_skyAmbient;
 uniform vec3 u_hazeColor;
 uniform vec3 u_sunColor;
+uniform float u_nightFactor;
 out vec4 finalColor;
 #include "maps/toolkit/shaders/map_sky.glsl"
 void main()
@@ -15,7 +16,7 @@ void main()
     float sunLenSq = dot(u_sunDirection, u_sunDirection);
     vec3 safeSunDir = (sunLenSq > 1e-8) ? (u_sunDirection * inversesqrt(sunLenSq)) : vec3(0.0, 1.0, 0.0);
 
-    vec3 skyColor = MapSkyRadiance(skyRay, safeSunDir, u_skyAmbient, u_hazeColor, u_sunColor);
+    vec3 skyColor = MapSkyRadianceEx(skyRay, safeSunDir, u_skyAmbient, u_hazeColor, u_sunColor, u_nightFactor);
 
     // Khử sọc chuyển sắc 8-bit (Color Banding) bằng nhiễu phân phối tam giác (Triangular-PDF IGN Dither)
     float ign0 = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));

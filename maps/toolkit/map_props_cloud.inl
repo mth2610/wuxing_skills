@@ -57,6 +57,20 @@ MapCloudSea MapProp_CreateCloudSea(float width, float depth, float tileSize)
     cloud.size = (Vector2){width, depth};
 
     BeginShaderMode(cloudShader);
+    {
+        static unsigned int s_cloudNightShaderId = 0;
+        static int s_cloudNightLoc = -1;
+        if (s_cloudNightShaderId != cloudShader.id)
+        {
+            s_cloudNightLoc = GetShaderLocation(cloudShader, "u_nightFactor");
+            s_cloudNightShaderId = cloudShader.id;
+        }
+        if (s_cloudNightLoc >= 0)
+        {
+            float nf = Environment_IsNightMode() ? 1.0f : 0.0f;
+            SetShaderValue(cloudShader, s_cloudNightLoc, &nf, SHADER_UNIFORM_FLOAT);
+        }
+    }
     if (locCloudTiling >= 0)
         SetShaderValue(cloudShader, locCloudTiling, &cloud.tiling, SHADER_UNIFORM_VEC2);
     EndShaderMode();
@@ -93,7 +107,21 @@ void MapProp_DrawCloudSea(const MapCloudSea *cloud, Vector3 worldCenter, float y
     // Chu kỳ 1000.0s là bội số chung chính xác của các vận tốc trôi UV (0.02, 0.008, -0.015, 0.01)
     float t = TimeFX_IsDeterministic() ? TimeFX_Elapsed() : (float)fmod(GetTime(), 1000.0);
 
-    BeginShaderMode(cloudShader); // Opaque sea surface: native depth covers submerged cliffs.
+    BeginShaderMode(cloudShader);
+    {
+        static unsigned int s_cloudNightShaderId = 0;
+        static int s_cloudNightLoc = -1;
+        if (s_cloudNightShaderId != cloudShader.id)
+        {
+            s_cloudNightLoc = GetShaderLocation(cloudShader, "u_nightFactor");
+            s_cloudNightShaderId = cloudShader.id;
+        }
+        if (s_cloudNightLoc >= 0)
+        {
+            float nf = Environment_IsNightMode() ? 1.0f : 0.0f;
+            SetShaderValue(cloudShader, s_cloudNightLoc, &nf, SHADER_UNIFORM_FLOAT);
+        }
+    } // Opaque sea surface: native depth covers submerged cliffs.
     Vector3 pos = {worldCenter.x, worldCenter.y + yOffset, worldCenter.z};
     if (locCloudOffset >= 0)
         SetShaderValue(cloudShader, locCloudOffset, &pos, SHADER_UNIFORM_VEC3);

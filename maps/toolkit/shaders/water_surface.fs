@@ -572,12 +572,13 @@ void main()
     float skyAngle = clamp(reflectDir.y * 0.85 + 0.15, 0.0, 1.0);
     float sunAzimuth = clamp(dot(normalize(vec2(reflectDir.x, reflectDir.z) + vec2(1e-5)),
                                  normalize(L.xz + vec2(1e-5))) * 0.5 + 0.5, 0.0, 1.0);
-    vec3 skyZenith  = mix(vec3(0.18, 0.42, 0.70), u_ambientColor * 1.18, 0.45);
-    vec3 skyHorizon = mix(u_ambientColor * 1.32 + vec3(0.10, 0.12, 0.14),
+    float daySkyScale = clamp(dot(u_ambientColor, vec3(0.3333)) * 2.4, 0.14, 1.0);
+    vec3 skyZenith  = mix(vec3(0.18, 0.42, 0.70) * daySkyScale, u_ambientColor * 1.18, 0.45);
+    vec3 skyHorizon = mix(u_ambientColor * 1.32 + vec3(0.10, 0.12, 0.14) * daySkyScale,
                           effectiveLight * 0.68, 0.24 + 0.34 * sunAzimuth * sunAzimuth);
     if (u_waterShape == 1 && u_lakeRadii.x > 80.0) {
-        skyZenith  = vec3(0.10, 0.36, 0.64);
-        skyHorizon = mix(vec3(0.24, 0.50, 0.68), effectiveLight * 0.55, 0.14 * sunAzimuth);
+        skyZenith  = mix(vec3(0.02, 0.04, 0.09), vec3(0.10, 0.36, 0.64), daySkyScale);
+        skyHorizon = mix(vec3(0.24, 0.50, 0.68) * daySkyScale, effectiveLight * 0.55, 0.14 * sunAzimuth);
     }
     vec3 reflectedSky = mix(skyHorizon, skyZenith, skyAngle);
     // Analytical hillside & riparian bank reflection near low grazing reflection angles

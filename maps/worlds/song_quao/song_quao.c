@@ -569,7 +569,7 @@ void InitSongQuaoMap(void)
         ColorGradeLut_Load("assets/maps/song_quao/song_quao_grade.png");
 
     // Ghost of Tsushima / Where Winds Meet dynamic celestial floating island ToD curve
-    static const EnvLightingPreset kSongQuaoToD[4] = {
+    static const EnvLightingPreset kSongQuaoToD[5] = {
         // 06:00 Misty Dawn: soft rose-gold sun, cool azure-violet ambient
         {
             .ambientColor = {80, 95, 130, 255},
@@ -621,10 +621,23 @@ void InitSongQuaoMap(void)
                 .optics = {.rayleighLMS = {0.0120f, 0.0185f, 0.0350f}, .mieScattering = 0.0068f, .mieAnisotropy = 0.85f, .multipleScatteringAmp = 2.6f},
                 .density = {.baseDensity = 0.014f, .heightFalloff = 0.30f, .baseAltitude = -1.5f, .enableSigmoidLayer = true, .layerAltitude = 2.4f, .layerThickness = 3.4f, .layerDensity = 0.007f}
             }
+        },
+        // 22:00 Midnight Moonlight: crisp silver-cyan lunar key light, deep indigo shadows & mist
+        {
+            .ambientColor = {34, 52, 92, 255},
+            .sunColor = {192, 218, 255, 255},
+            .sunDirection = {0.48f, -0.46f, -0.74f},
+            .shadowColor = {8, 14, 32, 200},
+            .fog = {.enabled = true, .color = {20, 30, 62, 255}, .start = 16.0f, .end = 155.0f, .density = 0.0150f},
+            .atmosphere = {
+                .color = {20, 30, 62, 255}, .start = 16.0f, .end = 155.0f, .enabled = true,
+                .optics = {.rayleighLMS = {0.0045f, 0.0085f, 0.0220f}, .mieScattering = 0.0048f, .mieAnisotropy = 0.82f, .multipleScatteringAmp = 1.85f},
+                .density = {.baseDensity = 0.0135f, .heightFalloff = 0.28f, .baseAltitude = -1.5f, .enableSigmoidLayer = true, .layerAltitude = 2.4f, .layerThickness = 3.4f, .layerDensity = 0.0060f}
+            }
         }
     };
-    static const float kSongQuaoTimes[4] = {0.25f, 0.50f, 0.6875f, 0.7708f};
-    Environment_SetTimeOfDayPresets(kSongQuaoToD, kSongQuaoTimes, 4);
+    static const float kSongQuaoTimes[5] = {0.25f, 0.50f, 0.6875f, 0.7708f, 0.92f};
+    Environment_SetTimeOfDayPresets(kSongQuaoToD, kSongQuaoTimes, 5);
     Environment_SetTimeOfDay(0.6875f); // 16:30 default
     Environment_SetTimeOfDaySpeed(0.0f);
     Environment_SetAmbientColor((Color){82, 110, 148, 255});
@@ -632,6 +645,8 @@ void InitSongQuaoMap(void)
     Environment_SetSunIntensity(2.35f);
     Environment_SetSunDirection(Vector3Normalize((Vector3){0.58f, -0.285f, -0.76f}));
     Environment_SetShadowColor((Color){32, 48, 72, 158});
+    if (Environment_IsNightMode())
+        Environment_ApplyMoonlightNight();
 
     PostFXMapProfile postProfile = {
         .enabled = true,

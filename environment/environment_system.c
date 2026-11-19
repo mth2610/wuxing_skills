@@ -1131,3 +1131,47 @@ void Environment_SetTimeOfDay(float t)
 }
 
 float Environment_GetTimeOfDay(void) { return s_todCurrentTime; }
+
+static bool s_nightMode = false;
+
+void Environment_SetNightMode(bool enabled)
+{
+    s_nightMode = enabled;
+}
+
+bool Environment_IsNightMode(void)
+{
+    if (!s_nightMode)
+    {
+        const char *env = getenv("WUXING_NIGHT");
+        if (env && env[0] == '1')
+            s_nightMode = true;
+    }
+    return s_nightMode;
+}
+
+void Environment_ApplyMoonlightNight(void)
+{
+    s_nightMode = true;
+    if (s_todCount > 0)
+    {
+        Environment_SetTimeOfDay(0.92f);
+        Environment_SetSunIntensity(1.12f);
+    }
+    else
+    {
+        Environment_SetAmbientColor((Color){20, 30, 62, 255});
+        Environment_SetSunColor((Color){168, 198, 252, 255});
+        Environment_SetSunDirection(Vector3Normalize((Vector3){0.48f, -0.46f, -0.74f}));
+        Environment_SetSunIntensity(1.12f);
+        Environment_SetShadowColor((Color){4, 7, 18, 215});
+        AtmosphereProfile atmos = {
+            .color = {12, 18, 42, 255},
+            .start = 16.0f,
+            .end = 155.0f,
+            .enabled = true,
+            .optics = {.rayleighLMS = {0.0045f, 0.0085f, 0.0220f}, .mieScattering = 0.0048f, .mieAnisotropy = 0.82f, .multipleScatteringAmp = 1.85f},
+            .density = {.baseDensity = 0.0135f, .heightFalloff = 0.28f, .baseAltitude = -1.5f, .enableSigmoidLayer = false}};
+        Environment_SetAtmosphereProfile(&atmos);
+    }
+}

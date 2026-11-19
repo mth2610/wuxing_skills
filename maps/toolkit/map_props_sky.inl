@@ -83,6 +83,20 @@ void MapProp_DrawSkyDome(const MapSkyDome *sky)
     SetShaderValue(sky->shader, sky->skyLoc, skyRGB, SHADER_UNIFORM_VEC3);
     SetShaderValue(sky->shader, sky->hazeLoc, hazeRGB, SHADER_UNIFORM_VEC3);
     SetShaderValue(sky->shader, sky->colorLoc, sunRGB, SHADER_UNIFORM_VEC3);
+    {
+        static unsigned int s_nightShaderId = 0;
+        static int s_nightLoc = -1;
+        if (s_nightShaderId != sky->shader.id)
+        {
+            s_nightLoc = GetShaderLocation(sky->shader, "u_nightFactor");
+            s_nightShaderId = sky->shader.id;
+        }
+        if (s_nightLoc >= 0)
+        {
+            float nf = Environment_IsNightMode() ? 1.0f : 0.0f;
+            SetShaderValue(sky->shader, s_nightLoc, &nf, SHADER_UNIFORM_FLOAT);
+        }
+    }
     DrawModel(sky->model, camera.position, 50.0f, WHITE);
     rlDrawRenderBatchActive();
     EndShaderMode();

@@ -1,9 +1,9 @@
-vec3 MapSkyRadiance(vec3 ray, vec3 sun, vec3 ambient, vec3 haze, vec3 direct)
+vec3 MapSkyRadianceEx(vec3 ray, vec3 sun, vec3 ambient, vec3 haze, vec3 direct, float nightOverride)
 {
     float rayLenSq = max(dot(ray, ray), 1e-8);
     ray *= inversesqrt(rayLenSq);
 
-    float daylight = smoothstep(-0.12, 0.08, sun.y);
+    float daylight = (nightOverride > 0.5) ? 0.0 : smoothstep(-0.12, 0.08, sun.y);
     float night = 1.0 - daylight;
 
     float zenithFactor = smoothstep(0.0, 0.65, max(ray.y, 0.0));
@@ -48,37 +48,46 @@ vec3 MapSkyRadiance(vec3 ray, vec3 sun, vec3 ambient, vec3 haze, vec3 direct)
             }
         }
 
-        // 2. Moon & Lunar Halo (positioned opposite the sun vector)
-        vec3 moonRaw = vec3(-sun.x, max(-sun.y, 0.35), -sun.z);
+        // 2. Moon & Lunar Halo (co-aligned with directional moonlight when nightOverride > 0.5)
+        vec3 moonRaw = (nightOverride > 0.5)
+            ? vec3(sun.x, max(sun.y, 0.30), sun.z)
+            : vec3(-sun.x, max(-sun.y, 0.35), -sun.z);
         float rawMoonDot = dot(ray, moonRaw);
         if (rawMoonDot > 0.0) {
-            float moonCos = rawMoonDot * inversesqrt(max(dot(moonRaw, moonRaw), 1e-8));
-            if (moonCos > 0.85) {
+            float moonLenInv = inversesqrt(max(dot(moonRaw, moonRaw), 1e-8));
+            vec3 moonDir = moonRaw * moonLenInv;
+            float moonCos = rawMoonDot * moonLenInv;
+            if (moonCos > 0.80) {
                 float m2 = moonCos * moonCos;
                 float m4 = m2 * m2;
                 float m16 = m4 * m4;
                 float m64 = m16 * m16;
 
-                vec3 moonHalo = vec3(0.42, 0.55, 0.85) * (m16 * 0.08 + m64 * 0.25);
-                float moonDisc = smoothstep(0.9991, 0.9995, moonCos);
-                nightAdditions += vec3(0.92, 0.96, 1.0) * (moonDisc * 3.2) + moonHalo;
+                vec3 moonHalo = vec3(0.36, 0.52, 0.88) * (m16 * 0.12 + m64 * 0.38);
+                float moonDisc = smoothstep(0.9987, 0.9992, moonCos);
+                if (moonDisc > 0.001) {
+                    vec3 mRight = normalize(cross(vec3(0.0, 1.0, 0.0), moonDir));
+                    vec3 mUp = cross(moonDir, mRight);
+                    vec2 mUV = vec2(dot(ray, mRight), dot(ray, mUp)) * 24.0;
+                    float maria = sin(mUV.x * 1.7 + 0.6) * cos(mUV.y * 1.4 - 0.3) * 0.5 + 0.5;
+                    float craters = sin(mUV.x * 4.2 - mUV.y * 3.1) * 0.5 + 0.5;
+                    float lunarAlbedo = mix(0.76, 1.06, maria * 0.7 + craters * 0.3);
+                    nightAdditions += vec3(0.88, 0.94, 1.0) * (moonDisc * 4.2 * lunarAlbedo);
+                }
+                nightAdditions += moonHalo;
             }
         }
 
-        // 3. Aurora Borealis (Cực quang: undulating emerald and violet curtains)
-        float auroraMask = smoothstep(0.08, 0.40, ray.y) * (1.0 - smoothstep(0.20, 0.85, ray.y));
-        if (auroraMask > 0.0) {
-            float invRayY = 1.0 / max(ray.y, 0.08);
-            float aX = ray.x * invRayY;
-            float aZ = ray.z * invRayY;
-            float curtainA = sin(aX * 3.8 + aZ * 1.8);
-            float curtainB = cos(aX * 7.5 - aZ * 3.2);
-            float auroraWave = smoothstep(0.25, 0.88, abs(curtainA + curtainB * 0.5) * 0.65);
-
-            vec3 auroraGreen  = vec3(0.12, 0.88, 0.48);
-            vec3 auroraViolet = vec3(0.62, 0.22, 0.85);
-            vec3 auroraTint = mix(auroraGreen, auroraViolet, smoothstep(0.18, 0.55, ray.y));
-            nightAdditions += auroraTint * (auroraWave * auroraMask * 0.48);
+        // 3. Soft Moonlit Night Wisps & Subtle Milky Way Veil (organic, non-grid)
+        float wispMask = smoothstep(0.05, 0.32, ray.y) * (1.0 - smoothstep(0.38, 0.90, ray.y));
+        if (wispMask > 0.0) {
+            float invRayY = 1.0 / max(ray.y, 0.10);
+            vec2 nUV = ray.xz * invRayY * 0.35;
+            float w1 = sin(nUV.x * 2.3 + cos(nUV.y * 1.9 + 0.7)) * 0.5 + 0.5;
+            float w2 = cos(nUV.y * 3.1 - sin(nUV.x * 2.7 - 0.4)) * 0.5 + 0.5;
+            float wisp = smoothstep(0.32, 0.85, w1 * 0.6 + w2 * 0.4);
+            vec3 wispTint = mix(vec3(0.06, 0.11, 0.24), vec3(0.18, 0.28, 0.48), w2);
+            nightAdditions += wispTint * (wisp * wispMask * 0.22);
         }
     }
 
@@ -117,4 +126,9 @@ vec3 MapSkyRadiance(vec3 ray, vec3 sun, vec3 ambient, vec3 haze, vec3 direct)
     }
 
     return mix(nightSky + nightAdditions, daySky + sunRadiance, daylight);
+}
+
+vec3 MapSkyRadiance(vec3 ray, vec3 sun, vec3 ambient, vec3 haze, vec3 direct)
+{
+    return MapSkyRadianceEx(ray, sun, ambient, haze, direct, 0.0);
 }

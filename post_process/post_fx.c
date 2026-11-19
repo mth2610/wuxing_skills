@@ -158,6 +158,7 @@ static int s_targetWidth = 0;
 static int s_targetHeight = 0;
 
 extern bool rlvkSetFramebufferDiscardOnBegin(unsigned int fbId, bool discard) __attribute__((weak));
+extern bool Environment_IsNightMode(void) __attribute__((weak));
 
 static void PostFX_PrimeTarget(RenderTexture2D target)
 {
@@ -659,6 +660,18 @@ void PostFX_Draw(const PostFXConfig *config)
     PostFX_ApplyTransient(&local);
   PostFX_ApplyTuning(&local);
   PostFX_ApplyQualityTier(&local);
+  if (Environment_IsNightMode && Environment_IsNightMode())
+  {
+    local.exposure = (local.exposure > 0.0f ? local.exposure : 1.0f) * 0.94f;
+    local.saturation = (local.saturation > 0.0f ? local.saturation : 1.0f) * 0.88f;
+    local.contrast = (local.contrast > 0.0f ? local.contrast : 1.0f) * 1.00f;
+    local.shadowTint.x *= 0.74f;
+    local.shadowTint.y *= 0.84f;
+    local.shadowTint.z *= 1.18f;
+    local.highlightTint.x *= 0.86f;
+    local.highlightTint.y *= 0.95f;
+    local.highlightTint.z *= 1.16f;
+  }
 
   static bool s_tunablesReg = false;
   if (!s_tunablesReg)

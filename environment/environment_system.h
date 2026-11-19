@@ -179,4 +179,8 @@ void Environment_SetTimeOfDaySpeed(float cyclesPerSecond);
 void Environment_SetTimeOfDay(float t);
 float Environment_GetTimeOfDay(void);
 
+void Environment_SetNightMode(bool enabled);
+bool Environment_IsNightMode(void);
+void Environment_ApplyMoonlightNight(void);
+
 #endif // ENVIRONMENT_SYSTEM_H

@@ -5,6 +5,15 @@
 #include "core/resource_manager.h"
 #include <math.h>
 #include <stddef.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+#define AUDIO_MAX_MUSIC_TRACKS 64
+
+static char    *s_musicTracks[AUDIO_MAX_MUSIC_TRACKS] = { 0 };
+static int      s_musicTrackCount = 0;
+static int      s_lastTrackIdx = -1;
 
 // Spatial falloff: full volume at the listener, silent past this (meters).
 #define AUDIO_SFX_MAX_DIST 26.0f
@@ -57,6 +66,35 @@ static Sound s_sfxAliases[SFX_COUNT][AUDIO_SFX_ALIASES - 1];
 static int   s_sfxVoiceCursor[SFX_COUNT] = { 0 };
 static bool  s_sfxLoaded[SFX_COUNT] = { false };
 
+static void Audio_ScanMusicDir(void) {
+    for (int i = 0; i < s_musicTrackCount; i++) {
+        free(s_musicTracks[i]);
+        s_musicTracks[i] = NULL;
+    }
+    s_musicTrackCount = 0;
+    s_lastTrackIdx = -1;
+
+    if (!DirectoryExists("assets/audio/music")) return;
+    FilePathList files = LoadDirectoryFiles("assets/audio/music");
+    for (unsigned int i = 0; i < files.count && s_musicTrackCount < AUDIO_MAX_MUSIC_TRACKS; i++) {
+        const char *p = files.paths[i];
+        if (!p || FileExists(p) == false) continue;
+        if (IsFileExtension(p, ".ogg") || IsFileExtension(p, ".mp3") ||
+            IsFileExtension(p, ".wav") || IsFileExtension(p, ".flac")) {
+            size_t len = strlen(p) + 1;
+            char *copy = (char *)malloc(len);
+            if (copy) {
+                memcpy(copy, p, len);
+                s_musicTracks[s_musicTrackCount++] = copy;
+            }
+        }
+    }
+    UnloadDirectoryFiles(files);
+    if (s_musicTrackCount > 0) {
+        TraceLog(LOG_INFO, "[AUDIO] discovered %d music track(s) in assets/audio/music/", s_musicTrackCount);
+    }
+}
+
 void Audio_Init(void) {
     InitAudioDevice();
     s_ready = IsAudioDeviceReady();
@@ -70,12 +108,20 @@ void Audio_Init(void) {
         s_sfxMissing[i] = false;
         s_sfxVoiceCursor[i] = 0;
     }
+    srand((unsigned int)time(NULL));
+    Audio_ScanMusicDir();
     TraceLog(LOG_INFO, "[AUDIO] ready (drop assets under assets/audio/ to hear them)");
 }
 
 void Audio_Shutdown(void) {
     if (!s_ready) return;
     Audio_StopMusic();
+    for (int i = 0; i < s_musicTrackCount; i++) {
+        free(s_musicTracks[i]);
+        s_musicTracks[i] = NULL;
+    }
+    s_musicTrackCount = 0;
+    s_lastTrackIdx = -1;
     for (int i = 0; i < SFX_COUNT; i++) {
         if (!s_sfxLoaded[i] || s_sfxMissing[i]) continue;
         for (int v = 0; v < AUDIO_SFX_ALIASES - 1; v++) {
@@ -88,10 +134,39 @@ void Audio_Shutdown(void) {
     s_ready = false;
 }
 
+static void Audio_PlayRandomTrack(MusicId id) {
+    if (s_musicTrackCount <= 0) return;
+    int idx = 0;
+    if (s_musicTrackCount > 1) {
+        idx = rand() % s_musicTrackCount;
+        if (idx == s_lastTrackIdx)
+            idx = (idx + 1 + (rand() % (s_musicTrackCount - 1))) % s_musicTrackCount;
+    }
+    const char *path = s_musicTracks[idx];
+    s_music = LoadMusicStream(path);
+    if (!IsMusicValid(s_music)) {
+        TraceLog(LOG_WARNING, "[AUDIO] failed to stream music %s", path);
+        return;
+    }
+    s_music.looping = (s_musicTrackCount == 1);
+    s_musicLoaded = true;
+    s_musicId = id;
+    s_lastTrackIdx = idx;
+    PlayMusicStream(s_music);
+    TraceLog(LOG_INFO, "[AUDIO] playing random BGM: %s", path);
+}
+
 void Audio_Update(float dt) {
     (void)dt;
     if (!s_ready) return;
-    if (s_musicLoaded) UpdateMusicStream(s_music);
+    if (s_musicLoaded) {
+        UpdateMusicStream(s_music);
+        if (s_musicTrackCount > 1 && !IsMusicStreamPlaying(s_music)) {
+            MusicId prevId = s_musicId;
+            Audio_StopMusic();
+            Audio_PlayRandomTrack(prevId);
+        }
+    }
 }
 
 void Audio_SetMasterVolume(float volume01) {
@@ -163,9 +238,17 @@ void Audio_PlaySFXAt(SfxId id, Vector3 worldPos) {
 
 void Audio_PlayMusic(MusicId id) {
     if (!s_ready) return;
+    if (id == MUS_NONE || id >= MUS_COUNT) {
+        Audio_StopMusic();
+        return;
+    }
     if (id == s_musicId && s_musicLoaded) return;
     Audio_StopMusic();
-    if (id <= MUS_NONE || id >= MUS_COUNT || kMusicPath[id] == NULL) return;
+    if (s_musicTrackCount > 0) {
+        Audio_PlayRandomTrack(id);
+        return;
+    }
+    if (kMusicPath[id] == NULL) return;
     static bool s_musicMissing[MUS_COUNT] = { false };
     if (s_musicMissing[id]) return;
     s_music = LoadMusicStream(kMusicPath[id]);

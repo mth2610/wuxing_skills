@@ -412,7 +412,7 @@ void InitNinhThuanMap(void)
         ColorGradeLut_UseNeutral();
 
     // Sun-Bleached Golden Afternoon (Ninh Thuan Coastal Semi-Arid Stone Park)
-    static const EnvLightingPreset kNinhThuanToD[4] = {
+    static const EnvLightingPreset kNinhThuanToD[5] = {
         {
             .ambientColor = {112, 120, 138, 255},
             .sunColor = {255, 206, 148, 255},
@@ -460,10 +460,23 @@ void InitNinhThuanMap(void)
                 .optics = {.rayleighLMS = {0.0110f, 0.0168f, 0.0290f}, .mieScattering = 0.0060f, .mieAnisotropy = 0.82f, .multipleScatteringAmp = 2.3f},
                 .density = {.baseDensity = 0.0048f, .heightFalloff = 0.22f, .baseAltitude = -6.0f, .enableSigmoidLayer = false}
             }
+        },
+        // 22:00 Midnight Moonlight: cool desert indigo ambient, crisp silvery lunar key light
+        {
+            .ambientColor = {18, 28, 58, 255},
+            .sunColor = {165, 195, 250, 255},
+            .sunDirection = {0.52f, -0.44f, -0.73f},
+            .shadowColor = {4, 7, 18, 215},
+            .fog = {.enabled = true, .color = {12, 18, 42, 255}, .start = 32.0f, .end = 215.0f, .density = 0.0062f},
+            .atmosphere = {
+                .color = {12, 18, 42, 255}, .start = 32.0f, .end = 215.0f, .enabled = true,
+                .optics = {.rayleighLMS = {0.0042f, 0.0078f, 0.0195f}, .mieScattering = 0.0045f, .mieAnisotropy = 0.80f, .multipleScatteringAmp = 1.75f},
+                .density = {.baseDensity = 0.0048f, .heightFalloff = 0.24f, .baseAltitude = -6.0f, .enableSigmoidLayer = false}
+            }
         }
     };
-    static const float kNinhThuanTimes[4] = {0.25f, 0.50f, 0.64f, 0.7708f};
-    Environment_SetTimeOfDayPresets(kNinhThuanToD, kNinhThuanTimes, 4);
+    static const float kNinhThuanTimes[5] = {0.25f, 0.50f, 0.64f, 0.7708f, 0.92f};
+    Environment_SetTimeOfDayPresets(kNinhThuanToD, kNinhThuanTimes, 5);
     Environment_SetTimeOfDay(0.64f);
     Environment_SetTimeOfDaySpeed(0.0f);
     Environment_SetAmbientColor((Color){114, 124, 144, 255});
@@ -471,6 +484,8 @@ void InitNinhThuanMap(void)
     Environment_SetSunIntensity(1.72f);
     Environment_SetSunDirection(Vector3Normalize((Vector3){0.74f, -0.42f, -0.52f}));
     Environment_SetShadowColor((Color){64, 74, 108, 165});
+    if (Environment_IsNightMode())
+        Environment_ApplyMoonlightNight();
 
     PostFXMapProfile postProfile = {
         .enabled = true,

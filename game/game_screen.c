@@ -545,6 +545,17 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
                 }
             }
         }
+        if (s_mode == GAME_MODE_EXPLORE ||
+            s_mode == GAME_MODE_PVP_ESCORT_1V1 ||
+            s_mode == GAME_MODE_PVP_ESCORT_2V2 ||
+            s_mode == GAME_MODE_TEAM_BATTLE)
+        {
+            Environment_ApplyMoonlightNight();
+        }
+        else
+        {
+            Environment_SetNightMode(false);
+        }
         if (s_mode == GAME_MODE_EXPLORE)
         {
             Vector3 mc = {0};
