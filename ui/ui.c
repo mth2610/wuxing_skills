@@ -146,13 +146,15 @@ Vector3 UI_GetAutoAimPoint(int agentId, bool *hasTarget) {
         }
     }
 
-    // Priority 3: nearest hostile monster/enemy within 24m (open-world combat).
+    // Priority 3: nearest hostile enemy (monster, boss, or hostile/sparring hero) within 24m.
     int bestHostile = -1;
     float bestHostileSq = 24.0f * 24.0f;
     for (int i = 0; i < MAX_AGENTS; i++) {
         if (i == agentId) continue;
         const Agent *cand = Entity_GetAgent(i);
-        if (!cand || (cand->archetype != ARCH_MINION && cand->archetype != ARCH_BOSS)) continue;
+        bool isPvpHero = (cand && cand->archetype == ARCH_HERO) &&
+                         (self->pkMode != PK_MODE_PEACE || cand->pkMode != PK_MODE_PEACE);
+        if (!cand || (cand->archetype != ARCH_MINION && cand->archetype != ARCH_BOSS && !isPvpHero)) continue;
         if (!Entity_CanDamageTarget(agentId, i)) continue;
         float dx = cand->position.x - self->position.x;
         float dz = cand->position.z - self->position.z;

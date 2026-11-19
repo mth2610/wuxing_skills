@@ -182,8 +182,7 @@ void UpdateIceCrystalLanceSkill(float dt, Vector3 enemyPos, float enemyRadius) {
                                                    hitIds, 8);
                 bool anyEnemy = false;
                 for (int h = 0; h < hits; h++) {
-                    const Agent *ag = Entity_GetAgent(hitIds[h]);
-                    if (ag != NULL && ag->team != inst->casterTeam) {
+                    if (Entity_CanDamageTarget(inst->ownerAgentId, hitIds[h])) {
                         anyEnemy = true;
                         Entity_ApplyStun(hitIds[h], 0.45f);
                     }

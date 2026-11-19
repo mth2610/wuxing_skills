@@ -19,7 +19,7 @@ static int WriteU16(unsigned char *buf, int off, uint16_t v)     { memcpy(buf + 
 static int ReadU16(const unsigned char *buf, int off, uint16_t *v){ memcpy(v, buf + off, 2); return off + 2; }
 
 static int16_t QuantizeCoord(float v) {
-    float q = roundf(v * 64.0f);
+    float q = roundf(v * 16.0f);
     if (q >  32767.0f) q =  32767.0f;
     if (q < -32768.0f) q = -32768.0f;
     return (int16_t)q;
@@ -75,49 +75,97 @@ bool Net_UnpackIntent(PlayerIntent *out, const unsigned char *buf, int len) {
 #define SNAP_AGENT_BYTES  18
 #define SNAP_HEADER_BYTES 4
 
+#define SNAP_MAX_SINGLE_PKT_AGENTS 64
+
+static int PackOneAgent(int i, const Agent *a, unsigned char *buf, int off) {
+    unsigned char meta = (unsigned char)(((a->team & 0x3) << 0) |
+                                         ((a->archetype & 0x3) << 2) |
+                                         ((a->currentElement & 0x7) << 4));
+    unsigned char flags = (unsigned char)((a->taijiActive ? 1 : 0) |
+                                          (a->isMeditating ? 2 : 0) |
+                                          (a->isStealthed ? 4 : 0) |
+                                          (a->duelFlag ? 8 : 0) |
+                                          (((unsigned int)a->pkMode & 0x3u) << 4));
+    float yawRad = atan2f(a->velocity.x, a->velocity.z);
+    if (yawRad < 0.0f) yawRad += 2.0f * PI;
+    unsigned char yawByte = (unsigned char)((yawRad / (2.0f * PI)) * 255.0f);
+
+    buf[off++] = (unsigned char)i;
+    buf[off++] = meta;
+    buf[off++] = flags;
+    buf[off++] = yawByte;
+    off = WriteI16(buf, off, QuantizeCoord(a->position.x));
+    off = WriteI16(buf, off, QuantizeCoord(a->position.y));
+    off = WriteI16(buf, off, QuantizeCoord(a->position.z));
+    off = WriteU16(buf, off, QuantizeStat(a->health));
+    off = WriteU16(buf, off, QuantizeStat(a->maxHealth));
+    off = WriteU16(buf, off, QuantizeStat(a->mana));
+    off = WriteU16(buf, off, QuantizeStat(a->maxMana));
+    return off;
+}
+
 int Net_PackAgentSnapshotFor(Vector3 focusPos, float interestRadius,
                              unsigned char *buf, int maxBytes) {
     if (buf == NULL || maxBytes < SNAP_HEADER_BYTES) return 0;
     int off = SNAP_HEADER_BYTES;
     int count = 0;
     float rSq = (interestRadius > 0.0f) ? (interestRadius * interestRadius) : -1.0f;
+    int cap = (rSq > 0.0f) ? SNAP_MAX_SINGLE_PKT_AGENTS : 255;
 
-    for (int i = 0; i < MAX_AGENTS && count < 255; i++) {
+    // Pass 1: always pack heroes & bosses first so they are never culled.
+    for (int i = 0; i < MAX_AGENTS && count < cap; i++) {
         const Agent *a = Entity_GetAgent(i);
         if (a == NULL) continue;
-
-        if (rSq > 0.0f && a->archetype == ARCH_MINION) {
-            float dx = a->position.x - focusPos.x;
-            float dz = a->position.z - focusPos.z;
-            if (dx * dx + dz * dz > rSq) continue;
-        }
-
+        if (rSq > 0.0f && a->archetype == ARCH_MINION) continue;
         if (off + SNAP_AGENT_BYTES > maxBytes) return 0;
-
-        unsigned char meta = (unsigned char)(((a->team & 0x3) << 0) |
-                                             ((a->archetype & 0x3) << 2) |
-                                             ((a->currentElement & 0x7) << 4));
-        unsigned char flags = (unsigned char)((a->taijiActive ? 1 : 0) |
-                                              (a->isMeditating ? 2 : 0) |
-                                              (a->isStealthed ? 4 : 0) |
-                                              (a->duelFlag ? 8 : 0));
-        float yawRad = atan2f(a->velocity.x, a->velocity.z);
-        if (yawRad < 0.0f) yawRad += 2.0f * PI;
-        unsigned char yawByte = (unsigned char)((yawRad / (2.0f * PI)) * 255.0f);
-
-        buf[off++] = (unsigned char)i;
-        buf[off++] = meta;
-        buf[off++] = flags;
-        buf[off++] = yawByte;
-        off = WriteI16(buf, off, QuantizeCoord(a->position.x));
-        off = WriteI16(buf, off, QuantizeCoord(a->position.y));
-        off = WriteI16(buf, off, QuantizeCoord(a->position.z));
-        off = WriteU16(buf, off, QuantizeStat(a->health));
-        off = WriteU16(buf, off, QuantizeStat(a->maxHealth));
-        off = WriteU16(buf, off, QuantizeStat(a->mana));
-        off = WriteU16(buf, off, QuantizeStat(a->maxMana));
+        off = PackOneAgent(i, a, buf, off);
         count++;
     }
+
+    // Pass 2 (Explore interest culling): pack the closest minions up to the
+    // single-UDP-packet budget (64 total agents = 1156B <= 1167B EOS MTU) so
+    // snapshots never fragment or drop on mobile Wi-Fi/4G.
+    if (rSq > 0.0f && count < cap) {
+        int slotsLeft = cap - count;
+        int mId[SNAP_MAX_SINGLE_PKT_AGENTS];
+        float mDist[SNAP_MAX_SINGLE_PKT_AGENTS];
+        int mCount = 0;
+        for (int i = 0; i < MAX_AGENTS; i++) {
+            const Agent *a = Entity_GetAgent(i);
+            if (a == NULL || a->archetype != ARCH_MINION) continue;
+            float dx = a->position.x - focusPos.x;
+            float dz = a->position.z - focusPos.z;
+            float d2 = dx * dx + dz * dz;
+            if (d2 > rSq) continue;
+            if (mCount < slotsLeft) {
+                int k = mCount++;
+                while (k > 0 && mDist[k - 1] > d2) {
+                    mId[k] = mId[k - 1];
+                    mDist[k] = mDist[k - 1];
+                    k--;
+                }
+                mId[k] = i;
+                mDist[k] = d2;
+            } else if (d2 < mDist[slotsLeft - 1]) {
+                int k = slotsLeft - 1;
+                while (k > 0 && mDist[k - 1] > d2) {
+                    mId[k] = mId[k - 1];
+                    mDist[k] = mDist[k - 1];
+                    k--;
+                }
+                mId[k] = i;
+                mDist[k] = d2;
+            }
+        }
+        for (int k = 0; k < mCount; k++) {
+            if (off + SNAP_AGENT_BYTES > maxBytes) break;
+            const Agent *a = Entity_GetAgent(mId[k]);
+            if (a == NULL) continue;
+            off = PackOneAgent(mId[k], a, buf, off);
+            count++;
+        }
+    }
+
     buf[0] = NET_MAGIC;
     buf[1] = NET_KIND_SNAP;
     buf[2] = NET_PROTOCOL_VERSION;
@@ -158,7 +206,7 @@ int Net_UnpackAgentSnapshot(NetAgentState *out, int maxAgents,
         off = ReadU16(buf, off, &mp);
         off = ReadU16(buf, off, &mmp);
 
-        s->position  = (Vector3){ (float)px / 64.0f, (float)py / 64.0f, (float)pz / 64.0f };
+        s->position  = (Vector3){ (float)px / 16.0f, (float)py / 16.0f, (float)pz / 16.0f };
         s->health    = (float)hp;
         s->maxHealth = (float)mhp;
         s->mana      = (float)mp;

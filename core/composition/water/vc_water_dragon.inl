@@ -349,9 +349,6 @@ void VC_WaterDragon_Update(float dt)
 
             VFX_ComposeSurfaceImpact(inst->groundPuddlePos, VFX_IMPACT_SURFACE_WATER);
             VFX_ComposeMistVeil(inst->groundPuddlePos, cfg->puddleRadius * 0.9f, 2.0f);
-
-            // Camera shake trauma
-            CameraFX_Shake(0.35f);
         }
 
         // Update ground puddle expansion

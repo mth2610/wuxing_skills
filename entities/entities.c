@@ -66,6 +66,7 @@ static const float   STAMINA_RECOVER_THRESH = 15.0f;
 // (100) refills within the 3s window (34 * 3 > 100).
 static const float   MEDITATE_DURATION = 3.0f;
 static const float   MEDITATE_REGEN_PER_SEC = 34.0f;
+static const float   MEDITATE_HP_PER_SEC = 28.0f;
 // Dash: short horizontal burst, then cooldown gate.
 static const float   DASH_DURATION = 0.15f;
 static const float   DASH_COOLDOWN = 1.0f;
@@ -77,6 +78,7 @@ static const float   WALL_CHECK_RADIUS = 3.0f;
 // Auto-target search radius — how far Entity_ExecuteBasicAttack looks for
 // the nearest other agent, no explicit target needed.
 static const float   AUTO_TARGET_RADIUS = 10.0f;
+static float         s_preSparHealth[MAX_AGENTS] = { 0 };
 
 void Entity_Init(void) {
     for (int i = 0; i < MAX_AGENTS; i++) {
@@ -156,6 +158,10 @@ void Entity_Update(float dt) {
         a->isRunning = false;
 
         if (a->isMeditating) {
+            if (a->health > 0.0f && a->health < a->maxHealth) {
+                a->health += MEDITATE_HP_PER_SEC * dt;
+                if (a->health > a->maxHealth) a->health = a->maxHealth;
+            }
             a->meditateTimer -= dt;
             if (a->meditateTimer <= 0.0f) {
                 a->meditateTimer = 0.0f;
@@ -232,6 +238,30 @@ void Entity_Update(float dt) {
             }
         }
     }
+
+    // End Spar (Tỉ Thí) cleanly when any sparring hero reaches 1 HP:
+    // return ALL sparring heroes to PK_MODE_PEACE and restore their pre-Spar HP.
+    bool sparEnded = false;
+    for (int i = 0; i < MAX_AGENTS; i++) {
+        if (agentPool[i].active && agentPool[i].archetype == ARCH_HERO &&
+            agentPool[i].pkMode == PK_MODE_SPAR &&
+            (agentPool[i].sparDefeated || agentPool[i].health <= 1.01f)) {
+            sparEnded = true;
+            break;
+        }
+    }
+    if (sparEnded) {
+        for (int j = 0; j < MAX_AGENTS; j++) {
+            Agent *ha = &agentPool[j];
+            if (!ha->active || ha->archetype != ARCH_HERO || ha->pkMode != PK_MODE_SPAR) continue;
+            ha->pkMode = PK_MODE_PEACE;
+            ha->duelFlag = false;
+            ha->sparDefeated = false;
+            float saved = (s_preSparHealth[j] > 1.0f) ? s_preSparHealth[j] : ha->maxHealth;
+            if (saved > ha->maxHealth) saved = ha->maxHealth;
+            ha->health = saved;
+        }
+    }
 }
 
 void Entity_Draw(void) {
@@ -298,10 +328,11 @@ bool Entity_CanDamageTarget(int attackerId, int targetId) {
     if (!att || !tgt) return false;
 
     if (att->archetype == ARCH_HERO && tgt->archetype == ARCH_HERO) {
+        // Tỉ Thí (non-lethal, stops at 1 HP) is allowed anywhere, including Safe Zone.
+        if (att->pkMode == PK_MODE_SPAR && tgt->pkMode == PK_MODE_SPAR) return true;
         if (att->inSafeZone || tgt->inSafeZone) return false;
         if (att->team != tgt->team) return true;
         if (att->pkMode == PK_MODE_SLAUGHTER || tgt->pkMode == PK_MODE_SLAUGHTER) return true;
-        if (att->pkMode == PK_MODE_SPAR && tgt->pkMode == PK_MODE_SPAR) return true;
         return att->duelFlag && tgt->duelFlag;
     }
     return att->team != tgt->team;
@@ -378,6 +409,9 @@ bool Entity_GetDuelFlag(int agentId) {
 
 void Entity_SetPkMode(int agentId, AgentPkMode mode) {
     if (agentId < 0 || agentId >= MAX_AGENTS || !agentPool[agentId].active) return;
+    if (agentPool[agentId].pkMode != PK_MODE_SPAR && mode == PK_MODE_SPAR) {
+        s_preSparHealth[agentId] = agentPool[agentId].health;
+    }
     agentPool[agentId].pkMode = mode;
     agentPool[agentId].duelFlag = (mode != PK_MODE_PEACE);
 }
@@ -634,6 +668,10 @@ void Entity_NetSyncAgent(int agentId, Vector3 pos, float health, float maxHealth
         }
     }
     a->active = true;
+    if (pos.x != a->position.x || pos.z != a->position.z) { /* keep smooth */ }
+    if (health < a->health - 0.5f) {
+        a->hitFlashTimer = 0.12f;
+    }
     a->position = pos;
     a->health = health;
     a->maxHealth = maxHealth;
@@ -1019,10 +1057,26 @@ void Entity_ApplyAoEDamage(Vector3 center, float radius, float damage,
     int ids[MAX_AGENTS];
     int count = Entity_GetNearbyTargets(center, radius, ids, MAX_AGENTS);
 
+    // Check if an active PvP/Spar hero exists so same-team (TEAM_ALLY) Open-World
+    // players can damage each other with AoE skills during Tỉ Thí or Đồ Sát.
+    int sparHeroCount = 0;
+    bool anySlaughter = false;
+    for (int i = 0; i < MAX_AGENTS; i++) {
+        if (agentPool[i].active && agentPool[i].archetype == ARCH_HERO &&
+            agentPool[i].team == attackerTeam) {
+            if (agentPool[i].pkMode == PK_MODE_SPAR) sparHeroCount++;
+            if (agentPool[i].pkMode == PK_MODE_SLAUGHTER && !agentPool[i].inSafeZone) anySlaughter = true;
+        }
+    }
+
     for (int i = 0; i < count; i++) {
         int id = ids[i];
         Agent *a = &agentPool[id];
-        if (a->team == attackerTeam) continue; // never hit your own team
+        if (a->team == attackerTeam) {
+            bool canSparAoE = (a->archetype == ARCH_HERO && sparHeroCount >= 2 && a->pkMode == PK_MODE_SPAR);
+            bool canSlaughterAoE = (a->archetype == ARCH_HERO && anySlaughter && !a->inSafeZone);
+            if (!canSparAoE && !canSlaughterAoE) continue;
+        }
 
         // XZ-plane direction away from center, consistent with the distance
         // check in Entity_GetNearbyTargets (Y ignored).
@@ -1036,7 +1090,38 @@ void Entity_ApplyAoEDamage(Vector3 center, float radius, float damage,
             knockback.z = (dz / len) * knockbackStrength;
         }
 
-        Entity_ApplyDamage(id, damage, knockback);
+        if (a->archetype == ARCH_HERO && a->pkMode == PK_MODE_SPAR &&
+            damage > 0.0f && (a->health - damage) <= 1.0f) {
+            a->health = 1.0f;
+            a->sparDefeated = true;
+            a->hitFlashTimer = 0.12f;
+        } else {
+            Entity_ApplyDamage(id, damage, knockback);
+        }
+    }
+
+    // End Spar (Tỉ Thí) cleanly when any sparring hero reaches 1 HP:
+    // return ALL sparring heroes to PK_MODE_PEACE and restore their pre-Spar HP.
+    bool sparEnded = false;
+    for (int i = 0; i < MAX_AGENTS; i++) {
+        if (agentPool[i].active && agentPool[i].archetype == ARCH_HERO &&
+            agentPool[i].pkMode == PK_MODE_SPAR &&
+            (agentPool[i].sparDefeated || agentPool[i].health <= 1.01f)) {
+            sparEnded = true;
+            break;
+        }
+    }
+    if (sparEnded) {
+        for (int j = 0; j < MAX_AGENTS; j++) {
+            Agent *ha = &agentPool[j];
+            if (!ha->active || ha->archetype != ARCH_HERO || ha->pkMode != PK_MODE_SPAR) continue;
+            ha->pkMode = PK_MODE_PEACE;
+            ha->duelFlag = false;
+            ha->sparDefeated = false;
+            float saved = (s_preSparHealth[j] > 1.0f) ? s_preSparHealth[j] : ha->maxHealth;
+            if (saved > ha->maxHealth) saved = ha->maxHealth;
+            ha->health = saved;
+        }
     }
 }
 

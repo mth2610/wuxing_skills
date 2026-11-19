@@ -32,6 +32,7 @@ void OWSandbox_TogglePanel(void);
 // Nearby world-object prompt ([F] at Altar or Duel Banner)
 const char *OWSandbox_GetNearbyPrompt(Vector3 playerPos);
 bool        OWSandbox_TryInteract(PlayerEntity *player);
+bool        OWSandbox_HandleTap(const PlayerEntity *player, Vector2 tapScreenPos, Camera3D cam);
 
 // Optional Slaughter PvE bonus multipliers
 float OWSandbox_GetSlaughterDamageMult(const Agent *pa);

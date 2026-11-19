@@ -236,8 +236,8 @@ void UpdateEarthPillarPrisonSkill(float dt, Vector3 enemyPos, float enemyRadius)
                 cfg.debrisChips = 18;
                 cfg.spawnGroundCrack = true;
                 cfg.groundWaveBurst = true;
-                cfg.screenShake = true;
-                cfg.traumaAmount = 0.30f;
+                cfg.screenShake = false;
+                cfg.traumaAmount = 0.0f;
                 p->spikeHandle = VFX_ComposeEarthSpikeEx(p->pos, p->pos, &cfg);
 
                 PlayImpactSound(EFFECT_PRESET_EARTH_CRACK);
@@ -247,8 +247,7 @@ void UpdateEarthPillarPrisonSkill(float dt, Vector3 enemyPos, float enemyRadius)
             int hits = Entity_GetNearbyTargets(p->pos, p->radius, hitIds, 8);
             bool anyEnemy = false;
             for (int h = 0; h < hits; h++) {
-                const Agent *ag = Entity_GetAgent(hitIds[h]);
-                if (ag != NULL && ag->team != p->casterTeam) {
+                if (Entity_CanDamageTarget(p->ownerAgentId, hitIds[h])) {
                     Entity_ApplyStun(hitIds[h], 0.16f);
                     anyEnemy = true;
                 }

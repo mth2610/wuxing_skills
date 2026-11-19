@@ -13,11 +13,21 @@ void NetPred_Reset(void);
 // Feeds a newly unpacked 20Hz snapshot from the host into the interpolation buffer.
 void NetPred_OnSnapshot(const NetAgentState *states, int count, int localHeroId);
 
+// Triggers immediate client-side jump/dash edges on the local hero so Khinh Công
+// and dodge launch cleanly at 60 FPS without waiting for a host snapshot.
+void NetPred_OnLocalIntent(int localHeroId, const PlayerIntent *in);
+
 // Applies immediate client-side movement preview on the local hero so WASD
 // feels instantaneous even over high-latency P2P relays.
 void NetPred_ApplyLocalPreview(int localHeroId, const PlayerIntent *in, float dt);
 
 // Smoothly interpolates all mirrored agents toward their latest host targets at 60 FPS.
 void NetPred_Tick(float dt, int localHeroId);
+
+// Returns true while the client's local predicted Khinh Công jump is airborne.
+bool NetPred_IsLocalAirborne(float *outVelY);
+
+// Consumes 1 (first jump) or 2 (2nd air-jump somersault) for client jump animation.
+int NetPred_ConsumeLocalJumpFired(void);
 
 #endif // NET_PREDICTION_H

@@ -37,6 +37,9 @@ static float   s_clock          = 0.0f;
 static bool    s_sparActive     = false;
 static Vector3 s_sparCenter     = { 0 };
 static int     s_sparOpponentId = -1;
+static int       s_selectedHeroId = -1;
+static bool      s_heroPopupOpen  = false;
+static Rectangle s_heroPopupRect  = { 0 };
 static bool    s_bountyActive   = false;
 static int     s_bountyAgentId  = -1;
 static bool    s_customBossLive = false;
@@ -120,6 +123,9 @@ void OWSandbox_Init(const OWRealmDef *realm) {
     s_clock          = 0.0f;
     s_sparActive     = false;
     s_sparOpponentId = -1;
+    s_selectedHeroId = -1;
+    s_heroPopupOpen  = false;
+    s_heroPopupRect  = (Rectangle){ 0 };
     s_bountyActive   = false;
     s_bountyAgentId  = -1;
     s_customBossLive = false;
@@ -144,6 +150,9 @@ void OWSandbox_ClearCustomSpawns(void) {
     }
     s_sparActive     = false;
     s_sparOpponentId = -1;
+    s_selectedHeroId = -1;
+    s_heroPopupOpen  = false;
+    s_heroPopupRect  = (Rectangle){ 0 };
     s_bountyActive   = false;
     s_bountyAgentId  = -1;
     s_customBossLive = false;
@@ -173,8 +182,8 @@ bool OWSandbox_SetPkMode(PlayerEntity *player, AgentPkMode mode) {
     const Agent *pa = Entity_GetAgent(player->agentId);
     if (!pa) return false;
 
-    if (mode != PK_MODE_PEACE && OW_IsInSafeZone(pa->position)) {
-        OW_SetBanner("TRONG VUNG AN TOAN KHONG THE BAT TY THI HOAC DO SAT!", 2.6f);
+    if (mode == PK_MODE_SLAUGHTER && OW_IsInSafeZone(pa->position)) {
+        OW_SetBanner("TRONG VUNG AN TOAN KHONG THE BAT DO SAT (PK)! CHI CO THE TY THI!", 2.8f);
         return false;
     }
 
@@ -245,10 +254,6 @@ bool OWSandbox_TriggerPreset(PlayerEntity *player, int presetIndex) {
             RegisterSpawned(bid, pr->actionKind, false);
         }
     } else if (pr->actionKind == OW_SPAWN_AI_RIVAL_SPAR) {
-        if (OW_IsInSafeZone(pa->position)) {
-            OW_SetBanner("HAY BUOC RA NGOAI OC DAO AN TOAN DE TY THI VOI CAO THU!", 2.8f);
-            return false;
-        }
         OWSandbox_SetPkMode(player, PK_MODE_SPAR);
         Vector3 rp = FindSafeCombatPos(pa->position, 7.5f);
         int botId = AI_SpawnHeroBot(rp, TEAM_ALLY);
@@ -298,6 +303,47 @@ const char *OWSandbox_GetNearbyPrompt(Vector3 playerPos) {
     return NULL;
 }
 
+bool OWSandbox_HandleTap(const PlayerEntity *player, Vector2 tapScreenPos, Camera3D cam) {
+    if (!s_hasRealm || !player) return false;
+    if (s_heroPopupOpen && CheckCollisionPointRec(tapScreenPos, s_heroPopupRect)) {
+        return true;
+    }
+
+    const Agent *pa = Entity_GetAgent(player->agentId);
+    if (!pa) return false;
+
+    int bestId = -1;
+    float bestPxSq = 68.0f * 68.0f;
+    for (int i = 0; i < MAX_AGENTS; i++) {
+        if (i == player->agentId) continue;
+        const Agent *cand = Entity_GetAgent(i);
+        if (!cand || cand->archetype != ARCH_HERO) continue;
+        if (DistXZ(pa->position, cand->position) > 32.0f) continue;
+
+        Vector3 mid = { cand->position.x, cand->position.y + 1.0f, cand->position.z };
+        Vector2 sp = GetWorldToScreen(mid, cam);
+        float dx = sp.x - tapScreenPos.x;
+        float dy = sp.y - tapScreenPos.y;
+        float d2 = dx * dx + dy * dy;
+        if (d2 < bestPxSq) {
+            bestPxSq = d2;
+            bestId = i;
+        }
+    }
+
+    if (bestId >= 0) {
+        s_selectedHeroId = bestId;
+        s_heroPopupOpen = true;
+        return true;
+    }
+
+    if (s_heroPopupOpen) {
+        s_heroPopupOpen = false;
+        s_selectedHeroId = -1;
+    }
+    return false;
+}
+
 bool OWSandbox_TryInteract(PlayerEntity *player) {
     if (!s_hasRealm || !player) return false;
     const Agent *pa = Entity_GetAgent(player->agentId);
@@ -339,10 +385,12 @@ static void FinishSparMatch(PlayerEntity *player, int winnerId, int loserId) {
     if (wa) {
         Entity_ApplyDamage(winnerId, -wa->maxHealth * 0.5f, (Vector3){ 0 });
         Entity_RestoreMana(winnerId, wa->maxMana * 0.5f);
+        Entity_SetPkMode(winnerId, PK_MODE_PEACE);
     }
     if (la) {
         Entity_ApplyDamage(loserId, -la->maxHealth * 0.5f, (Vector3){ 0 });
         Entity_RestoreMana(loserId, la->maxMana * 0.5f);
+        Entity_SetPkMode(loserId, PK_MODE_PEACE);
     }
 
     if (player && winnerId == player->agentId) {
@@ -550,6 +598,57 @@ void OWSandbox_DrawHUD(const PlayerEntity *player, Camera3D cam) {
             : OWSandbox_GetPkModeLabel(pa->pkMode);
         if (WuxiaUI_DrawButton(pkb, pkLbl, pkCol, pa->pkMode != PK_MODE_PEACE, 11.5f)) {
             OWSandbox_CyclePkMode((PlayerEntity *)player);
+        }
+    }
+
+    if (s_heroPopupOpen && s_selectedHeroId >= 0) {
+        const Agent *tgt = Entity_GetAgent(s_selectedHeroId);
+        if (!tgt || tgt->archetype != ARCH_HERO || !pa) {
+            s_heroPopupOpen = false;
+            s_selectedHeroId = -1;
+        } else {
+            Vector3 anchor3D = { tgt->position.x, tgt->position.y + 2.2f, tgt->position.z };
+            Vector2 sp = GetWorldToScreen(anchor3D, cam);
+            float popW = 216.0f, popH = 98.0f;
+            float px = sp.x - popW * 0.5f;
+            float py = sp.y - popH - 10.0f;
+            if (px < 12.0f) px = 12.0f;
+            if (px + popW > (float)sw - 12.0f) px = (float)sw - popW - 12.0f;
+            if (py < 70.0f) py = 70.0f;
+            if (py + popH > (float)GetScreenHeight() - 12.0f) py = (float)GetScreenHeight() - popH - 12.0f;
+            s_heroPopupRect = (Rectangle){ px, py, popW, popH };
+
+            WuxiaUI_DrawPanel(s_heroPopupRect, WUXIA_GOLD, true);
+            WuxiaUI_DrawText(TextFormat("DONG DAO #%d  (HP %d/%d)",
+                                        s_selectedHeroId, (int)tgt->health, (int)tgt->maxHealth),
+                             px + 12.0f, py + 10.0f, 12.5f, WUXIA_TEXT_PRIMARY);
+
+            Rectangle sparBtn = { px + 12.0f, py + 38.0f, 118.0f, 42.0f };
+            Rectangle closeBtn = { px + 138.0f, py + 38.0f, 66.0f, 42.0f };
+            if (WuxiaUI_DrawButton(sparBtn, "TY THI (1v1)", WUXIA_GOLD, false, 12.5f)) {
+                UI_SetManualTarget(s_selectedHeroId);
+                if (Net_GetMode() != NET_MODE_OFF) {
+                    Net_SendSocialState(player->agentId, 10 /* OW_EMOTE_SPAR_ASK */, false);
+                    OW_SetBanner("DA GUI LOI MOI TY THI! CHO DONG DAO DONG Y...", 2.8f);
+                } else {
+                    OWSandbox_SetPkMode((PlayerEntity *)player, PK_MODE_SPAR);
+                    Entity_SetPkMode(s_selectedHeroId, PK_MODE_SPAR);
+                    s_sparActive = true;
+                    s_sparOpponentId = s_selectedHeroId;
+                    s_sparCenter = (Vector3){
+                        (pa->position.x + tgt->position.x) * 0.5f,
+                        MapManager_GetGroundHeightAt((pa->position.x + tgt->position.x) * 0.5f,
+                                                     (pa->position.z + tgt->position.z) * 0.5f),
+                        (pa->position.z + tgt->position.z) * 0.5f
+                    };
+                    OW_SetBanner("BAT DAU TY THI 1v1! (DUNG O 1 SINH LUC)", 3.2f);
+                }
+                s_heroPopupOpen = false;
+            }
+            if (WuxiaUI_DrawButton(closeBtn, "DONG", WUXIA_CRIMSON, false, 12.0f)) {
+                s_heroPopupOpen = false;
+                s_selectedHeroId = -1;
+            }
         }
     }
 

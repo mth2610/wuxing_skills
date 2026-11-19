@@ -121,8 +121,9 @@ void Combat_Update(float dt) {
             if (a->team == b->team) {
                 const Agent *oa = Entity_GetAgent(a->ownerAgentId);
                 const Agent *ob = Entity_GetAgent(b->ownerAgentId);
-                bool duelClash = (oa && ob && oa->duelFlag && ob->duelFlag &&
-                                  !oa->inSafeZone && !ob->inSafeZone);
+                bool bothSpar = (oa && ob && oa->pkMode == PK_MODE_SPAR && ob->pkMode == PK_MODE_SPAR);
+                bool duelClash = bothSpar || (oa && ob && oa->duelFlag && ob->duelFlag &&
+                                              !oa->inSafeZone && !ob->inSafeZone);
                 if (!duelClash) continue;
             }
             if (!CheckCollisionSpheres(a->pos, a->radius, b->pos, b->radius)) continue;

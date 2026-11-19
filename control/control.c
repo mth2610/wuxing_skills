@@ -8,7 +8,7 @@
 
 // Brisk walk, real-world-scaled (1 unit = 1 meter) — same value the interim
 // game_screen controller used.
-static const float RUN_SPEED_MPS  = 5.4f;
+static const float RUN_SPEED_MPS  = 6.4f;
 static const float WALK_SPEED_MPS = 3.0f;
 static const float JUMP_FORCE     = 4.6f;
 static const float DASH_SPEED_MPS = 10.0f;

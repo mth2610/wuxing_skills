@@ -206,7 +206,6 @@ static void VFX_SeqFireBeat(const struct VFX_Sequence *s, const VFX_Beat *b)
         break;
 
     case VFX_BEAT_SHAKE:
-        CameraFX_Shake((b->a > 0.0f) ? b->a : 0.3f);
         break;
 
     case VFX_BEAT_HITSTOP:

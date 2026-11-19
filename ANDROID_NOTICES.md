@@ -16,7 +16,7 @@ adb connect <IP>:<main_port>
 
 # install
 adb install -r wuxing_skills.apk
-adb -s 192.168.1.168:42841 install -r wuxing_skills.apk
+adb -s 192.168.1.168:34691 install -r wuxing_skills.apk
 
 # crash log
 adb logcat -c

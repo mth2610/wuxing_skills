@@ -100,8 +100,8 @@ static int SpawnStonePillarStep(Vector3 pillarPos, float height, float radius,
     cfg.debrisChips       = withBurstVfx ? 14 : 0;
     cfg.spawnGroundCrack  = withBurstVfx;
     cfg.groundWaveBurst   = false;
-    cfg.screenShake       = withBurstVfx;
-    cfg.traumaAmount      = withBurstVfx ? 0.22f : 0.0f;
+    cfg.screenShake       = false;
+    cfg.traumaAmount      = 0.0f;
     cfg.windImpulse       = withBurstVfx;
     cfg.windRadius        = 2.2f;
     return VFX_ComposeEarthSpikeEx(pillarPos, pillarPos, &cfg);
@@ -186,7 +186,7 @@ static void SpawnEarthDisc(EdvInstance *inst, Vector3 sliceOrigin, int sliceIdx)
     cfg.shatterChips      = 10;
     cfg.shatterVelocity   = 4.5f;
     cfg.impactDustRadius  = 0.85f * inst->sizeScale;
-    cfg.impactShake       = 0.14f;
+    cfg.impactShake       = 0.0f;
     cfg.impactCraterCrack = false;
     cfg.impactShockRing   = false;
     cfg.matId             = VC_MAT_EARTH;

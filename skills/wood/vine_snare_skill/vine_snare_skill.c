@@ -236,8 +236,7 @@ void UpdateVineSnareSkill(float dt, Vector3 enemyPos, float enemyRadius) {
             int hits = Entity_GetNearbyTargets(v->targetPos, v->radius, hitIds, 8);
             bool anyEnemy = false;
             for (int h = 0; h < hits; h++) {
-                const Agent *ag = Entity_GetAgent(hitIds[h]);
-                if (ag != NULL && ag->team != v->casterTeam) {
+                if (Entity_CanDamageTarget(v->ownerAgentId, hitIds[h])) {
                     Entity_ApplyPull(hitIds[h], v->targetPos, 5.5f, 0.12f);
                     Entity_ApplyStun(hitIds[h], 0.16f);
                     anyEnemy = true;

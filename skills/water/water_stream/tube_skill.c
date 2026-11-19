@@ -252,8 +252,7 @@ void UpdateTubeSkill(float dt) {
                                                    hitIds, 8);
                 bool anyEnemy = false;
                 for (int h = 0; h < hits; h++) {
-                    const Agent *ag = Entity_GetAgent(hitIds[h]);
-                    if (ag != NULL && ag->team != st->casterTeam) {
+                    if (Entity_CanDamageTarget(st->ownerAgentId, hitIds[h])) {
                         anyEnemy = true;
                         break;
                     }

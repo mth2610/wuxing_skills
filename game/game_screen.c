@@ -23,6 +23,7 @@
 #include "open_world/realms/ow_desert_earth.h"
 #include "open_world/realms/ow_song_quao.h"
 #include "ai/ai.h"
+#include "net/net_prediction.h"
 #include "ui/ui.h"
 #include "ui/ui_theme.h"
 #include "ui/ui_hub.h"
@@ -112,6 +113,7 @@ static float s_remoteYaw[MAX_AGENTS];
 static bool s_remoteAnimInit[MAX_AGENTS];
 static ModularInstance s_remoteModular[MAX_AGENTS];
 static bool s_remoteModularInit[MAX_AGENTS];
+static bool s_desktopMeditateReq = false;
 
 static void EnsureRemoteModularInit(int agentId)
 {
@@ -224,9 +226,21 @@ static void SyncRemoteWardrobeAndCasts(int localAgentId)
             if (dx * dx + dz * dz > 0.001f)
                 s_remoteYaw[aid] = atan2f(dx, dz);
         }
-        bool hasSword = s_remoteModularInit[aid] &&
-                        (s_remoteModular[aid].loadout.itemIndices[MODULAR_SLOT_WEAPON_R] >= 0);
-        CharacterModel_Trigger(&s_remoteAnim[aid], hasSword ? CHAR_ANIM_SWORD_SLASH : CHAR_ANIM_CAST);
+        if (casts[k].skillIndex >= 250 && casts[k].skillIndex <= 252)
+        {
+            int bType = casts[k].skillIndex - 250;
+            CharacterAnimSlot meleeSlot = (bType == 0) ? CHAR_ANIM_PUNCH
+                                        : (bType == 1) ? CHAR_ANIM_KICK
+                                                       : CHAR_ANIM_PALM;
+            float swingSecs = Entity_GetBasicAttackSeconds((BasicAttackType)bType);
+            CharacterModel_TriggerAttackTimed(&s_remoteAnim[aid], meleeSlot, swingSecs);
+        }
+        else
+        {
+            bool hasSword = s_remoteModularInit[aid] &&
+                            (s_remoteModular[aid].loadout.itemIndices[MODULAR_SLOT_WEAPON_R] >= 0);
+            CharacterModel_Trigger(&s_remoteAnim[aid], hasSword ? CHAR_ANIM_SWORD_SLASH : CHAR_ANIM_CAST);
+        }
     }
 }
 
@@ -797,6 +811,9 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
             {
                 DaTau_Update(dt);
                 DaTau_TickZoneHold(dt, Entity_GetAgent(player->agentId) != NULL);
+                if (s_exploreRealm >= 0 && s_exploreRealm <= 3) {
+                    OW_Update(player, dt);
+                }
                 if (!Net_IsPeerConnected())
                 {
                     // Seamless Host Failover: keep player & local profile intact,
@@ -1241,6 +1258,11 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
     UI_SetCamera(camera);
     UI_Update(dt);
     PlayerIntent intent = Control_ReadIntent();
+    if (s_desktopMeditateReq)
+    {
+        intent.meditate = true;
+        s_desktopMeditateReq = false;
+    }
 
     UITouchSkillSlot touchSlots[5];
     BuildGameTouchSlots(player, touchSlots);
@@ -1302,8 +1324,11 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
             if (!s_gameTouchInput.pointerOverUI && (tdx * tdx + tdy * tdy) <= 18.0f * 18.0f)
             {
                 bool handledTap = false;
-                if (s_mode == GAME_MODE_EXPLORE && s_exploreRealm >= 0 && s_exploreRealm <= 3)
+                if (s_mode == GAME_MODE_EXPLORE && s_exploreRealm >= 0 && s_exploreRealm <= 3) {
                     handledTap = OWQuestNpc_HandleTap(player->position, up, *camera);
+                    if (!handledTap)
+                        handledTap = OWSandbox_HandleTap(player, up, *camera);
+                }
 
                 if (!handledTap)
                 {
@@ -1361,10 +1386,46 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
 
         if (Net_ClientDrivesWorld())
         {
-            // The host simulates our hero; snapshots move it back to us.
-            // Update local facing yaw immediately so the client character
-            // rotates toward its movement/cast direction instead of staying frozen.
+            if (touchExtraSkillIdx >= 0 && intent.castSkillSlot < 0)
+                intent.castSkillSlot = 4;
+
+            // Optimistic 0ms local skill feedback on client: play anim, SFX & visual VFX
+            // immediately on press while the host executes authoritative damage/cooldowns.
+            if (intent.castSkillSlot >= 0 && intent.castSkillSlot < AGENT_SKILL_SLOTS &&
+                !Entity_IsStunned(player->agentId))
+            {
+                const Agent *pc = Entity_GetAgent(player->agentId);
+                int castIdx = pc ? pc->equippedSkills[intent.castSkillSlot] : -1;
+                if (castIdx >= 0 && SkillManager_CanCast(castIdx, player->agentId))
+                {
+                    SkillManager_SetFreeCast(true);
+                    SkillParams sp = {.level = 1, .quantity = 1, .sizeScale = 1.0f};
+                    bool played = CastSkill(castIdx, player->agentId, player->position, intent.aimPoint, sp);
+                    SkillManager_SetFreeCast(false);
+                    if (played)
+                    {
+                        float cdMult = GameRules_CooldownMult(pc->currentElement, Map_QueryZoneAt(player->position));
+                        SkillManager_TriggerCooldown(castIdx, player->agentId, 1.0f * cdMult);
+                        Control_FaceTowards(intent.aimPoint);
+                        float castSecs = Skill_GetCastAnimSeconds(castIdx);
+                        char animClip[64];
+                        float animSecs = 0.0f;
+                        if (Skill_ConsumeAnimTrigger(player->agentId, animClip, sizeof(animClip), &animSecs))
+                            CharacterModel_TriggerByName(&player->anim, animClip, animSecs);
+                        else
+                            CharacterModel_TriggerAttackTimed(&player->anim, CHAR_ANIM_CAST, castSecs);
+                        s_swingSlowTimer = castSecs * 0.6f;
+                        int castElem = GameSkillElementByName(GetRegisteredSkillName(castIdx));
+                        int sfxElem = (castElem >= 0) ? castElem : pc->currentElement;
+                        Audio_PlaySFXAt(pc->taijiActive ? SFX_CAST_TAIJI : Audio_CastSfxForElement(sfxElem),
+                                        player->position);
+                    }
+                }
+            }
+
+            // Apply local jump/dash & facing immediately so Khinh Công and movement feel 60 FPS native.
             Control_UpdateFacingFromIntent(&intent);
+            NetPred_OnLocalIntent(player->agentId, &intent);
             Net_ClientSubmitIntent(&intent);
         }
         else
@@ -1439,17 +1500,26 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
             CharacterModel_TriggerByName(&player->anim, animClip, animSecs);
     }
 
-    int jumpFired = Control_ConsumeJumpFired();
+    int jumpFired = Net_ClientDrivesWorld() ? NetPred_ConsumeLocalJumpFired() : Control_ConsumeJumpFired();
     if (jumpFired == 1)
         CharacterModel_TriggerVariant(&player->anim, CHAR_ANIM_JUMP, 0);
-    else if (jumpFired == 2)
+    else if (jumpFired >= 2)
         CharacterModel_TriggerVariant(&player->anim, CHAR_ANIM_JUMP, 1);
 
     float moveLen = sqrtf(intent.moveDir.x * intent.moveDir.x + intent.moveDir.y * intent.moveDir.y);
     CharacterAnimSlot locoSlot = CHAR_ANIM_IDLE;
-    if (selfAgent && (selfAgent->vState == AGENT_JUMPING || selfAgent->vState == AGENT_RING_OUT_FALLING))
+    float predVelY = 0.0f;
+    if (Net_ClientDrivesWorld() && NetPred_IsLocalAirborne(&predVelY))
+    {
+        locoSlot = (predVelY > 0.25f) ? CHAR_ANIM_JUMP : CHAR_ANIM_FALL;
+    }
+    else if (selfAgent && (selfAgent->vState == AGENT_JUMPING || selfAgent->vState == AGENT_RING_OUT_FALLING))
     {
         locoSlot = (selfAgent->velocity.y > 0.25f) ? CHAR_ANIM_JUMP : CHAR_ANIM_FALL;
+    }
+    else if (selfAgent && selfAgent->isMeditating)
+    {
+        locoSlot = CHAR_ANIM_MEDITATE;
     }
     else if (moveLen > 0.0001f)
     {
@@ -1489,6 +1559,13 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
             Vector3 targetPos, wallPos;
             int wallElement;
             bool gotWallBonus = Entity_ExecuteBasicAttack(player->agentId, basicAttackType, &targetPos, &wallPos, &wallElement);
+            Vector3 swingAim = targetPos;
+            if (swingAim.x == 0.0f && swingAim.y == 0.0f && swingAim.z == 0.0f)
+            {
+                float yaw = Control_GetYaw();
+                swingAim = (Vector3){ player->position.x + sinf(yaw), player->position.y, player->position.z + cosf(yaw) };
+            }
+            Net_HostNotifyCast(player->agentId, 250 + (int)basicAttackType, swingAim);
             // targetPos is only written when auto-target found someone (stays
             // (0,0,0) otherwise) — turn to face the attack direction if so.
             if (targetPos.x != 0.0f || targetPos.y != 0.0f || targetPos.z != 0.0f)
@@ -1561,22 +1638,41 @@ void GameScreen_Draw3D(const PlayerEntity *player)
                                              : (Color){255, 170, 150, 255};
             if (CharacterModel_IsLoaded())
             {
-                // Per-agent anim state: infer walk/idle + facing from the
-                // position delta between frames (no intent stream here).
-                float dx = a->position.x - s_remotePrevPos[i].x;
-                float dz = a->position.z - s_remotePrevPos[i].z;
-                float moved = sqrtf(dx * dx + dz * dz);
                 if (!s_remoteAnimInit[i])
                 {
                     CharacterModel_ResetState(&s_remoteAnim[i]);
+                    s_remotePrevPos[i] = a->position;
                     s_remoteAnimInit[i] = true;
                 }
-                if (moved > 0.001f)
-                    s_remoteYaw[i] = atan2f(dx, dz);
-                CharacterModel_Update(&s_remoteAnim[i], frameDt, moved > 0.02f * frameDt * 60.0f);
+                if (!EnvShadow_IsCapturing())
+                {
+                    float dx = a->position.x - s_remotePrevPos[i].x;
+                    float dy = a->position.y - s_remotePrevPos[i].y;
+                    float dz = a->position.z - s_remotePrevPos[i].z;
+                    float moved = sqrtf(dx * dx + dz * dz);
+                    if (moved > 0.001f)
+                        s_remoteYaw[i] = atan2f(dx, dz);
+
+                    float groundY = MapManager_GetGroundHeightAt(a->position.x, a->position.z);
+                    float speed = (frameDt > 0.0001f) ? (moved / frameDt) : 0.0f;
+                    CharacterAnimSlot remoteSlot = CHAR_ANIM_IDLE;
+                    if (a->position.y > groundY + 0.25f)
+                    {
+                        remoteSlot = (dy >= -0.005f) ? CHAR_ANIM_JUMP : CHAR_ANIM_FALL;
+                    }
+                    else if (a->isMeditating)
+                    {
+                        remoteSlot = CHAR_ANIM_MEDITATE;
+                    }
+                    else if (speed > 0.35f)
+                    {
+                        remoteSlot = CHAR_ANIM_RUN;
+                    }
+                    CharacterModel_UpdateLocomotion(&s_remoteAnim[i], frameDt, remoteSlot);
+                    s_remotePrevPos[i] = a->position;
+                }
                 EnsureRemoteModularInit(i);
                 ModularInstance_DrawWithState(&s_remoteModular[i], &s_remoteAnim[i], a->position, s_remoteYaw[i], 1.0f, tint);
-                s_remotePrevPos[i] = a->position;
             }
             else
             {
@@ -1733,6 +1829,17 @@ void GameScreen_DrawHUD(const PlayerEntity *player)
                             (Color){ 120, 185, 145, 180 },
                             (agent && agent->staminaExhausted) ? "THE LUC (KIET SUC)" : TextFormat("THE LUC  %d/%d", (int)stam, (int)maxStam), 9.0f);
 
+    if (!UI_IsTouchControlsEnabled() && s_state == GAME_FIGHTING && !UI_IsLoadoutOpen() && !UI_Hub_IsModalOpen())
+    {
+        bool medActive = (agent && agent->isMeditating);
+        const char *medLbl = medActive ? "DANG THIEN..." : "[G] THIEN";
+        Rectangle medBtn = { (float)cardX, (float)(cardY + cardH + 6), 124.0f, 26.0f };
+        if (WuxiaUI_DrawButton(medBtn, medLbl, medActive ? WUXIA_GOLD_BRIGHT : WUXIA_JADE, medActive, 12.0f))
+        {
+            s_desktopMeditateReq = true;
+        }
+    }
+
     // Module 9 overlay: skill slot chips + auto-aim reticle.
     UI_DrawOverlay(player->agentId);
 
@@ -1743,21 +1850,24 @@ void GameScreen_DrawHUD(const PlayerEntity *player)
         {
             if (i == player->agentId) continue;
             const Agent *ea = Entity_GetAgent(i);
-            if (!ea || ea->maxHealth <= 0.0f) continue;
-            if (ea->archetype == ARCH_HERO || ea->isStatic) continue;
+            if (!ea || ea->maxHealth <= 0.0f || ea->isStatic) continue;
+            bool isHostileHero = (ea->archetype == ARCH_HERO) && Entity_CanDamageTarget(player->agentId, i);
+            if (ea->archetype == ARCH_HERO && !isHostileHero) continue;
             float dx = ea->position.x - player->position.x;
             float dz = ea->position.z - player->position.z;
             if (dx * dx + dz * dz > 28.0f * 28.0f) continue;
-            Vector3 head = { ea->position.x, ea->position.y + (ea->archetype == ARCH_BOSS ? 2.2f : 1.1f), ea->position.z };
+            float headOff = (ea->archetype == ARCH_BOSS) ? 2.2f : (ea->archetype == ARCH_HERO) ? 2.05f : 1.1f;
+            Vector3 head = { ea->position.x, ea->position.y + headOff, ea->position.z };
             Vector2 sp = GetWorldToScreen(head, s_hudCamera);
             if (sp.x < 0 || sp.x > GetScreenWidth() || sp.y < 0 || sp.y > GetScreenHeight()) continue;
-            int bw = (ea->archetype == ARCH_BOSS) ? 72 : 42;
-            int bh = (ea->archetype == ARCH_BOSS) ? 7 : 5;
+            int bw = (ea->archetype == ARCH_BOSS) ? 72 : (ea->archetype == ARCH_HERO) ? 56 : 42;
+            int bh = (ea->archetype == ARCH_BOSS) ? 7 : (ea->archetype == ARCH_HERO) ? 6 : 5;
             float frac = ea->health / ea->maxHealth;
             if (frac < 0.0f) frac = 0.0f;
             if (frac > 1.0f) frac = 1.0f;
             DrawRectangle((int)sp.x - bw / 2 - 1, (int)sp.y - 1, bw + 2, bh + 2, (Color){ 10, 10, 16, 200 });
-            Color barCol = (ea->team == TEAM_ALLY) ? (Color){ 70, 185, 255, 255 } : (Color){ 225, 65, 60, 255 };
+            Color barCol = isHostileHero ? (Color){ 235, 55, 50, 255 }
+                         : (ea->team == TEAM_ALLY) ? (Color){ 70, 185, 255, 255 } : (Color){ 225, 65, 60, 255 };
             DrawRectangle((int)sp.x - bw / 2, (int)sp.y, (int)(bw * frac), bh, barCol);
         }
     }

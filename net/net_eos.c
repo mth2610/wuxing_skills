@@ -323,7 +323,8 @@ typedef struct {
     void         *peerRef;     // whose fragments these are
     unsigned char buf[MAX_LOGICAL];
 } Reassembly;
-static Reassembly s_reasm[2];
+static Reassembly s_reasm[2][4];
+static int s_reasmNext[2] = { 0, 0 };
 
 // peerRef: the target ProductUserId (host role); NULL = the lobby owner
 // (client role — its only link).
@@ -343,7 +344,7 @@ static bool EosSend(void *peerRef, int channel, const void *data, int len, bool 
     opt.Channel      = (uint8_t)channel;
     // Queue while the NAT punch is still completing (client's first intents).
     opt.bAllowDelayedDelivery = EOS_TRUE;
-    opt.Reliability = reliable ? EOS_PR_ReliableOrdered : EOS_PR_UnreliableUnordered;
+    opt.Reliability = reliable ? EOS_PR_ReliableUnordered : EOS_PR_UnreliableUnordered;
     opt.bDisableAutoAcceptConnection = EOS_FALSE;
 
     for (int i = 0; i < count; i++) {
@@ -374,8 +375,18 @@ static void ReceiveFragment(void *peerRef, int channel,
     // deliver once every bit is in. A lost fragment just drops the snapshot
     // (the next one is 50ms behind). Only host→client snapshots fragment, so
     // one reassembly slot per channel is enough — but guard against peer mixups.
-    Reassembly *r = &s_reasm[channel & 1];
-    if (r->seq != seq || r->count != count || r->peerRef != peerRef) {
+    int ch = channel & 1;
+    Reassembly *r = NULL;
+    for (int s = 0; s < 4; s++) {
+        Reassembly *cand = &s_reasm[ch][s];
+        if (cand->count == count && cand->seq == seq && cand->peerRef == peerRef) {
+            r = cand;
+            break;
+        }
+    }
+    if (r == NULL) {
+        r = &s_reasm[ch][s_reasmNext[ch]];
+        s_reasmNext[ch] = (s_reasmNext[ch] + 1) & 3;
         r->seq = seq; r->count = count; r->haveMask = 0; r->lastLen = -1;
         r->peerRef = peerRef;
     }

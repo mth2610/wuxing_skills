@@ -514,8 +514,8 @@ void VFX_EarthSpike_ApplyPreset(VFX_EarthSpikeConfig *cfg, VFX_EarthSpikePreset 
     cfg->debrisChips = 5;
     cfg->spawnGroundCrack = true;
     cfg->groundWaveBurst = true;
-    cfg->screenShake = true;
-    cfg->traumaAmount = 0.12f;
+    cfg->screenShake = false;
+    cfg->traumaAmount = 0.0f;
     cfg->windImpulse = true;
     cfg->windRadius = 3.2f;
 
@@ -793,10 +793,8 @@ void VC_EarthSpike_Update(float dt)
                     Wind_SpawnRadialBlast(sub->groundPos, cfg->windRadius, 6.0f, 0.25f);
                 }
 
-                // Screen Shake Trauma
-                if (cfg->screenShake) {
-                    CameraFX_Shake(cfg->traumaAmount);
-                }
+                // Screen Shake disabled across skills
+                (void)cfg->screenShake;
             }
 
             // 2. Kinematics Evolution

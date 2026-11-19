@@ -94,6 +94,7 @@ PROJECT_SOURCE_FILES   := main.c \
                           core/gas/gas_system.c \
                           core/path_spline.c \
                           post_process/post_fx.c \
+                          post_process/taa.c \
                           post_process/color_grade_lut.c \
                           post_process/scene_targets.c \
                           post_process/render_scale.c \

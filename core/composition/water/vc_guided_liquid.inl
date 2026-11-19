@@ -280,7 +280,7 @@ VFX_GuidedLiquidConfig VFX_GuidedLiquid_DefaultConfig(void)
     cfg.impactShockRing = false;
     cfg.impactDecal = false;
     cfg.impactMistRadius = 0.8f;
-    cfg.impactShake = 0.15f;
+    cfg.impactShake = 0.0f;
     cfg.windBlastRadius = 1.5f;
 
     GL_SetWaterColors(&cfg);

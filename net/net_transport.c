@@ -23,8 +23,8 @@
 #define NET_CH_STREAM  0
 #define NET_CH_CONTROL 1
 
-#define NET_SNAPSHOT_HZ 20.0f
-#define NET_INTENT_HZ   30.0f
+#define NET_SNAPSHOT_HZ 30.0f
+#define NET_INTENT_HZ   60.0f
 
 // Remote hero spawn base (host side) — mirrors game/game_screen.c's match
 // world (VERDANT_PATH plateau), opposite the host player's spawn. Slots
@@ -112,8 +112,8 @@ static unsigned char s_hostTeam = 0;     // lobby: the host player's own side
 static int           s_botCount[2] = { 0, 0 }; // lobby: bots per side
 static bool          s_matchStart = false;     // START received/armed, unread
 
-static const float REMOTE_MOVE_MPS = 3.5f;  // mirror control/'s walk speed
-static const float REMOTE_JUMP_FORCE = 4.0f;
+static const float REMOTE_MOVE_MPS = 6.4f;  // match control/'s RUN_SPEED_MPS
+static const float REMOTE_JUMP_FORCE = 4.6f; // match control/'s JUMP_FORCE
 static const float REMOTE_DASH_MPS = 10.0f;
 
 // Pluggable packet backend (net_transport_internal.h) — when installed it
@@ -242,21 +242,36 @@ void Net_ClientSubmitIntent(const PlayerIntent *intent) {
     if (!s_clientIntentValid) {
         s_clientIntent = *intent;
         s_clientIntentValid = true;
-        return;
+    } else {
+        // Preserve edge-triggered actions pressed between sends so
+        // 60+ FPS frames never overwrite them before transmission.
+        bool keepJump = s_clientIntent.jump || intent->jump;
+        bool keepDash = s_clientIntent.dash || intent->dash;
+        bool keepMed  = s_clientIntent.meditate || intent->meditate;
+        int  keepSlot = (intent->castSkillSlot >= 0) ? intent->castSkillSlot : s_clientIntent.castSkillSlot;
+        int  keepAtk  = (intent->basicAttack > 0) ? intent->basicAttack : s_clientIntent.basicAttack;
+        s_clientIntent = *intent;
+        s_clientIntent.jump = keepJump;
+        s_clientIntent.dash = keepDash;
+        s_clientIntent.meditate = keepMed;
+        s_clientIntent.castSkillSlot = keepSlot;
+        s_clientIntent.basicAttack = keepAtk;
     }
-    // Preserve edge-triggered actions pressed between NET_INTENT_HZ sends so
-    // 60+ FPS frames never overwrite them before Net_Tick transmits.
-    bool keepJump = s_clientIntent.jump || intent->jump;
-    bool keepDash = s_clientIntent.dash || intent->dash;
-    bool keepMed  = s_clientIntent.meditate || intent->meditate;
-    int  keepSlot = (intent->castSkillSlot >= 0) ? intent->castSkillSlot : s_clientIntent.castSkillSlot;
-    int  keepAtk  = (intent->basicAttack > 0) ? intent->basicAttack : s_clientIntent.basicAttack;
-    s_clientIntent = *intent;
-    s_clientIntent.jump = keepJump;
-    s_clientIntent.dash = keepDash;
-    s_clientIntent.meditate = keepMed;
-    s_clientIntent.castSkillSlot = keepSlot;
-    s_clientIntent.basicAttack = keepAtk;
+
+    // Immediate zero-queue flush for discrete actions (skills, attacks, Khinh Công, dash, meditate)
+    bool hasEdge = (s_clientIntent.castSkillSlot >= 0 || s_clientIntent.basicAttack > 0 ||
+                    s_clientIntent.jump || s_clientIntent.dash || s_clientIntent.meditate);
+    if (hasEdge && s_connected) {
+        unsigned char buf[128];
+        int bytes = Net_PackIntent(&s_clientIntent, buf, (int)sizeof(buf));
+        if (bytes > 0) {
+            ClientSendToHost(NET_CH_STREAM, buf, bytes, s_clientIntent.castSkillSlot >= 0);
+            s_sendAccum = 0.0f;
+            s_clientIntent.jump = s_clientIntent.dash = s_clientIntent.meditate = false;
+            s_clientIntent.castSkillSlot = -1;
+            s_clientIntent.basicAttack = 0;
+        }
+    }
 }
 
 // --- Roster ------------------------------------------------------------------
@@ -439,12 +454,12 @@ static void PushTradeGift(int senderAgentId, int itemKind, int amount) {
 
 void Net_SendSocialState(int agentId, int emoteId, bool duelFlag) {
     if (agentId < 0 || agentId > 255) return;
+    unsigned char pkMode = (unsigned char)Entity_GetPkMode(agentId);
     unsigned char buf[NET_SOCIAL_PACKET_BYTES] = {
         NET_CTRL_SOCIAL_EMOTE, NET_PROTOCOL_VERSION,
-        (unsigned char)agentId, (unsigned char)emoteId, (unsigned char)(duelFlag ? 1 : 0), 0
+        (unsigned char)agentId, (unsigned char)emoteId, (unsigned char)(duelFlag ? 1 : 0), pkMode
     };
     if (s_mode == NET_MODE_HOST) {
-        Entity_SetDuelFlag(agentId, duelFlag);
         HostBroadcast(NET_CH_CONTROL, buf, (int)sizeof(buf), true);
     } else if (s_mode == NET_MODE_CLIENT && s_connected) {
         ClientSendToHost(NET_CH_CONTROL, buf, (int)sizeof(buf), true);
@@ -574,10 +589,11 @@ static unsigned char HostAutoBalanceTeam(void) {
 static void HostSpawnPeerHero(int idx) {
     HostPeer *p = &s_peers[idx];
     if (s_exploreMode) p->team = 0; // Explore Co-op: all players share TEAM_ALLY
-    // Fan slots out around the active map's spawn point so heroes never stack.
+    // Always spawn peers at the fixed active map spawn point (independent of
+    // where player 1 has moved), fanned out slightly so heroes don't overlap.
     Vector3 pos = MapManager_GetActiveSpawnPoint();
-    pos.x += (float)(idx % 4) * 1.6f - 2.4f;
-    pos.z += (float)(idx / 4) * 1.6f;
+    pos.x += (float)(idx % 4) * 1.8f + 1.8f;
+    pos.z += (float)(idx / 4) * 1.8f;
     pos.y = MapManager_GetGroundHeightAt(pos.x, pos.z);
     p->agentId = Entity_SpawnAgent(pos, 100.0f, 0,
                                    (p->team == 0) ? TEAM_ALLY : TEAM_ENEMY,
@@ -649,14 +665,16 @@ static void HostApplyRemoteEdges(int idx, const PlayerIntent *in) {
     const Agent *a = Entity_GetAgent(agentId);
     if (a == NULL) return;
 
-    if (in->jump && a->vState == AGENT_GROUNDED && !Entity_IsCrowdControlled(agentId)) {
+    if (in->jump && (a->vState == AGENT_GROUNDED || a->vState == AGENT_JUMPING) &&
+        !Entity_IsCrowdControlled(agentId)) {
         float len = sqrtf(in->moveDir.x * in->moveDir.x + in->moveDir.y * in->moveDir.y);
         Vector3 hv = { 0 };
         if (len > 0.0001f) {
             hv.x = (in->moveDir.x / len) * REMOTE_MOVE_MPS;
             hv.z = (in->moveDir.y / len) * REMOTE_MOVE_MPS;
         }
-        Entity_ApplyLaunch(agentId, REMOTE_JUMP_FORCE, hv);
+        float vForce = (a->vState == AGENT_JUMPING) ? (REMOTE_JUMP_FORCE * 1.05f) : REMOTE_JUMP_FORCE;
+        Entity_PerformJump(agentId, vForce, hv);
     }
     if (in->dash) {
         Vector3 dir = { in->moveDir.x, 0.0f, in->moveDir.y };
@@ -665,12 +683,14 @@ static void HostApplyRemoteEdges(int idx, const PlayerIntent *in) {
     if (in->meditate) Entity_StartMeditate(agentId);
 
     if (in->basicAttack > 0) {
-        // Melee for the remote hero — gameplay only; its VFX/anim are the
-        // client's local feedback (event mirroring is Đợt A5).
-        Vector3 tp, wp; int we;
+        Vector3 tp = {0}, wp = {0}; int we = -1;
         Entity_ExecuteBasicAttack(agentId,
                                   (BasicAttackType)(in->basicAttack - 1),
                                   &tp, &wp, &we);
+        Vector3 swingAim = (tp.x != 0.0f || tp.y != 0.0f || tp.z != 0.0f) ? tp : in->aimPoint;
+        int meleeCode = 250 + (in->basicAttack - 1);
+        Net_HostNotifyCast(agentId, meleeCode, swingAim);
+        PushCastEvent(agentId, meleeCode, swingAim);
     }
 
     if (in->castSkillSlot >= 0 && in->castSkillSlot < AGENT_SKILL_SLOTS &&
@@ -798,11 +818,12 @@ static void HandlePacket(ENetPeer *ep, void *ref, int channel,
             int agentId = s_peers[idx].agentId;
             if (agentId >= 0) {
                 bool duel = (data[4] != 0);
-                Entity_SetDuelFlag(agentId, duel);
+                AgentPkMode pkMode = (data[5] <= 2) ? (AgentPkMode)data[5] : (duel ? PK_MODE_SLAUGHTER : PK_MODE_PEACE);
+                Entity_SetPkMode(agentId, pkMode);
                 PushSocialEvent(agentId, (int)data[3], duel);
                 unsigned char fwd[NET_SOCIAL_PACKET_BYTES] = {
                     NET_CTRL_SOCIAL_EMOTE, NET_PROTOCOL_VERSION,
-                    (unsigned char)agentId, data[3], data[4], 0
+                    (unsigned char)agentId, data[3], data[4], data[5]
                 };
                 HostBroadcast(NET_CH_CONTROL, fwd, (int)sizeof(fwd), true);
             }
@@ -835,15 +856,23 @@ static void HandlePacket(ENetPeer *ep, void *ref, int channel,
                 int agentId = data[2], skillIndex = data[3];
                 Vector3 aim;
                 memcpy(&aim, data + 4, sizeof(Vector3));
+                if (agentId == s_localHeroId) {
+                    // Client already played its own cast optimistically at 0ms.
+                    return;
+                }
                 const Agent *caster = Entity_GetAgent(agentId);
                 if (caster != NULL) {
-                    SkillManager_SetFreeCast(true);
-                    bool played = CastSkill(skillIndex, agentId, caster->position, aim,
-                                            (SkillParams){ .level = 1, .quantity = 1, .sizeScale = 1.0f });
-                    SkillManager_SetFreeCast(false);
-                    if (played) {
+                    if (skillIndex >= 250 && skillIndex <= 252) {
                         PushCastEvent(agentId, skillIndex, aim);
-                        TraceLog(LOG_INFO, "[NET] cast mirror agent=%d skill=%d", agentId, skillIndex);
+                    } else {
+                        SkillManager_SetFreeCast(true);
+                        bool played = CastSkill(skillIndex, agentId, caster->position, aim,
+                                                (SkillParams){ .level = 1, .quantity = 1, .sizeScale = 1.0f });
+                        SkillManager_SetFreeCast(false);
+                        if (played) {
+                            PushCastEvent(agentId, skillIndex, aim);
+                            TraceLog(LOG_INFO, "[NET] cast mirror agent=%d skill=%d", agentId, skillIndex);
+                        }
                     }
                 }
             } else if (len == NET_KILL_REWARD_PACKET_BYTES && data[0] == NET_CTRL_KILL_REWARD &&
@@ -860,7 +889,8 @@ static void HandlePacket(ENetPeer *ep, void *ref, int channel,
                        data[1] == NET_PROTOCOL_VERSION) {
                 int aid = (int)data[2];
                 bool duel = (data[4] != 0);
-                Entity_SetDuelFlag(aid, duel);
+                AgentPkMode pkMode = (data[5] <= 2) ? (AgentPkMode)data[5] : (duel ? PK_MODE_SLAUGHTER : PK_MODE_PEACE);
+                Entity_SetPkMode(aid, pkMode);
                 PushSocialEvent(aid, (int)data[3], duel);
             } else if (len == NET_TRADE_PACKET_BYTES && data[0] == NET_CTRL_TRADE_GIFT &&
                        data[1] == NET_PROTOCOL_VERSION) {

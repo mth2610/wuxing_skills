@@ -764,16 +764,11 @@ void SpawnGroundDecalEx(DecalPresetType type, Vector3 pos,
                       lifetime, tint, BLEND_ALPHA, yOffset);
 }
 
-// 8. Camera Impulse Implementation
+// 8. Camera Impulse Implementation (camera shake disabled across all skills)
 void CameraFX_AddImpulse(Vector3 origin, CameraImpulse impulse)
 {
-    float dist = Vector3Distance(origin, camera.target);
-    float factor = 1.0f / (1.0f + dist * impulse.falloff);
-    float resultTrauma = impulse.magnitude * factor;
-    if (resultTrauma > 0.05f)
-    {
-        CameraFX_Shake(resultTrauma);
-    }
+    (void)origin;
+    (void)impulse;
 }
 
 // 9. ForceField Preset Implementation

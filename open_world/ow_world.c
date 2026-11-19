@@ -63,6 +63,17 @@ static bool  s_touchHealReq     = false;
 static bool  s_touchManaReq     = false;
 static bool  s_touchDuelReq     = false;
 
+// P2P Spar (Tỉ Thí) handshake: Ask -> Agree -> 3..2..1 -> Fight
+#define OW_EMOTE_SPAR_ASK     10
+#define OW_EMOTE_SPAR_ACCEPT  11
+#define OW_EMOTE_SPAR_DECLINE 12
+static bool  s_sparInvitePending = false;
+static int   s_sparInviteFromId  = -1;
+static float s_sparCountdown     = 0.0f;
+static bool  s_sparStarting      = false;
+static float s_prevHeroHp[MAX_AGENTS];
+static bool  s_prevHeroHpInit[MAX_AGENTS];
+
 static float DistXZ(Vector3 a, Vector3 b) {
     float dx = a.x - b.x, dz = a.z - b.z;
     return sqrtf(dx * dx + dz * dz);
@@ -332,7 +343,69 @@ void OW_Update(PlayerEntity *player, float dt) {
 
     NetSocialEvent sev[8];
     int nsev = Net_PollSocialEvents(sev, 8);
-    for (int i = 0; i < nsev; i++) RecordEmote(sev[i].agentId, sev[i].emoteId);
+    for (int i = 0; i < nsev; i++) {
+        if (sev[i].emoteId == OW_EMOTE_SPAR_ASK) {
+            if (player && sev[i].agentId != player->agentId) {
+                s_sparInvitePending = true;
+                s_sparInviteFromId  = sev[i].agentId;
+            }
+        } else if (sev[i].emoteId == OW_EMOTE_SPAR_ACCEPT) {
+            if (player && sev[i].agentId != player->agentId) {
+                s_sparInvitePending = false;
+                s_sparCountdown = 3.0f;
+                s_sparStarting  = true;
+                OW_SetBanner("DOI PHUONG DA DONG Y! CHUAN BI TY THI...", 2.0f);
+            }
+        } else if (sev[i].emoteId == OW_EMOTE_SPAR_DECLINE) {
+            if (player && sev[i].agentId != player->agentId) {
+                OW_SetBanner("DOI PHUONG TU CHOI TY THI.", 2.4f);
+            }
+        } else {
+            RecordEmote(sev[i].agentId, sev[i].emoteId);
+        }
+    }
+
+    // Countdown 3..2..1 -> Activate Tỉ Thí (PK_MODE_SPAR)
+    if (s_sparStarting) {
+        s_sparCountdown -= dt;
+        if (s_sparCountdown <= 0.0f) {
+            s_sparStarting  = false;
+            s_sparCountdown = 0.0f;
+            if (player) {
+                OWSandbox_SetPkMode(player, PK_MODE_SPAR);
+                OW_SetBanner("BAT DAU TY THI! (DUNG O 1 HP)", 2.2f);
+            }
+        }
+    }
+
+    // Floating damage numbers & hit flash for all heroes (works on both Host & Client!)
+    for (int i = 0; i < MAX_AGENTS; i++) {
+        const Agent *ha = Entity_GetAgent(i);
+        if (!ha || ha->archetype != ARCH_HERO) {
+            s_prevHeroHpInit[i] = false;
+            continue;
+        }
+        if (!s_prevHeroHpInit[i]) {
+            s_prevHeroHp[i] = ha->health;
+            s_prevHeroHpInit[i] = true;
+        } else {
+            float delta = s_prevHeroHp[i] - ha->health;
+            if (delta >= 0.8f) {
+                Vector3 txtPos = { ha->position.x, ha->position.y + 1.9f, ha->position.z };
+                AddFloatingText(txtPos, TextFormat("-%.0f", delta),
+                                (Color){ 255, 95, 70, 255 }, 20.0f, 0.9f);
+                VFX_ComposeImpactDust(ha->position, VC_MAT_EARTH, 0.9f, 0.7f);
+            }
+            s_prevHeroHp[i] = ha->health;
+        }
+        if (player && i == player->agentId) {
+            static AgentPkMode s_prevPlayerPkMode = PK_MODE_PEACE;
+            if (s_prevPlayerPkMode == PK_MODE_SPAR && ha->pkMode == PK_MODE_PEACE && ha->health > 1.2f) {
+                OW_SetBanner("TY THI KET THUC! HOI PHUC SINH LUC BAN DAU!", 3.2f);
+            }
+            s_prevPlayerPkMode = ha->pkMode;
+        }
+    }
 
     NetTradeGift tgv[8];
     int ntg = Net_PollTradeGifts(tgv, 8);
@@ -362,11 +435,20 @@ void OW_Update(PlayerEntity *player, float dt) {
     s_lastPlayerPos = pa->position;
 
     bool inSafe = OW_IsInSafeZone(pa->position);
-    Entity_SetSafeZone(player->agentId, inSafe);
-    if (inSafe) {
-        if (pa->health < pa->maxHealth)
-            Entity_ApplyDamage(player->agentId, -15.0f * dt, (Vector3){ 0 });
-        Entity_RestoreMana(player->agentId, 20.0f * dt);
+    if (!Net_ClientDrivesWorld()) {
+        for (int i = 0; i < MAX_AGENTS; i++) {
+            const Agent *ha = Entity_GetAgent(i);
+            if (ha && ha->archetype == ARCH_HERO) {
+                Entity_SetSafeZone(i, OW_IsInSafeZone(ha->position));
+            }
+        }
+        if (inSafe && pa->pkMode != PK_MODE_SPAR) {
+            if (pa->health < pa->maxHealth)
+                Entity_ApplyDamage(player->agentId, -15.0f * dt, (Vector3){ 0 });
+            Entity_RestoreMana(player->agentId, 20.0f * dt);
+        }
+    } else {
+        Entity_SetSafeZone(player->agentId, inSafe);
     }
 
     // Vampire-Survivors Frenzy Tiers based on Kill Streak
@@ -666,7 +748,10 @@ void OW_DrawHUD(const PlayerEntity *player, Camera3D cam) {
             Rectangle br = { bx, eb.y + 46.0f, 81.0f, 50.0f };
             Color bc = (i == 4 && pa && pa->duelFlag) ? WUXIA_CRIMSON : WUXIA_AZURE;
             if (WuxiaUI_DrawButton(br, eLbls[i], bc, (i == 4 && pa && pa->duelFlag), 12.5f)) {
-                if (i < 4) {
+                if (i == 2) {
+                    Net_SendSocialState(player->agentId, OW_EMOTE_SPAR_ASK, false);
+                    OW_SetBanner("DA GUI LOI MOI TY THI! CHO DONG DAO DONG Y...", 2.8f);
+                } else if (i < 4) {
                     RecordEmote(player->agentId, i + 1);
                     Net_SendSocialState(player->agentId, i + 1, Entity_GetDuelFlag(player->agentId));
                     if (i == 3) s_tradeMenuOpen = true;
@@ -676,6 +761,38 @@ void OW_DrawHUD(const PlayerEntity *player, Camera3D cam) {
                 s_emoteMenuOpen = false;
             }
         }
+    }
+
+    // Spar invite popup (Ask -> Agree -> 1, 2, 3)
+    if (s_sparInvitePending && player) {
+        (void)s_sparInviteFromId;
+        Rectangle sb = { (float)sw / 2 - 190.0f, 130.0f, 380.0f, 110.0f };
+        WuxiaUI_DrawPanel(sb, WUXIA_GOLD, true);
+        WuxiaUI_DrawText("DONG DAO MOI BAN TY THI (1v1)!", sb.x + 22.0f, sb.y + 16.0f, 16.0f, WUXIA_GOLD);
+        Rectangle btnYes = { sb.x + 24.0f, sb.y + 52.0f, 154.0f, 40.0f };
+        Rectangle btnNo  = { sb.x + 202.0f, sb.y + 52.0f, 154.0f, 40.0f };
+        if (WuxiaUI_DrawButton(btnYes, "DONG Y", (Color){ 46, 156, 88, 255 }, false, 15.0f)) {
+            s_sparInvitePending = false;
+            s_sparCountdown = 3.0f;
+            s_sparStarting  = true;
+            Net_SendSocialState(player->agentId, OW_EMOTE_SPAR_ACCEPT, false);
+        }
+        if (WuxiaUI_DrawButton(btnNo, "TU CHOI", WUXIA_CRIMSON, false, 15.0f)) {
+            s_sparInvitePending = false;
+            Net_SendSocialState(player->agentId, OW_EMOTE_SPAR_DECLINE, false);
+        }
+    }
+
+    // 3..2..1 Spar Countdown overlay
+    if (s_sparStarting && s_sparCountdown > 0.0f) {
+        int sh = GetScreenHeight();
+        int sec = (int)ceilf(s_sparCountdown);
+        if (sec < 1) sec = 1;
+        const char *cdTxt = TextFormat("TY THI BAT DAU SAU: %d", sec);
+        int cw = MeasureText(cdTxt, 30);
+        DrawRectangle(sw / 2 - cw / 2 - 26, sh / 2 - 48, cw + 52, 68, (Color){ 16, 12, 8, 220 });
+        DrawRectangleLines(sw / 2 - cw / 2 - 26, sh / 2 - 48, cw + 52, 68, GOLD);
+        DrawText(cdTxt, sw / 2 - cw / 2, sh / 2 - 28, 30, GOLD);
     }
 
     if (s_tradeMenuOpen && pa) {

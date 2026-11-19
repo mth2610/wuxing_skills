@@ -22,7 +22,7 @@
 // players + the host. Explore mode caps at 5 players/host for low-latency P2P.
 #define NET_MAX_PLAYERS         8
 #define NET_EXPLORE_MAX_PLAYERS 5
-#define NET_INTEREST_RADIUS     55.0f
+#define NET_INTEREST_RADIUS     36.0f
 
 #define NET_ROSTER_NONE      255  // agentId value: no hero spawned yet
 #define NET_ROSTER_OCCUPIED  0x1  // flags
