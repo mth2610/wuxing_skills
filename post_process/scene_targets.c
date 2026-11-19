@@ -320,6 +320,10 @@ static void SceneTargets_CreateSizedTargets(int width, int height)
 
   SceneTargets_PrimeTarget(renderTex);
   SceneTargets_PrimeTarget(prevDepthTex);
+#if defined(GRAPHICS_API_VULKAN)
+  if (renderTex.id > 0 && s_depthTextureActive)
+    s_depthSampleOnDemand = rlvkSetFramebufferDepthSampleOnDemand(renderTex.id, true);
+#endif
 }
 
 void SceneTargets_Init(int width, int height)
@@ -470,8 +474,8 @@ void SceneTargets_BeginWorldRefraction(void)
 void SceneTargets_EndWorldRefraction(void)
 {
   rlDrawRenderBatchActive();
-  rlEnableFramebuffer(renderTex.id);
-  rlViewport(0, 0, s_targetWidth, s_targetHeight);
+  rlDisableFramebuffer();
+  rlViewport(0, 0, GetRenderWidth(), GetRenderHeight());
 }
 
 void VFXRender_BeginPass(VFXRenderPass pass)

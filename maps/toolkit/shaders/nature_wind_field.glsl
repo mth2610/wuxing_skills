@@ -53,7 +53,7 @@ vec2 NatureGlobalWindXZ(vec3 worldPosition, float time)
 
     // Fast height & bounding-box check using fixed 32x32 macro grid half-texel margin (0.5 - 0.5/32 = 0.484375)
     // to avoid per-vertex textureSize() descriptor queries on GPU.
-    if (u_windCacheEnabled != 0 && u_windCacheRegion.z > 0.0001 && abs(worldPosition.y - u_windCacheRegion.w) < 2.0) {
+    if (u_windCacheEnabled != 0 && u_windCacheRegion.z > 0.0001) {
         float extraLag = max(0.0, u_natureWindResponse.x - 0.08);
         vec2 sampleXZ = worldPosition.xz - baseVelocity.xz * (extraLag * 0.45);
         vec2 uvOffset = (sampleXZ - u_windCacheRegion.xy) / u_windCacheRegion.z;

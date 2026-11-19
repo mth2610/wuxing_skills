@@ -10,6 +10,7 @@
 #include "core/particles/particle_manager.h"
 #include "core/granular/granular_sim.h"
 #include "post_process/post_fx.h"
+#include "post_process/taa.h"
 #include "post_process/render_scale.h"
 #include "sandbox/sandbox_core.h"
 #include "post_process/scene_targets.h"
@@ -209,7 +210,15 @@ static void MyBeginMode3D(Camera3D camera) {
     // in sync if this ever changes.
     double top = 1.0 * tan(camera.fovy * 0.5 * DEG2RAD);
     double right = top * aspect;
-    rlFrustum(-right, right, -top, top, 1.0, 1000.0);
+    float jx = 0.0f, jy = 0.0f;
+    TAA_GetJitterPixels(&jx, &jy);
+    int tw = SceneTargets_GetWidth();
+    int th = SceneTargets_GetHeight();
+    if (tw <= 0) tw = GetScreenWidth();
+    if (th <= 0) th = GetScreenHeight();
+    double jitX = (double)jx * (2.0 * right) / (double)tw;
+    double jitY = (double)jy * (2.0 * top) / (double)th;
+    rlFrustum(-right - jitX, right - jitX, -top - jitY, top - jitY, 1.0, 1000.0);
   } else if (camera.projection == CAMERA_ORTHOGRAPHIC) {
     double top = camera.fovy / 2.0;
     double right = top * aspect;
@@ -366,8 +375,7 @@ static void CompositeScreenSpaceVFX(Camera3D camera)
 }
 
 static inline float QualityToRenderScale(GfxQuality q) {
-  return (q >= GFX_ULTRA) ? 1.00f :
-         (q >= GFX_HIGH)  ? 0.92f :
+  return (q >= GFX_HIGH)  ? 1.00f :
          (q >= GFX_MED)   ? 0.78f :
          (q >= GFX_LOW)   ? 0.65f : 0.65f;
 }
@@ -1920,6 +1928,9 @@ int main(int argc, char **argv) {
     }
     const bool vfxBgActive = s_vfxBgOn && currentScreen == SCREEN_VFX_TESTER;
 
+    TAA_NextFrame(camera, SceneTargets_GetWidth() > 0 ? SceneTargets_GetWidth() : GetScreenWidth(),
+                  SceneTargets_GetHeight() > 0 ? SceneTargets_GetHeight() : GetScreenHeight());
+    PostFX_SetCamera(camera);
     SceneTargets_Begin();
     if (vfxBgActive) {
         ClearBackground(s_vfxBgColor);

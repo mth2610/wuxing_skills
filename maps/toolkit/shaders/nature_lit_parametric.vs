@@ -1,4 +1,5 @@
-#version 330
+#version 430
+#define NATURE_GPU_INDIRECT_CAPABLE 1
 #include "maps/toolkit/shaders/nature_wind_impact.glsl"
 #include "maps/toolkit/shaders/nature_wind_field.glsl"
 #include "maps/toolkit/shaders/grass_blade_state.glsl"
@@ -159,8 +160,12 @@ void main()
     }
 
     fragPosition = world;
-    fragNormal = bentNormal * inversesqrt(max(dot(bentNormal, bentNormal), 1e-8));
-    fragColor = vec4(bladeColor.rgb, windSheen);
+    vec3 normDir = bentNormal * inversesqrt(max(dot(bentNormal, bentNormal), 1e-8));
+    // M3 Far-Canopy continuity: blend toward terrain upward canopy normal beyond 34m
+    float farBlend = clamp((s_cachedDistToCam - 34.0) / 14.0, 0.0, 0.65);
+    fragNormal = normalize(mix(normDir, vec3(0.0, 1.0, 0.0), farBlend));
+    float canopyWave = 1.0 + farBlend * 0.08 * sin(world.x * 0.15 + world.z * 0.11 - u_time * 1.8);
+    fragColor = vec4(bladeColor.rgb * canopyWave, windSheen);
     fragHeight = h;
     fragTexCoord = bladeSurfaceUV;
 

@@ -3802,6 +3802,134 @@ static const char *sc_ubo_arena(void)
 
 #include "rlvk_liquid_capture_test.inl"
 
+extern bool rlvkSetFramebufferDiscardOnBegin(unsigned int fbId, bool discard);
+extern void rlvkDrawVertexArrayElementsIndirect(unsigned int indirectSsboId, unsigned int offsetBytes);
+
+static const char *sc_lazy_scope_clear(void)
+{
+    RenderTexture2D rt = LoadRenderTexture(W, H);
+    RenderTexture2D scratch = LoadRenderTexture(W, H);
+    rlvkSetFramebufferDiscardOnBegin(scratch.id, true);
+
+    for (int f = 0; f < 3; f++)
+    {
+        BeginDrawing();
+        // Empty FBO open/close before any fb=0 draw (must not corrupt or open fb=0)
+        BeginTextureMode(scratch);
+        EndTextureMode();
+        // Clear-only FBO open/close (must materialize GREEN via LOAD_OP_CLEAR)
+        BeginTextureMode(rt);
+        ClearBackground(GREEN);
+        EndTextureMode();
+        // First draw on fb=0 composites rt
+        ClearBackground(BLACK);
+        DrawTextureRec(rt.texture, (Rectangle){0, 0, W, -H}, (Vector2){0, 0}, WHITE);
+        EndDrawing();
+    }
+
+    Image im = snap();
+    Color c = at(im, W / 2, H / 2);
+    UnloadImage(im);
+    UnloadRenderTexture(scratch);
+    UnloadRenderTexture(rt);
+    bool ok = (c.g >= 180 && c.r < 80 && c.b < 80);
+    return ok ? NULL : "lazy scope / fused clear failed to produce green";
+}
+
+static const char *sc_indirect_draw(void)
+{
+    const char *CS =
+        "#version 430\n"
+        "layout(local_size_x = 1) in;\n"
+        "layout(std430, binding = 0) buffer Cmd { uint cmd[5]; };\n"
+        "void main() {\n"
+        "    cmd[0] = 6u; cmd[1] = 1u; cmd[2] = 0u; cmd[3] = 0u; cmd[4] = 0u;\n"
+        "}\n";
+    const char *VS =
+        "#version 330\n"
+        "in vec3 vertexPosition;\n"
+        "uniform mat4 mvp;\n"
+        "void main() { gl_Position = mvp * vec4(vertexPosition, 1.0); }\n";
+    const char *FS =
+        "#version 330\n"
+        "out vec4 finalColor;\n"
+        "void main() { finalColor = vec4(1.0, 0.0, 0.0, 1.0); }\n";
+
+    unsigned int csId = rlLoadShader(CS, RL_COMPUTE_SHADER);
+    unsigned int csProg = rlLoadShaderProgramCompute(csId);
+    Shader sh = LoadShaderFromMemory(VS, FS);
+
+    unsigned int initCmd[5] = {0, 0, 0, 0, 0};
+    unsigned int indirectSsbo = rlLoadShaderBuffer(sizeof(initCmd), initCmd, RL_DYNAMIC_COPY);
+
+    Mesh quad = GenMeshPlane(4.0f, 4.0f, 1, 1);
+
+    Camera3D cam = {.position = {0, 3.0f, 0.01f}, .target = {0, 0, 0}, .up = {0, 1, 0}, .fovy = 45.0f, .projection = CAMERA_PERSPECTIVE};
+
+    for (int f = 0; f < 3; f++)
+    {
+        rlEnableShader(csProg);
+        rlBindShaderBuffer(indirectSsbo, 0);
+        rlComputeShaderDispatch(1, 1, 1);
+        rlDisableShader();
+
+        BeginDrawing();
+        ClearBackground(BLACK);
+        BeginMode3D(cam);
+        rlEnableShader(sh.id);
+        Matrix mvp = MatrixMultiply(rlGetMatrixModelview(), rlGetMatrixProjection());
+        rlSetUniformMatrix(sh.locs[SHADER_LOC_MATRIX_MVP], mvp);
+        rlEnableVertexArray(quad.vaoId);
+        rlvkDrawVertexArrayElementsIndirect(indirectSsbo, 0);
+        rlDisableVertexArray();
+        rlDisableShader();
+        EndMode3D();
+        EndDrawing();
+    }
+
+    Image im = snap();
+    Color c = at(im, W / 2, H / 2);
+    UnloadImage(im);
+    UnloadMesh(quad);
+    rlUnloadShaderBuffer(indirectSsbo);
+    UnloadShader(sh);
+    rlUnloadShaderProgram(csProg);
+    bool ok = (c.r >= 180 && c.g < 80 && c.b < 80);
+    return ok ? NULL : "indirect draw did not render red quad";
+}
+
+static const char *sc_aniso_filter(void)
+{
+    Image chk = GenImageChecked(128, 128, 16, 16, WHITE, DARKGRAY);
+    Texture2D tex = LoadTextureFromImage(chk);
+    UnloadImage(chk);
+    GenTextureMipmaps(&tex);
+    SetTextureFilter(tex, TEXTURE_FILTER_ANISOTROPIC_4X);
+
+    Mesh plane = GenMeshPlane(8.0f, 8.0f, 1, 1);
+    Material mat = LoadMaterialDefault();
+    mat.maps[MATERIAL_MAP_DIFFUSE].texture = tex;
+    Camera3D cam = {.position = {0, 0.6f, 4.0f}, .target = {0, 0, 0}, .up = {0, 1, 0}, .fovy = 45.0f, .projection = CAMERA_PERSPECTIVE};
+
+    for (int f = 0; f < 2; f++)
+    {
+        BeginDrawing();
+        ClearBackground(BLACK);
+        BeginMode3D(cam);
+        DrawMesh(plane, mat, MatrixIdentity());
+        EndMode3D();
+        EndDrawing();
+    }
+
+    Image im = snap();
+    Color c = at(im, W / 2, H / 2);
+    UnloadImage(im);
+    UnloadMaterial(mat);
+    UnloadMesh(plane);
+    UnloadTexture(tex);
+    return (c.r > 20 || c.g > 20 || c.b > 20) ? NULL : "anisotropic filtered plane rendered black";
+}
+
 // ---- runner ----------------------------------------------------------------------
 
 typedef struct { const char *name; const char *(*fn)(void); } Scenario;
@@ -3850,6 +3978,9 @@ static const Scenario SCENARIOS[] = {
     { "shadow_cast",    sc_shadow_cast },
     { "shadow_pipeline",sc_shadow_pipeline },
     { "ubo_arena",      sc_ubo_arena },
+    { "lazy_scope_clear", sc_lazy_scope_clear },
+    { "indirect_draw",  sc_indirect_draw },
+    { "aniso_filter",   sc_aniso_filter },
     { "perf_base",      sc_perf_base },
     { "perf_dynmesh",   sc_perf_dynmesh },
     { "perf_upload_fbo",sc_perf_upload_fbo },

@@ -74,6 +74,7 @@ typedef struct rlvkTextureSlot
     VkSamplerMipmapMode mipMode;       // Sampler mipmap mode
     bool mipEnabled;                   // raw GL min filter selects mipmaps (NEAREST/LINEAR do not)
     VkSamplerAddressMode wrapS, wrapT; // Sampler wrap modes (GL default: repeat)
+    f32 maxAniso;                      // Requested anisotropic filtering level (1.0 = off)
     bool inUse;                        // Slot occupied
 } rlvkTextureSlot;
 
@@ -123,6 +124,7 @@ typedef struct rlvkFramebufferSlot
     bool inUse;                // Slot occupied
 
     bool depthSampleOnDemand; // default false; raw-depth feedback is forbidden when enabled
+    bool discardOnBegin;      // opt-in LOAD_OP_DONT_CARE when opened without ClearBackground()
 
     // Offscreen MSAA (rlvkSetFramebufferSamples; 0/1 = off, the default). The attached
     // color/depth TEXTURES stay 1x and become RESOLVE destinations - everything that samples
@@ -373,9 +375,14 @@ typedef struct rlvkData
     int msaaSamples;      // requested via rlvkSetMsaaSamples (1 = off)
     u32 blitReadFb;       // rlBindFramebuffer(RL_READ_FRAMEBUFFER, ...) source
 
-    bool frameActive;   // a swapchain image is acquired and the render scope is open
-    bool frameConsumed; // rlReadScreenPixels already ended+presented this frame
-    bool acquireWaited; // this frame's acquire semaphore was consumed by an earlier submit (mid-frame flush)
+    bool frameActive;          // a swapchain image is acquired and a frame is being recorded
+    bool scopeOpen;            // a VkRenderPass is currently open on the recording cmdBuffer
+    bool swapchainInitialized; // swapchain inter/depth attachments cleared/initialized this frame
+    bool pendingClearColor;    // ClearBackground() recorded before lazy scope open (color)
+    bool pendingClearDepth;    // ClearBackground() recorded before lazy scope open (depth)
+    f32 pendingClearColorValue[4];
+    bool frameConsumed;        // rlReadScreenPixels already ended+presented this frame
+    bool acquireWaited;        // this frame's acquire semaphore was consumed by an earlier submit (mid-frame flush)
 
     // 8B-aligned smaller arrays
     rlvkBatchBackingBuffer batchBacking[RLVK_FRAME_INDEX_COUNT];
@@ -528,6 +535,8 @@ typedef struct rlvkData
                              // disables depth test/write on that attachment. When set,
                              // FBO depth images drop SAMPLED (depth-sampling shaders
                              // like soft particles/screen distortion lose their input).
+        bool samplerAnisotropy; // Core optional feature: anisotropic texture filtering
+        f32 maxSamplerAnisotropy;
     } Caps;
 
     // 4B scalars

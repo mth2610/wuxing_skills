@@ -13,6 +13,7 @@
 #include <stddef.h>
 #include "environment/volumetric/volumetric_fog_volume.inl"
 extern void rlvkPassMark(const char *label) __attribute__((weak));
+extern bool rlvkSetFramebufferDiscardOnBegin(unsigned int fbId, bool discard) __attribute__((weak));
 #define PASS_MARK(label) do { if (rlvkPassMark) rlvkPassMark(label); } while (0)
 
 static bool s_enabled = true;
@@ -119,6 +120,8 @@ void VolumetricFog_Init(int width, int height) {
 
     s_volumetricTarget = LoadRenderTexture(s_lowWidth, s_lowHeight);
     SetTextureFilter(s_volumetricTarget.texture, TEXTURE_FILTER_BILINEAR);
+    if (s_volumetricTarget.id != 0 && rlvkSetFramebufferDiscardOnBegin)
+        rlvkSetFramebufferDiscardOnBegin(s_volumetricTarget.id, true);
 
     // Image borrows immutable ranks; LoadTextureFromImage copies them to GPU.
     Image samplingImage = {.data = (void *)kFogBlueNoise,

@@ -132,8 +132,7 @@ void rlComputeShaderDispatch(unsigned int gx, unsigned int gy, unsigned int gz)
         openFb = RLVK.scope.fbSlot;
         if (openFb)
             rlDisableFramebuffer();
-        rlvkProfileEndScope();
-        vkCmdEndRenderPass(cmdBuffer);
+        rlvkCloseScopeIfOpen(cmdBuffer);
     }
     else
     {
@@ -287,19 +286,15 @@ void rlComputeShaderDispatch(unsigned int gx, unsigned int gy, unsigned int gz)
                                                   .srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                                                   .srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
                                                   .dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-                                                  .dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT | VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_INDEX_READ_BIT | VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_UNIFORM_READ_BIT,
+                                                  .dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT | VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_INDEX_READ_BIT | VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_UNIFORM_READ_BIT,
                                               },
                                           });
     }
     else
         TRACELOG(RL_LOG_WARNING, "RLVK: compute descriptor pool exhausted - raise RLVK_COMPUTE_SETS_PER_FRAME");
 
-    if (inFrame)
-    {
-        rlvkResumeSwapchainScope(cmdBuffer);
-        if (openFb)
-            rlEnableFramebuffer(openFb);
-    }
+    if (inFrame && openFb)
+        rlEnableFramebuffer(openFb);
     /* Else: left OPEN in the batch. It is submitted by rlvkComputeBatchFlush,
      * which every path that must observe the result already calls. */
 }
@@ -328,7 +323,7 @@ unsigned int rlLoadShaderBuffer(unsigned int size, const void *data, int usageHi
     RLVK_CHECK(vkCreateBuffer(RLVK.device,
                               &(VkBufferCreateInfo){VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
                                                     .size = size,
-                                                    .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, // particle systems draw straight from their SSBO
+                                                    .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, // particle systems & GPU-culled indirect draws
                                                     .sharingMode = VK_SHARING_MODE_EXCLUSIVE},
                               RLVK_ALLOC, &b->buffer));
     VkMemoryRequirements memReq;
@@ -462,8 +457,7 @@ void rlCopyShaderBuffer(unsigned int destId, unsigned int srcId, unsigned int de
         u32 openFb = RLVK.scope.fbSlot;
         if (openFb)
             rlDisableFramebuffer();
-        rlvkProfileEndScope();
-        vkCmdEndRenderPass(cmdBuffer);
+        rlvkCloseScopeIfOpen(cmdBuffer);
         vkCmdCopyBuffer(cmdBuffer, src->buffer, dst->buffer, 1,
                         &(VkBufferCopy){.srcOffset = srcOffset, .dstOffset = destOffset, .size = count});
         vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
@@ -474,10 +468,9 @@ void rlCopyShaderBuffer(unsigned int destId, unsigned int srcId, unsigned int de
                                                   .srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
                                                   .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
                                                   .dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-                                                  .dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT | VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT,
+                                                  .dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT | VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT,
                                               },
                                           });
-        rlvkResumeSwapchainScope(cmdBuffer);
         if (openFb)
             rlEnableFramebuffer(openFb);
     }
@@ -651,6 +644,7 @@ void rlLoadDrawQuad(void)
     // Interleaved pos+uv layout and shader stages are baked into the cached pipeline
     // Pipeline MUST be bound BEFORE vertex buffers (MoltenVK Metal buffer index resolution)
     // Bail on a failed build rather than blit with a stale pipeline (better a black frame).
+    rlvkEnsureScopeOpen();
     if (!rlvkBindPipeline(cmdBuffer, 2, RLVK_VLAYOUT_QUAD, RLVK.State.activeShaderSlot))
         return;
     vkCmdBindVertexBuffers(cmdBuffer, 0, 1,

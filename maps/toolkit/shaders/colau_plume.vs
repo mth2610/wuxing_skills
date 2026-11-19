@@ -192,6 +192,7 @@ void main()
         alFactor = 1.0;
     }
 
+    alFactor *= 1.0 - smoothstep(64.0, 84.0, distToCam);
     v_color = litColor;
     v_strandUV = vec2(v, alFactor);
     v_distToCam = distToCam;

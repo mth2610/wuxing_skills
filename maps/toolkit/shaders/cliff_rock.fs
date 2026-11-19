@@ -140,7 +140,7 @@ void main() {
     float strataMacro = sin(strataCoord * 2.40 + strataWarp) * 0.5 + 0.5;
     float strataFine  = sin(strataCoord * 6.80 + strataWarp * 1.8) * 0.5 + 0.5;
     float combinedStrata = strataMacro * 0.65 + strataFine * 0.35;
-    float strataContrast = (strataMacro - 0.5) * 1.35 + (strataFine - 0.5) * 0.65;
+    float strataContrast = (strataMacro - 0.5) * 1.55 + (strataFine - 0.5) * 0.78;
 
     // Authentic mountain slate-granite palette (or warm sun-baked Ninh Thuan granite in arid mode)
     vec3 slateBedrock = mix(vec3(0.46, 0.48, 0.51), vec3(0.68, 0.57, 0.46), u_cliffAridMode);
@@ -159,7 +159,7 @@ void main() {
     float upperRimBoost = smoothstep(0.05, 0.75, fragColor.g) * 0.65 + 0.35;
     float shelfMoss = fragColor.g * ledgeFacing * upperRimBoost * (0.65 + 0.35 * creviceMask);
     float mossMask = clamp(max(shelfMoss, rimSodDrape * 0.94), 0.0, 1.0);
-    vec3 lushMossColor = mix(vec3(0.11, 0.19, 0.07), vec3(0.18, 0.29, 0.10), clamp(triAlbedo.g * 0.75 + rimSodDrape * 0.35, 0.0, 1.0));
+    vec3 lushMossColor = mix(vec3(0.10, 0.19, 0.06), vec3(0.20, 0.32, 0.10), clamp(triAlbedo.g * 0.75 + rimSodDrape * 0.35, 0.0, 1.0));
     vec3 aridRimColor  = mix(vec3(0.72, 0.61, 0.44), vec3(0.82, 0.70, 0.51), clamp(triAlbedo.g * 0.75 + rimSodDrape * 0.35, 0.0, 1.0));
     vec3 mossColor = mix(lushMossColor, aridRimColor, u_cliffAridMode);
     vec3 rockAlbedo = mix(rockBase, mossColor, mossMask * mix(0.88, 0.82, u_cliffAridMode));

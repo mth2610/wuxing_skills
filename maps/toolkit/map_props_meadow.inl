@@ -600,7 +600,7 @@ static NatureBladeDescriptor Nature_DescribeMeadowBladeCtx(const MapMeadowPlacem
         }
 
         height = clump->height * lengthScale * 1.05f;
-        float baseWidth = fmaxf(0.027f, clump->radius * style.bladeWidthScale * widthScaleVal);
+        float baseWidth = fmaxf(0.014f, clump->radius * style.bladeWidthScale * widthScaleVal);
         width = baseWidth * widthMultiplier;
         lean = height * leanFactor;
         droopY = height * droopFactor;
@@ -613,7 +613,7 @@ static NatureBladeDescriptor Nature_DescribeMeadowBladeCtx(const MapMeadowPlacem
                 stretch *= 1.08f;
             stretch = 1.0f + (stretch - 1.0f) * ctx->botanical;
             height *= stretch;
-            baseWidth = fmaxf(0.025f, baseWidth * Nature_FastInvSqrt(stretch));
+            baseWidth = fmaxf(0.012f, baseWidth * Nature_FastInvSqrt(stretch));
             width = baseWidth * widthMultiplier;
             lean *= stretch * (1.0f + ctx->botanical * (0.06f + 0.10f * ctx->habit));
             droopY = height * (droopFactor + ctx->botanical * 0.08f * ctx->habit);

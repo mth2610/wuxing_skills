@@ -59,7 +59,15 @@ typedef struct
     Vector4 preparedBands;
     int preparedWidth, preparedHeight, preparedQuality;
     float preparedDrawDistance;
+
+    // M1: GPU compute frustum/LOD culling + indirect draw
+    unsigned int tuftBoundsSsbo;
+    unsigned int visibleIdsSsbo;
+    unsigned int indirectSsbo;
+    bool gpuCullReady;
 } NatureParametricMeadow;
+
+extern void rlvkDrawVertexArrayElementsIndirect(unsigned int indirectSsboId, unsigned int offsetBytes) __attribute__((weak));
 
 typedef struct
 {
@@ -189,6 +197,16 @@ static int s_natureTuftOffsetLoc[2] = {-1, -1};
 static int s_natureCompactLoc[2] = {-1, -1};
 static int s_natureVisibleIdsLoc = -1;
 static int s_natureVisibleOffsetLoc = -1;
+static int s_natureGpuIndirectLoc = -1;
+
+static unsigned int s_meadowCullProg = 0;
+static int s_cullTuftCountLoc = -1;
+static int s_cullBandStrideLoc = -1;
+static int s_cullLodCamLoc = -1;
+static int s_cullLodBandsLoc = -1;
+static int s_cullDrawDistSqLoc = -1;
+static int s_cullFrustumLoc = -1;
+static bool s_meadowCullTried = false;
 static int s_natureWorldOffsetLoc[2] = {-1, -1};
 static int s_natureWindFieldDetailLoc[2] = {-1, -1};
 
@@ -339,6 +357,7 @@ static Shader NatureParametric_Shader(bool shadow)
             s_natureTuftFadeRangeLoc = GetShaderLocation(*shader, "u_tuftFadeRange");
             s_natureVisibleIdsLoc = GetShaderLocation(*shader, "u_visibleTuftIds");
             s_natureVisibleOffsetLoc = GetShaderLocation(*shader, "u_visibleTuftOffset");
+            s_natureGpuIndirectLoc = GetShaderLocation(*shader, "u_gpuIndirect");
             if (s_natureTuftLodBandsLoc < 0 || s_natureTuftLodLevelLoc < 0 ||
                 s_natureTuftLodCameraLoc < 0 || s_natureTuftFadeRangeLoc < 0)
                 TraceLog(LOG_WARNING, "MEADOW_PARAMETRIC: missing LOD uniforms; using expanded mesh fallback");
@@ -425,6 +444,12 @@ static void NatureParametric_Destroy(MapMeadowSurface *meadow)
         UnloadTexture(data->parameters);
     if (data->visibleIds.id)
         UnloadTexture(data->visibleIds);
+    if (data->tuftBoundsSsbo)
+        rlUnloadShaderBuffer(data->tuftBoundsSsbo);
+    if (data->visibleIdsSsbo)
+        rlUnloadShaderBuffer(data->visibleIdsSsbo);
+    if (data->indirectSsbo)
+        rlUnloadShaderBuffer(data->indirectSsbo);
     for (int lod = 0; lod < NATURE_PARAMETRIC_LODS; lod++)
     {
         if (data->templates[lod].vao)
@@ -676,8 +701,8 @@ static bool NatureParametric_Create(MapMeadowSurface *meadow,
         style.bladesPerClump >= 3 ? 2 : style.bladesPerClump,
         style.bladesPerClump >= 3 ? 2 : style.bladesPerClump};
     int segments[4] = {
-        style.bladeSegments,
-        style.bladeSegments >= 2 ? 2 : 1,
+        (style.bladeSegments >= 4) ? 6 : style.bladeSegments,
+        style.bladeSegments >= 2 ? 3 : 1,
         1,
         1};
 
@@ -761,6 +786,48 @@ static bool NatureParametric_Create(MapMeadowSurface *meadow,
     for (int lod = 0; lod < geometryLods; lod++)
         if (!NatureParametric_BuildTemplate(&data->templates[lod], blades[lod], segments[lod]))
             goto failed;
+
+    if (data->canonical && data->compact && rlvkDrawVertexArrayElementsIndirect != NULL)
+    {
+        const char *gpuCullEnv = getenv("WUXING_MEADOW_GPU_CULL");
+        if (!gpuCullEnv || strcmp(gpuCullEnv, "0") != 0)
+        {
+            if (!s_meadowCullTried)
+            {
+                s_meadowCullTried = true;
+                char *code = LoadFileText("maps/toolkit/shaders/meadow_cull.comp");
+                if (code)
+                {
+                    unsigned int csId = rlLoadShader(code, RL_COMPUTE_SHADER);
+                    s_meadowCullProg = rlLoadShaderProgramCompute(csId);
+                    UnloadFileText(code);
+                    if (s_meadowCullProg > 0)
+                    {
+                        s_cullTuftCountLoc = rlGetLocationUniform(s_meadowCullProg, "u_tuftCount");
+                        s_cullBandStrideLoc = rlGetLocationUniform(s_meadowCullProg, "u_bandStride");
+                        s_cullLodCamLoc = rlGetLocationUniform(s_meadowCullProg, "u_lodCam");
+                        s_cullLodBandsLoc = rlGetLocationUniform(s_meadowCullProg, "u_lodBands");
+                        s_cullDrawDistSqLoc = rlGetLocationUniform(s_meadowCullProg, "u_drawDistSq");
+                        s_cullFrustumLoc = rlGetLocationUniform(s_meadowCullProg, "u_frustumPlanes");
+                    }
+                }
+            }
+            if (s_meadowCullProg > 0)
+            {
+                Vector4 *bounds = MemAlloc((size_t)count * sizeof(Vector4));
+                if (bounds)
+                {
+                    for (int i = 0; i < count; i++)
+                        bounds[i] = (Vector4){data->roots[i].x, data->roots[i].y, data->roots[i].z, 0.85f};
+                    data->tuftBoundsSsbo = rlLoadShaderBuffer((unsigned int)((size_t)count * sizeof(Vector4)), bounds, RL_STATIC_DRAW);
+                    MemFree(bounds);
+                    data->visibleIdsSsbo = rlLoadShaderBuffer((unsigned int)((size_t)count * 3u * sizeof(unsigned int)), NULL, RL_DYNAMIC_COPY);
+                    data->indirectSsbo = rlLoadShaderBuffer(15u * sizeof(unsigned int), NULL, RL_DYNAMIC_COPY);
+                    data->gpuCullReady = (data->tuftBoundsSsbo != 0 && data->visibleIdsSsbo != 0 && data->indirectSsbo != 0);
+                }
+            }
+        }
+    }
 
     MemFree(cellCounts);
     MemFree(cellToChunk);
@@ -958,6 +1025,76 @@ static void NatureParametric_PrepareVisible(MapMeadowSurface *meadow, Vector3 wo
     float fadeEnd = view.drawDistance;
     bool hasFade = (fadeEnd > 0.0f);
     float fadeEndSq = fadeEnd * fadeEnd;
+
+    if (data->gpuCullReady && s_meadowCullProg > 0)
+    {
+        unsigned int initCmds[15] = {
+            (unsigned int)data->templates[0].indexCount, 0u, 0u, 0u, 0u,
+            (unsigned int)data->templates[1].indexCount, 0u, 0u, 0u, 0u,
+            (unsigned int)data->templates[2].indexCount, 0u, 0u, 0u, 0u,
+        };
+        rlUpdateShaderBuffer(data->indirectSsbo, initCmds, sizeof(initCmds), 0);
+
+        float aspect = (GetScreenHeight() > 0) ? ((float)GetScreenWidth() / (float)GetScreenHeight()) : 1.0f;
+        Matrix matView = MatrixLookAt(Vector3Subtract(camera.position, worldOffset), Vector3Subtract(camera.target, worldOffset), camera.up);
+        Matrix matProj;
+        if (camera.projection == CAMERA_ORTHOGRAPHIC)
+        {
+            double top = camera.fovy * 0.5;
+            double right = top * aspect;
+            matProj = MatrixOrtho(-right, right, -top, top, 0.0001, 150.0);
+        }
+        else
+        {
+            double top = 1.0 * tan(camera.fovy * 0.5 * DEG2RAD);
+            double right = top * aspect;
+            matProj = MatrixFrustum(-right, right, -top, top, 1.0, 1000.0);
+        }
+        Matrix vp = MatrixMultiply(matView, matProj);
+        Vector4 planes[6] = {
+            {vp.m3 + vp.m0, vp.m7 + vp.m4, vp.m11 + vp.m8, vp.m15 + vp.m12},
+            {vp.m3 - vp.m0, vp.m7 - vp.m4, vp.m11 - vp.m8, vp.m15 - vp.m12},
+            {vp.m3 + vp.m1, vp.m7 + vp.m5, vp.m11 + vp.m9, vp.m15 + vp.m13},
+            {vp.m3 - vp.m1, vp.m7 - vp.m5, vp.m11 - vp.m9, vp.m15 - vp.m13},
+            {vp.m3 + vp.m2, vp.m7 + vp.m6, vp.m11 + vp.m10, vp.m15 + vp.m14},
+            {vp.m3 - vp.m2, vp.m7 - vp.m6, vp.m11 - vp.m10, vp.m15 - vp.m14},
+        };
+        for (int p = 0; p < 6; p++)
+        {
+            float len = sqrtf(planes[p].x * planes[p].x + planes[p].y * planes[p].y + planes[p].z * planes[p].z);
+            if (len > 1e-6f)
+            {
+                float inv = 1.0f / len;
+                planes[p].x *= inv;
+                planes[p].y *= inv;
+                planes[p].z *= inv;
+                planes[p].w *= inv;
+            }
+        }
+
+        unsigned int bandStride = (unsigned int)data->tuftCount;
+        float drawDistSq = hasFade ? fadeEndSq : 0.0f;
+        rlEnableShader(s_meadowCullProg);
+        if (s_cullTuftCountLoc >= 0) rlSetUniform(s_cullTuftCountLoc, &data->tuftCount, RL_SHADER_UNIFORM_INT, 1);
+        if (s_cullBandStrideLoc >= 0) rlSetUniform(s_cullBandStrideLoc, &bandStride, RL_SHADER_UNIFORM_UINT, 1);
+        if (s_cullLodCamLoc >= 0) rlSetUniform(s_cullLodCamLoc, &localEye, RL_SHADER_UNIFORM_VEC3, 1);
+        if (s_cullLodBandsLoc >= 0) rlSetUniform(s_cullLodBandsLoc, &bands, RL_SHADER_UNIFORM_VEC4, 1);
+        if (s_cullDrawDistSqLoc >= 0) rlSetUniform(s_cullDrawDistSqLoc, &drawDistSq, RL_SHADER_UNIFORM_FLOAT, 1);
+        if (s_cullFrustumLoc >= 0) rlSetUniform(s_cullFrustumLoc, planes, RL_SHADER_UNIFORM_VEC4, 6);
+        rlBindShaderBuffer(data->tuftBoundsSsbo, 0);
+        rlBindShaderBuffer(data->visibleIdsSsbo, 1);
+        rlBindShaderBuffer(data->indirectSsbo, 2);
+        rlComputeShaderDispatch((unsigned int)((data->tuftCount + 63) / 64), 1u, 1u);
+        rlDisableShader();
+
+        data->bandBase[0] = 0;
+        data->bandBase[1] = data->tuftCount;
+        data->bandBase[2] = data->tuftCount * 2;
+        data->bandCount[0] = 1;
+        data->bandCount[1] = 1;
+        data->bandCount[2] = 1;
+        return;
+    }
     float thinStart = fadeEnd * 0.55f;
     float thinStartSq = thinStart * thinStart;
     float invThinSpanSq = (fadeEndSq > thinStartSq + 1.0f) ? (1.0f / (fadeEndSq - thinStartSq)) : 0.0f;
@@ -1223,6 +1360,11 @@ static void NatureParametric_DrawChunk(MapMeadowSurface *meadow, int chunk, int 
         rlEnableTexture(data->parameters.id);
         int unit = 0;
         SetShaderValue(shader, s_natureParameterLoc[pass], &unit, SHADER_UNIFORM_INT);
+        if (pass == 0 && s_natureGpuIndirectLoc >= 0)
+        {
+            int gpuOff = 0;
+            SetShaderValue(shader, s_natureGpuIndirectLoc, &gpuOff, SHADER_UNIFORM_INT);
+        }
 
         s_activeParametricMeadow = data;
         s_activeParametricPass = pass;
@@ -1305,6 +1447,14 @@ static void NatureParametric_DrawBand(MapMeadowSurface *meadow, int lod, Shader 
         rlEnableTexture(data->visibleIds.id);
         SetShaderValue(shader, s_natureVisibleIdsLoc, &idUnit, SHADER_UNIFORM_INT);
 
+        if (s_natureGpuIndirectLoc >= 0)
+        {
+            int gpuOn = data->gpuCullReady ? 1 : 0;
+            SetShaderValue(shader, s_natureGpuIndirectLoc, &gpuOn, SHADER_UNIFORM_INT);
+        }
+        if (data->gpuCullReady)
+            rlBindShaderBuffer(data->visibleIdsSsbo, 0);
+
         rlActiveTextureSlot(0);
         rlEnableTexture(data->parameters.id);
         int unit = 0;
@@ -1344,5 +1494,8 @@ static void NatureParametric_DrawBand(MapMeadowSurface *meadow, int lod, Shader 
         rlEnableVertexArray(mesh->vao);
         s_activeParametricVao = mesh->vao;
     }
-    rlDrawVertexArrayElementsInstanced(0, mesh->indexCount, NULL, instanceCount);
+    if (data->gpuCullReady)
+        rlvkDrawVertexArrayElementsIndirect(data->indirectSsbo, (unsigned int)(lod * 20));
+    else
+        rlDrawVertexArrayElementsInstanced(0, mesh->indexCount, NULL, instanceCount);
 }

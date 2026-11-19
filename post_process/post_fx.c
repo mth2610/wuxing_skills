@@ -4,6 +4,7 @@
 #include "post_process/screen_distort.h"  // SceneTargets_IsHDR — scene buffer is the HDR authority
 #include "core/gfx_quality.h"             // E8 — the tier budget for the two new passes
 #include "post_process/color_grade_lut.h" // G5 — display-referred grading strip
+#include "post_process/taa.h"             // P1 — HDR Temporal Anti-Aliasing
 #include "post_process/post_fx_debug_internal.inl"
 #include "rlgl.h"
 #include "post_process/render_scale.h"
@@ -19,6 +20,9 @@ static RenderTexture2D ldrTex;
 static Shader fxaaShader;
 static int fxaaTexelLoc = -1;
 static int fxaaSharpenLoc = -1;
+static int sceneTexelLoc = -1;
+static int rcasSharpnessLoc = -1;
+static Camera3D s_taaCamera = {0};
 
 // HDR (Đợt G) — the whole offscreen chain (scene + bloom pyramid) uses a
 // 16-bit half-float color format so additive VFX / emissive can exceed 1.0 and
@@ -153,10 +157,14 @@ static RenderTexture2D LoadRenderTextureWithFormat(int width, int height, int fo
 static int s_targetWidth = 0;
 static int s_targetHeight = 0;
 
+extern bool rlvkSetFramebufferDiscardOnBegin(unsigned int fbId, bool discard) __attribute__((weak));
+
 static void PostFX_PrimeTarget(RenderTexture2D target)
 {
   if (target.id == 0 || target.texture.id == 0)
     return;
+  if (rlvkSetFramebufferDiscardOnBegin)
+    rlvkSetFramebufferDiscardOnBegin(target.id, true);
   BeginTextureMode(target);
   ClearBackground(BLACK);
   EndTextureMode();
@@ -255,6 +263,7 @@ void PostFX_Resize(int width, int height)
     return;
   PostFX_DestroySizedTargets();
   PostFX_CreateSizedTargets(width, height);
+  TAA_Resize(width, height);
   TraceLog(LOG_INFO, "PostFX: chain resized to %dx%d", width, height);
 }
 
@@ -266,6 +275,7 @@ void PostFX_Init(int width, int height)
   }
 
   PostFX_CreateSizedTargets(width, height);
+  TAA_Init(width, height);
   TraceLog(LOG_INFO, "PostFX: %s pipeline (%s)", s_hdrActive ? "HDR float" : "LDR",
            s_hdrActive ? "R16G16B16A16" : "R8G8B8A8");
 
@@ -315,6 +325,8 @@ void PostFX_Init(int width, int height)
   fxaaShader = LoadShader(0, "post_process/shaders/fxaa.fs");
   fxaaTexelLoc = GetShaderLocation(fxaaShader, "u_texel");
   fxaaSharpenLoc = GetShaderLocation(fxaaShader, "u_sharpen");
+  sceneTexelLoc = GetShaderLocation(compositeShader, "u_sceneTexel");
+  rcasSharpnessLoc = GetShaderLocation(compositeShader, "u_rcasSharpness");
   radialBlurEnabledLoc = GetShaderLocation(compositeShader, "u_radialBlurEnabled");
   radialBlurCenterLoc = GetShaderLocation(compositeShader, "u_radialBlurCenter");
   radialBlurStrengthLoc = GetShaderLocation(compositeShader, "u_radialBlurStrength");
@@ -337,6 +349,7 @@ void PostFX_Unload(void)
   UnloadShader(usShader);
   UnloadShader(compositeShader);
   ColorGradeLut_Unload();
+  TAA_Shutdown();
 }
 
 void PostFX_Begin(void)
@@ -680,6 +693,10 @@ void PostFX_Draw(const PostFXConfig *config)
   if (width != s_targetWidth || height != s_targetHeight)
     PostFX_Resize(width, height);
 
+  TAA_SetEnabled(GfxQuality_Get() >= GFX_HIGH);
+  if (TAA_IsEnabled())
+    srcTex = TAA_Resolve(srcTex, SceneTargets_GetDepthTexture(), s_taaCamera);
+
   const int activeLevels = PostFX_GetActiveBloomLevels();
   bool inTextureMode = false;
 
@@ -754,10 +771,11 @@ void PostFX_Draw(const PostFXConfig *config)
     }
   }
 
-  // PASS 6: Composite → screen (hoặc ldrTex nếu bật FXAA)
-  if (s_fxaa > 0.5f)
+  // PASS 6: Composite → screen (hoặc ldrTex nếu dùng FXAA khi TAA tắt)
+  const bool taaActive = TAA_IsEnabled();
+  if (!taaActive && s_fxaa > 0.5f)
     PostFX_EnsureLdrTarget();
-  const bool useFxaa = (s_fxaa > 0.5f) && fxaaShader.id != 0 && ldrTex.id != 0;
+  const bool useFxaa = !taaActive && (s_fxaa > 0.5f) && fxaaShader.id != 0 && ldrTex.id != 0;
   if (useFxaa)
   {
     PostFX_BeginOrSwitchTarget(ldrTex, &inTextureMode);
@@ -895,6 +913,14 @@ void PostFX_Draw(const PostFXConfig *config)
     Vector4 hh = {s_heatHazeConfig.x, (float)GetTime(), s_heatHazeConfig.y, s_heatHazeConfig.z};
     SetShaderValue(compositeShader, heatHazeParamsLoc, &hh, SHADER_UNIFORM_VEC4);
   }
+  if (sceneTexelLoc >= 0) {
+    float st[2] = {1.0f / (float)width, 1.0f / (float)height};
+    SetShaderValue(compositeShader, sceneTexelLoc, st, SHADER_UNIFORM_VEC2);
+  }
+  if (rcasSharpnessLoc >= 0) {
+    float rcas = taaActive ? ((s_sharpen >= 0.0f) ? s_sharpen : 0.25f) : 0.0f;
+    SetShaderValue(compositeShader, rcasSharpnessLoc, &rcas, SHADER_UNIFORM_FLOAT);
+  }
 
   const float outW = useFxaa ? (float)ldrTex.texture.width : (float)GetRenderWidth();
   const float outH = useFxaa ? (float)ldrTex.texture.height : (float)GetRenderHeight();
@@ -946,6 +972,7 @@ void PostFX_Draw(const PostFXConfig *config)
 }
 
 void PostFX_UseDirectSource(Texture2D sceneTex) { s_directSource = sceneTex; }
+void PostFX_SetCamera(Camera3D camera) { s_taaCamera = camera; }
 
 void PostFX_SetMonochrome(float intensity01)
 {

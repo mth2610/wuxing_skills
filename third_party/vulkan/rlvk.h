@@ -317,6 +317,13 @@ RLVKAPI int  rlvkSetFramebufferSamples(unsigned int fbId, int samples);
 // previously materialized twin, or warn and substitute a safe default if none exists.
 // Shared-depth writers must observe the same snapshot contract.
 RLVKAPI bool rlvkSetFramebufferDepthSampleOnDemand(unsigned int fbId, bool enabled);
+// Opt an offscreen framebuffer into discarding prior attachment contents (LOAD_OP_DONT_CARE)
+// when its render pass opens without a preceding ClearBackground(). Safe for single-pass
+// fullscreen-overwrite targets; never use on multi-pass targets that preserve prior draws.
+RLVKAPI bool rlvkSetFramebufferDiscardOnBegin(unsigned int fbId, bool discard);
+// Issue an indexed indirect draw from a device-local SSBO (VkDrawIndexedIndirectCommand at
+// offsetBytes) using the currently bound VAO, shader, and descriptors.
+RLVKAPI void rlvkDrawVertexArrayElementsIndirect(unsigned int indirectSsboId, unsigned int offsetBytes);
 // Materialize the latest closed framebuffer depth for later raw-depth consumers. Copies only
 // when its twin is dirty/uninitialized; native sampled depth is unchanged. Explicit request,
 // so callers should invoke this only when a consumer needs depth. Returns false for an invalid

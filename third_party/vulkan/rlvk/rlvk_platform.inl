@@ -781,32 +781,8 @@ static void rlvkBeginFrame(void)
         vkCmdWriteTimestamp(cmdBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, s_gpuPool, frameIndex * 3 + 0);
     }
 
-    bool msaa = (RLVK.msaaSamples > 1);
-    {
-        // Fixed-function resolve into the 1x intermediate at every scope close (MSAA only)
-        VkImageView scopeViews[3];
-        u32 scopeViewCount = 0;
-        scopeViews[scopeViewCount++] = msaa ? RLVK.msaaView[frameIndex] : RLVK.interView[frameIndex];
-        if (msaa)
-            scopeViews[scopeViewCount++] = RLVK.interView[frameIndex];
-        scopeViews[scopeViewCount++] = RLVK.depthView[frameIndex];
-        rlvkRenderPassKey rpKey;
-        memset(&rpKey, 0, sizeof(rpKey));
-        rpKey.colorFormats[0] = RLVK.swapchainFormat;
-        rpKey.depthFormat = RLVK.depthFormat;
-        rpKey.colorCount = 1;
-        rpKey.samples = msaa ? 4 : 1;
-        rpKey.colorLoad = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        rpKey.depthLoad = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        rpKey.depthStore = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        rpKey.hasResolve = msaa ? 1 : 0;
-        rlvkBeginScopeRenderPass(cmdBuffer, &rpKey, scopeViews, scopeViewCount,
-                                 RLVK.swapchainExtent.width, RLVK.swapchainExtent.height,
-                                 &(VkClearValue){.color = {.float32 = {
-                                                               RLVK.State.clearR / 255.0f, RLVK.State.clearG / 255.0f,
-                                                               RLVK.State.clearB / 255.0f, RLVK.State.clearA / 255.0f}}},
-                                 &(VkClearValue){.depthStencil = {1.0f, 0}}, 0);
-    }
+    // Lazy scope open (R1): populate swapchain scope metadata without beginning a VkRenderPass
+    // until the first draw/clear or rlvkPresent(). Eliminates empty fb=0 opens on FBO-heavy frames.
     RLVK.scope.fbSlot = 0;
     RLVK.scope.width = RLVK.swapchainExtent.width;
     RLVK.scope.height = RLVK.swapchainExtent.height;
@@ -816,6 +792,10 @@ static void rlvkBeginFrame(void)
     RLVK.scope.depthResolve = false; // the swapchain scope resolves colour only
     RLVK.scope.flipY = false;        // UNMIRRORED: swapchain-scope rendering matches GL memory orientation
 
+    RLVK.scopeOpen = false;
+    RLVK.swapchainInitialized = false;
+    RLVK.pendingClearColor = false;
+    RLVK.pendingClearDepth = false;
     RLVK.frameActive = true;
 }
 
@@ -849,8 +829,9 @@ void rlvkPresent(void)
     u32 imageIndex = RLVK.currentImageIndex;
     VkCommandBuffer cmdBuffer = RLVK.cmdBuffers[frameIndex];
 
-    rlvkProfileEndScope();
-    vkCmdEndRenderPass(cmdBuffer);
+    if (!RLVK.swapchainInitialized || RLVK.pendingClearColor || RLVK.pendingClearDepth)
+        rlvkEnsureScopeOpen();
+    rlvkCloseScopeIfOpen(cmdBuffer);
     rlvkFinishSwapchainImage(cmdBuffer); // flip-blit the frame into the swapchain
 
     // COLOR_ATTACHMENT_OPTIMAL -> PRESENT_SRC

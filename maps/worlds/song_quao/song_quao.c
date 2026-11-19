@@ -247,9 +247,9 @@ static float SongQuaoEdgeTaper(float cx, float cz, void *userData)
     }
 
     float signedShore = SongQuaoSampleSignedShore(cx, cz);
-    float shoreTaper = (signedShore >= 0.95f)
+    float shoreTaper = (signedShore >= 1.15f)
                            ? 1.0f
-                           : (0.16f + 0.84f * MapMath_SmoothStep01(0.08f, 0.95f, signedShore));
+                           : (0.12f + 0.88f * MapMath_SmoothStep01(0.05f, 1.15f, signedShore));
     float cliffTaper = (pos.y >= -0.20f)
                            ? 1.0f
                            : (0.35f + 0.65f * MapMath_SmoothStep01(GRASS_CLIFF_MIN_Y, -0.20f, pos.y));
@@ -306,7 +306,7 @@ static void BuildFloraPlacements(void)
 {
     Vector2 minB = {10.0f, 8.0f};
     Vector2 maxB = {MAP_WIDTH - 10.0f, MAP_DEPTH - 8.0f};
-    float spacing = 0.43f;
+    float spacing = 0.30f;
     if (s_scaleXZ > 1.5f)
     {
         float halfWin = 110.0f;
@@ -627,21 +627,21 @@ void InitSongQuaoMap(void)
     Environment_SetTimeOfDayPresets(kSongQuaoToD, kSongQuaoTimes, 4);
     Environment_SetTimeOfDay(0.6875f); // 16:30 default
     Environment_SetTimeOfDaySpeed(0.0f);
-    Environment_SetAmbientColor((Color){92, 118, 152, 255});
+    Environment_SetAmbientColor((Color){82, 110, 148, 255});
     Environment_SetSunColor((Color){255, 204, 142, 255});
-    Environment_SetSunIntensity(2.10f);
+    Environment_SetSunIntensity(2.35f);
     Environment_SetSunDirection(Vector3Normalize((Vector3){0.58f, -0.285f, -0.76f}));
-    Environment_SetShadowColor((Color){36, 52, 72, 145});
+    Environment_SetShadowColor((Color){32, 48, 72, 158});
 
     PostFXMapProfile postProfile = {
         .enabled = true,
-        .exposure = 1.02f,
-        .contrast = 1.08f,
-        .saturation = 1.08f,
-        .bloomIntensity = 0.16f,
+        .exposure = 1.04f,
+        .contrast = 1.12f,
+        .saturation = 1.10f,
+        .bloomIntensity = 0.20f,
         .shadowTint = {0.92f, 0.96f, 1.05f},    // Cool jade-slate shadows
         .highlightTint = {1.06f, 1.01f, 0.91f}, // Warm golden amber sun highlights
-        .bloomThreshold = 1.12f,                // Catches water glints, cloud crests & grass SSS
+        .bloomThreshold = 1.06f,                // Catches water glints, cloud crests & grass SSS
         .bloomKnee = 0.42f,
         .hueRestore = 0.65f,                    // Filmic hue restore: prevents neon lime skew under ACES
     };
@@ -949,12 +949,12 @@ void InitSongQuaoMap(void)
         (MapFloraStyle){
             .grassRootColor = {35, 54, 20, 255},  // Deep velvety moss-jade root matching ground_splat.fs
             .grassTipColor = {102, 142, 50, 255}, // Natural sunlit olive-jade tips
-            .bladesPerClump = 5,
+            .bladesPerClump = 6,
             .bladeSegments = 4,
-            .bladeWidthScale = 0.098f,
-            .lodDistance = 30.0f,
-            .midLodDistance = 23.0f,
-            .drawDistance = 42.0f,
+            .bladeWidthScale = 0.060f,
+            .lodDistance = 24.0f,
+            .midLodDistance = 18.0f,
+            .drawDistance = 58.0f,
             .shadowDistance = 24.0f,
             .grassState = MAP_GRASS_STATE_LUSH,
             .reedRootColor = {22, 36, 16, 255},

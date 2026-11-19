@@ -542,8 +542,8 @@ void main()
         float causticMin = min(c0, c1) * 2.2;
         float causticWave = causticMin * sqrt(max(causticMin, 0.0));
 
-        float causticIntensity = smoothstep(0.42, 0.84, causticWave) *
-                                 u_causticsStrength * 0.24 * depthFadeCaustic;
+        float causticIntensity = smoothstep(0.40, 0.82, causticWave) *
+                                 u_causticsStrength * 0.34 * depthFadeCaustic;
         causticLight = effectiveLight * (causticIntensity * transmittance);
     }
 
@@ -672,7 +672,7 @@ void main()
         ? clamp(depthOpacity * 0.78, 0.0, 0.88)
         : clamp(depthOpacity * 0.75, 0.0, 0.85);
     float glintAlphaBoost = clamp(glintSharp * 0.38, 0.0, 0.26);
-    float opticalWaterAlpha = (fresnel * 0.55) + waterColumnAlpha + glintAlphaBoost;
+    float opticalWaterAlpha = (fresnel * 0.62) + waterColumnAlpha * 0.88 + glintAlphaBoost;
 
     float shoreEdgeFade = radialEdgeFade;
     float meniscusDepth = waterDepth;

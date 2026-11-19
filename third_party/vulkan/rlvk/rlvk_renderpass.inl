@@ -420,161 +420,20 @@ void rlEnableFramebuffer(unsigned int id)
         return; // nothing attached yet
 
     u32 previousId = RLVK.scope.fbSlot;
-    rlvkProfileEndScope();
-    vkCmdEndRenderPass(cmdBuffer);
-    rlvkCloseFramebufferColorsForSwitch(cmdBuffer, previousId);
+    if (!RLVK.scopeOpen && (RLVK.pendingClearColor || RLVK.pendingClearDepth))
+        rlvkEnsureScopeOpen();
+    if (RLVK.scopeOpen)
+    {
+        rlvkCloseScopeIfOpen(cmdBuffer);
+        rlvkCloseFramebufferColorsForSwitch(cmdBuffer, previousId);
+    }
 
-    // Collect all attachment transitions into a single batched CmdPipelineBarrier2 call
-    VkImageMemoryBarrier2 batchedBarriers[11]; // max 8 colors + 1 depth + the 2 MSAA attachments
-    u32 barrierCount = 0;
-
-    // Offscreen MSAA: the scene rasterizes into the slot's private multisample images and the
-    // attached 1x textures are the resolve destinations (which the loops below already put in
-    // COLOR_ATTACHMENT_OPTIMAL / DEPTH_STENCIL_ATTACHMENT_OPTIMAL - the same layouts a resolve
-    // destination needs, so nothing changes for them). Only the multisample images are extra.
-    // MSAA is off unless the FBO was declared multisampled AND has exactly one colour attachment.
-    // A depth attachment added AFTER rlvkSetFramebufferSamples would have no multisample twin,
-    // and a 1-sample depth cannot share a subpass with a multisample colour: fall back to 1x for
-    // this scope rather than build an illegal render pass.
     bool fbMsaa = (f->samples > 1) && (f->msColorImage != VK_NULL_HANDLE) && (colorCount == 1) &&
                   (!(fbDepth && fbDepth->image) || (f->msDepthImage != VK_NULL_HANDLE));
-    if (fbMsaa)
-    {
-        if (f->msColorLayout != VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
-        {
-            batchedBarriers[barrierCount++] = (VkImageMemoryBarrier2){
-                VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-                .srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                .srcAccessMask = 0,
-                .dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                .dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-                .oldLayout = f->msColorLayout,
-                .newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                .image = f->msColorImage,
-                .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
-            };
-            f->msColorLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        }
-        if (f->msDepthImage && (f->msDepthLayout != VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL))
-        {
-            batchedBarriers[barrierCount++] = (VkImageMemoryBarrier2){
-                VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-                .srcStageMask = VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-                .srcAccessMask = 0,
-                .dstStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-                .dstAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-                .oldLayout = f->msDepthLayout,
-                .newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                .image = f->msDepthImage,
-                .subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1},
-            };
-            f->msDepthLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-        }
-    }
+    int fbW = color ? color->width : fbDepth->width;
+    int fbH = color ? color->height : fbDepth->height;
 
-    for (u32 c = 0; c < colorCount; c++)
-    {
-        // Color texture -> COLOR_ATTACHMENT. oldLayout MUST be the tracked layout, not a
-        // hardcoded SHADER_READ_ONLY: a freshly-created FBO texture is still UNDEFINED on its
-        // first bind, and a fixed oldLayout trips VUID-VkImageMemoryBarrier-oldLayout-01211
-        // (the depth barrier below already does this). Already-COLOR means nothing to transition.
-        if (colors[c]->currentLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
-            continue;
-        VkImageLayout oldL = colors[c]->currentLayout;
-        bool wasRead = (oldL == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-
-        batchedBarriers[barrierCount++] = (VkImageMemoryBarrier2){
-            VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-            .srcStageMask = wasRead ? VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT : VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
-            .srcAccessMask = wasRead ? VK_ACCESS_2_SHADER_SAMPLED_READ_BIT : 0,
-            .dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-            .dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-            .oldLayout = oldL,
-            .newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-            .image = colors[c]->image,
-            .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
-        };
-        colors[c]->currentLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    }
-
-    rlvkTextureSlot *depth = fbDepth;
-    if (depth && depth->image && depth->currentLayout != VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
-    {
-        // The depth texture may have been SAMPLED since the last bind (depth shaders)
-        bool wasSampled = (depth->currentLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-        batchedBarriers[barrierCount++] = (VkImageMemoryBarrier2){
-            VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-            .srcStageMask = wasSampled
-                                ? (VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT)
-                                : (VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT),
-            .srcAccessMask = wasSampled ? VK_ACCESS_2_SHADER_SAMPLED_READ_BIT : 0,
-            .dstStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-            .dstAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-            .oldLayout = wasSampled ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
-            .newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-            .image = depth->image,
-            .subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1},
-        };
-        depth->currentLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-    }
-
-    if (barrierCount > 0)
-    {
-        vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
-                                              VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-                                              .imageMemoryBarrierCount = barrierCount,
-                                              .pImageMemoryBarriers = batchedBarriers,
-                                          });
-    }
-
-    // GL semantics: framebuffer content persists across binds -> loadOp LOAD (ClearBackground
-    // inside the texture mode clears explicitly). Depth-only framebuffers (shadowmaps) have no
-    // color attachment at all; depth must be STORED so it can be sampled afterwards.
-    int fbW = color ? color->width : depth->width;
-    int fbH = color ? color->height : depth->height;
-    bool fbHasDepth = (depth && depth->image);
-    VkImageView scopeViews[RLVK_MAX_SCOPE_ATTACHMENTS];
-    u32 scopeViewCount = 0;
-
-    rlvkRenderPassKey rpKey = {0};
-
-    // Attachment order is the one convention used everywhere (rlvk_state.inl): colours, then the
-    // colour resolve target, then depth, then the depth resolve target. Under MSAA the colour
-    // slot holds the multisample image and the attached texture moves into the resolve slot.
-    if (fbMsaa)
-    {
-        scopeViews[scopeViewCount++] = f->msColorView;
-        rpKey.colorFormats[0] = colors[0]->format;
-        scopeViews[scopeViewCount++] = colors[0]->view; // colour resolve destination
-    }
-    else
-    {
-        for (u32 c = 0; c < colorCount; c++)
-        {
-            scopeViews[scopeViewCount++] = colors[c]->view;
-            rpKey.colorFormats[c] = colors[c]->format;
-        }
-    }
-    bool fbMsaaDepth = fbMsaa && fbHasDepth && (f->msDepthImage != VK_NULL_HANDLE);
-    if (fbMsaaDepth)
-    {
-        scopeViews[scopeViewCount++] = f->msDepthView;
-        scopeViews[scopeViewCount++] = depth->view; // depth resolve destination (SAMPLE_ZERO)
-    }
-    else if (fbHasDepth)
-        scopeViews[scopeViewCount++] = depth->view;
-
-    rpKey.depthFormat = fbHasDepth ? depth->format : VK_FORMAT_UNDEFINED;
-    rpKey.colorCount = (unsigned char)colorCount;
-    rpKey.samples = fbMsaa ? f->samples : 1;
-    rpKey.hasResolve = fbMsaa ? 1 : 0;
-    rpKey.hasDepthResolve = fbMsaaDepth ? 1 : 0;
-    rpKey.colorLoad = VK_ATTACHMENT_LOAD_OP_LOAD;
-    rpKey.depthLoad = VK_ATTACHMENT_LOAD_OP_LOAD;
-    rpKey.depthStore = VK_ATTACHMENT_STORE_OP_STORE;
-
-    rlvkBeginScopeRenderPass(cmdBuffer, &rpKey, scopeViews, scopeViewCount, (u32)fbW, (u32)fbH, NULL, NULL, id);
-
+    // Defer attachment barriers + vkCmdBeginRenderPass until first draw/clear (R1/R2).
     RLVK.scope.fbSlot = id;
     RLVK.scope.width = (u32)fbW;
     RLVK.scope.height = (u32)fbH;
@@ -582,8 +441,11 @@ void rlEnableFramebuffer(unsigned int id)
     for (u32 c = 0; c < colorCount; c++)
         RLVK.scope.colorFormats[c] = colors[c]->format;
     RLVK.scope.samples = fbMsaa ? f->samples : 1u;
-    RLVK.scope.depthResolve = fbMsaaDepth;
+    RLVK.scope.depthResolve = fbMsaa && fbDepth && fbDepth->image && (f->msDepthImage != VK_NULL_HANDLE);
     RLVK.scope.flipY = false;
+    RLVK.scopeOpen = false;
+    RLVK.pendingClearColor = false;
+    RLVK.pendingClearDepth = false;
 }
 
 // Copy after the depth/twin transfer-layout barriers; shared by default close and opt-in binds.
@@ -666,8 +528,12 @@ void rlDisableFramebuffer(void)
     VkCommandBuffer cmdBuffer = RLVK.cmdBuffers[frameIndex];
     rlvkFramebufferSlot *f = &RLVK.fbSlots[id];
 
-    rlvkProfileEndScope();
-    vkCmdEndRenderPass(cmdBuffer);
+    // If ClearBackground() was called with no subsequent draws, materialize it now.
+    if (!RLVK.scopeOpen && (RLVK.pendingClearColor || RLVK.pendingClearDepth))
+        rlvkEnsureScopeOpen();
+
+    bool wasOpen = RLVK.scopeOpen;
+    rlvkCloseScopeIfOpen(cmdBuffer);
 
     // Batched Pipeline Barriers
     VkImageMemoryBarrier2 batchedBarriers[10]; // max 8 colors + up to 2 for depth
@@ -679,16 +545,20 @@ void rlDisableFramebuffer(void)
         if (!texSlot || texSlot >= RLVK_MAX_TEXTURE_SLOTS)
             continue;
         rlvkTextureSlot *color = &RLVK.textureSlots[texSlot];
-        if (!color->image || color->currentLayout != VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+        if (!color->image)
+            continue;
+        if (color->currentLayout != VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL &&
+            color->currentLayout != VK_IMAGE_LAYOUT_UNDEFINED)
             continue;
 
+        bool wasUndefined = (color->currentLayout == VK_IMAGE_LAYOUT_UNDEFINED);
         batchedBarriers[barrierCount++] = (VkImageMemoryBarrier2){
             VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-            .srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-            .srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+            .srcStageMask = wasUndefined ? VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT : VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+            .srcAccessMask = wasUndefined ? 0 : VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
             .dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
             .dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
-            .oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            .oldLayout = color->currentLayout,
             .newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
             .image = color->image,
             .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
@@ -702,7 +572,7 @@ void rlDisableFramebuffer(void)
                                  : NULL;
     // The twin is refilled only while a bind is RECENT; see rlvkTextureSlot.sampleWantedFrame.
     bool deferred = rlvkDeferFramebufferDepthSample(id);
-    bool twinWanted = !deferred && depth && depth->sampleWantedFrame &&
+    bool twinWanted = wasOpen && !deferred && depth && depth->sampleWantedFrame &&
                       ((RLVK.frameCounter + 1 - depth->sampleWantedFrame) <= (u64)RLVK_TWIN_KEEPALIVE_FRAMES) &&
                       (depth->sampleDirty || depth->sampleLayout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     if (depth && depth->image)
@@ -746,16 +616,17 @@ void rlDisableFramebuffer(void)
             // until a recent consumer requires a refresh; an uninitialized twin refreshes
             // on the next close after its first bind, preserving the existing warm-up rule.
         }
-        else
+        else if (!depth->sampleImage && (wasOpen || depth->currentLayout == VK_IMAGE_LAYOUT_UNDEFINED))
         {
             // Healthy driver: the attachment depth carries SAMPLED — transition it directly.
+            bool wasUndefined = (depth->currentLayout == VK_IMAGE_LAYOUT_UNDEFINED);
             batchedBarriers[barrierCount++] = (VkImageMemoryBarrier2){
                 VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-                .srcStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-                .srcAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                .srcStageMask = wasUndefined ? VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT : (VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT),
+                .srcAccessMask = wasUndefined ? 0 : VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
                 .dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
                 .dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
-                .oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                .oldLayout = depth->currentLayout,
                 .newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                 .image = depth->image,
                 .subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1},
@@ -776,8 +647,11 @@ void rlDisableFramebuffer(void)
     if (depth && depth->image && depth->sampleImage && twinWanted)
         rlvkCopyDepthTwin(cmdBuffer, depth, id);
 
-    // Resume the swapchain scope, preserving its content
-    rlvkResumeSwapchainScope(cmdBuffer);
+    // Return lazily to the swapchain scope (do NOT open VkRenderPass until first draw/clear).
+    rlvkSetSwapchainScopeMeta();
+    RLVK.scopeOpen = false;
+    RLVK.pendingClearColor = false;
+    RLVK.pendingClearDepth = false;
 }
 
 // Refresh a CLOSED depth source without reopening its pass (or repeating its MSAA resolve).
@@ -802,10 +676,10 @@ static bool rlvkRefreshDepthTwin(u32 textureSlot, u32 profileSlot)
 
     u32 frameIndex = (u32)(RLVK.frameCounter % RLVK_FRAME_INDEX_COUNT);
     VkCommandBuffer cmdBuffer = RLVK.cmdBuffers[frameIndex];
+    bool wasOpen = RLVK.scopeOpen;
     if (openFb)
         rlDisableFramebuffer();
-    rlvkProfileEndScope();
-    vkCmdEndRenderPass(cmdBuffer);
+    rlvkCloseScopeIfOpen(cmdBuffer);
     VkImageMemoryBarrier2 barriers[2] = {
         {
             VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
@@ -837,9 +711,10 @@ static bool rlvkRefreshDepthTwin(u32 textureSlot, u32 profileSlot)
                                       });
     rlvkCopyDepthTwin(cmdBuffer, depth, profileSlot);
     depth->sampleWantedFrame = RLVK.frameCounter + 1;
-    rlvkResumeSwapchainScope(cmdBuffer);
     if (openFb)
         rlEnableFramebuffer(openFb);
+    if (wasOpen)
+        rlvkEnsureScopeOpen();
     return true;
 }
 
@@ -854,14 +729,31 @@ bool rlvkRefreshFramebufferDepthTexture(unsigned int fbId)
     return rlvkRefreshDepthTwin(f->depthTexture, fbId);
 }
 
-// Re-open the swapchain-target rendering scope preserving content (color LOAD + depth LOAD)
-// after a mid-frame suspension (FBO round-trip, depth blit, in-stream texture update).
-// Renders into the UNMIRRORED per-frame target: msaa image when active, else the intermediate.
-static void rlvkResumeSwapchainScope(VkCommandBuffer cmdBuffer)
+static void rlvkCloseScopeIfOpen(VkCommandBuffer cmdBuffer)
+{
+    if (!RLVK.scopeOpen)
+        return;
+    rlvkProfileEndScope();
+    vkCmdEndRenderPass(cmdBuffer);
+    RLVK.scopeOpen = false;
+}
+
+static void rlvkSetSwapchainScopeMeta(void)
+{
+    RLVK.scope.fbSlot = 0;
+    RLVK.scope.width = RLVK.swapchainExtent.width;
+    RLVK.scope.height = RLVK.swapchainExtent.height;
+    RLVK.scope.colorCount = 1;
+    RLVK.scope.colorFormats[0] = RLVK.swapchainFormat;
+    RLVK.scope.samples = (u32)RLVK.msaaSamples;
+    RLVK.scope.depthResolve = false;
+    RLVK.scope.flipY = false;
+}
+
+static void rlvkOpenSwapchainScope(VkCommandBuffer cmdBuffer)
 {
     u32 frameIndex = (u32)(RLVK.frameCounter % RLVK_FRAME_INDEX_COUNT);
     bool msaa = (RLVK.msaaSamples > 1);
-    // Fixed-function resolve into the 1x intermediate at every scope close (MSAA only)
     VkImageView scopeViews[3];
     u32 scopeViewCount = 0;
     scopeViews[scopeViewCount++] = msaa ? RLVK.msaaView[frameIndex] : RLVK.interView[frameIndex];
@@ -869,28 +761,214 @@ static void rlvkResumeSwapchainScope(VkCommandBuffer cmdBuffer)
         scopeViews[scopeViewCount++] = RLVK.interView[frameIndex];
     scopeViews[scopeViewCount++] = RLVK.depthView[frameIndex];
 
+    bool firstOpen = !RLVK.swapchainInitialized;
+    bool clearColor = firstOpen || RLVK.pendingClearColor;
+    bool clearDepth = firstOpen || RLVK.pendingClearDepth;
+
     rlvkRenderPassKey rpKey = {0};
     rpKey.colorFormats[0] = RLVK.swapchainFormat;
     rpKey.depthFormat = RLVK.depthFormat;
     rpKey.colorCount = 1;
     rpKey.samples = msaa ? 4 : 1;
-    rpKey.colorLoad = VK_ATTACHMENT_LOAD_OP_LOAD;
-    rpKey.depthLoad = VK_ATTACHMENT_LOAD_OP_LOAD;
+    rpKey.colorLoad = clearColor ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+    rpKey.depthLoad = clearDepth ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
     rpKey.depthStore = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     rpKey.hasResolve = msaa ? 1 : 0;
 
+    VkClearValue clearColorVal = {.color = {.float32 = {
+                                                RLVK.pendingClearColor ? RLVK.pendingClearColorValue[0] : RLVK.State.clearR / 255.0f,
+                                                RLVK.pendingClearColor ? RLVK.pendingClearColorValue[1] : RLVK.State.clearG / 255.0f,
+                                                RLVK.pendingClearColor ? RLVK.pendingClearColorValue[2] : RLVK.State.clearB / 255.0f,
+                                                RLVK.pendingClearColor ? RLVK.pendingClearColorValue[3] : RLVK.State.clearA / 255.0f}}};
+    VkClearValue clearDepthVal = {.depthStencil = {1.0f, 0}};
+
     rlvkBeginScopeRenderPass(cmdBuffer, &rpKey, scopeViews, scopeViewCount,
-                             RLVK.swapchainExtent.width, RLVK.swapchainExtent.height, NULL, NULL, 0);
-    RLVK.scope.fbSlot = 0;
-    RLVK.scope.width = RLVK.swapchainExtent.width;
-    RLVK.scope.height = RLVK.swapchainExtent.height;
-    RLVK.scope.colorCount = 1;
-    RLVK.scope.colorFormats[0] = RLVK.swapchainFormat;
-    RLVK.scope.samples = (u32)RLVK.msaaSamples;
-    RLVK.scope.depthResolve = false; // the swapchain scope resolves colour only
-    RLVK.scope.flipY = false;        // UNMIRRORED: swapchain-scope rendering matches GL memory orientation
+                             RLVK.swapchainExtent.width, RLVK.swapchainExtent.height,
+                             clearColor ? &clearColorVal : NULL,
+                             clearDepth ? &clearDepthVal : NULL, 0);
+    rlvkSetSwapchainScopeMeta();
+    RLVK.scopeOpen = true;
+    RLVK.swapchainInitialized = true;
+    RLVK.pendingClearColor = false;
+    RLVK.pendingClearDepth = false;
     if (rlvkDebugFlag("RLVK_DEBUG_FBO", &s_dbgFbo))
         TRACELOG(RL_LOG_WARNING, "VKDBG frameOPEN fc=%llu img=%u", (ull)RLVK.frameCounter, RLVK.currentImageIndex);
+}
+
+static void rlvkOpenFboScope(VkCommandBuffer cmdBuffer, u32 id)
+{
+    rlvkFramebufferSlot *f = &RLVK.fbSlots[id];
+    u32 colorCount = 0;
+    rlvkTextureSlot *colors[8] = {0};
+    for (u32 c = 0; c < f->colorCount && c < 8; c++)
+    {
+        u32 texSlot = f->colorTextures[c];
+        if (!texSlot || texSlot >= RLVK_MAX_TEXTURE_SLOTS)
+            continue;
+        rlvkTextureSlot *t = &RLVK.textureSlots[texSlot];
+        if (t->image)
+            colors[colorCount++] = t;
+    }
+    rlvkTextureSlot *color = colorCount ? colors[0] : NULL;
+    rlvkTextureSlot *depth = (f->hasDepth && f->depthTexture && f->depthTexture < RLVK_MAX_TEXTURE_SLOTS)
+                                 ? &RLVK.textureSlots[f->depthTexture]
+                                 : NULL;
+    if (!color && !(depth && depth->image))
+        return;
+
+    VkImageMemoryBarrier2 batchedBarriers[11];
+    u32 barrierCount = 0;
+
+    bool fbMsaa = (f->samples > 1) && (f->msColorImage != VK_NULL_HANDLE) && (colorCount == 1) &&
+                  (!(depth && depth->image) || (f->msDepthImage != VK_NULL_HANDLE));
+    if (fbMsaa)
+    {
+        if (f->msColorLayout != VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+        {
+            batchedBarriers[barrierCount++] = (VkImageMemoryBarrier2){
+                VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                .srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                .srcAccessMask = 0,
+                .dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                .dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                .oldLayout = f->msColorLayout,
+                .newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                .image = f->msColorImage,
+                .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+            };
+            f->msColorLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        }
+        if (f->msDepthImage && (f->msDepthLayout != VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL))
+        {
+            batchedBarriers[barrierCount++] = (VkImageMemoryBarrier2){
+                VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                .srcStageMask = VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                .srcAccessMask = 0,
+                .dstStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                .dstAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                .oldLayout = f->msDepthLayout,
+                .newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                .image = f->msDepthImage,
+                .subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1},
+            };
+            f->msDepthLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        }
+    }
+
+    for (u32 c = 0; c < colorCount; c++)
+    {
+        if (colors[c]->currentLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+            continue;
+        VkImageLayout oldL = colors[c]->currentLayout;
+        bool wasRead = (oldL == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        batchedBarriers[barrierCount++] = (VkImageMemoryBarrier2){
+            VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+            .srcStageMask = wasRead ? VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT : VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
+            .srcAccessMask = wasRead ? VK_ACCESS_2_SHADER_SAMPLED_READ_BIT : 0,
+            .dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+            .dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+            .oldLayout = oldL,
+            .newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            .image = colors[c]->image,
+            .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+        };
+        colors[c]->currentLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    }
+
+    if (depth && depth->image && depth->currentLayout != VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+    {
+        bool wasSampled = (depth->currentLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        batchedBarriers[barrierCount++] = (VkImageMemoryBarrier2){
+            VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+            .srcStageMask = wasSampled
+                                ? (VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT)
+                                : (VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT),
+            .srcAccessMask = wasSampled ? VK_ACCESS_2_SHADER_SAMPLED_READ_BIT : 0,
+            .dstStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+            .dstAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+            .oldLayout = wasSampled ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
+            .newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            .image = depth->image,
+            .subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1},
+        };
+        depth->currentLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    }
+
+    if (barrierCount > 0)
+    {
+        vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
+                                              VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                                              .imageMemoryBarrierCount = barrierCount,
+                                              .pImageMemoryBarriers = batchedBarriers,
+                                          });
+    }
+
+    int fbW = color ? color->width : depth->width;
+    int fbH = color ? color->height : depth->height;
+    bool fbHasDepth = (depth && depth->image);
+    VkImageView scopeViews[RLVK_MAX_SCOPE_ATTACHMENTS];
+    u32 scopeViewCount = 0;
+
+    rlvkRenderPassKey rpKey = {0};
+    if (fbMsaa)
+    {
+        scopeViews[scopeViewCount++] = f->msColorView;
+        rpKey.colorFormats[0] = colors[0]->format;
+        scopeViews[scopeViewCount++] = colors[0]->view;
+    }
+    else
+    {
+        for (u32 c = 0; c < colorCount; c++)
+        {
+            scopeViews[scopeViewCount++] = colors[c]->view;
+            rpKey.colorFormats[c] = colors[c]->format;
+        }
+    }
+    bool fbMsaaDepth = fbMsaa && fbHasDepth && (f->msDepthImage != VK_NULL_HANDLE);
+    if (fbMsaaDepth)
+    {
+        scopeViews[scopeViewCount++] = f->msDepthView;
+        scopeViews[scopeViewCount++] = depth->view;
+    }
+    else if (fbHasDepth)
+        scopeViews[scopeViewCount++] = depth->view;
+
+    rpKey.depthFormat = fbHasDepth ? depth->format : VK_FORMAT_UNDEFINED;
+    rpKey.colorCount = (unsigned char)colorCount;
+    rpKey.samples = fbMsaa ? f->samples : 1;
+    rpKey.hasResolve = fbMsaa ? 1 : 0;
+    rpKey.hasDepthResolve = fbMsaaDepth ? 1 : 0;
+    rpKey.colorLoad = RLVK.pendingClearColor ? VK_ATTACHMENT_LOAD_OP_CLEAR
+                      : f->discardOnBegin    ? VK_ATTACHMENT_LOAD_OP_DONT_CARE
+                                             : VK_ATTACHMENT_LOAD_OP_LOAD;
+    rpKey.depthLoad = RLVK.pendingClearDepth ? VK_ATTACHMENT_LOAD_OP_CLEAR
+                      : f->discardOnBegin    ? VK_ATTACHMENT_LOAD_OP_DONT_CARE
+                                             : VK_ATTACHMENT_LOAD_OP_LOAD;
+    rpKey.depthStore = VK_ATTACHMENT_STORE_OP_STORE;
+
+    VkClearValue clearColorVal = {.color = {.float32 = {
+                                                RLVK.pendingClearColorValue[0], RLVK.pendingClearColorValue[1],
+                                                RLVK.pendingClearColorValue[2], RLVK.pendingClearColorValue[3]}}};
+    VkClearValue clearDepthVal = {.depthStencil = {1.0f, 0}};
+
+    rlvkBeginScopeRenderPass(cmdBuffer, &rpKey, scopeViews, scopeViewCount, (u32)fbW, (u32)fbH,
+                             RLVK.pendingClearColor ? &clearColorVal : NULL,
+                             RLVK.pendingClearDepth ? &clearDepthVal : NULL, id);
+    RLVK.scopeOpen = true;
+    RLVK.pendingClearColor = false;
+    RLVK.pendingClearDepth = false;
+}
+
+static void rlvkEnsureScopeOpen(void)
+{
+    if (RLVK.scopeOpen || !RLVK.frameActive)
+        return;
+    u32 frameIndex = (u32)(RLVK.frameCounter % RLVK_FRAME_INDEX_COUNT);
+    VkCommandBuffer cmdBuffer = RLVK.cmdBuffers[frameIndex];
+    if (RLVK.scope.fbSlot == 0)
+        rlvkOpenSwapchainScope(cmdBuffer);
+    else
+        rlvkOpenFboScope(cmdBuffer, RLVK.scope.fbSlot);
 }
 
 // Wait the fences of every frame slot except the recording one: full completion of submitted
@@ -921,8 +999,7 @@ static void rlvkFlushFrame(void)
     u32 openFb = RLVK.scope.fbSlot;
     if (openFb)
         rlDisableFramebuffer();
-    rlvkProfileEndScope();
-    vkCmdEndRenderPass(cmdBuffer);
+    rlvkCloseScopeIfOpen(cmdBuffer);
     vk.EndCommandBuffer(cmdBuffer);
 
     vk.QueueSubmit2(RLVK.graphicsQueue, 1, &(VkSubmitInfo2){
@@ -977,9 +1054,10 @@ static void rlvkFlushFrame(void)
                                           },
                                       });
 
-    rlvkResumeSwapchainScope(cmdBuffer);
     if (openFb)
         rlEnableFramebuffer(openFb);
+    else
+        rlvkSetSwapchainScopeMeta();
 }
 
 // PASS MARK (RLVK_PASS_MARK env, off by default): per-pass GPU cost where timestamp queries are
@@ -1075,8 +1153,9 @@ void rlBlitFramebuffer(int srcX, int srcY, int srcWidth, int srcHeight, int dstX
     u32 frameIndex = (u32)(RLVK.frameCounter % RLVK_FRAME_INDEX_COUNT);
     VkCommandBuffer cmdBuffer = RLVK.cmdBuffers[frameIndex];
 
-    rlvkProfileEndScope();
-    vkCmdEndRenderPass(cmdBuffer);
+    if (!RLVK.swapchainInitialized)
+        rlvkEnsureScopeOpen();
+    rlvkCloseScopeIfOpen(cmdBuffer);
 
     VkImageLayout originalSrcLayout = srcDepth->currentLayout;
     bool wasAttachment = (originalSrcLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
@@ -1150,8 +1229,7 @@ void rlBlitFramebuffer(int srcX, int srcY, int srcWidth, int srcHeight, int dstX
                                       });
 
     srcDepth->currentLayout = originalSrcLayout;
-
-    rlvkResumeSwapchainScope(cmdBuffer);
+    RLVK.swapchainInitialized = true;
     RLVK.blitReadFb = 0;
 }
 // Bind framebuffer object (fbo)
@@ -1352,8 +1430,6 @@ void rlClearColor(unsigned char r, unsigned char g, unsigned char b, unsigned ch
 // a colour-only layer clear must not erase a shared scene depth attachment.
 void rlClearScreenBuffers(void)
 {
-    // Frame not open yet: the scope's loadOp CLEAR (with State.clear*) handles it lazily.
-    // Inside an active scope (e.g. ClearBackground inside BeginTextureMode): clear explicitly.
     if (!RLVK.frameActive)
         return;
     u32 frameIndex = (u32)(RLVK.frameCounter % RLVK_FRAME_INDEX_COUNT);
@@ -1366,6 +1442,24 @@ void rlClearScreenBuffers(void)
         rlvkFramebufferSlot *f = &RLVK.fbSlots[RLVK.scope.fbSlot];
         hasColor = (f->colorCount > 0) && (f->colorTextures[0] < RLVK_MAX_TEXTURE_SLOTS) && RLVK.textureSlots[f->colorTextures[0]].image;
         hasDepth = f->hasDepth && (f->depthTexture < RLVK_MAX_TEXTURE_SLOTS) && RLVK.textureSlots[f->depthTexture].image;
+    }
+    // R2: If the scope render pass hasn't opened yet, fuse ClearBackground() into LOAD_OP_CLEAR.
+    if (!RLVK.scopeOpen)
+    {
+        if (hasColor)
+        {
+            RLVK.pendingClearColor = true;
+            RLVK.pendingClearColorValue[0] = RLVK.State.clearR / 255.0f;
+            RLVK.pendingClearColorValue[1] = RLVK.State.clearG / 255.0f;
+            RLVK.pendingClearColorValue[2] = RLVK.State.clearB / 255.0f;
+            RLVK.pendingClearColorValue[3] = RLVK.State.clearA / 255.0f;
+        }
+        if (hasDepth && RLVK.State.depthWrite)
+        {
+            rlvkRecordDepthWrite();
+            RLVK.pendingClearDepth = true;
+        }
+        return;
     }
     VkClearAttachment clears[9];
     u32 clearCount = 0;

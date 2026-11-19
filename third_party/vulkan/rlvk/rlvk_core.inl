@@ -626,6 +626,7 @@ void rlDrawRenderBatch(rlRenderBatch *batch)
         // modelview and per-eye projection, geometry recorded twice.
         Matrix matProjection = RLVK.State.projection;
         Matrix matModelView = RLVK.State.modelview;
+        rlvkEnsureScopeOpen();
         int eyeCount = RLVK.State.stereoRender ? 2 : 1;
         for (int eye = 0; eye < eyeCount; eye++)
         {
@@ -872,8 +873,7 @@ static void rlvkUploadBuffer(VkBuffer dst, u32 dstOffset, const void *data, u32 
         u32 openFb = RLVK.scope.fbSlot;
         if (openFb)
             rlDisableFramebuffer();
-        rlvkProfileEndScope();
-        vkCmdEndRenderPass(cmdBuffer);
+        rlvkCloseScopeIfOpen(cmdBuffer);
 
         vkCmdCopyBuffer(cmdBuffer, arena->buffer, dst, 1,
                         &(VkBufferCopy){.srcOffset = off, .dstOffset = dstOffset, .size = size});
@@ -889,15 +889,14 @@ static void rlvkUploadBuffer(VkBuffer dst, u32 dstOffset, const void *data, u32 
                                                   // GPU-particle vertex shader reads them as storage buffers);
                                                   // vertex-attribute/index visibility alone left those reads STALE
                                                   // (invisible particles - silently wrong, no validation error).
-                                                  .dstStageMask = VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT | VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                                                  .dstAccessMask = VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_INDEX_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_UNIFORM_READ_BIT,
+                                                  .dstStageMask = VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT | VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT | VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                                                  .dstAccessMask = VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_INDEX_READ_BIT | VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_UNIFORM_READ_BIT,
                                                   .buffer = dst,
                                                   .offset = dstOffset,
                                                   .size = size,
                                               },
                                           });
 
-        rlvkResumeSwapchainScope(cmdBuffer);
         if (openFb)
             rlEnableFramebuffer(openFb);
         return;

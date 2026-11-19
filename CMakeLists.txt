@@ -213,6 +213,7 @@ add_executable(wuxing
     core/path_spline.c
     # --- Post Process ---
     post_process/post_fx.c
+    post_process/taa.c
     post_process/color_grade_lut.c
     post_process/scene_targets.c
     post_process/render_scale.c

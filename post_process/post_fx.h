@@ -118,6 +118,7 @@ void PostFX_Draw(const PostFXConfig *config);
  * handing it the scene target (whose alpha is accumulated VFX coverage and
  * means nothing) is safe. See core/scene_targets.h. */
 void PostFX_UseDirectSource(Texture2D sceneTex);
+void PostFX_SetCamera(Camera3D camera);
 
 void PostFX_SetMonochrome(float intensity01);
 

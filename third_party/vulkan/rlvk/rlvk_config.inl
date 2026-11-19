@@ -190,6 +190,7 @@ enum
     RLVK_PFN_FUNC(CmdPushConstants)                                            \
     RLVK_PFN_FUNC(CmdDraw)                                                     \
     RLVK_PFN_FUNC(CmdDrawIndexed)                                              \
+    RLVK_PFN_FUNC(CmdDrawIndexedIndirect)                                      \
     RLVK_PFN_FUNC(CmdBlitImage)                                                \
     RLVK_PFN_FUNC(CmdCopyImageToBuffer)                                        \
     /* swapchain (loaded once surface is attached) */                          \

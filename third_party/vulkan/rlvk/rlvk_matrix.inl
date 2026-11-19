@@ -449,6 +449,7 @@ void rlTextureParameters(unsigned int id, int param, int value)
     bool newMipEnabled = t->mipEnabled;
     VkSamplerAddressMode newWrapS = t->wrapS;
     VkSamplerAddressMode newWrapT = t->wrapT;
+    f32 newMaxAniso = (t->maxAniso >= 1.0f) ? t->maxAniso : 1.0f;
 
     switch (param)
     {
@@ -456,15 +457,35 @@ void rlTextureParameters(unsigned int id, int param, int value)
         newMag = (value == RL_TEXTURE_FILTER_NEAREST) ? VK_FILTER_NEAREST : VK_FILTER_LINEAR;
         break;
     case RL_TEXTURE_MIN_FILTER:
-        newMipEnabled = value == RL_TEXTURE_FILTER_MIP_NEAREST || value == RL_TEXTURE_FILTER_LINEAR_MIP_NEAREST ||
-                        value == RL_TEXTURE_FILTER_NEAREST_MIP_LINEAR || value == RL_TEXTURE_FILTER_MIP_LINEAR;
-        newMin = ((value == RL_TEXTURE_FILTER_NEAREST) || (value == RL_TEXTURE_FILTER_MIP_NEAREST) ||
-                  (value == RL_TEXTURE_FILTER_NEAREST_MIP_LINEAR))
-                     ? VK_FILTER_NEAREST
-                     : VK_FILTER_LINEAR;
-        newMipMode = ((value == RL_TEXTURE_FILTER_NEAREST_MIP_LINEAR) || (value == RL_TEXTURE_FILTER_MIP_LINEAR))
-                         ? VK_SAMPLER_MIPMAP_MODE_LINEAR
-                         : VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        if (value == RL_TEXTURE_FILTER_ANISOTROPIC_4X ||
+            value == RL_TEXTURE_FILTER_ANISOTROPIC_8X ||
+            value == RL_TEXTURE_FILTER_ANISOTROPIC_16X)
+        {
+            f32 req = (value == RL_TEXTURE_FILTER_ANISOTROPIC_4X) ? 4.0f
+                    : (value == RL_TEXTURE_FILTER_ANISOTROPIC_8X) ? 8.0f
+                                                                  : 16.0f;
+            newMipEnabled = true;
+            newMin = VK_FILTER_LINEAR;
+            newMipMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+            newMaxAniso = RLVK.Caps.samplerAnisotropy
+                              ? ((req < RLVK.Caps.maxSamplerAnisotropy) ? req : RLVK.Caps.maxSamplerAnisotropy)
+                              : 1.0f;
+            if (newMaxAniso < 1.0f)
+                newMaxAniso = 1.0f;
+        }
+        else
+        {
+            newMaxAniso = 1.0f;
+            newMipEnabled = value == RL_TEXTURE_FILTER_MIP_NEAREST || value == RL_TEXTURE_FILTER_LINEAR_MIP_NEAREST ||
+                            value == RL_TEXTURE_FILTER_NEAREST_MIP_LINEAR || value == RL_TEXTURE_FILTER_MIP_LINEAR;
+            newMin = ((value == RL_TEXTURE_FILTER_NEAREST) || (value == RL_TEXTURE_FILTER_MIP_NEAREST) ||
+                      (value == RL_TEXTURE_FILTER_NEAREST_MIP_LINEAR))
+                         ? VK_FILTER_NEAREST
+                         : VK_FILTER_LINEAR;
+            newMipMode = ((value == RL_TEXTURE_FILTER_NEAREST_MIP_LINEAR) || (value == RL_TEXTURE_FILTER_MIP_LINEAR))
+                             ? VK_SAMPLER_MIPMAP_MODE_LINEAR
+                             : VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        }
         break;
     case RL_TEXTURE_WRAP_S:
     case RL_TEXTURE_WRAP_T:
@@ -492,12 +513,14 @@ void rlTextureParameters(unsigned int id, int param, int value)
         newMag = VK_FILTER_NEAREST;
         newMin = VK_FILTER_NEAREST;
         newMipMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        newMaxAniso = 1.0f;
     }
 
     if (t->sampler != VK_NULL_HANDLE &&
         newMag == t->magFilter && newMin == t->minFilter &&
         newMipMode == t->mipMode && newMipEnabled == t->mipEnabled &&
-        newWrapS == t->wrapS && newWrapT == t->wrapT)
+        newWrapS == t->wrapS && newWrapT == t->wrapT &&
+        newMaxAniso == t->maxAniso)
     {
         return; // No sampler state changed; skip redundant vkCreateSampler
     }
@@ -508,6 +531,7 @@ void rlTextureParameters(unsigned int id, int param, int value)
     t->mipEnabled = newMipEnabled;
     t->wrapS = newWrapS;
     t->wrapT = newWrapT;
+    t->maxAniso = newMaxAniso;
 
     VkSampler oldSampler = t->sampler;
     for (u32 b = 0; b < RLVK_MAX_TEXTURE_UNITS; b++)
@@ -530,6 +554,8 @@ void rlTextureParameters(unsigned int id, int param, int value)
                                    .addressModeU = t->wrapS,
                                    .addressModeV = t->wrapT,
                                    .addressModeW = t->wrapT,
+                                   .anisotropyEnable = (RLVK.Caps.samplerAnisotropy && t->maxAniso > 1.0f) ? VK_TRUE : VK_FALSE,
+                                   .maxAnisotropy = (RLVK.Caps.samplerAnisotropy && t->maxAniso > 1.0f) ? t->maxAniso : 1.0f,
                                    .maxLod = (t->mipEnabled && t->mipCount > 1) ? (f32)(t->mipCount - 1) : 0.0f,
                                },
                                RLVK_ALLOC, &t->sampler));

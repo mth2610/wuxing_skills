@@ -31,6 +31,9 @@ static void rlvkDeferDestroy(VkBuffer buffer, VkImage image, VkImageView view, V
 static void rlvkDeferDestroyFramebufferOnly(VkFramebuffer framebuffer);                                                                        // Queue a cached framebuffer for fence-gated destruction
 static void rlvkEvictFramebuffersForView(VkImageView view);                                                                                    // Evict cached framebuffers referencing a dying view
 static void rlvkBeginScopeRenderPass(VkCommandBuffer cmdBuffer, const rlvkRenderPassKey *key, const VkImageView *views, u32 viewCount, u32 width, u32 height, const VkClearValue *clearColor, const VkClearValue *clearDepth, u32 profileSlot);
+static void rlvkEnsureScopeOpen(void);                                                                                        // Lazily open the pending render-pass scope on first draw/clear
+static void rlvkCloseScopeIfOpen(VkCommandBuffer cmdBuffer);                                                                  // Close the active render pass if one is currently open
+static void rlvkSetSwapchainScopeMeta(void);                                                                                  // Populate swapchain scope dimensions/formats without opening a pass
 static bool rlvkRefreshDepthTwin(u32 textureSlot, u32 profileSlot);                                                           // Refresh a closed FBO depth twin
 static void rlvkResumeSwapchainScope(VkCommandBuffer cmdBuffer);                                                              // Re-open the swapchain scope preserving content
 static void rlvkFlushFrame(void);                                                                                             // Submit current recording, wait, resume (GL-ordered readbacks)

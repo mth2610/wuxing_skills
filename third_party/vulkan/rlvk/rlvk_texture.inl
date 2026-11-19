@@ -442,10 +442,12 @@ void rlSetVertexAttributeDefault(int loc, const void *v, int t, int c)
     (void)c;
 }
 
-// Record a mesh draw (DrawMesh path)
-static void rlvkDrawMesh(int offset, int count, bool indexed, int instances)
+// Record a mesh draw (DrawMesh path, direct or indirect)
+static void rlvkDrawMeshInternal(int offset, int count, bool indexed, int instances, u32 indirectSsboId, u32 indirectOffsetBytes)
 {
-    if (!isGpuReady || count <= 0)
+    if (!isGpuReady || (indirectSsboId == 0 && count <= 0))
+        return;
+    if (indirectSsboId != 0 && (indirectSsboId >= RLVK_MAX_BUFFER_SLOTS || RLVK.bufferSlots[indirectSsboId].buffer == VK_NULL_HANDLE))
         return;
     u32 vao = RLVK.State.currentVAO;
     if (!vao || vao >= RLVK_MAX_VAO_SLOTS || !RLVK.vertexArrays[vao].inUse)
@@ -556,6 +558,7 @@ static void rlvkDrawMesh(int offset, int count, bool indexed, int instances)
         s_bindingValid = true;
     }
 
+    rlvkEnsureScopeOpen();
     if (!rlvkBindPipeline(cmdBuffer, 1, vertexLayout, RLVK.State.activeShaderSlot))
         return;
 
@@ -651,10 +654,23 @@ static void rlvkDrawMesh(int offset, int count, bool indexed, int instances)
     {
         if (!sameBinding)
             vkCmdBindIndexBuffer(cmdBuffer, RLVK.bufferSlots[a->indexSlot].buffer, 0, VK_INDEX_TYPE_UINT16);
-        vk.CmdDrawIndexed(cmdBuffer, count, (instances > 0) ? instances : 1, offset, 0, 0);
+        if (indirectSsboId != 0)
+            vk.CmdDrawIndexedIndirect(cmdBuffer, RLVK.bufferSlots[indirectSsboId].buffer, (VkDeviceSize)indirectOffsetBytes, 1, 0);
+        else
+            vk.CmdDrawIndexed(cmdBuffer, count, (instances > 0) ? instances : 1, offset, 0, 0);
     }
-    else
+    else if (indirectSsboId == 0)
         vk.CmdDraw(cmdBuffer, count, (instances > 0) ? instances : 1, offset, 0);
+}
+
+static void rlvkDrawMesh(int offset, int count, bool indexed, int instances)
+{
+    rlvkDrawMeshInternal(offset, count, indexed, instances, 0, 0);
+}
+
+void rlvkDrawVertexArrayElementsIndirect(unsigned int indirectSsboId, unsigned int offsetBytes)
+{
+    rlvkDrawMeshInternal(0, 0, true, 1, indirectSsboId, offsetBytes);
 }
 
 void rlDrawVertexArray(int offset, int count) { rlvkDrawMesh(offset, count, false, 1); }
@@ -1122,8 +1138,7 @@ void rlUpdateTexture(unsigned int id, int x, int y, int w, int h, int format, co
         if (openFb)
             rlDisableFramebuffer();
 
-        rlvkProfileEndScope();
-        vkCmdEndRenderPass(cmdBuffer);
+        rlvkCloseScopeIfOpen(cmdBuffer);
         vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
                                               VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
                                               .imageMemoryBarrierCount = 1,
@@ -1163,7 +1178,6 @@ void rlUpdateTexture(unsigned int id, int x, int y, int w, int h, int format, co
                                           });
         t->currentLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
-        rlvkResumeSwapchainScope(cmdBuffer);
         if (openFb)
             rlEnableFramebuffer(openFb);
         if (converted)
@@ -1429,6 +1443,8 @@ void rlGenTextureMipmaps(unsigned int id, int w, int h, int format, int *mipmaps
                                    .addressModeU = t->wrapS,
                                    .addressModeV = t->wrapT,
                                    .addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+                                   .anisotropyEnable = (RLVK.Caps.samplerAnisotropy && t->maxAniso > 1.0f) ? VK_TRUE : VK_FALSE,
+                                   .maxAnisotropy = (RLVK.Caps.samplerAnisotropy && t->maxAniso > 1.0f) ? t->maxAniso : 1.0f,
                                    .maxLod = t->mipEnabled ? (f32)(mipCount - 1) : 0.0f,
                                },
                                RLVK_ALLOC, &t->sampler));
@@ -1545,8 +1561,9 @@ unsigned char *rlReadScreenPixels(int width, int height)
     vkBindBufferMemory(RLVK.device, rbBuf, rbMem, 0);
     vkMapMemory(RLVK.device, rbMem, 0, sizeBytes, 0, &rbMapped);
 
-    rlvkProfileEndScope();
-    vkCmdEndRenderPass(cmdBuffer);
+    if (!RLVK.swapchainInitialized)
+        rlvkEnsureScopeOpen();
+    rlvkCloseScopeIfOpen(cmdBuffer);
     rlvkFinishSwapchainImage(cmdBuffer);
 
     vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
@@ -1667,6 +1684,17 @@ bool rlvkSetFramebufferDepthSampleOnDemand(unsigned int fbId, bool enabled)
         (RLVK.frameActive && RLVK.scope.fbSlot == fbId))
         return false;
     f->depthSampleOnDemand = enabled;
+    return true;
+}
+
+bool rlvkSetFramebufferDiscardOnBegin(unsigned int fbId, bool discard)
+{
+    if (!isGpuReady || fbId == 0 || fbId >= RLVK_MAX_FRAMEBUFFER_SLOTS)
+        return false;
+    rlvkFramebufferSlot *f = &RLVK.fbSlots[fbId];
+    if (!f->inUse)
+        return false;
+    f->discardOnBegin = discard;
     return true;
 }
 

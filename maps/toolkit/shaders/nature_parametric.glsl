@@ -17,6 +17,12 @@ uniform vec2 u_tuftFadeRange;
 uniform int u_compactTuftSubmission;
 uniform sampler2D u_visibleTuftIds;
 uniform int u_visibleTuftOffset;
+#ifdef NATURE_GPU_INDIRECT_CAPABLE
+layout(std430, binding = 0) readonly buffer VisibleTuftSsbo {
+    uint b_visibleTuftIds[];
+};
+uniform int u_gpuIndirect;
+#endif
 #endif
 
 // Per-vertex cache to avoid duplicate texture fetches and distance sqrt() calls
@@ -33,6 +39,12 @@ int NatureTuftId()
 {
     if (s_cachedTuftId >= 0) return s_cachedTuftId;
 #ifdef NATURE_VISIBLE_TUFT_LOD
+#ifdef NATURE_GPU_INDIRECT_CAPABLE
+    if (u_gpuIndirect != 0) {
+        s_cachedTuftId = int(b_visibleTuftIds[u_visibleTuftOffset + gl_InstanceID]);
+        return s_cachedTuftId;
+    }
+#endif
     if (u_compactTuftSubmission != 0) {
         int index = u_visibleTuftOffset + gl_InstanceID;
         int texel = index >> 2;
@@ -220,17 +232,17 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
         float tasselTaper = (t > 0.75) ? max(0.22, 1.0 - (t - 0.75) * 3.1) : 1.0;
         profile = stalk * tasselTaper;
     } else {
-        // [VISUAL UPGRADE]: Vuốt thon mượt liên tục nhưng chặn cận dưới ở mức >= 0.28 để ngọn lá không bị sụp xuống kích thước dưới pixel (subpixel needle)
+        // Taper smoothly to a sharp needle tip (0.10 floor resolved cleanly by HDR TAA)
         float sheath = 1.0 + 0.16 * (1.0 - smoothstep(0.0, 0.18, t));
-        float taper = max(0.28, 1.0 - 0.48 * t - 0.24 * t2);
+        float taper = max(0.10, 1.0 - 0.56 * t - 0.34 * t2);
         profile = sheath * taper;
     }
     float halfWidth = p1.w * 0.54 * profile;
 
     float fadeAlpha = 1.0;
 #ifdef NATURE_VISIBLE_TUFT_LOD
-    // Screen-space subpixel clamp (>= ~1.06px at 0.72x render scale) to eliminate tip shimmering
-    float minPxHalfWidth = distToCam * 0.00085;
+    // Subpixel guard halved (0.00042) with HDR TAA resolving fine tips without shimmer
+    float minPxHalfWidth = distToCam * 0.00042;
     halfWidth = max(halfWidth, minPxHalfWidth);
 #elif defined(NATURE_BLADE_POSITION_ONLY)
     // Shadow pass: keep blades >= 1 shadow texel wide so sparse grass casts crisp shadows

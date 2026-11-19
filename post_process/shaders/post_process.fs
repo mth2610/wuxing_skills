@@ -48,6 +48,8 @@ uniform vec4  u_heatHazeParams;     // .x = strength (0 = off), .y = time, .z = 
 
 uniform float u_hueRestore;    // shipping default 0.6 (§12.1); 0 = the old per-channel curve
 uniform float u_shoulderView;  // diagnostic, 0 = off
+uniform vec2  u_sceneTexel;    // 1 / scene resolution
+uniform float u_rcasSharpness; // 0 = off, >0 = 5-tap RCAS sharpening in composite pass
 
 out vec4 finalColor;
 
@@ -114,8 +116,22 @@ void main() {
         }
     }
 
-    // 1. Fetch gốc + Chromatic Aberration
+    // 1. Fetch gốc + optional 5-tap RCAS (when TAA is active) + Chromatic Aberration
     vec4 sceneCol = texture(texture0, uv);
+    if (u_rcasSharpness > 0.001 && u_chromaticEnabled <= 0.5) {
+        vec3 n = texture(texture0, uv + vec2(0.0, -u_sceneTexel.y)).rgb;
+        vec3 s = texture(texture0, uv + vec2(0.0,  u_sceneTexel.y)).rgb;
+        vec3 e = texture(texture0, uv + vec2( u_sceneTexel.x, 0.0)).rgb;
+        vec3 w = texture(texture0, uv + vec2(-u_sceneTexel.x, 0.0)).rgb;
+        vec3 c = max(sceneCol.rgb, vec3(0.0));
+        vec3 minN = min(c, min(min(n, s), min(e, w)));
+        vec3 maxN = max(c, max(max(n, s), max(e, w)));
+        vec3 amp = clamp(min(minN, 2.0 - maxN) / max(maxN, vec3(1e-4)), 0.0, 1.0);
+        float k = -0.18 * clamp(u_rcasSharpness, 0.0, 1.0);
+        vec3 w4 = sqrt(amp) * k;
+        vec3 sharpened = (c + (n + s + e + w) * w4) / max(vec3(1.0) + 4.0 * w4, vec3(1e-4));
+        sceneCol.rgb = clamp(sharpened, minN, maxN);
+    }
     vec2 chromaOffset = vec2(0.0);
     if (u_chromaticEnabled > 0.5) {
         chromaOffset = toCenter * (u_chromaticStrength * distSq * 0.05);

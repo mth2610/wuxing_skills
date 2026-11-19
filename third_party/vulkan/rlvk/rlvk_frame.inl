@@ -354,6 +354,7 @@ static bool rlvkInitLogicalDevice(void)
     RLVK.Caps.pageableMemory = (hasPriority && hasPageable);
     RLVK.Caps.graphicsPipelineLibrary = (hasGpl && hasPipelineLibrary);
     RLVK.Caps.graphicsSsboStores = q2.features.vertexPipelineStoresAndAtomics;
+    RLVK.Caps.samplerAnisotropy = (q2.features.samplerAnisotropy == VK_TRUE);
     // MoltenVK on Intel GPUs: a depth image created with SAMPLED usage silently stops working
     // as a depth ATTACHMENT (test/write no-op, no validation error). Bisected empirically -
     // scripts/run_rlvk_visual_test.sh depth_rt reproduces. 0x8086 = Intel vendor id.
@@ -361,6 +362,7 @@ static bool rlvkInitLogicalDevice(void)
         VkPhysicalDeviceProperties qprops;
         vkGetPhysicalDeviceProperties(RLVK.physicalDevice, &qprops);
         RLVK.Caps.noSampledDepth = hasPortabilitySubset && (qprops.vendorID == 0x8086);
+        RLVK.Caps.maxSamplerAnisotropy = RLVK.Caps.samplerAnisotropy ? qprops.limits.maxSamplerAnisotropy : 1.0f;
     }
     if (RLVK.Caps.noSampledDepth)
         TRACELOG(RL_LOG_INFO, "RLVK: quirk noSampledDepth active (MoltenVK/Intel) - FBO depth textures are not sampleable");
@@ -463,6 +465,7 @@ static bool rlvkInitLogicalDevice(void)
             // wideLines is deliberately NOT requested: every pipeline uses lineWidth 1.0
             // (rlSetLineWidth is stored for rlGetLineWidth but never widens rasterization)
             .fillModeNonSolid = RLVK.Caps.fillModeNonSolid ? VK_TRUE : VK_FALSE,
+            .samplerAnisotropy = RLVK.Caps.samplerAnisotropy ? VK_TRUE : VK_FALSE,
             // Graphics-stage SSBO writes (optional): without it SSBOs are read-only and
             // rlvkRebaseStorageBuffers injects NonWritable to satisfy VUID-RuntimeSpirv-06341
             .vertexPipelineStoresAndAtomics = RLVK.Caps.graphicsSsboStores ? VK_TRUE : VK_FALSE,
