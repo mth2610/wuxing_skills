@@ -8,6 +8,7 @@
 #include "maps/map_manager.h"
 #include "skills/skill_manager.h"
 #include "ui/ui_hub.h"
+#include "raymath.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -339,8 +340,11 @@ void OWQuestNpc_Draw3D(void) {
 
     if (s_steleAgentId >= 0) {
         Vector3 sp = { s_stelePos.x, MapManager_GetGroundHeightAt(s_stelePos.x, s_stelePos.z), s_stelePos.z };
-        DrawCube((Vector3){ sp.x, sp.y + 1.0f, sp.z }, 0.85f, 2.0f, 0.55f, (Color){ 120, 112, 102, 255 });
-        DrawCubeWires((Vector3){ sp.x, sp.y + 1.0f, sp.z }, 0.88f, 2.04f, 0.58f, ORANGE);
+        DrawCylinder(sp, 0.68f, 0.56f, 0.28f, 8, (Color){ 96, 86, 74, 255 });
+        DrawCube((Vector3){ sp.x, sp.y + 1.15f, sp.z }, 0.82f, 1.78f, 0.42f, (Color){ 132, 118, 98, 255 });
+        DrawCube((Vector3){ sp.x, sp.y + 2.08f, sp.z }, 0.94f, 0.16f, 0.52f, (Color){ 162, 142, 110, 255 });
+        DrawSphere((Vector3){ sp.x, sp.y + 1.55f, sp.z + 0.23f }, 0.13f, (Color){ 245, 175, 75, 235 });
+        DrawCylinder((Vector3){ sp.x, sp.y + 0.04f, sp.z }, 0.95f, 1.05f, 0.03f, 16, (Color){ 235, 165, 65, 85 });
     }
 
     const DaTauQuest *q = DaTau_GetCurrent();
@@ -371,22 +375,43 @@ void OWQuestNpc_DrawHUD(const Agent *pa, Camera3D cam) {
     int sw = GetScreenWidth();
     const DaTauQuest *q = DaTau_GetCurrent();
 
+    Vector3 camFwd = Vector3Normalize(Vector3Subtract(cam.target, cam.position));
+    const float maxTagDistSq = 65.0f * 65.0f;
+
     Vector3 dp = OW_GetDaTauNpcPos();
-    Vector2 sp = GetWorldToScreen((Vector3){ dp.x, dp.y + 2.3f, dp.z }, cam);
-    const char *tag = (q && q->phase == DATAU_PHASE_READY_RETURN) ? "[?] DA TAU (TRA NV)" :
-                      (q && q->phase == DATAU_PHASE_WAIT_ACCEPT)  ? "[!] DA TAU (NHAN NV)" : "DA TAU";
-    Color tc = (q && q->phase != DATAU_PHASE_IN_PROGRESS) ? GOLD : LIGHTGRAY;
-    int tw = MeasureText(tag, 13);
-    DrawRectangle((int)sp.x - tw / 2 - 6, (int)sp.y - 10, tw + 12, 20, (Color){ 16, 20, 28, 215 });
-    DrawText(tag, (int)sp.x - tw / 2, (int)sp.y - 7, 13, tc);
+    Vector3 dpLabel = { dp.x, dp.y + 2.3f, dp.z };
+    Vector3 toDp = Vector3Subtract(dpLabel, cam.position);
+    float dpDistSq = Vector3LengthSqr(toDp);
+    if (dpDistSq < maxTagDistSq && Vector3DotProduct(camFwd, toDp) > 0.0f) {
+        float dist = sqrtf(dpDistSq);
+        float alphaScale = (dist <= 45.0f) ? 1.0f : (1.0f - (dist - 45.0f) / 20.0f);
+        if (alphaScale > 0.05f) {
+            Vector2 sp = GetWorldToScreen(dpLabel, cam);
+            const char *tag = (q && q->phase == DATAU_PHASE_READY_RETURN) ? "[?] DA TAU (TRA NV)" :
+                              (q && q->phase == DATAU_PHASE_WAIT_ACCEPT)  ? "[!] DA TAU (NHAN NV)" : "DA TAU";
+            Color tc = (q && q->phase != DATAU_PHASE_IN_PROGRESS) ? GOLD : LIGHTGRAY;
+            tc.a = (unsigned char)(255.0f * alphaScale);
+            int tw = MeasureText(tag, 13);
+            DrawRectangle((int)sp.x - tw / 2 - 6, (int)sp.y - 10, tw + 12, 20, (Color){ 16, 20, 28, (unsigned char)(215.0f * alphaScale) });
+            DrawText(tag, (int)sp.x - tw / 2, (int)sp.y - 7, 13, tc);
+        }
+    }
 
     Vector3 ap = s_alchemistPos;
     ap.y = MapManager_GetGroundHeightAt(ap.x, ap.z) + 2.3f;
-    Vector2 asp = GetWorldToScreen(ap, cam);
-    const char *atag = UI_IsTouchControlsEnabled() ? "LUYEN DAN SU" : "LUYEN DAN SU [F]";
-    int atw = MeasureText(atag, 12);
-    DrawRectangle((int)asp.x - atw / 2 - 6, (int)asp.y - 10, atw + 12, 18, (Color){ 16, 26, 22, 210 });
-    DrawText(atag, (int)asp.x - atw / 2, (int)asp.y - 7, 12, (Color){ 140, 240, 175, 255 });
+    Vector3 toAp = Vector3Subtract(ap, cam.position);
+    float apDistSq = Vector3LengthSqr(toAp);
+    if (apDistSq < maxTagDistSq && Vector3DotProduct(camFwd, toAp) > 0.0f) {
+        float dist = sqrtf(apDistSq);
+        float alphaScale = (dist <= 45.0f) ? 1.0f : (1.0f - (dist - 45.0f) / 20.0f);
+        if (alphaScale > 0.05f) {
+            Vector2 asp = GetWorldToScreen(ap, cam);
+            const char *atag = UI_IsTouchControlsEnabled() ? "LUYEN DAN SU" : "LUYEN DAN SU [F]";
+            int atw = MeasureText(atag, 12);
+            DrawRectangle((int)asp.x - atw / 2 - 6, (int)asp.y - 10, atw + 12, 18, (Color){ 16, 26, 22, (unsigned char)(210.0f * alphaScale) });
+            DrawText(atag, (int)asp.x - atw / 2, (int)asp.y - 7, 12, (Color){ 140, 240, 175, (unsigned char)(255.0f * alphaScale) });
+        }
+    }
 
     if (s_npcDialogOpen && q) {
         Rectangle db = { (float)sw / 2 - 250.0f, 126.0f, 500.0f, 212.0f };

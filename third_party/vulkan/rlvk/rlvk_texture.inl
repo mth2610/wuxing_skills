@@ -498,7 +498,7 @@ static void rlvkDrawMesh(int offset, int count, bool indexed, int instances)
                    (RLVK.bufferSlots[a->tangentSlot].buffer != VK_NULL_HANDLE) &&
                    (shader->attribLocs[RLVK_ATTRIB_TANGENT] >= 0);
     bool wantBones = (shader->attribLocs[RLVK_ATTRIB_BONEIDS] >= 0) && (shader->attribLocs[RLVK_ATTRIB_BONEWEIGHTS] >= 0);
-    bool wantInst = (instances > 1) && a->instSlot && (a->instSlot < RLVK_MAX_BUFFER_SLOTS) &&
+    bool wantInst = (instances >= 1) && a->instSlot && (a->instSlot < RLVK_MAX_BUFFER_SLOTS) &&
                     (RLVK.bufferSlots[a->instSlot].buffer != VK_NULL_HANDLE) &&
                     (shader->attribLocs[RLVK_ATTRIB_INSTANCE_TX] >= 0);
     bool realBones = (a->boneIdSlot != 0) && (a->boneWtSlot != 0) &&

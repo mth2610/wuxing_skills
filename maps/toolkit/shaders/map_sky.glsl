@@ -101,13 +101,13 @@ vec3 MapSkyRadiance(vec3 ray, vec3 sun, vec3 ambient, vec3 haze, vec3 direct)
         }
 
         // 2-layer procedural sunset cirrus/cumulus clouds above horizon
-        if (ray.y > 0.035) {
-            float invY = 1.0 / max(ray.y, 0.06);
+        if (ray.y > 0.012) {
+            float invY = 1.0 / max(ray.y, 0.055);
             vec2 cUV = ray.xz * invY * 0.42;
             float w1 = sin(cUV.x * 2.1 + cos(cUV.y * 1.7)) * cos(cUV.y * 1.9 - sin(cUV.x * 1.4));
             float w2 = sin(cUV.x * 4.7 - cUV.y * 3.8 + 1.2) * 0.5 + 0.5;
-            float cloudShape = smoothstep(0.18, 0.72, (w1 * 0.5 + 0.5) * 0.65 + w2 * 0.35);
-            float cloudHorizonFade = smoothstep(0.035, 0.18, ray.y) * (1.0 - smoothstep(0.45, 0.92, ray.y));
+            float cloudShape = smoothstep(0.16, 0.72, (w1 * 0.5 + 0.5) * 0.65 + w2 * 0.35);
+            float cloudHorizonFade = smoothstep(0.012, 0.14, ray.y) * (1.0 - smoothstep(0.45, 0.92, ray.y));
             float sunEdge = smoothstep(-0.3, 0.95, dot(ray, sun));
             vec3 cloudDark = mix(ambient * 0.75 + vec3(0.16, 0.14, 0.22), haze * 0.85, 0.45);
             vec3 cloudLit = direct * vec3(1.15, 0.88, 0.62);

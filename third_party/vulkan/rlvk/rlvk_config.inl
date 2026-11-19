@@ -54,7 +54,7 @@
 #endif
 // Deferred-destruction queue depth per frame-in-flight (objects released mid-recording)
 #ifndef RLVK_MAX_DEAD_RESOURCES
-#define RLVK_MAX_DEAD_RESOURCES 256
+#define RLVK_MAX_DEAD_RESOURCES 512
 #endif
 #ifndef RLVK_MAX_SWAPCHAIN_IMAGES
 #define RLVK_MAX_SWAPCHAIN_IMAGES 8

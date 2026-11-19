@@ -1652,10 +1652,10 @@ void LiquidSWE_Draw3D(Camera3D cam)
                     float fx0 = SWE_SmoothStep(0.05f, 0.22f, nx0) * SWE_SmoothStep(0.95f, 0.78f, nx0);
                     float fx1 = SWE_SmoothStep(0.05f, 0.22f, nx1) * SWE_SmoothStep(0.95f, 0.78f, nx1);
 
-                    Vector3 p00 = SWE_CellWorldXZ(inst, ix, iz);     p00.y = inst->b[iz][ix] + 0.018f;
-                    Vector3 p10 = SWE_CellWorldXZ(inst, ix + 1, iz); p10.y = inst->b[iz][ix + 1] + 0.018f;
-                    Vector3 p01 = SWE_CellWorldXZ(inst, ix, iz + 1); p01.y = inst->b[iz + 1][ix] + 0.018f;
-                    Vector3 p11 = SWE_CellWorldXZ(inst, ix + 1, iz + 1); p11.y = inst->b[iz + 1][ix + 1] + 0.018f;
+                    Vector3 p00 = SWE_CellWorldXZ(inst, ix, iz);     p00.y = inst->b[iz][ix] + 0.080f;
+                    Vector3 p10 = SWE_CellWorldXZ(inst, ix + 1, iz); p10.y = inst->b[iz][ix + 1] + 0.080f;
+                    Vector3 p01 = SWE_CellWorldXZ(inst, ix, iz + 1); p01.y = inst->b[iz + 1][ix] + 0.080f;
+                    Vector3 p11 = SWE_CellWorldXZ(inst, ix + 1, iz + 1); p11.y = inst->b[iz + 1][ix + 1] + 0.080f;
 
                     const Vector3 wPos[4] = {p00, p10, p01, p11};
                     const float ws[4] = {w00 * fx0 * fz0, w10 * fx1 * fz0, w01 * fx0 * fz1, w11 * fx1 * fz1};

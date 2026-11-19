@@ -212,6 +212,8 @@ void main()
                          + (1.0 - smoothstep(-1.60, -0.75, fragWorldPos.y))
                          * (1.0 - smoothstep(0.02, 0.38, shoreFactor));
     outerCliffElev = clamp(outerCliffElev, 0.0, 1.0);
+    // Dampen single-quad geometric face slope on interior arid dunes to prevent 1m square rock blotches
+    slope = mix(slope, max(smoothSlope, geoSlope * 0.55), u_aridBiomeFactor * (1.0 - outerCliffElev));
 
     // ---- 6. Soil Detail ----
     bool soilPossible = distToPath < PATH_INFLUENCE
@@ -226,11 +228,12 @@ void main()
     vec3 dirtDetail = vec3(0.5);
     if (soilPossible) {
         colorDirt = textureLod(texPath, tiledUV * 0.85, mipTiled);
-        if (nearDualScale && u_aridBiomeFactor < 0.5) {
+        if (nearDualScale) {
             vec2 broadDirtUV = vec2(-tiledUV.y * 0.31 + 8.5, tiledUV.x * 0.31 + 14.2);
             vec3 broadDirt = textureLod(texPath, broadDirtUV, mipTiled).rgb;
             vec3 broadMod = clamp(broadDirt / max(dot(broadDirt, vec3(0.3333)), 0.18), vec3(0.80), vec3(1.22));
-            dirtDetail = clamp(colorDirt.rgb * mix(vec3(1.0), broadMod, 0.45 * dualScaleFade), vec3(0.0), vec3(1.0));
+            float broadWeight = mix(0.45, 0.32, u_aridBiomeFactor);
+            dirtDetail = clamp(colorDirt.rgb * mix(vec3(1.0), broadMod, broadWeight * dualScaleFade), vec3(0.0), vec3(1.0));
         } else {
             dirtDetail = colorDirt.rgb;
         }
@@ -678,9 +681,10 @@ void main()
             //    Golden-sand matrix with embedded quartzite pebbles
             vec3 exposedSandBar = mix(sandBase, pebbleMineral, gravelHighlight * 0.68 * shingleBar) * gravelAO;
 
-            // 3. Upper-Bank Moss & Loam Fringe (or dry gravel/crust in arid biome)
-            vec3 bankMossTone = mix(mix(vec3(0.15, 0.25, 0.09), vec3(0.23, 0.35, 0.13), dirtDetail.r), u_aridLichenColor, u_aridBiomeFactor);
-            vec3 bankLoamTone = mix(mix(vec3(0.24, 0.20, 0.15), vec3(0.33, 0.28, 0.21), dirtDetail.g), u_aridGrusColor, u_aridBiomeFactor);
+            // 3. Upper-Bank Moss & Loam Fringe (lush oasis emerald fringe even in arid desert)
+            vec3 aridOasisMoss = vec3(0.24, 0.34, 0.14);
+            vec3 bankMossTone = mix(mix(vec3(0.15, 0.25, 0.09), vec3(0.23, 0.35, 0.13), dirtDetail.r), aridOasisMoss, u_aridBiomeFactor);
+            vec3 bankLoamTone = mix(mix(vec3(0.24, 0.20, 0.15), vec3(0.33, 0.28, 0.21), dirtDetail.g), u_aridGrusColor * 0.96, u_aridBiomeFactor);
             vec3 upperBankFringe = mix(bankLoamTone, bankMossTone, 0.52 + 0.35 * microSediment.g) * (0.90 + 0.25 * colorDirt.rgb);
 
             float bankDist = max(variableShore, 0.0);
@@ -716,24 +720,25 @@ void main()
     }
 
     float rockContactAO = 1.0;
-    if (highDetailGround && u_groundDebrisEnabled != 0 && camDistSqXZ < 1024.0) {
-        float debrisDistFade = 1.0 - smoothstep(576.0, 1024.0, camDistSqXZ);
+    float debrisMaxDistSq = mix(1024.0, 25600.0, u_aridBiomeFactor);
+    if (highDetailGround && u_groundDebrisEnabled != 0 && camDistSqXZ < debrisMaxDistSq) {
+        float debrisDistFade = 1.0 - smoothstep(debrisMaxDistSq * 0.56, debrisMaxDistSq, camDistSqXZ);
         vec4 debris = textureLod(u_groundDebris, fragTexCoord, 0.0);
         float fineGrain = (soilPossible) ? dirtDetail.r : fineGrassLuma;
         float grassDebrisAtten = 1.0 - wGrass * 0.72;
 
         if (debris.b > 0.02) {
-            float rawRockAO = 1.0 - smoothstep(0.18, 0.90, debris.b) * mix(0.68, 0.25, u_aridBiomeFactor) * debrisDistFade;
+            float rawRockAO = 1.0 - smoothstep(0.18, 0.90, debris.b) * mix(0.68, 0.36, u_aridBiomeFactor) * debrisDistFade;
             rockContactAO = mix(rawRockAO, 1.0, clamp(lakeDepthFactor * 2.0, 0.0, 1.0));
         }
 
         float dryWoodlandMask = (1.0 - clamp(shoreFactor + streamWet, 0.0, 1.0)) * debrisDistFade * grassDebrisAtten;
         if (debris.r > 0.04 && dryWoodlandMask > 0.05) {
             vec3 lushLeafCol = mix(vec3(0.25, 0.18, 0.09), vec3(0.42, 0.29, 0.14), fineGrain);
-            vec3 redLateriteCol = mix(vec3(0.56, 0.42, 0.30), vec3(0.64, 0.48, 0.34), fineGrain);
+            vec3 redLateriteCol = mix(vec3(0.56, 0.34, 0.20), vec3(0.68, 0.42, 0.26), fineGrain);
             vec3 debrisRCol = mix(lushLeafCol, redLateriteCol, u_aridBiomeFactor);
             float leafMask = smoothstep(0.10, 0.58, debris.r) * (0.40 + 0.60 * fineGrain) * dryWoodlandMask;
-            blendedAlbedo = mix(blendedAlbedo, debrisRCol, leafMask * mix(0.36, 0.22, u_aridBiomeFactor));
+            blendedAlbedo = mix(blendedAlbedo, debrisRCol, leafMask * mix(0.36, 0.34, u_aridBiomeFactor));
         }
 
         // Gate scree gravel by steep slope in lush maps; in arid mode also show rock-apron grus on flats
@@ -744,15 +749,15 @@ void main()
             vec3 aridGrus   = u_aridGrusColor * (0.88 + 0.22 * fineGrain);
             vec3 gravelColor = mix(lushGravel, aridGrus, u_aridBiomeFactor);
             float gravelMask = smoothstep(0.16, 0.68, debris.g) * slopeGate * grassDebrisAtten * debrisDistFade;
-            blendedAlbedo = mix(blendedAlbedo, gravelColor, gravelMask * mix(0.40, 0.34, u_aridBiomeFactor));
+            blendedAlbedo = mix(blendedAlbedo, gravelColor, gravelMask * mix(0.40, 0.38, u_aridBiomeFactor));
         }
 
         if (debris.a > 0.04) {
             vec3 lushMoss = mix(vec3(0.18, 0.30, 0.10), vec3(0.28, 0.42, 0.14), fineGrain);
-            vec3 aridHardpan = u_aridHardpanColor * (1.12 + 0.18 * fineGrain);
+            vec3 aridHardpan = u_aridHardpanColor * (1.16 + 0.20 * fineGrain);
             vec3 mossColor = mix(lushMoss, aridHardpan, u_aridBiomeFactor);
             float mossMask = smoothstep(0.12, 0.60, debris.a) * debrisDistFade * grassDebrisAtten;
-            blendedAlbedo = mix(blendedAlbedo, mossColor, mossMask * mix(0.28, 0.22, u_aridBiomeFactor));
+            blendedAlbedo = mix(blendedAlbedo, mossColor, mossMask * mix(0.28, 0.28, u_aridBiomeFactor));
         }
     }
 
@@ -769,7 +774,7 @@ void main()
 
     // ---- 10. Tangent Frame & Specular AA ----
     vec4 soilMaterial = vec4(0.5, 0.5, 1.0, 0.8);
-    if (highDetailGround && hasSoil && camDistSqXZ < 400.0 && (u_aridBiomeFactor < 0.5 || wCliff > 0.05)) {
+    if (highDetailGround && hasSoil && camDistSqXZ < 400.0) {
         float soilMatFade = 1.0 - smoothstep(225.0, 400.0, camDistSqXZ);
         vec4 sampledSoilMat = textureLod(texSoilMaterial, tiledUV * 0.85, mipTiled);
         soilMaterial = mix(soilMaterial, sampledSoilMat, soilMatFade);
@@ -840,10 +845,13 @@ void main()
             nRaw += vec3(gradDir.x, 0.0, gradDir.y) * (waveSlope * 0.15 * rippleGate);
             blendedAlbedo *= (1.0 - waveTrough * 0.048 * rippleGate);
 
-            // Fine mineral sand grain within 12m
+            // Fine mineral sand grain within 12m (Mali-safe sin-less hash)
             if (camDistSqXZ < 144.0) {
                 float grainFade = (1.0 - camDistSqXZ * (1.0 / 144.0)) * detailResolve * u_aridBiomeFactor;
-                float g0 = fract(sin(dot(floor(fragWorldPos.xz * 48.0), vec2(12.9898, 78.233))) * 43758.5453) - 0.5;
+                vec2 gCell = floor(fragWorldPos.xz * 48.0);
+                vec2 gH = fract(gCell * vec2(0.1031, 0.1030));
+                gH += dot(gH, gH.yx + 33.33);
+                float g0 = fract((gH.x + gH.y) * gH.x) - 0.5;
                 blendedAlbedo *= (1.0 + g0 * 0.032 * grainFade);
             }
         }
@@ -928,20 +936,19 @@ void main()
     vec3 drySpec = actualLight * specGGX * (NdotL_clamped * sunVisibility);
     groundLit += drySpec * (0.85 - wGrass * 0.65);
 
-    // Quartz / mica grain sparkle on sunlit desert grus & granite
+    // Quartz / mica grain sparkle on sunlit desert grus & granite (Mali-safe sin-less hash)
     if (u_aridBiomeFactor > 0.05 && sunVisibility > 0.01 && camDistSqXZ < 400.0 && NdotH > 0.72) {
         vec2 glintUV = fragWorldPos.xz * 26.0;
         vec2 cell = floor(glintUV);
         vec2 cellFrac = fract(glintUV);
-        vec2 cellRand = fract(sin(vec2(
-            dot(cell, vec2(127.1, 311.7)),
-            dot(cell, vec2(269.5, 183.3))
-        )) * 43758.5453);
+        vec3 q3 = fract(cell.xyx * vec3(0.1031, 0.1030, 0.0973));
+        q3 += dot(q3, q3.yzx + 33.33);
+        vec2 cellRand = fract((q3.xx + q3.yz) * q3.zy);
         vec2 jitterCenter = 0.18 + 0.64 * cellRand;
         float grainRadius = 0.10 + 0.12 * fract(cellRand.x * 17.3 + cellRand.y * 31.7);
         float distToGrain = length(cellFrac - jitterCenter);
         float grainMask = 1.0 - smoothstep(grainRadius * 0.35, grainRadius, distToGrain);
-        float quartzHash = fract(sin(dot(cell, vec2(12.9898, 78.233))) * 43758.5453);
+        float quartzHash = fract((q3.x + q3.z) * q3.y);
         vec2 fw = fwidth(glintUV);
         float pixelFootprint = max(fw.x, fw.y);
         float aaFade = 1.0 - smoothstep(0.35, 0.85, pixelFootprint);
@@ -987,11 +994,12 @@ void main()
         groundLit = mix(groundLit, cloudVeilColor, veil);
     }
 
-    // Gentle golden-hour aerial perspective over distant hills (35m..145m)
+    // Gentle golden-hour aerial perspective over distant hills (35m..320m for MOBA & OW)
     if (camDistSqXZ > 1225.0) {
-        float aerialFactor = smoothstep(1225.0, 21025.0, camDistSqXZ) * (1.0 - smoothstep(2.5, 11.5, fragWorldPos.y) * 0.35);
+        float aerialEndSq = mix(21025.0, 102400.0, u_aridBiomeFactor);
+        float aerialFactor = smoothstep(1225.0, aerialEndSq, camDistSqXZ) * (1.0 - smoothstep(2.5, 11.5, fragWorldPos.y) * 0.35);
         vec3 horizonAerial = actualAmbient * vec3(0.88, 0.84, 0.78) + actualLight * vec3(0.28, 0.22, 0.16);
-        groundLit = mix(groundLit, horizonAerial, aerialFactor * 0.28);
+        groundLit = mix(groundLit, horizonAerial, aerialFactor * mix(0.28, 0.36, u_aridBiomeFactor));
     }
 
     if (u_aridBiomeFactor < 0.5 && fragWorldPos.y < -1.80) {

@@ -5,8 +5,10 @@
 #include "character/player_profile.h"
 #include "entities/entities.h"
 #include "environment/atmosphere.h"
+#include "environment/environment_system.h"
 #include "environment/wind/wind_system.h"
 #include "maps/map_manager.h"
+#include "post_process/post_fx.h"
 #include "skills/skill_manager.h"
 #include "ui/ui.h"
 #include "ui/ui_theme.h"
@@ -52,9 +54,43 @@ static void ClearDrops(void) {
     memset(s_drops, 0, sizeof(s_drops));
 }
 
+static EnvFogConfig s_baseFog = { 0 };
+static bool         s_hasBaseFog = false;
+
 static void ApplyWeatherEnvironment(const OWWeatherProfileDef *p) {
     if (!p) return;
     Atmosphere_SetMode(p->atmoMode);
+
+    if (!s_hasBaseFog) {
+        s_baseFog = Environment_GetFogConfig();
+        s_hasBaseFog = true;
+    }
+
+    EnvFogConfig fog = s_baseFog;
+    if (p->type == OW_WEATHER_STORM) {
+        // Sandstorm / element storm: dense golden-ochre dust veil + strong heat shimmer
+        fog.enabled = true;
+        fog.color = (Color){ 216, 162, 102, 255 };
+        fog.start = fminf(s_baseFog.start, 24.0f);
+        fog.end   = fminf(s_baseFog.end,   145.0f);
+        fog.density = fmaxf(s_baseFog.density, 0.011f);
+        PostFX_SetHeatHaze(0.0010f, 0.50f, 0.92f);
+    } else if (p->type == OW_WEATHER_SPIRIT_PHENOM) {
+        // Mirage / Spirit tide: shimmering horizon haze + warm amber lift
+        fog.color = (Color){ 238, 198, 148, 255 };
+        fog.start = fminf(s_baseFog.start, 40.0f);
+        fog.end   = fminf(s_baseFog.end,   195.0f);
+        PostFX_SetHeatHaze(0.0016f, 0.48f, 0.92f);
+    } else if (p->type == OW_WEATHER_CATACLYSM) {
+        // Meteor / solar cataclysm: fiery horizon tint + mid shimmer
+        fog.color = (Color){ 228, 138, 92, 255 };
+        fog.start = fminf(s_baseFog.start, 35.0f);
+        fog.end   = fminf(s_baseFog.end,   180.0f);
+        PostFX_SetHeatHaze(0.0012f, 0.50f, 0.92f);
+    } else {
+        PostFX_SetHeatHaze(0.0f, 0.0f, 0.0f);
+    }
+    Environment_SetFogConfig(fog);
 
     WindMacroConfig cfg = Wind_GetMacro();
     float len = sqrtf(p->windDirection.x * p->windDirection.x + p->windDirection.y * p->windDirection.y);
@@ -143,6 +179,11 @@ void OWWeather_Init(const OWRealmDef *realm) {
 }
 
 void OWWeather_Clear(void) {
+    if (s_hasBaseFog) {
+        Environment_SetFogConfig(s_baseFog);
+        s_hasBaseFog = false;
+    }
+    PostFX_SetHeatHaze(0.0f, 0.0f, 0.0f);
     memset(s_profiles, 0, sizeof(s_profiles));
     s_profileCount   = 0;
     s_currentIdx     = 0;

@@ -52,7 +52,9 @@ static int s_cliffLocAmbientColor = -1;
 static int s_cliffLocViewPos = -1;
 static int s_cliffLocHazeColor = -1;
 static int s_cliffLocAridMode = -1;
+static int s_cliffLocSeaLevel = -1;
 static float s_cliffAridMode = 0.0f;
+static float s_cliffSeaLevel = -1.25f;
 
 static void Cliff_EnsureShaderLocs(Shader shader)
 {
@@ -66,6 +68,7 @@ static void Cliff_EnsureShaderLocs(Shader shader)
     s_cliffLocViewPos = GetShaderLocation(shader, "u_viewPos");
     s_cliffLocHazeColor = GetShaderLocation(shader, "u_hazeColor");
     s_cliffLocAridMode = GetShaderLocation(shader, "u_cliffAridMode");
+    s_cliffLocSeaLevel = GetShaderLocation(shader, "u_seaLevel");
     s_cliffCachedShaderId = shader.id;
 }
 
@@ -224,6 +227,10 @@ static void Cliff_UpdateLighting(Shader shader, Camera3D cam)
     {
         SetShaderValue(shader, s_cliffLocAridMode, &s_cliffAridMode, SHADER_UNIFORM_FLOAT);
     }
+    if (s_cliffLocSeaLevel >= 0)
+    {
+        SetShaderValue(shader, s_cliffLocSeaLevel, &s_cliffSeaLevel, SHADER_UNIFORM_FLOAT);
+    }
 
     MapShadow_UpdateShader(shader);
     EndShaderMode();
@@ -232,6 +239,11 @@ static void Cliff_UpdateLighting(Shader shader, Camera3D cam)
 void MapProp_SetCliffAridMode(float aridMode)
 {
     s_cliffAridMode = aridMode;
+}
+
+void MapProp_SetCliffSeaLevel(float seaLevelY)
+{
+    s_cliffSeaLevel = seaLevelY;
 }
 
 // ── Ordered coast contour via marching squares ─────────────────────────────
@@ -294,18 +306,28 @@ static int Cliff_BuildCoastLoop(const MapGroundSurface *ground, Vector3 mapCente
         return 0;
 
     float minX = 1e9f, maxX = -1e9f, minZ = 1e9f, maxZ = -1e9f;
-    for (int v = 0; v < mesh->vertexCount; v++)
+    if (ground->lookup.hfPacked16 && ground->lookup.hfWidth > 2.0f && ground->lookup.hfDepth > 2.0f)
     {
-        float x = mesh->vertices[v * 3 + 0];
-        float z = mesh->vertices[v * 3 + 2];
-        if (x < minX)
-            minX = x;
-        if (x > maxX)
-            maxX = x;
-        if (z < minZ)
-            minZ = z;
-        if (z > maxZ)
-            maxZ = z;
+        minX = 0.0f;
+        maxX = ground->lookup.hfWidth;
+        minZ = 0.0f;
+        maxZ = ground->lookup.hfDepth;
+    }
+    else
+    {
+        for (int v = 0; v < mesh->vertexCount; v++)
+        {
+            float x = mesh->vertices[v * 3 + 0];
+            float z = mesh->vertices[v * 3 + 2];
+            if (x < minX)
+                minX = x;
+            if (x > maxX)
+                maxX = x;
+            if (z < minZ)
+                minZ = z;
+            if (z > maxZ)
+                maxZ = z;
+        }
     }
     float width = maxX - minX, depth = maxZ - minZ;
     if (width < 2.0f || depth < 2.0f)
@@ -587,10 +609,13 @@ static Vector3 Cliff_FindLip(const MapGroundSurface *ground, Vector3 mapCenter,
                              Vector3 contourPoint, Vector2 inward, float contourY)
 {
     (void)contourY;
-    const float step = 0.18f;
+    float cellW = (ground->lookup.hfPacked16 && ground->lookup.hfW > 1)
+                      ? (ground->lookup.hfWidth / (float)(ground->lookup.hfW - 1))
+                      : 1.0f;
+    const float step = fmaxf(0.18f, cellW * 0.35f);
     Vector3 best = contourPoint;
     float bestY = -1e9f;
-    for (int k = 1; k <= 16; k++)
+    for (int k = 1; k <= 24; k++)
     {
         float d = (float)k * step;
         Vector3 p, n;
@@ -616,6 +641,8 @@ static void Cliff_ConformGroundBoundary(MapGroundSurface *ground, Vector3 mapCen
                                         const Vector3 *rimPos, int M)
 {
     if (!ground || !ground->ready || ground->model.meshCount < 1 || !rimPos || M < 3)
+        return;
+    if (ground->lookup.hfPacked16 || ground->model.meshes[0].vertexCount <= 16)
         return;
     Mesh *mesh = &ground->model.meshes[0];
     if (!mesh->vertices || !mesh->indices || mesh->triangleCount < 1)
@@ -871,7 +898,7 @@ static void Cliff_ConformGroundBoundary(MapGroundSurface *ground, Vector3 mapCen
 
 MapCliffSkirt MapProp_CreateCliffSkirt(const MapGroundSurface *ground, Vector3 mapCenter, float sliceHeight, float bottomY)
 {
-    (void)bottomY;
+    float depthScale = (bottomY < -26.0f) ? (fabsf(bottomY) / 26.0f) : 1.0f;
     MapCliffSkirt cliff = {0};
     if (!ground || !ground->ready)
         return cliff;
@@ -1135,16 +1162,16 @@ MapCliffSkirt MapProp_CreateCliffSkirt(const MapGroundSurface *ground, Vector3 m
     {
         const CliffRowProfile *rp = &kCliffRowProfiles[r];
         float spacing = (r + 1 < CLIFF_ROW_COUNT)
-                            ? (kCliffRowProfiles[r + 1].depth - rp->depth)
-                            : (rp->depth - kCliffRowProfiles[r - 1].depth);
-        float tiltAmp = fminf(0.34f, spacing * 0.60f);
+                            ? ((kCliffRowProfiles[r + 1].depth - rp->depth) * depthScale)
+                            : ((rp->depth - kCliffRowProfiles[r - 1].depth) * depthScale);
+        float tiltAmp = fminf(0.34f * depthScale, spacing * 0.60f);
         for (int i = 0; i < M; i++)
         {
             float s = colArcLen[i];
             float strataTilt = (sinf(s * 0.024f + (float)r * 0.85f) * 0.62f +
                                 (Cliff_Noise1(s * 0.09f + (float)r * 3.7f, 17 + r) - 0.5f) * 0.75f) *
                                tiltAmp;
-            float depth = rp->depth + strataTilt;
+            float depth = rp->depth * depthScale + strataTilt;
             if (depth < 0.0f)
                 depth = 0.0f;
 
@@ -1200,6 +1227,8 @@ MapCliffSkirt MapProp_CreateCliffSkirt(const MapGroundSurface *ground, Vector3 m
             float lateralShear = (Cliff_Noise1(s * 0.10f + (float)r * 0.75f, 137) - 0.5f) * 0.56f * rp->noise * bayDamp;
 
             float outTotal = d + relief + rp->out * bayDamp;
+            if (r >= 1 && r <= 7 && outTotal < 0.08f)
+                outTotal = 0.08f;
 
             Vector3 vPos = {
                 rimPos[i].x + rimNorm[i].x * outTotal + rimTan.x * lateralShear,
@@ -1367,9 +1396,18 @@ MapCliffSkirt MapProp_CreateCliffSkirt(const MapGroundSurface *ground, Vector3 m
         VFXLight_RegisterShader(cliff.shader);
     }
 
-    Texture2D diffTex = MapLoadMippedTexture("assets/textures/rock_diffuse.png", TEXTURE_WRAP_REPEAT);
-    Texture2D normTex = MapLoadMippedTexture("assets/textures/rock_normal.png", TEXTURE_WRAP_REPEAT);
-    Texture2D roughTex = MapLoadMippedTexture("assets/textures/rock_roughness.png", TEXTURE_WRAP_REPEAT);
+    const char *cliffDiffPath = (s_cliffAridMode > 0.5f && FileExists("assets/textures/rocks/granite_diffuse.png"))
+                                    ? "assets/textures/rocks/granite_diffuse.png"
+                                    : "assets/textures/rock_diffuse.png";
+    const char *cliffNormPath = (s_cliffAridMode > 0.5f && FileExists("assets/textures/rocks/granite_normal.png"))
+                                    ? "assets/textures/rocks/granite_normal.png"
+                                    : "assets/textures/rock_normal.png";
+    const char *cliffRoughPath = (s_cliffAridMode > 0.5f && FileExists("assets/textures/rocks/granite_roughness.png"))
+                                     ? "assets/textures/rocks/granite_roughness.png"
+                                     : "assets/textures/rock_roughness.png";
+    Texture2D diffTex = MapLoadMippedTexture(cliffDiffPath, TEXTURE_WRAP_REPEAT);
+    Texture2D normTex = MapLoadMippedTexture(cliffNormPath, TEXTURE_WRAP_REPEAT);
+    Texture2D roughTex = MapLoadMippedTexture(cliffRoughPath, TEXTURE_WRAP_REPEAT);
     Texture2D cloudNoise = Environment_GetCloudShadowFrame().noiseTexture;
 
     cliff.chunkCount = numChunks;

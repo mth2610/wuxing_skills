@@ -149,6 +149,7 @@ typedef struct
 void MapProp_SetGroundBiomeProfile(const MapGroundBiomeProfile *profile);
 void MapProp_SetRockAridMode(float aridMode);
 void MapProp_SetCliffAridMode(float aridMode);
+void MapProp_SetCliffSeaLevel(float seaLevelY);
 void MapProp_UnloadGround(MapGroundSurface *ground);
 float MapProp_SampleGroundHeight(const MapGroundSurface *ground, Vector3 worldCenter, float x, float z);
 bool MapProp_SampleGroundSurface(const MapGroundSurface *ground, Vector3 worldCenter,
@@ -232,9 +233,14 @@ typedef struct
 {
     MapRockSet models[MAP_ROCK_ARCHETYPE_COUNT];
     MapRockSet variants[MAP_ROCK_ARCHETYPE_COUNT][MAP_ROCK_VARIANTS_PER_ARCHETYPE - 1];
+    MapRockSet farModels[MAP_ROCK_ARCHETYPE_COUNT];
     MapRockSet boulders;
     MapRockSet crags;
     MapRockSet riverStones;
+    char fallbackDiffuse[256];
+    char fallbackNormal[256];
+    char fallbackRoughness[256];
+    bool hasNormalRoughness;
     MapRockItem *items;
     int count;
     int capacity;

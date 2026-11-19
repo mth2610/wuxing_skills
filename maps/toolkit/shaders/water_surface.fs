@@ -79,7 +79,9 @@ vec3 RainSplash(vec2 xz, float t)
     vec2 p = xz * 1.48;
     vec2 id = floor(p);
     vec2 f = fract(p) - 0.5;
-    float h = fract(sin(dot(id, vec2(127.1, 311.7))) * 43758.5453);
+    vec2 p2 = fract(id * vec2(0.1031, 0.1030));
+    p2 += dot(p2, p2.yx + 33.33);
+    float h = fract((p2.x + p2.y) * p2.x);
     float phase = fract(t * 1.95 + h * 6.2831853);
     float d = length(f);
     float ring = smoothstep(0.085, 0.0, abs(d - phase * 0.48)) * (1.0 - phase);
@@ -276,9 +278,11 @@ void main()
     vec2 oceanShoreDir = vec2(0.0);
     float oceanSurfCrest = 0.0;
     if (isOcean) {
+        float owShoreScale = max(1.0, u_lakeRadii.x / 420.0);
         if (u_flowFieldEnabled > 0) {
             vec4 shoreData = textureGrad(u_flowFieldTex, fragLakeCoord * 0.5 + 0.5, lakeDx, lakeDy);
-            oceanShoreDist = max(0.0, shoreData.b * 24.0 - 2.4);
+            if (shoreData.b <= 0.0015) discard;
+            oceanShoreDist = max(0.0, shoreData.b * (24.0 * owShoreScale) - 1.2 * owShoreScale);
             vec2 rawToShore = shoreData.rg * 2.0 - 1.0;
             float sLen = length(rawToShore);
             oceanShoreDir = (sLen > 0.05) ? (rawToShore / sLen) : vec2(0.0);
@@ -753,6 +757,18 @@ void main()
 
     // VFX Point Light response
     color += VFXLights_Accumulate(fragPosition, normal, shallowTint) * 0.65;
+
+    if (isOcean) {
+        float edgeMax = max(abs(fragLakeCoord.x), abs(fragLakeCoord.y));
+        float owHorizonScale = max(1.0, u_lakeRadii.x / 420.0);
+        float radialFog = smoothstep(0.42, 0.84, edgeMax);
+        float distFog = smoothstep(140.0 * owHorizonScale, 370.0 * owHorizonScale, sqrt(distSq));
+        float horizonFog = clamp(max(radialFog, distFog * 0.88), 0.0, 1.0);
+        vec3 horizonBlend = mix(u_ambientColor * vec3(1.22, 1.12, 0.98) + vec3(0.22, 0.18, 0.14),
+                                effectiveLight * vec3(0.52, 0.40, 0.28), 0.26 + 0.44 * sunAzimuth);
+        color = mix(color, horizonBlend, horizonFog);
+        alpha = mix(alpha, 1.0, horizonFog * 0.72) * (1.0 - smoothstep(0.70, 0.96, edgeMax));
+    }
 
     finalColor = vec4(color, alpha);
 }

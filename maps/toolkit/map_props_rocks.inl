@@ -193,10 +193,14 @@ static Mesh Nature_GenMeshIcoSphere(float radius, int subdivisions)
     return mesh;
 }
 
-static Mesh Nature_BuildProceduralRockMeshVariant(int rockType, int variantSeed)
+static Mesh Nature_BuildProceduralRockMeshVariantLod(int rockType, int variantSeed, int subdivisionsOverride)
 {
     int subdivisions = 3; // 1280 triangles, 3840 vertices
-    if (rockType == MAP_ROCK_RIVER_STONE || rockType == MAP_ROCK_SCREE)
+    if (subdivisionsOverride > 0)
+    {
+        subdivisions = subdivisionsOverride;
+    }
+    else if (rockType == MAP_ROCK_RIVER_STONE || rockType == MAP_ROCK_SCREE)
     {
         subdivisions = 2; // 320 triangles, 960 vertices
     }
@@ -903,11 +907,11 @@ static Mesh Nature_BuildProceduralRockMeshVariant(int rockType, int variantSeed)
     return mesh;
 }
 
-static MapRockSet Rock_CreateTypedSetVariant(int rockType, int variantSeed, const char *diffusePath,
-                                             const char *normalPath, const char *roughnessPath)
+static MapRockSet Rock_CreateTypedSetVariantLod(int rockType, int variantSeed, int subdivisionsOverride,
+                                                const char *diffusePath, const char *normalPath, const char *roughnessPath)
 {
     MapRockSet rocks = {0};
-    Mesh mesh = Nature_BuildProceduralRockMeshVariant(rockType, variantSeed);
+    Mesh mesh = Nature_BuildProceduralRockMeshVariantLod(rockType, variantSeed, subdivisionsOverride);
     MapProp_MeshBounds(&mesh, &rocks.boundsCenter, &rocks.boundsRadius);
     float maxRXZ = 0.0f;
     float maxY = 0.0f;
@@ -948,6 +952,12 @@ static MapRockSet Rock_CreateTypedSetVariant(int rockType, int variantSeed, cons
 
     rocks.ready = true;
     return rocks;
+}
+
+static MapRockSet Rock_CreateTypedSetVariant(int rockType, int variantSeed, const char *diffusePath,
+                                             const char *normalPath, const char *roughnessPath)
+{
+    return Rock_CreateTypedSetVariantLod(rockType, variantSeed, 0, diffusePath, normalPath, roughnessPath);
 }
 
 static MapRockSet Rock_CreateTypedSet(int rockType, const char *diffusePath,
@@ -1126,9 +1136,13 @@ int MapProp_GenerateMountainRing(MapRockPlacement *outPlacements, int maxCount,
 
 // --- Unified Rock & Crag System -----------------------------------------
 
-MapRockSystem MapProp_CreateRockSystem(const char *diffusePath, const char *normalPath, const char *roughnessPath, int capacity)
+static void Rock_EnsureArchetypeLoaded(MapRockSystem *sys, MapRockArchetype archetype)
 {
-    MapRockSystem sys = {0};
+    if (!sys || (int)archetype < 0 || archetype >= MAP_ROCK_ARCHETYPE_COUNT)
+        return;
+    int a = (int)archetype;
+    if (sys->models[a].ready)
+        return;
 
     static const char *kArchDiffuse[MAP_ROCK_ARCHETYPE_COUNT] = {
         "assets/textures/rocks/granite_diffuse.png",
@@ -1167,23 +1181,35 @@ MapRockSystem MapProp_CreateRockSystem(const char *diffusePath, const char *norm
         "assets/textures/rocks/scree_roughness.png",
     };
 
-    for (int a = 0; a < MAP_ROCK_ARCHETYPE_COUNT; a++)
+    const char *fbD = sys->fallbackDiffuse[0] ? sys->fallbackDiffuse : kArchDiffuse[a];
+    const char *fbN = (sys->hasNormalRoughness && sys->fallbackNormal[0]) ? sys->fallbackNormal : NULL;
+    const char *fbR = (sys->hasNormalRoughness && sys->fallbackRoughness[0]) ? sys->fallbackRoughness : NULL;
+
+    const char *dPath = FileExists(kArchDiffuse[a]) ? kArchDiffuse[a] : fbD;
+    const char *nPath = (sys->hasNormalRoughness && FileExists(kArchNormal[a])) ? kArchNormal[a] : fbN;
+    const char *rPath = (sys->hasNormalRoughness && FileExists(kArchRoughness[a])) ? kArchRoughness[a] : fbR;
+
+    sys->models[a] = Rock_CreateTypedSetVariant(a, 0, dPath, nPath, rPath);
+    for (int v = 0; v < MAP_ROCK_VARIANTS_PER_ARCHETYPE - 1; v++)
     {
-        const char *dPath = (FileExists(kArchDiffuse[a])) ? kArchDiffuse[a] : diffusePath;
-        const char *nPath = (normalPath && FileExists(kArchNormal[a])) ? kArchNormal[a] : normalPath;
-        const char *rPath = (roughnessPath && FileExists(kArchRoughness[a])) ? kArchRoughness[a] : roughnessPath;
-
-        sys.models[a] = Rock_CreateTypedSetVariant(a, 0, dPath, nPath, rPath);
-        for (int v = 0; v < MAP_ROCK_VARIANTS_PER_ARCHETYPE - 1; v++)
-        {
-            sys.variants[a][v] = Rock_CreateTypedSetVariant(a, v + 1, dPath, nPath, rPath);
-        }
+        sys->variants[a][v] = Rock_CreateTypedSetVariant(a, v + 1, dPath, nPath, rPath);
     }
+    if (a != MAP_ROCK_SCREE && a != MAP_ROCK_RIVER_STONE)
+    {
+        sys->farModels[a] = Rock_CreateTypedSetVariantLod(a, 0, 1, dPath, nPath, rPath);
+    }
+}
 
-    // Aliases for backwards compatibility
-    sys.boulders = sys.models[MAP_ROCK_BOULDER];
-    sys.crags = sys.models[MAP_ROCK_CRAG];
-    sys.riverStones = sys.models[MAP_ROCK_RIVER_STONE];
+MapRockSystem MapProp_CreateRockSystem(const char *diffusePath, const char *normalPath, const char *roughnessPath, int capacity)
+{
+    MapRockSystem sys = {0};
+    if (diffusePath)
+        snprintf(sys.fallbackDiffuse, sizeof(sys.fallbackDiffuse), "%s", diffusePath);
+    if (normalPath)
+        snprintf(sys.fallbackNormal, sizeof(sys.fallbackNormal), "%s", normalPath);
+    if (roughnessPath)
+        snprintf(sys.fallbackRoughness, sizeof(sys.fallbackRoughness), "%s", roughnessPath);
+    sys.hasNormalRoughness = (normalPath != NULL && roughnessPath != NULL);
 
     if (capacity > 0)
     {
@@ -1199,6 +1225,9 @@ bool MapProp_AddRockItem(MapRockSystem *sys, Vector3 pos, float rScale, float hS
 {
     if (!sys || !sys->ready || !sys->items || sys->count >= sys->capacity)
         return false;
+    if ((int)archetype < 0 || archetype >= MAP_ROCK_ARCHETYPE_COUNT)
+        archetype = MAP_ROCK_BOULDER;
+    Rock_EnsureArchetypeLoaded(sys, archetype);
     sys->items[sys->count++] = (MapRockItem){
         .position = pos,
         .radiusScale = rScale,
@@ -1267,17 +1296,58 @@ static inline const MapRockSet *Rock_ResolveArchetypeSet(const MapRockSystem *sy
     return &sys->boulders;
 }
 
+static const MapRockSystem *s_rockSortSys = NULL;
+static const MapRockItem *s_rockSortItems = NULL;
+static int s_rockSortCount = -1;
+static int *s_rockSortIdx = NULL;
+static int s_rockSortCap = 0;
+
+static void EnsureRockDrawOrder(const MapRockSystem *sys)
+{
+    if (s_rockSortSys == sys && s_rockSortItems == sys->items && s_rockSortCount == sys->count)
+        return;
+    if (sys->count > s_rockSortCap)
+    {
+        RL_FREE(s_rockSortIdx);
+        s_rockSortCap = sys->count + 64;
+        s_rockSortIdx = (int *)RL_MALLOC((size_t)s_rockSortCap * sizeof(int));
+    }
+    if (!s_rockSortIdx)
+        return;
+    int cursor = 0;
+    for (int a = 0; a < MAP_ROCK_ARCHETYPE_COUNT; a++)
+    {
+        for (int v = 0; v < MAP_ROCK_VARIANTS_PER_ARCHETYPE; v++)
+        {
+            for (int i = 0; i < sys->count; i++)
+            {
+                if (sys->items[i].archetype != (MapRockArchetype)a)
+                    continue;
+                int iv = Rock_HashVariant(i, sys->items[i].position.x, sys->items[i].position.z);
+                if (iv == v)
+                    s_rockSortIdx[cursor++] = i;
+            }
+        }
+    }
+    s_rockSortSys = sys;
+    s_rockSortItems = sys->items;
+    s_rockSortCount = sys->count;
+}
+
 void MapProp_DrawRockSystem(const MapRockSystem *sys, bool drawShadows)
 {
     if (!sys || !sys->ready || !sys->items || sys->count <= 0)
         return;
 
     PropLit_UpdateLighting();
+    EnsureRockDrawOrder(sys);
     MapPropViewFrustum frustum;
     bool cull = MapProp_BuildViewFrustum(&frustum);
     Vector3 rotAxis = {0.0f, 1.0f, 0.0f};
-    for (int i = 0; i < sys->count; i++)
+    Vector3 camPos = camera.position;
+    for (int idx = 0; idx < sys->count; idx++)
     {
+        int i = (s_rockSortIdx && s_rockSortCount == sys->count) ? s_rockSortIdx[idx] : idx;
         const MapRockItem *p = &sys->items[i];
         int variant = Rock_HashVariant(i, p->position.x, p->position.z);
         const MapRockSet *set = Rock_ResolveArchetypeSet(sys, p->archetype, variant);
@@ -1290,6 +1360,19 @@ void MapProp_DrawRockSystem(const MapRockSystem *sys, bool drawShadows)
                                  p->archetype != MAP_ROCK_CRAG &&
                                  p->archetype != MAP_ROCK_LIMESTONE;
 
+        float dxC = pos.x - camPos.x;
+        float dyC = pos.y - camPos.y;
+        float dzC = pos.z - camPos.z;
+        float camDistSq = dxC * dxC + dyC * dyC + dzC * dzC;
+        float maxS = fmaxf(scale.x, fmaxf(scale.y, scale.z));
+        float approxR = maxS * set->boundsRadius;
+
+        // Distance & projected-size culling: skip sub-pixel scree & distant pebbles
+        if (p->archetype == MAP_ROCK_SCREE && camDistSq > 3025.0f) // > 55m
+            continue;
+        if (camDistSq > 100.0f && (approxR * approxR) < camDistSq * 0.000025f) // proj < 0.005 rad (~3px)
+            continue;
+
         if (cull)
         {
             float shadowPad = canCastFakeShadow ? (2.0f * p->radiusScale) : 0.0f;
@@ -1298,6 +1381,13 @@ void MapProp_DrawRockSystem(const MapRockSystem *sys, bool drawShadows)
             Rock_PlacementBounds(set, pos, scale, shadowPad, &bc, &br);
             if (MapProp_FrustumCullsSphere(&frustum, bc, br))
                 continue;
+        }
+
+        // Low-poly far LOD (80 tris vs 1280 tris) beyond 75m or small screen footprint
+        if (camDistSq > 5625.0f && (int)p->archetype >= 0 && (int)p->archetype < MAP_ROCK_ARCHETYPE_COUNT &&
+            sys->farModels[p->archetype].ready)
+        {
+            set = &sys->farModels[p->archetype];
         }
 
         if (canCastFakeShadow)
@@ -1311,11 +1401,13 @@ void MapProp_DrawRockSystem(const MapRockSystem *sys, bool drawShadows)
             }
         }
 
-        // [VISUAL UPGRADE]: Sắc độ đá ấm bắt nắng chiều vàng (không bị sậm đen trên đồi cỏ)
-        Color rockTint = (Color){184, 176, 166, 255};
+        // Deterministic per-placement mineral tint variation (keeps r >= b and a == 255 for non-river-stones)
+        unsigned int hTint = (unsigned int)i * 747796405u ^ (unsigned int)((int)(pos.x * 7.0f) * 19349663);
+        int jitter = (int)((hTint >> 16) & 31u) - 16; // -16..+15
+        Color rockTint = (Color){188, 178, 166, 255};
         if (p->archetype == MAP_ROCK_SANDSTONE)
         {
-            rockTint = (Color){198, 180, 148, 255};
+            rockTint = (Color){204, 182, 146, 255};
         }
         else if (p->archetype == MAP_ROCK_RIVER_STONE)
         {
@@ -1323,11 +1415,22 @@ void MapProp_DrawRockSystem(const MapRockSystem *sys, bool drawShadows)
         }
         else if (p->archetype == MAP_ROCK_SCREE)
         {
-            rockTint = (Color){168, 160, 150, 255};
+            rockTint = (Color){174, 162, 148, 255};
         }
         else if (p->archetype == MAP_ROCK_LIMESTONE || p->archetype == MAP_ROCK_CRAG)
         {
-            rockTint = (Color){196, 192, 184, 255};
+            rockTint = (Color){198, 188, 174, 255};
+        }
+        if (p->archetype != MAP_ROCK_RIVER_STONE)
+        {
+            int rC = (int)rockTint.r + jitter;
+            int gC = (int)rockTint.g + (jitter * 3) / 4;
+            int bC = (int)rockTint.b + jitter / 2;
+            rockTint.r = (unsigned char)(rC < 120 ? 120 : (rC > 235 ? 235 : rC));
+            rockTint.g = (unsigned char)(gC < 110 ? 110 : (gC > 225 ? 225 : gC));
+            rockTint.b = (unsigned char)(bC < 100 ? 100 : (bC > 210 ? 210 : bC));
+            if (rockTint.b > rockTint.r)
+                rockTint.b = rockTint.r;
         }
 
         if (set->model.materialCount > 0)
@@ -1421,6 +1524,16 @@ void MapProp_UnloadRockSystem(MapRockSystem *sys)
                 MapProp_UnloadRocks(&sys->variants[a][v]);
             }
         }
+        if (sys->farModels[a].ready)
+        {
+            MapProp_UnloadRocks(&sys->farModels[a]);
+        }
+    }
+    if (s_rockSortSys == sys)
+    {
+        s_rockSortSys = NULL;
+        s_rockSortItems = NULL;
+        s_rockSortCount = -1;
     }
     if (sys->items)
     {
@@ -1601,6 +1714,7 @@ static Vector2 Rock_ClosestPointOnTriangleXZ(Vector2 p, Vector2 a, Vector2 b, Ve
 static const MapRockSystem *s_rockHashSys = NULL;
 static const MapRockItem *s_rockHashItems = NULL;
 static int s_rockHashCount = -1;
+static float s_rockMaxBroadR = 12.0f;
 static int s_rockHead[ROCK_HASH_BUCKETS];
 static int *s_rockNext = NULL;
 static int s_rockNextCap = 0;
@@ -1618,14 +1732,18 @@ static void EnsureRockCollisionHash(const MapRockSystem *sys) {
     }
     for (int b = 0; b < ROCK_HASH_BUCKETS; b++) s_rockHead[b] = -1;
     if (!s_rockNext) return;
+    float maxBroad = 4.0f;
     const float invCell = 1.0f / ROCK_HASH_CELL;
     for (int i = 0; i < sys->count; i++) {
+        float mr = fmaxf(sys->items[i].radiusScale, sys->items[i].heightScale) * 1.45f;
+        if (mr > maxBroad) maxBroad = mr;
         int cx = (int)floorf(sys->items[i].position.x * invCell);
         int cz = (int)floorf(sys->items[i].position.z * invCell);
         unsigned int b = RockHashCell(cx, cz);
         s_rockNext[i] = s_rockHead[b];
         s_rockHead[b] = i;
     }
+    s_rockMaxBroadR = maxBroad;
     s_rockHashSys = sys;
     s_rockHashItems = sys->items;
     s_rockHashCount = sys->count;
@@ -1642,10 +1760,13 @@ void MapProp_ResolveRockSystemCollision(const MapRockSystem *sys, Vector3 *pos,
     const float invCell = 1.0f / ROCK_HASH_CELL;
     int px = (int)floorf(pos->x * invCell);
     int pz = (int)floorf(pos->z * invCell);
+    int cellSpan = (int)ceilf((s_rockMaxBroadR + agentRadius + 0.5f) * invCell);
+    if (cellSpan < 1) cellSpan = 1;
+    if (cellSpan > 3) cellSpan = 3;
 
     float supportY = inOutGroundY ? *inOutGroundY : pos->y;
-    for (int dzc = -1; dzc <= 1; dzc++) {
-        for (int dxc = -1; dxc <= 1; dxc++) {
+    for (int dzc = -cellSpan; dzc <= cellSpan; dzc++) {
+        for (int dxc = -cellSpan; dxc <= cellSpan; dxc++) {
             unsigned int b = RockHashCell(px + dxc, pz + dzc);
             for (int i = s_rockHead[b]; i >= 0; i = s_rockNext[i])
             {
@@ -1667,6 +1788,8 @@ void MapProp_ResolveRockSystemCollision(const MapRockSystem *sys, Vector3 *pos,
         if (fabsf(dx) > broadR || fabsf(dz) > broadR)
             continue;
         if (dx * dx + dz * dz > broadR * broadR)
+            continue;
+        if (pos->y > p->position.y + set->localMaxY * p->heightScale + 1.0f)
             continue;
 
         const Mesh *m = &set->model.meshes[0];

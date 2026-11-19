@@ -16,6 +16,7 @@
 #include "raymath.h"
 #include <math.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 #include <stdlib.h> // getenv (WUXING_GROUND_LOOKUP_VERIFY)
 

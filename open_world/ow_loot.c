@@ -313,24 +313,50 @@ void OWLoot_Update(const Agent *pa, float dt) {
     }
 }
 
-void OWLoot_Draw3D(void) {
+void OWLoot_Draw3D(Camera3D cam) {
+    const float maxDrawDistSq = 95.0f * 95.0f;
     for (int i = 0; i < s_nodeCount; i++) {
         const OWNode *n = &s_nodes[i];
         if (!n->active || !n->available) continue;
+        float dx = n->pos.x - cam.position.x;
+        float dz = n->pos.z - cam.position.z;
+        if (dx * dx + dz * dz > maxDrawDistSq) continue;
+
         float bob = sinf(n->pulsePhase) * 0.08f;
         if (n->kind == OW_NODE_HERB) {
-            DrawSphere((Vector3){ n->pos.x, n->pos.y + 0.35f + bob, n->pos.z }, 0.30f, (Color){ 70, 230, 120, 235 });
-            DrawCylinder(n->pos, 0.48f, 0.52f, 0.04f, 12, (Color){ 90, 240, 140, 90 });
+            // Jade Lotus / Desert Herb cluster
+            DrawCylinder(n->pos, 0.50f, 0.56f, 0.03f, 12, (Color){ 80, 215, 130, 72 });
+            for (int p = 0; p < 4; p++) {
+                float ang = (float)p * (PI * 0.5f) + 0.35f;
+                Vector3 leafPos = { n->pos.x + cosf(ang) * 0.22f, n->pos.y + 0.12f, n->pos.z + sinf(ang) * 0.22f };
+                DrawCylinderEx(n->pos, leafPos, 0.14f, 0.03f, 6, (Color){ 48, 152, 78, 255 });
+            }
+            DrawSphere((Vector3){ n->pos.x, n->pos.y + 0.34f + bob, n->pos.z }, 0.20f, (Color){ 95, 240, 150, 240 });
+            DrawSphere((Vector3){ n->pos.x, n->pos.y + 0.34f + bob, n->pos.z }, 0.28f, (Color){ 135, 255, 185, 75 });
         } else if (n->kind == OW_NODE_ORE_VEIN) {
-            DrawCube((Vector3){ n->pos.x, n->pos.y + 0.45f, n->pos.z }, 0.65f, 0.90f, 0.65f, (Color){ 210, 155, 65, 255 });
-            DrawCubeWires((Vector3){ n->pos.x, n->pos.y + 0.45f, n->pos.z }, 0.72f, 0.96f, 0.72f, GOLD);
+            // Faceted crystal ore cluster emerging from dark stone base
+            DrawCylinder(n->pos, 0.52f, 0.38f, 0.24f, 7, (Color){ 86, 74, 64, 255 });
+            DrawCylinderEx((Vector3){ n->pos.x - 0.10f, n->pos.y + 0.12f, n->pos.z + 0.08f },
+                           (Vector3){ n->pos.x - 0.24f, n->pos.y + 0.96f, n->pos.z + 0.18f },
+                           0.16f, 0.02f, 6, (Color){ 214, 150, 58, 255 });
+            DrawCylinderEx((Vector3){ n->pos.x + 0.06f, n->pos.y + 0.14f, n->pos.z - 0.04f },
+                           (Vector3){ n->pos.x + 0.18f, n->pos.y + 1.18f + bob * 0.4f, n->pos.z - 0.12f },
+                           0.19f, 0.02f, 6, (Color){ 238, 182, 78, 255 });
+            DrawCylinderEx((Vector3){ n->pos.x + 0.18f, n->pos.y + 0.10f, n->pos.z + 0.16f },
+                           (Vector3){ n->pos.x + 0.34f, n->pos.y + 0.72f, n->pos.z + 0.28f },
+                           0.13f, 0.02f, 6, (Color){ 188, 124, 48, 255 });
         } else {
+            // Lacquered wooden/gilded reliquary chest
             bool golden = (n->kind == OW_NODE_GOLDEN_RELIC_CHEST);
-            Color c = golden ? GOLD : (Color){ 185, 125, 55, 255 };
-            DrawCube((Vector3){ n->pos.x, n->pos.y + 0.38f, n->pos.z }, 0.95f, 0.72f, 0.68f, c);
-            DrawCubeWires((Vector3){ n->pos.x, n->pos.y + 0.38f, n->pos.z }, 0.98f, 0.75f, 0.70f, WHITE);
+            Color bodyCol = golden ? (Color){ 176, 128, 42, 255 } : (Color){ 96, 56, 32, 255 };
+            Color trimCol = golden ? GOLD : (Color){ 198, 162, 86, 255 };
+            DrawCube((Vector3){ n->pos.x, n->pos.y + 0.24f, n->pos.z }, 0.92f, 0.48f, 0.64f, bodyCol);
+            DrawCube((Vector3){ n->pos.x, n->pos.y + 0.54f, n->pos.z }, 0.96f, 0.18f, 0.68f, trimCol);
+            DrawCube((Vector3){ n->pos.x - 0.34f, n->pos.y + 0.34f, n->pos.z }, 0.10f, 0.62f, 0.68f, trimCol);
+            DrawCube((Vector3){ n->pos.x + 0.34f, n->pos.y + 0.34f, n->pos.z }, 0.10f, 0.62f, 0.68f, trimCol);
+            DrawSphere((Vector3){ n->pos.x, n->pos.y + 0.48f, n->pos.z + 0.35f }, 0.09f, golden ? (Color){ 110, 245, 200, 255 } : GOLD);
             if (golden) {
-                DrawCylinder((Vector3){ n->pos.x, n->pos.y, n->pos.z }, 0.35f, 0.10f, 8.0f, 12, (Color){ 255, 225, 110, 95 });
+                DrawCylinder((Vector3){ n->pos.x, n->pos.y + 0.2f, n->pos.z }, 0.36f, 0.08f, 7.5f, 12, (Color){ 255, 225, 110, 75 });
             }
         }
     }

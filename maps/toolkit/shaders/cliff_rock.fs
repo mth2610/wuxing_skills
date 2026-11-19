@@ -37,6 +37,7 @@ uniform vec3 u_ambientColor;  // ambient sky color
 uniform vec3 u_viewPos;       // camera pos in view space
 uniform vec3 u_hazeColor;     // atmosphere / cloud haze color
 uniform float u_cliffAridMode;// 0.0 = lush moss rim, 1.0 = arid earth/ochre crust rim
+uniform float u_seaLevel;     // coastal water Y (world meters)
 uniform sampler2D u_cloudNoise;
 uniform mat4 u_cloudWorldFromShader;
 
@@ -141,42 +142,42 @@ void main() {
     float combinedStrata = strataMacro * 0.65 + strataFine * 0.35;
     float strataContrast = (strataMacro - 0.5) * 1.35 + (strataFine - 0.5) * 0.65;
 
-    // Authentic mountain slate-granite palette (or pale pink-grey Ninh Thuan granite in arid mode)
-    vec3 slateBedrock = mix(vec3(0.46, 0.48, 0.51), vec3(0.60, 0.54, 0.49), u_cliffAridMode);
-    vec3 feldsparVein = mix(vec3(0.62, 0.58, 0.52), vec3(0.74, 0.67, 0.59), u_cliffAridMode);
-    vec3 bedrockTint = mix(slateBedrock, feldsparVein, combinedStrata * mix(0.42, 0.68, u_cliffAridMode)) * 1.24;
+    // Authentic mountain slate-granite palette (or warm sun-baked Ninh Thuan granite in arid mode)
+    vec3 slateBedrock = mix(vec3(0.46, 0.48, 0.51), vec3(0.68, 0.57, 0.46), u_cliffAridMode);
+    vec3 feldsparVein = mix(vec3(0.62, 0.58, 0.52), vec3(0.84, 0.72, 0.57), u_cliffAridMode);
+    vec3 bedrockTint = mix(slateBedrock, feldsparVein, combinedStrata * mix(0.42, 0.72, u_cliffAridMode)) * 1.24;
 
     vec3 rockBase = triAlbedo * bedrockTint * colDiffuse.rgb;
 
     // ── 3. Ledge Moss, Rim Turf Overhang & Lichen Colonization (or arid ochre crust & caliche rim) ──
-    // Organic sod/crust drape over the top 0.45m cliff lip eliminates hard polygon seams against the ground
+    // Organic sod/crust drape over the top cliff lip (fragColor.g = rim moss mask, invariant to rim world Y)
     float sodDropNoise = sin(worldPosition.x * 1.85 + worldPosition.z * 1.45) * 0.14
                        + cos(worldPosition.z * 3.40 - worldPosition.x * 2.70) * 0.08;
-    float rimSodDrape = smoothstep(-0.48 + sodDropNoise, -0.04 + sodDropNoise * 0.5, fragLocalY) * fragColor.g;
+    float rimSodDrape = smoothstep(0.32 + sodDropNoise * 0.35, 0.86, fragColor.g) * fragColor.g;
     float ledgeFacing = smoothstep(0.60, 0.86, worldNormal.y);
     float creviceMask = smoothstep(-0.35, 0.45, strataContrast * 0.75 + triAlbedo.g - 0.5);
-    float upperRimBoost = smoothstep(-3.2, -0.20, fragLocalY) * 0.65 + 0.35;
+    float upperRimBoost = smoothstep(0.05, 0.75, fragColor.g) * 0.65 + 0.35;
     float shelfMoss = fragColor.g * ledgeFacing * upperRimBoost * (0.65 + 0.35 * creviceMask);
     float mossMask = clamp(max(shelfMoss, rimSodDrape * 0.94), 0.0, 1.0);
     vec3 lushMossColor = mix(vec3(0.11, 0.19, 0.07), vec3(0.18, 0.29, 0.10), clamp(triAlbedo.g * 0.75 + rimSodDrape * 0.35, 0.0, 1.0));
-    vec3 aridRimColor  = mix(vec3(0.64, 0.56, 0.43), vec3(0.74, 0.65, 0.50), clamp(triAlbedo.g * 0.75 + rimSodDrape * 0.35, 0.0, 1.0));
+    vec3 aridRimColor  = mix(vec3(0.72, 0.61, 0.44), vec3(0.82, 0.70, 0.51), clamp(triAlbedo.g * 0.75 + rimSodDrape * 0.35, 0.0, 1.0));
     vec3 mossColor = mix(lushMossColor, aridRimColor, u_cliffAridMode);
     vec3 rockAlbedo = mix(rockBase, mossColor, mossMask * mix(0.88, 0.82, u_cliffAridMode));
 
     // ── 4. Deep Crevice Cavity Occlusion (80.lv RTGI Principle) ──
     // Intense occlusion in deep fissures and under shelf overhangs gives rock weight and depth
     float microCrevice = clamp(normX.z * triWeights.x + normY.z * triWeights.y + normZ.z * triWeights.z, 0.25, 1.0);
-    float cavityAO = clamp(fragColor.r * (0.35 + 0.65 * microCrevice), mix(0.18, 0.66, u_cliffAridMode), 1.0);
+    float cavityAO = clamp(fragColor.r * (0.35 + 0.65 * microCrevice), mix(0.18, 0.68, u_cliffAridMode), 1.0);
 
-    // Coastal tidal wet-rock splash zone + clinging white surf foam + subtle sea bounce in arid mode
+    // Coastal tidal wet-rock splash zone + clinging white surf foam + turquoise sea bounce in arid mode
     float coastalWet = (u_cliffAridMode > 0.5)
-        ? (1.0 - smoothstep(-1.35, 0.35, worldPosition.y))
+        ? (1.0 - smoothstep(u_seaLevel - 0.15, u_seaLevel + 0.65, worldPosition.y))
         : 0.0;
-    rockAlbedo *= mix(1.0, 0.48, coastalWet * 0.85);
-    roughness = mix(roughness, 0.18, coastalWet * 0.85);
+    rockAlbedo *= mix(1.0, 0.72, coastalWet * 0.75);
+    roughness = mix(roughness, 0.20, coastalWet * 0.82);
     if (u_cliffAridMode > 0.5) {
-        // Clinging sea-foam & pale salt-crust collar in wet rock crevices right at the splash band (-1.35..-0.55m)
-        float splashBand = 1.0 - smoothstep(0.0, 0.55, abs(worldPosition.y - (-1.05)));
+        // Clinging sea-foam & pale salt-crust collar in wet rock crevices right at the splash band
+        float splashBand = 1.0 - smoothstep(0.0, 0.55, abs(worldPosition.y - (u_seaLevel + 0.15)));
         float rockFoam = splashBand * smoothstep(0.48, 0.82, triAlbedo.r * 0.65 + (1.0 - microCrevice) * 0.45);
         rockAlbedo = mix(rockAlbedo, vec3(0.92, 0.94, 0.96), clamp(rockFoam * 0.72, 0.0, 0.78));
     }
@@ -189,11 +190,11 @@ void main() {
     actualLight *= 1.0 / (1.0 + max(worldLightDir.y - 0.36, 0.0) * 0.82);
     vec3 actualAmbient = (dot(u_ambientColor, u_ambientColor) > 0.001) ? u_ambientColor : vec3(0.36, 0.42, 0.50);
 
-    // Wrap diffuse lighting & shadow evaluation
+    // Wrap diffuse lighting & shadow evaluation (view-space fragPosition/normal/lightDir matching u_lightVP)
     float NdotL = max((dot(normal, lightDir) + 0.22) * (1.0 / 1.22), 0.0);
     float directAtten = 0.0;
     if (NdotL > 0.0) {
-        directAtten = MapShadowVisibility(worldPosition, worldNormal, worldLightDir);
+        directAtten = MapShadowVisibility(fragPosition, normal, lightDir);
         if (directAtten > 0.001) {
             directAtten *= Environment_CloudVisibility(u_cloudNoise, worldPosition);
         }
@@ -213,24 +214,31 @@ void main() {
         spec = min(ggx * 0.18, 1.6) * (1.0 - roughness) * 0.28 * (1.0 - mossMask * 0.85);
     }
 
-    // ── 6. Cloud Sea Up-Bounce (disabled for coastal sea mode) ──
+    // ── 6. Cloud Sea Up-Bounce (lush islands) or Turquoise Sea + Sky Bounce (coastal arid cliffs) ──
     float cloudSeaGate = 1.0 - step(0.5, u_cliffAridMode);
     float upwardCloudBounceFactor = max(-worldNormal.y * 0.65 + 0.20, 0.0) * cloudSeaGate;
     vec3 cloudLitColor = actualLight * vec3(0.50, 0.44, 0.36) + actualAmbient * vec3(0.85, 0.88, 0.92);
     vec3 cloudBounceLight = cloudLitColor * (upwardCloudBounceFactor * 1.45);
+    vec3 seaBounce = (actualAmbient * vec3(0.55, 0.92, 0.96) + actualLight * vec3(0.24, 0.42, 0.40))
+                   * max(-worldNormal.y * 0.45 + 0.42, 0.0) * (step(0.5, u_cliffAridMode) * 0.85);
 
-    // Total Lighting Combination with Hemisphere Sky Irradiance
-    vec3 hemisphereAmbient = Environment_HemisphereIrradiance(normal, actualAmbient);
-    vec3 diffuseLight = (hemisphereAmbient + cloudBounceLight) * cavityAO + actualLight * (NdotL * directAtten);
+    // Total Lighting Combination with World-Space Hemisphere Sky Irradiance
+    vec3 hemisphereAmbient = Environment_HemisphereIrradiance(worldNormal, actualAmbient);
+    vec3 diffuseLight = (hemisphereAmbient + cloudBounceLight + seaBounce) * cavityAO + actualLight * (NdotL * directAtten);
     vec3 finalRgb = rockAlbedo * diffuseLight + actualLight * (spec * directAtten);
 
     // Dynamic VFX point lights if active
     finalRgb += VFXLights_Accumulate(fragPosition, normal, rockAlbedo);
 
-    // ── 7. Base Dissolving Cloud Haze (cloud-sea islands only) ──
+    // ── 7. Base Dissolving Cloud Haze (cloud-sea islands) or Coastal Aerial Perspective (arid) ──
     float baseHaze = clamp(fragColor.b, 0.0, 1.0) * cloudSeaGate;
     vec3 hazeTarget = (dot(u_hazeColor, u_hazeColor) > 0.001) ? u_hazeColor : vec3(0.82, 0.86, 0.92);
     finalRgb = mix(finalRgb, hazeTarget, baseHaze * 0.90);
+    if (u_cliffAridMode > 0.5 && camDistSq > 1600.0) {
+        float aerial = smoothstep(1600.0, 129600.0, camDistSq) * 0.42;
+        vec3 coastalHaze = actualAmbient * vec3(0.88, 0.84, 0.78) + actualLight * vec3(0.28, 0.22, 0.16);
+        finalRgb = mix(finalRgb, coastalHaze, aerial);
+    }
 
     finalColor = vec4(finalRgb, 1.0);
 }

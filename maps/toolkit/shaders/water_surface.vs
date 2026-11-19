@@ -76,16 +76,18 @@ void main()
     vec3 oceanNormalOut = vec3(0.0, 1.0, 0.0);
     if (u_waterShape == 1 && u_flowFieldEnabled > 0) {
         float t = mod(u_time * u_waveSpeed, 6283.185307);
-        float amp = u_waveHeight * 1.45 * shoreFade;
+        float owWaveScale = (u_lakeRadii.x > 500.0) ? (u_lakeRadii.x / 420.0) : 1.0;
+        float horizonCalm = 1.0 - smoothstep(0.55, 0.90, max(abs(coord.x), abs(coord.y)));
+        float amp = u_waveHeight * 1.45 * shoreFade * horizonCalm;
         vec3 tangent = vec3(1.0, 0.0, 0.0);
         vec3 binormal = vec3(0.0, 0.0, 1.0);
         float crest = 0.0;
         vec3 disp = vec3(0.0);
-        // 4 Golden-Ratio Gerstner Swells for crisp 3D wave peaks & analytical normals
-        disp += addOceanGerstner(world.xz, vec2(-0.96,  0.28), 0.24 * amp, 54.0, 1.15, t, tangent, binormal, crest);
-        disp += addOceanGerstner(world.xz, vec2(-0.91, -0.41), 0.20 * amp, 34.0, 1.08, t, tangent, binormal, crest);
-        disp += addOceanGerstner(world.xz, vec2(-0.98,  0.16), 0.16 * amp, 22.0, 1.02, t, tangent, binormal, crest);
-        disp += addOceanGerstner(world.xz, vec2(-0.84,  0.54), 0.13 * amp, 14.0, 0.96, t, tangent, binormal, crest);
+        // 4 Golden-Ratio Gerstner Swells for crisp 3D wave peaks & analytical normals (Nyquist-safe in OW)
+        disp += addOceanGerstner(world.xz, vec2(-0.96,  0.28), 0.24 * amp, 54.0 * owWaveScale, 1.15, t, tangent, binormal, crest);
+        disp += addOceanGerstner(world.xz, vec2(-0.91, -0.41), 0.20 * amp, 34.0 * owWaveScale, 1.08, t, tangent, binormal, crest);
+        disp += addOceanGerstner(world.xz, vec2(-0.98,  0.16), 0.16 * amp, 22.0 * owWaveScale, 1.02, t, tangent, binormal, crest);
+        disp += addOceanGerstner(world.xz, vec2(-0.84,  0.54), 0.13 * amp, 14.0 * owWaveScale, 0.96, t, tangent, binormal, crest);
         local += disp;
         world += disp;
         vec3 nAnalytic = normalize(cross(binormal, tangent));

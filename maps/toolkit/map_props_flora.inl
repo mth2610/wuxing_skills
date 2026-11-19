@@ -745,56 +745,57 @@ MapFloraSystem MapProp_CreateFloraSystem(
                                                       .growthForm = MAP_MEADOW_GROWTH_PAMPAS,
                                                   });
         flora.pampasCount = style.pampasCount;
+    }
 
-        // 3b. 3D Cỏ Lau Plumes (Camera-Facing Fiber Ribbons, WebGL2 Low Preset)
-        if (style.enableCoLauPlumes || style.coLauPlumeDensity > 0.0f)
+    // 3b. 3D Cỏ Lau Plumes (Camera-Facing Fiber Ribbons, WebGL2 Low Preset)
+    // Independent of pampasPlacements so maps with coLauOnReeds + reedPlacements also spawn plumes
+    if (style.enableCoLauPlumes || style.coLauPlumeDensity > 0.0f)
+    {
+        float density = (style.coLauPlumeDensity > 0.0f) ? style.coLauPlumeDensity : 0.85f;
+        // Default to riparian reeds (ven suối / ven sông) if available or if style.coLauOnReeds is set
+        bool useReeds = (style.coLauOnReeds || (!style.pampasPlacements && reedPlacements)) && (reedPlacements && reedCount > 0);
+        const MapMeadowPlacement *srcPlacements = useReeds ? reedPlacements : style.pampasPlacements;
+        int srcCount = useReeds ? reedCount : style.pampasCount;
+
+        int plumeCount = (int)((float)srcCount * density);
+        if (plumeCount > 0 && srcPlacements)
         {
-            float density = (style.coLauPlumeDensity > 0.0f) ? style.coLauPlumeDensity : 0.85f;
-            // Default to riparian reeds (ven suối / ven sông) if available or if style.coLauOnReeds is set
-            bool useReeds = (style.coLauOnReeds || (!style.pampasPlacements && reedPlacements)) && (reedPlacements && reedCount > 0);
-            const MapMeadowPlacement *srcPlacements = useReeds ? reedPlacements : style.pampasPlacements;
-            int srcCount = useReeds ? reedCount : style.pampasCount;
-
-            int plumeCount = (int)((float)srcCount * density);
-            if (plumeCount > 0 && srcPlacements)
+            MapCoLauPlacement *placements = (MapCoLauPlacement *)RL_MALLOC((size_t)plumeCount * sizeof(MapCoLauPlacement));
+            if (placements)
             {
-                MapCoLauPlacement *placements = (MapCoLauPlacement *)RL_MALLOC((size_t)plumeCount * sizeof(MapCoLauPlacement));
-                if (placements)
+                unsigned int cRng = 0x6a1f29u;
+                Color baseTint = (style.coLauPlumeTint.a > 0) ? style.coLauPlumeTint : (Color){228, 230, 223, 255};
+                int idx = 0;
+                for (int p = 0; p < srcCount && idx < plumeCount; p++)
                 {
-                    unsigned int cRng = 0x6a1f29u;
-                    Color baseTint = (style.coLauPlumeTint.a > 0) ? style.coLauPlumeTint : (Color){228, 230, 223, 255};
-                    int idx = 0;
-                    for (int p = 0; p < srcCount && idx < plumeCount; p++)
-                    {
-                        const MapMeadowPlacement *mp = &srcPlacements[p];
-                        float r = Nature_Random01(&cRng);
-                        if (r > density && (srcCount - p) > (plumeCount - idx))
-                            continue;
+                    const MapMeadowPlacement *mp = &srcPlacements[p];
+                    float r = Nature_Random01(&cRng);
+                    if (r > density && (srcCount - p) > (plumeCount - idx))
+                        continue;
 
-                        Color tint = baseTint;
-                        float tintDice = Nature_Random01(&cRng);
-                        if (tintDice > 0.82f)
-                            tint = (Color){242, 232, 206, 255}; // Warm Champagne Silk
-                        else if (tintDice > 0.58f)
-                            tint = (Color){236, 238, 232, 255}; // Silver-Mist White
+                    Color tint = baseTint;
+                    float tintDice = Nature_Random01(&cRng);
+                    if (tintDice > 0.82f)
+                        tint = (Color){242, 232, 206, 255}; // Warm Champagne Silk
+                    else if (tintDice > 0.58f)
+                        tint = (Color){236, 238, 232, 255}; // Silver-Mist White
 
-                        // Natural riverbank reed plume height: ~1.38m - 1.80m with fuller feathery volume
-                        float h = 1.38f + 0.42f * Nature_Random01(&cRng);
-                        float sc = 1.06f + 0.34f * (mp->radius / 0.30f);
+                    // Natural riverbank reed plume height: ~1.38m - 1.80m with fuller feathery volume
+                    float h = 1.38f + 0.42f * Nature_Random01(&cRng);
+                    float sc = 1.06f + 0.34f * (mp->radius / 0.30f);
 
-                        placements[idx++] = (MapCoLauPlacement){
-                            .position = mp->position,
-                            .height = h,
-                            .scale = sc,
-                            .rotationDeg = mp->rotationDeg,
-                            .phase = mp->phase,
-                            .tint = tint,
-                        };
-                    }
-                    flora.coLauField = MapProp_CreateCoLauField(placements, idx);
-                    flora.coLauCount = idx;
-                    RL_FREE(placements);
+                    placements[idx++] = (MapCoLauPlacement){
+                        .position = mp->position,
+                        .height = h,
+                        .scale = sc,
+                        .rotationDeg = mp->rotationDeg,
+                        .phase = mp->phase,
+                        .tint = tint,
+                    };
                 }
+                flora.coLauField = MapProp_CreateCoLauField(placements, idx);
+                flora.coLauCount = idx;
+                RL_FREE(placements);
             }
         }
     }

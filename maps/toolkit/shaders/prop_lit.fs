@@ -90,25 +90,20 @@ void main() {
     albedo.rgb = mix(albedo.rgb, vec3(dot(albedo.rgb, vec3(0.3333333))), 0.08) * 0.96;
     albedo.rgb *= colDiffuse.rgb;
     if (u_rockAridMode > 0.5) {
-        // Smooth world-space procedural granite mineral variation (no grid/row artifacts)
-        vec3 gP1 = worldPosition * 4.2;
+        // Mali-safe sin-less 3D granite mineral variation preserving crisp texture & RNM relief
+        vec3 gP1 = worldPosition * 2.4;
         vec3 i1 = floor(gP1); vec3 f1 = fract(gP1); f1 = f1 * f1 * (3.0 - 2.0 * f1);
-        float c000 = fract(sin(dot(i1 + vec3(0,0,0), vec3(12.9898,78.233,37.719))) * 43758.5453);
-        float c100 = fract(sin(dot(i1 + vec3(1,0,0), vec3(12.9898,78.233,37.719))) * 43758.5453);
-        float c010 = fract(sin(dot(i1 + vec3(0,1,0), vec3(12.9898,78.233,37.719))) * 43758.5453);
-        float c110 = fract(sin(dot(i1 + vec3(1,1,0), vec3(12.9898,78.233,37.719))) * 43758.5453);
-        float c001 = fract(sin(dot(i1 + vec3(0,0,1), vec3(12.9898,78.233,37.719))) * 43758.5453);
-        float c101 = fract(sin(dot(i1 + vec3(1,0,1), vec3(12.9898,78.233,37.719))) * 43758.5453);
-        float c011 = fract(sin(dot(i1 + vec3(0,1,1), vec3(12.9898,78.233,37.719))) * 43758.5453);
-        float c111 = fract(sin(dot(i1 + vec3(1,1,1), vec3(12.9898,78.233,37.719))) * 43758.5453);
-        float gCoarse = mix(mix(mix(c000, c100, f1.x), mix(c010, c110, f1.x), f1.y),
-                            mix(mix(c001, c101, f1.x), mix(c011, c111, f1.x), f1.y), f1.z);
+        vec3 h0 = fract(i1 * vec3(0.1031, 0.1030, 0.0973));
+        float c0 = fract((h0.x + h0.y) * h0.z + dot(h0, vec3(0.37, 0.71, 0.53)));
+        float c1 = fract((h0.x + 0.1031 + h0.y) * h0.z + 0.19);
+        float c2 = fract((h0.x + h0.y + 0.1030) * h0.z + 0.43);
+        float gCoarse = mix(mix(c0, c1, f1.x), c2, f1.y * 0.6 + f1.z * 0.4);
         float texGrain = dot(albedo.rgb, vec3(0.3333333));
-        vec3 feldsparBase = mix(vec3(0.56, 0.50, 0.45), vec3(0.75, 0.68, 0.61), gCoarse * 0.68 + 0.18);
-        // Darken only natural texture crevices for biotite mineral flecks
-        float biotiteMask = (1.0 - smoothstep(0.24, 0.48, texGrain)) * 0.35;
-        vec3 procGranite = mix(feldsparBase, vec3(0.26, 0.24, 0.22), biotiteMask);
-        albedo.rgb = mix(albedo.rgb, procGranite * (0.84 + 0.32 * texGrain), u_rockAridMode * 0.82);
+        vec3 feldsparBase = mix(vec3(0.68, 0.56, 0.44), vec3(0.86, 0.74, 0.58), gCoarse * 0.62 + 0.20);
+        // Darken only natural texture crevices for warm biotite mineral flecks
+        float biotiteMask = (1.0 - smoothstep(0.22, 0.46, texGrain)) * 0.42;
+        vec3 procGranite = mix(feldsparBase, vec3(0.32, 0.25, 0.20), biotiteMask);
+        albedo.rgb = mix(albedo.rgb, procGranite * (0.76 + 0.48 * texGrain), u_rockAridMode * 0.38);
     }
 
     vec3 normY = textureGrad(texture2, uvY, uvDxY, uvDyY).rgb * 2.0 - 1.0;
@@ -258,10 +253,10 @@ void main() {
         spec = calcSpecular(normal, modelLightDir, viewDir, shininess) * specStrength;
     }
 
-    vec3 ambient = Environment_HemisphereIrradiance(normal, actualAmbient);
+    vec3 ambient = Environment_HemisphereIrradiance(worldNormal, actualAmbient);
     // Warm meadow turf bounce (or sun-baked desert sand bounce in arid mode) into lower rock facets
-    vec3 bounceTint = mix(vec3(0.20, 0.32, 0.12), vec3(0.48, 0.35, 0.21), u_rockAridMode);
-    vec3 turfBounce = bounceTint * actualAmbient * max(-worldNormal.y * 0.5 + 0.5, 0.0) * mix(0.45, 0.62, u_rockAridMode);
+    vec3 bounceTint = mix(vec3(0.20, 0.32, 0.12), vec3(0.62, 0.46, 0.28), u_rockAridMode);
+    vec3 turfBounce = bounceTint * actualAmbient * max(-worldNormal.y * 0.5 + 0.5, 0.0) * mix(0.45, 0.72, u_rockAridMode);
     ambient = (ambient + turfBounce) * contactAO;
     if (isRiverStone > 0.5) {
         vec3 streamBounce = actualAmbient * vec3(0.85, 1.12, 1.20) + vec3(0.04, 0.10, 0.12);
@@ -277,9 +272,11 @@ void main() {
 
     lit += VFXLights_Accumulate(fragPosition, normal, albedo.rgb);
 
-    // Atmospheric aerial haze for distant mountain crags
-    float haze = smoothstep(38.0, 115.0, camDist) * 0.30;
-    vec3 hazeColor = actualAmbient * 1.35;
+    // Atmospheric aerial haze for distant mountain crags (matches ground_splat.fs in arid mode)
+    float hazeStart = mix(38.0, 42.0, u_rockAridMode);
+    float hazeEnd = mix(115.0, 320.0, u_rockAridMode);
+    float haze = smoothstep(hazeStart, hazeEnd, camDist) * mix(0.30, 0.36, u_rockAridMode);
+    vec3 hazeColor = mix(actualAmbient * 1.35, actualAmbient * vec3(0.88, 0.84, 0.78) + actualLight * vec3(0.28, 0.22, 0.16), u_rockAridMode);
     lit = mix(lit, hazeColor, haze);
 
     finalColor = vec4(lit, albedo.a * colDiffuse.a);

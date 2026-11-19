@@ -77,13 +77,25 @@ def bake_ninh_thuan():
     outcrop_w = np.clip((ground_src - 2.0) / 6.0, 0.0, 0.50) * arena_guard
     terrain = np.where(valid, ground_src * (1.0 - outcrop_w) + terraced * outcrop_w, -cliff_depth)
 
-    # ── 2. Dry Wadi + Shallow Desert Oasis Pool ──
-    # Retain surface water only in the lowest oasis basin (landform == 4)
-    lake = valid & (landform == 4)
-    oasis_zone = gaussian_filter_2d(lake.astype(np.float64), 2.5) > 0.12
-    water_plane = np.where(oasis_zone, water_y_src, terrain - 0.25)
+    # ── 2. Dry Wadi + Unified Crescent Desert Oasis Pool ──
+    # Unify the lowest basin (landform == 4) into a single cohesive crescent oasis pool
+    # with C^2 Gaussian-smoothed sandy beaches (LANDMINES.md §248).
+    lake_raw = valid & (landform == 4)
+    oasis_blob = gaussian_filter_2d(lake_raw.astype(np.float64), 3.0)
+    perimeter_pre = distance_inside(valid, sx, sz)
+    oasis_zone = valid & (oasis_blob > 0.18) & (perimeter_pre >= 4.5)
+    # Carve a gentle C^2 oasis basin so the water pool is cohesive (never split into 2 puddles or islands)
+    oasis_carve = gaussian_filter_2d(oasis_zone.astype(np.float64), 2.4)
+    lake_water_y = float(np.median(water_y_src[lake_raw])) if lake_raw.any() else 0.14
+    oasis_bed_target = lake_water_y - 0.95 * np.clip(oasis_carve * 1.25, 0.0, 1.0)
+    terrain = np.where(valid & (oasis_carve > 0.02),
+                       np.minimum(terrain, oasis_bed_target),
+                       terrain)
+    terrain = np.where(valid & (~oasis_zone), np.maximum(terrain, -0.15), terrain)
+    water_plane = np.where(oasis_zone, lake_water_y, terrain - 0.25)
     water_depth = np.where(valid & oasis_zone, np.maximum(0.0, water_plane - terrain), 0.0)
-    wet = valid & oasis_zone & (water_depth > 0.002)
+    wet = valid & oasis_zone & (water_depth > 0.004)
+    lake = wet
 
     height_code = np.rint(np.clip((terrain + cliff_depth) / total_range, 0.0, 1.0) * 65535.0).astype(np.uint16)
     ground = height_code.astype(np.float64) / 65535.0 * total_range - cliff_depth
@@ -168,6 +180,16 @@ def bake_ninh_thuan():
     write_png(p("island_heightmap.png"), encoded)
     height_rgba = np.stack((height_code >> 8, height_code & 255, np.zeros_like(height_code), np.full_like(height_code, 255)), axis=-1)
     write_png(p("heightfield.png"), height_rgba, 6)
+
+    # Dedicated 2x (377x601) Open World heightfield with micro-dune wind ridges & crisp benches
+    X2, Z2 = np.meshgrid(np.arange(w2) * sx2, np.arange(h2) * sz2)
+    dune_ridge = (np.sin(X2 * 0.22 + Z2 * 0.13 + np.sin(Z2 * 0.07) * 1.4) * 0.14
+                  + np.cos(X2 * 0.41 - Z2 * 0.28) * 0.06)
+    ow_flat_mask = np.clip(1.0 - slope2 / 14.0, 0.0, 1.0) * (1.0 - wet_smooth2) * valid2.astype(np.float64)
+    terrain_ow = np.where(valid2, ground2 + dune_ridge * ow_flat_mask, -cliff_depth)
+    height_code_ow = np.rint(np.clip((terrain_ow + cliff_depth) / total_range, 0.0, 1.0) * 65535.0).astype(np.uint16)
+    height_rgba_ow = np.stack((height_code_ow >> 8, height_code_ow & 255, np.zeros_like(height_code_ow), np.full_like(height_code_ow, 255)), axis=-1)
+    write_png(p("heightfield_ow.png"), height_rgba_ow, 6)
     write_png(p("ecology_splat.png"), np.rint(splat2 * 255), 6)
     write_png(p("ground_material.png"), np.rint(ground_material2 * 255), 6)
     write_png(p("habitat.png"), np.rint(habitat2 * 255), 6)
@@ -238,7 +260,7 @@ def bake_ninh_thuan():
             occupied.append((x, z, r_scale))
         return True
 
-    # 4A. 5 Monumental Hero Kopjes (Ninh Thuan Landmark Granite Stacks, 8-16m tall)
+    # 4A. 5 Monumental Hero Kopjes (Asymmetric Granite Tors + Crag Spires + Flanking Sandstone Shelves)
     hero_anchors = [
         (52.0, 128.0),
         (136.0, 122.0),
@@ -247,35 +269,38 @@ def bake_ninh_thuan():
         (96.0, 96.0),
     ]
     kopjes_placed = 0
-    for hx, hz in hero_anchors:
+    for idx_h, (hx, hz) in enumerate(hero_anchors):
         gy, sl, _, val, is_wet, _ = sample_cell(hx, hz)
         if not val or is_wet:
             continue
-        r_base = float(rng.uniform(4.8, 6.6))
-        h_base = r_base * float(rng.uniform(0.82, 1.05))
+        r_base = float(rng.uniform(4.8, 6.4))
+        h_base = r_base * float(rng.uniform(0.70, 0.92))
         rot_base = float(rng.uniform(0.0, 360.0))
         if add_rock(hx, hz, r_base, h_base, rot_base, "MAP_ROCK_GRANITE"):
             kopjes_placed += 1
             gy_base = placements[-1][1]
-            # Second tier stacked corestone
-            r2 = r_base * float(rng.uniform(0.62, 0.74))
-            h2_s = r2 * float(rng.uniform(0.88, 1.15))
-            a2 = np.radians(rot_base + rng.uniform(-30.0, 30.0))
-            p2x, p2z = hx + np.cos(a2) * r_base * 0.16, hz + np.sin(a2) * r_base * 0.16
-            p2y = gy_base + h_base * 0.50
-            placements.append((p2x, p2y, p2z, r2, h2_s, (rot_base + 52.0) % 360.0, "MAP_ROCK_GRANITE"))
-            # Third tier crowning cap boulder
-            r3 = r2 * float(rng.uniform(0.55, 0.68))
-            h3_s = r3 * float(rng.uniform(0.80, 1.05))
-            p3x, p3z = p2x - np.cos(a2) * r2 * 0.12, p2z - np.sin(a2) * r2 * 0.12
-            p3y = p2y + h2_s * 0.50
-            placements.append((p3x, p3y, p3z, r3, h3_s, (rot_base + 118.0) % 360.0, "MAP_ROCK_GRANITE"))
+            # Asymmetric flanking shoulder tor (offset laterally rather than stacked vertically like a snowman)
+            a2 = np.radians(rot_base + rng.uniform(-40.0, 40.0))
+            r2 = r_base * float(rng.uniform(0.58, 0.72))
+            h2_s = r2 * float(rng.uniform(0.95, 1.25))
+            p2x, p2z = hx + np.cos(a2) * r_base * 0.42, hz + np.sin(a2) * r_base * 0.42
+            p2y = gy_base + h_base * 0.34
+            placements.append((p2x, p2y, p2z, r2, h2_s, (rot_base + 58.0) % 360.0, "MAP_ROCK_GRANITE"))
+            # Dramatic jagged crag / sandstone spire breaking the silhouette
+            r3 = r_base * float(rng.uniform(0.36, 0.48))
+            h3_s = r3 * float(rng.uniform(1.35, 1.75))
+            a3 = a2 + np.radians(rng.uniform(125.0, 165.0))
+            p3x, p3z = hx + np.cos(a3) * r_base * 0.38, hz + np.sin(a3) * r_base * 0.38
+            p3y = gy_base + h_base * 0.32
+            spire_arch = "MAP_ROCK_CRAG" if (idx_h % 2 == 0) else "MAP_ROCK_SANDSTONE"
+            placements.append((p3x, p3y, p3z, r3, h3_s, (rot_base + 142.0) % 360.0, spire_arch))
             # Flanking apron boulders & scree
             for k in range(4):
                 ang = np.radians(rot_base + k * 88.0 + rng.uniform(-18.0, 18.0))
                 dist = r_base + float(rng.uniform(0.5, 2.4))
                 cr = float(rng.uniform(1.1, 2.2))
-                add_rock(hx + np.cos(ang) * dist, hz + np.sin(ang) * dist, cr, cr * float(rng.uniform(0.65, 0.90)), float(rng.uniform(0, 360)), "MAP_ROCK_GRANITE")
+                f_arch = "MAP_ROCK_SANDSTONE" if (k % 2 == 1) else "MAP_ROCK_GRANITE"
+                add_rock(hx + np.cos(ang) * dist, hz + np.sin(ang) * dist, cr, cr * float(rng.uniform(0.55, 0.85)), float(rng.uniform(0, 360)), f_arch)
             for s in range(6):
                 ang = rng.uniform(0.0, 2.0 * np.pi)
                 dist = r_base + float(rng.uniform(1.2, 4.2))
@@ -347,6 +372,12 @@ def bake_ninh_thuan():
         if is_wadi and rng.random() < 0.55:
             arch = "MAP_ROCK_RIVER_STONE"
             h_s = r_s * 0.48
+        elif rng.random() < 0.34:
+            arch = "MAP_ROCK_SANDSTONE"
+            h_s = r_s * float(rng.uniform(0.52, 0.78))
+        elif tpi_v > 2.2 and rng.random() < 0.35:
+            arch = "MAP_ROCK_CRAG"
+            h_s = r_s * float(rng.uniform(1.15, 1.55))
         if add_rock(x, z, r_s, h_s, rot, arch):
             for _ in range(int(rng.integers(1, 3))):
                 a = rng.uniform(0.0, 2.0 * np.pi)

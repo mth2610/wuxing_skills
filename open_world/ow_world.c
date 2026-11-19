@@ -458,14 +458,37 @@ void OW_Update(PlayerEntity *player, float dt) {
 void OW_Draw3D(const PlayerEntity *player, Camera3D cam) {
     if (!s_hasRealm) return;
 
-    Vector3 safeRing = s_realm.safeCenter;
-    safeRing.y = MapManager_GetGroundHeightAt(safeRing.x, safeRing.z) + 0.12f;
-    DrawCircle3D(safeRing, s_realm.safeRadius, (Vector3){ 1, 0, 0 }, 90.0f, (Color){ 90, 235, 175, 145 });
+    // Terrain-conforming safe zone perimeter arc
+    {
+        const int segs = 48;
+        Color ringCol = (Color){ 90, 235, 175, 135 };
+        float step = (2.0f * PI) / (float)segs;
+        Vector3 prev = {
+            s_realm.safeCenter.x + s_realm.safeRadius,
+            0.0f,
+            s_realm.safeCenter.z
+        };
+        prev.y = MapManager_GetGroundHeightAt(prev.x, prev.z) + 0.14f;
+        for (int i = 1; i <= segs; i++) {
+            float a = (float)i * step;
+            Vector3 cur = {
+                s_realm.safeCenter.x + cosf(a) * s_realm.safeRadius,
+                0.0f,
+                s_realm.safeCenter.z + sinf(a) * s_realm.safeRadius
+            };
+            cur.y = MapManager_GetGroundHeightAt(cur.x, cur.z) + 0.14f;
+            DrawLine3D(prev, cur, ringCol);
+            prev = cur;
+        }
+    }
 
     OWQuestNpc_Draw3D();
 
     for (int i = 0; i < s_windSurgeCount; i++) {
         Vector3 wp = s_windSurges[i].pos;
+        float dx = wp.x - cam.position.x;
+        float dz = wp.z - cam.position.z;
+        if (dx * dx + dz * dz > 95.0f * 95.0f) continue;
         Color wc = (s_windSurges[i].cooldown > 0.0f) ? (Color){ 100, 160, 150, 70 }
                                                      : (Color){ 110, 255, 220, 190 };
         DrawCircle3D((Vector3){ wp.x, wp.y + 0.25f, wp.z }, 1.8f, (Vector3){ 1, 0, 0 }, 90.0f, wc);
@@ -473,7 +496,7 @@ void OW_Draw3D(const PlayerEntity *player, Camera3D cam) {
                      1.2f, (Vector3){ 1, 0, 0 }, 90.0f, wc);
     }
 
-    OWLoot_Draw3D();
+    OWLoot_Draw3D(cam);
     OWWeather_Draw3D(player, cam);
     OWSandbox_Draw3D(player, cam);
 

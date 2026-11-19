@@ -98,14 +98,14 @@ def generate_textures(out_dir, size=512):
     n_grain = make_tileable_noise(size, 7, seed=103)
     
     # Crystals
-    feldspar = np.clip(n1 * 1.4 - 0.2, 0, 1) # muted feldspar grains
-    mica = np.clip(n2 * 2.2 - 1.0, 0, 1)     # dark mica specks
+    feldspar = np.clip(n1 * 1.25 - 0.15, 0, 1) # warm feldspar grains
+    mica = np.clip(n_grain * 1.55 - 0.62, 0, 1) # fine biotite specks (no dark blotches)
     quartz = 1.0 - np.maximum(feldspar, mica) # quartz groundmass
     
-    # Calibrated weathered granite albedo (natural linear reflectance ~0.26)
-    r_granite = 135 * quartz + 152 * feldspar + 38 * mica + n_grain * 10
-    g_granite = 130 * quartz + 138 * feldspar + 40 * mica + n_grain * 10
-    b_granite = 124 * quartz + 126 * feldspar + 42 * mica + n_grain * 10
+    # Calibrated weathered granite albedo (clean fine grain without repeating dark polka-dots)
+    r_granite = 148 * quartz + 166 * feldspar + 92 * mica + n_grain * 12
+    g_granite = 140 * quartz + 150 * feldspar + 88 * mica + n_grain * 12
+    b_granite = 130 * quartz + 134 * feldspar + 84 * mica + n_grain * 12
     diff_granite = np.clip(np.stack([r_granite, g_granite, b_granite], axis=-1), 0, 255).astype(np.uint8)
     
     h_granite = n1 * 0.45 + n2 * 0.25 + n_grain * 0.15

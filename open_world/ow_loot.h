@@ -7,7 +7,7 @@
 
 void OWLoot_Init(const OWRealmDef *realm);
 void OWLoot_Update(const Agent *playerAgent, float dt);
-void OWLoot_Draw3D(void);
+void OWLoot_Draw3D(Camera3D cam);
 
 void OWLoot_SpawnOrb(Vector3 pos, OWLootKind kind, int amount);
 bool OWLoot_TryHarvestNearest(Vector3 playerPos);

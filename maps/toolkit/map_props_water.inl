@@ -149,10 +149,12 @@ MapWaterConfig MapProp_DefaultWaterConfig(MapWaterEcosystem eco)
 
 static void Water_ApplyConfigDefaults(MapWaterConfig *config)
 {
+    bool isOcean = (config->shape == WATER_SHAPE_RECT && config->radiusX > 80.0f);
     if (config->maxDepth <= 0.0f)
         config->maxDepth = 1.25f;
-    if (config->maxDepth > 2.50f)
-        config->maxDepth = 2.50f;
+    float maxCap = isOcean ? 12.0f : 2.50f;
+    if (config->maxDepth > maxCap)
+        config->maxDepth = maxCap;
 
     if (config->absorption.x <= 0.0f && config->absorption.y <= 0.0f && config->absorption.z <= 0.0f)
     {
@@ -1558,8 +1560,10 @@ void MapProp_DrawWaterOverlay(const MapWaterSurface *water, float time)
         SetShaderValue(shader, s_waterLocResolution, &screenRes, SHADER_UNIFORM_VEC2);
 
     // Mobile TBDR: bỏ qua depth resolve toàn màn hình trên GFX_LOW để tránh tốn băng thông bộ nhớ tile
-    // WATER_SHAPE_TERRAIN already has baked vertex bathymetry (fragWaterDepth), avoiding depth-twin copy cost.
-    bool needsSceneDepth = (quality >= GFX_MED) &&
+    // WATER_SHAPE_TERRAIN already has baked vertex bathymetry (fragWaterDepth), and large ocean
+    // patches (WATER_SHAPE_RECT && radiusX > 80m) use analytic coastal distance, avoiding depth-twin copy cost.
+    bool isOceanPatch = (water->config.shape == WATER_SHAPE_RECT && water->config.radiusX > 80.0f);
+    bool needsSceneDepth = (quality >= GFX_MED) && !isOceanPatch &&
                            (water->config.shape != WATER_SHAPE_RADIAL &&
                             water->config.shape != WATER_SHAPE_TERRAIN);
     if (needsSceneDepth)

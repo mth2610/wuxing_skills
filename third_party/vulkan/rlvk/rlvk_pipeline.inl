@@ -405,6 +405,20 @@ static void rlvkAppendDummyAttribs(unsigned short vertexLayout, rlvkShaderSlot *
         (*bindCount)++;
         dummyBinding++;
     }
+    if (!(covered & (1u << RLVK_ATTRIB_INSTANCE_TX)) && (shader->attribLocs[RLVK_ATTRIB_INSTANCE_TX] >= 0))
+    {
+#if defined(__APPLE__)
+        u32 stride = 44;
+#else
+        u32 stride = 0;
+#endif
+        u32 base = (u32)shader->attribLocs[RLVK_ATTRIB_INSTANCE_TX];
+        binds[*bindCount] = (VkVertexInputBindingDescription){.binding = dummyBinding, .stride = stride, .inputRate = VK_VERTEX_INPUT_RATE_INSTANCE};
+        for (u32 c = 0; c < 4; c++)
+            attrs[(*attrCount)++] = (VkVertexInputAttributeDescription){.location = base + c, .binding = dummyBinding, .format = VK_FORMAT_R32G32B32A32_SFLOAT};
+        (*bindCount)++;
+        dummyBinding++;
+    }
 }
 
 static void rlvkBuildVertexInput(const rlvkPipelineKey *key,
@@ -509,8 +523,8 @@ static void rlvkBindDummyAttribBuffers(VkCommandBuffer cmdBuffer, unsigned short
 {
     u32 dummyBinding = 0;
     unsigned int covered = rlvkLayoutCoverage(vertexLayout, &dummyBinding);
-    VkBuffer dummyBufs[8];
-    VkDeviceSize dummyOffs[8];
+    VkBuffer dummyBufs[10];
+    VkDeviceSize dummyOffs[10];
     u32 dummyCount = 0;
     VkBuffer dummyBuf = RLVK.bufferSlots[RLVK.dummyAttribSlot].buffer;
     for (int i = 0; i < (int)RLVK_COUNTOF(rlvkDummyAttribs); i++)
@@ -520,6 +534,12 @@ static void rlvkBindDummyAttribBuffers(VkCommandBuffer cmdBuffer, unsigned short
             continue;
         dummyBufs[dummyCount] = dummyBuf;
         dummyOffs[dummyCount] = rlvkDummyAttribs[i].dummyOffset;
+        dummyCount++;
+    }
+    if (!(covered & (1u << RLVK_ATTRIB_INSTANCE_TX)) && (shader->attribLocs[RLVK_ATTRIB_INSTANCE_TX] >= 0))
+    {
+        dummyBufs[dummyCount] = dummyBuf;
+        dummyOffs[dummyCount] = 0;
         dummyCount++;
     }
     if (dummyCount > 0)

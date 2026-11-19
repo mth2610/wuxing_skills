@@ -877,6 +877,19 @@ int main(int argc, char **argv) {
   // sandbox screen so AutoTest_RunFrame/VisualVerify actually tick (the menu
   // branch `continue;`s past them, which used to hang autotest forever).
   if (autoTestMode || visualVerifyMode) currentScreen = SCREEN_SKILL_SANDBOX;
+  // Dev: WUXING_MAP_SCALE=open_world|moba sets MapScaleMode before WUXING_MAP init
+  {
+    const char *wantScale = getenv("WUXING_MAP_SCALE");
+    if (wantScale != NULL && wantScale[0] != '\0') {
+      if (strcasecmp(wantScale, "open_world") == 0 || strcasecmp(wantScale, "ow") == 0) {
+        MapManager_SetScaleMode(MAP_SCALE_OPEN_WORLD);
+        TraceLog(LOG_INFO, "WUXING_MAP_SCALE: MAP_SCALE_OPEN_WORLD");
+      } else if (strcasecmp(wantScale, "moba") == 0) {
+        MapManager_SetScaleMode(MAP_SCALE_MOBA);
+        TraceLog(LOG_INFO, "WUXING_MAP_SCALE: MAP_SCALE_MOBA");
+      }
+    }
+  }
   // Dev: WUXING_MAP=<name substring> forces the active map (case-insensitive)
   // so headless verify/screenshot runs can target a specific world.
   {
