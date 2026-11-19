@@ -1074,6 +1074,7 @@ int main(int argc, char **argv) {
     Audio_Update(dt); // streams the music bed (SFX are fire-and-forget)
 
     if (currentScreen == SCREEN_MAIN_MENU) {
+        Audio_PlayMusic(MUS_MENU_WUXIA);
         // Execute the online action queued LAST frame — its "DANG KET NOI"
         // overlay is already on screen, because EOS setup (login + lobby)
         // blocks the thread for a few seconds.
@@ -1591,7 +1592,10 @@ int main(int argc, char **argv) {
         // no-ops until assets/audio/ has files — Audio_PlayMusic self-guards
         // against restarting the same track).
         Audio_SetListener(player.position);
-        Audio_PlayMusic(MUS_ARENA_NIGHT);
+        Audio_PlayMusic((GameScreen_GetMode() == GAME_MODE_TEAM_BATTLE &&
+                         GameScreen_GetState() == GAME_FIGHTING)
+                            ? MUS_COMBAT_INTENSE
+                            : MUS_ARENA_NIGHT);
         GameScreen_Update(&player, &camera, dt);
         // Dev: WUXING_TEAM_TEST=1 — scripted team-battle round on the host
         // for headless net verification (no inputs available): 10s into

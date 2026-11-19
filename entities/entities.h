@@ -121,6 +121,7 @@ typedef struct {
     bool           inSafeZone;          // True inside Safe Sanctum (e.g. Oasis) — immune to PK
     int            lastCastSkillIndex;  // Last skill cast by this agent (for direct use-based XP)
     float          lastCastDamageScale; // PvE skill-level damage multiplier (ignored vs ARCH_HERO)
+    float          hitFlashTimer;       // Brief white hit-flash feedback (seconds remaining)
 } Agent;
 
 // Sized for the real target scale (up to 6 real players + a mixed pool of
@@ -165,6 +166,13 @@ bool Entity_CheckRingOut(int agentId);
 void Entity_SetArenaBounds(Vector3 center, float radius);
 // Read them back (ai/'s hero-bot edge guard, HUD debug).
 void Entity_GetArenaBounds(Vector3 *outCenter, float *outRadius);
+
+// Optional rectangular playable bounds for Open World DEM maps (overrides circular ring-out when active).
+void Entity_SetPlayableRect(float minX, float maxX, float minZ, float maxZ);
+void Entity_ClearPlayableRect(void);
+
+// Rebuilds internal 2D XZ spatial hash grid (also auto-rebuilt lazily when dirty).
+void Entity_RebuildSpatialGrid(void);
 
 // --- Crowd control (see ENTITIES_API.md §12) ---
 // Launch: sets velocity and vState = AGENT_JUMPING (shared with Entity_Jump).

@@ -7,6 +7,9 @@
 #define MAX_MAPS 16
 
 static MapDefinition s_maps[MAX_MAPS];
+static MapScaleMode  s_builtScale[MAX_MAPS];
+static bool          s_mapInitialized[MAX_MAPS];
+static MapScaleMode  s_scaleMode = MAP_SCALE_MOBA;
 static int s_mapCount = 0;
 static int s_activeMapIndex = 0;
 
@@ -64,6 +67,8 @@ void MapManager_Init(void) {
             PollInputEvents();
 #endif
             s_maps[s_activeMapIndex].Init();
+            s_mapInitialized[s_activeMapIndex] = true;
+            s_builtScale[s_activeMapIndex] = s_scaleMode;
 #ifdef __ANDROID__
             PollInputEvents();
 #endif
@@ -209,6 +214,7 @@ void MapManager_DrawTransparent(void) {
 void MapManager_Unload(void) {
     for (int i = 0; i < s_mapCount; i++) {
         if (s_maps[i].Unload) s_maps[i].Unload();
+        s_mapInitialized[i] = false;
     }
     s_mapCount = 0;
     s_zoneCount = 0;
@@ -244,11 +250,19 @@ void MapManager_SetActiveIndex(int index) {
         MapProp_SetCliffAridMode(0.0f);
         MapProp_SetGrassState(MAP_GRASS_STATE_LUSH, 0.0f);
         MapProp_ClearGrassBurnZones();
+        if (s_mapInitialized[s_activeMapIndex] && s_builtScale[s_activeMapIndex] != s_scaleMode) {
+            if (s_maps[s_activeMapIndex].Unload) {
+                s_maps[s_activeMapIndex].Unload();
+            }
+            s_mapInitialized[s_activeMapIndex] = false;
+        }
         if (s_maps[s_activeMapIndex].Init) {
 #ifdef __ANDROID__
             PollInputEvents();
 #endif
             s_maps[s_activeMapIndex].Init();
+            s_mapInitialized[s_activeMapIndex] = true;
+            s_builtScale[s_activeMapIndex] = s_scaleMode;
 #ifdef __ANDROID__
             PollInputEvents();
 #endif
@@ -257,18 +271,32 @@ void MapManager_SetActiveIndex(int index) {
     }
 }
 
+void MapManager_SetScaleMode(MapScaleMode mode) {
+    s_scaleMode = mode;
+}
+
+MapScaleMode MapManager_GetScaleMode(void) {
+    return s_scaleMode;
+}
+
+float MapManager_GetWorldScaleXZ(void) {
+    return (s_scaleMode == MAP_SCALE_OPEN_WORLD) ? 4.0f : 1.0f;
+}
+
+float MapManager_GetWorldScaleY(void) {
+    return (s_scaleMode == MAP_SCALE_OPEN_WORLD) ? 2.2f : 1.0f;
+}
+
 Vector3 MapManager_GetActiveSpawnPoint(void) {
     if (s_mapCount == 0) return (Vector3){ 6.0f, 0.0f, 4.4f };
     const char *name = s_maps[s_activeMapIndex].name;
+    float sXZ = MapManager_GetWorldScaleXZ();
     Vector3 pt;
     if (strcmp(name, "SONG_QUAO") == 0) {
-        // Island center is (94.15f, 150.0f). Spawn near the main plateau.
-        pt = (Vector3){ 94.15f, 0.0f, 150.0f };
+        pt = (Vector3){ 94.15f * sXZ, 0.0f, 150.0f * sXZ };
     } else if (strcmp(name, "NINH_THUAN") == 0) {
-        // Oasis Safe Sanctum shore (looking toward Starter Dunes & Relic Canyon).
-        pt = (Vector3){ 160.0f, 0.0f, 222.0f };
+        pt = (Vector3){ 160.0f * sXZ, 0.0f, 222.0f * sXZ };
     } else {
-        // DEFAULT_ARENA and default fallback
         pt = (Vector3){ 6.0f, 0.0f, 4.4f };
     }
     pt.y = MapManager_GetGroundHeightAt(pt.x, pt.z);
@@ -282,13 +310,28 @@ void MapManager_GetActiveBounds(Vector3 *outCenter, float *outRadius) {
         return;
     }
     const char *name = s_maps[s_activeMapIndex].name;
+    float sXZ = MapManager_GetWorldScaleXZ();
     if (strcmp(name, "SONG_QUAO") == 0 || strcmp(name, "NINH_THUAN") == 0) {
-        if (outCenter) *outCenter = (Vector3){ 94.15f, 0.0f, 150.0f };
-        if (outRadius) *outRadius = 135.0f;
+        if (outCenter) *outCenter = (Vector3){ 94.15f * sXZ, 0.0f, 150.0f * sXZ };
+        if (outRadius) *outRadius = 135.0f * sXZ;
     } else {
         if (outCenter) *outCenter = (Vector3){ 6.0f, 0.0f, 4.4f };
         if (outRadius) *outRadius = 18.0f;
     }
+}
+
+bool MapManager_GetActivePlayableRect(float *minX, float *maxX, float *minZ, float *maxZ) {
+    if (s_mapCount == 0) return false;
+    const char *name = s_maps[s_activeMapIndex].name;
+    float sXZ = MapManager_GetWorldScaleXZ();
+    if (strcmp(name, "SONG_QUAO") == 0 || strcmp(name, "NINH_THUAN") == 0) {
+        if (minX) *minX = 6.0f * sXZ;
+        if (maxX) *maxX = 182.0f * sXZ;
+        if (minZ) *minZ = 6.0f * sXZ;
+        if (maxZ) *maxZ = 294.0f * sXZ;
+        return true;
+    }
+    return false;
 }
 
 void MapManager_SetZones(const MapZone *zones, int count) {

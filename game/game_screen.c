@@ -14,11 +14,14 @@
 #include "maps/toolkit/map_props.h"
 #include "game/game_rules.h"
 #include "game/quest_datau.h"
+#include "game/horde_renderer.h"
 #include "open_world/ow_world.h"
+#include "open_world/ow_loot.h"
 #include "open_world/ow_quest_npc.h"
 #include "open_world/ow_sandbox_modes.h"
 #include "open_world/ow_weather.h"
 #include "open_world/realms/ow_desert_earth.h"
+#include "open_world/realms/ow_song_quao.h"
 #include "ai/ai.h"
 #include "ui/ui.h"
 #include "ui/ui_theme.h"
@@ -287,7 +290,7 @@ static void ApplyModeBalanceToPlayer(int agentId)
     float dmgOut = 1.0f + fmaxf(0.0f, ws.elementalBonus);
     float dmgTaken = fmaxf(0.25f, 1.0f - fmaxf(0.0f, ws.elementalResist));
     float moveSpd = (ws.speedMultiplier > 0.0f) ? ws.speedMultiplier : 1.0f;
-    if (s_mode == GAME_MODE_EXPLORE && s_exploreRealm == 3) {
+    if (s_mode == GAME_MODE_EXPLORE && s_exploreRealm >= 0 && s_exploreRealm <= 3) {
         if (OW_GetMightTimer() > 0.0f) {
             dmgOut += 0.35f;
             dmgTaken = fmaxf(0.25f, dmgTaken - 0.30f);
@@ -511,7 +514,7 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
     }
 
     // --- Match state machine (Module 7) ---
-    if (s_mode == GAME_MODE_EXPLORE && s_exploreRealm == 3 && s_state == GAME_FIGHTING)
+    if (s_mode == GAME_MODE_EXPLORE && s_exploreRealm >= 0 && s_exploreRealm <= 3 && s_state == GAME_FIGHTING)
     {
         OW_DrawHUD(player, s_hudCamera);
         int peerCount = (Net_GetMode() != NET_MODE_OFF) ? (Net_GetPeerCount() + 1) : 1;
@@ -522,10 +525,17 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
 
     if (s_state == GAME_ARENA_INTRO)
     {
+        static MapScaleMode s_lastAppliedScale = MAP_SCALE_MOBA;
+        MapScaleMode wantScale = (s_mode == GAME_MODE_EXPLORE && s_exploreRealm != 4)
+            ? MAP_SCALE_OPEN_WORLD : MAP_SCALE_MOBA;
+        MapManager_SetScaleMode(wantScale);
+
         const char *targetMap = (s_mode == GAME_MODE_EXPLORE)
             ? ExploreMapNameForRealm(s_exploreRealm) : MATCH_MAP_NAME;
-        if (strcmp(MapManager_GetName(MapManager_GetActiveIndex()), targetMap) != 0)
+        if (strcmp(MapManager_GetName(MapManager_GetActiveIndex()), targetMap) != 0 ||
+            s_lastAppliedScale != wantScale)
         {
+            s_lastAppliedScale = wantScale;
             for (int i = 0; i < MapManager_GetCount(); i++)
             {
                 if (strcmp(MapManager_GetName(i), targetMap) == 0)
@@ -541,12 +551,19 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
             float mr = 30.0f;
             MapManager_GetActiveBounds(&mc, &mr);
             Entity_SetArenaBounds(mc, mr);
+            float rMinX, rMaxX, rMinZ, rMaxZ;
+            if (MapManager_GetActivePlayableRect(&rMinX, &rMaxX, &rMinZ, &rMaxZ)) {
+                Entity_SetPlayableRect(rMinX, rMaxX, rMinZ, rMaxZ);
+            } else {
+                Entity_ClearPlayableRect();
+            }
             Vector3 sp = MapManager_GetActiveSpawnPoint();
             player->position = sp;
             Entity_SetPosition(player->agentId, sp);
         }
         else
         {
+            Entity_ClearPlayableRect();
             Entity_SetArenaBounds(MATCH_ARENA_CENTER, MATCH_ARENA_RADIUS);
         }
         if (s_mode == GAME_MODE_TEAM_BATTLE)
@@ -635,8 +652,11 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
 
                 Vector3 sp = MapManager_GetActiveSpawnPoint();
                 DaTau_Init(s_exploreRealm);
-                if (s_exploreRealm == 3) {
-                    OW_Init(OWRealm_GetDesertEarth(), !Net_ClientDrivesWorld());
+                if (s_exploreRealm >= 0 && s_exploreRealm <= 3) {
+                    const OWRealmDef *rdef = (s_exploreRealm <= 1)
+                        ? OWRealm_GetSongQuao(s_exploreRealm)
+                        : OWRealm_GetDesertEarth();
+                    OW_Init(rdef, !Net_ClientDrivesWorld());
                 } else {
                     Vector3 ac = {0};
                     float ar = 20.0f;
@@ -861,7 +881,7 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
         else if (s_mode == GAME_MODE_EXPLORE)
         {
             DaTau_Update(dt);
-            if (s_exploreRealm == 3) {
+            if (s_exploreRealm >= 0 && s_exploreRealm <= 3) {
                 OW_Update(player, dt);
                 if (Entity_GetAgent(player->agentId))
                     ApplyModeBalanceToPlayer(player->agentId);
@@ -928,21 +948,36 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
                 Control_SetCastCooldownMult(GameRules_CooldownMult(pa->currentElement, zone));
                 Entity_SetStealth(player->agentId, GameRules_GrantsStealth(pa->currentElement, zone));
 
-                MonsterKillEvent kills[16];
-                int nk = AI_PollMonsterKills(kills, 16);
+                MonsterKillEvent kills[64];
+                int nk = AI_PollMonsterKills(kills, 64);
                 if (nk > 0)
                 {
+                    OW_RecordKills(nk);
                     PlayerProfile *prof = PlayerProfile_GetGlobal();
+                    int orbBudget = 10;
                     for (int k = 0; k < nk; k++)
                     {
-                        int goldGain = (kills[k].kind == MONSTER_ELITE_GUARD) ? 80 : 25;
-                        uint32_t xpGain = (kills[k].kind == MONSTER_ELITE_GUARD) ? 90u : 35u;
-                        prof->gold += goldGain;
+                        int goldGain = (kills[k].kind == MONSTER_ELITE_GUARD) ? 60 : 12;
+                        uint32_t xpGain = (kills[k].kind == MONSTER_ELITE_GUARD) ? 75u : 18u;
+                        if (s_exploreRealm >= 0 && s_exploreRealm <= 3) {
+                            if (orbBudget > 0) {
+                                OWLoot_SpawnOrb(kills[k].pos, OW_LOOT_SKILL_XP, (int)xpGain);
+                                if ((k & 1) == 0 || kills[k].kind == MONSTER_ELITE_GUARD) {
+                                    OWLoot_SpawnOrb(kills[k].pos, OW_LOOT_GOLD, goldGain);
+                                }
+                                orbBudget--;
+                            } else {
+                                prof->gold += goldGain;
+                                int skIdx = pa->equippedSkills[k % AGENT_SKILL_SLOTS];
+                                if (skIdx >= 0) PlayerProfile_AddSkillXp(skIdx, xpGain);
+                            }
+                        } else {
+                            prof->gold += goldGain;
+                            int skIdx = pa->equippedSkills[k % AGENT_SKILL_SLOTS];
+                            if (skIdx >= 0) PlayerProfile_AddSkillXp(skIdx, xpGain);
+                        }
                         if (kills[k].kind == MONSTER_ELITE_GUARD)
                             prof->elementalStones[s_exploreRealm % 5] += 1;
-                        int skSlot = k % AGENT_SKILL_SLOTS;
-                        int skIdx = pa->equippedSkills[skSlot];
-                        if (skIdx >= 0) PlayerProfile_AddSkillXp(skIdx, xpGain);
                         DaTau_OnMonsterKilled((int)kills[k].kind, kills[k].element, false);
                         Net_HostNotifyKillReward((int)kills[k].kind, kills[k].element, false, goldGain, (int)xpGain);
                     }
@@ -1259,7 +1294,7 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
             if (!s_gameTouchInput.pointerOverUI && (tdx * tdx + tdy * tdy) <= 18.0f * 18.0f)
             {
                 bool handledTap = false;
-                if (s_mode == GAME_MODE_EXPLORE && s_exploreRealm == 3)
+                if (s_mode == GAME_MODE_EXPLORE && s_exploreRealm >= 0 && s_exploreRealm <= 3)
                     handledTap = OWQuestNpc_HandleTap(player->position, up, *camera);
 
                 if (!handledTap)
@@ -1370,6 +1405,7 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
                     if (s_tuongSinhChain >= 3 && pc && !pc->taijiActive)
                     {
                         Entity_SetTaijiActive(player->agentId, true);
+                        Audio_PlaySFX(SFX_TAIJI_ENTER);
                         AddFloatingText(player->position, "NGO DAO THAI CUC!", ELEMENT_COLOR_TAIJI, 20.0f, 1.4f);
                         s_tuongSinhChain = 0;
                     }
@@ -1422,7 +1458,7 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
         SkillHelper_StartMeleeTrails(player->agentId, &player->anim, player->position,
                                      Control_GetYaw(), (int)basicAttackType, swingSecs);
         s_swingSlowTimer = swingSecs * 0.6f; // damp walking through the swing
-        Audio_PlaySFXAt(SFX_MELEE_HIT, player->position);
+        Audio_PlaySFXAt(SFX_MARTIAL_SWING, player->position);
 
         if (!Net_ClientDrivesWorld())
         {
@@ -1435,6 +1471,7 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
             {
                 Control_FaceTowards(targetPos);
                 SkillHelper_SpawnMeleeImpact(player->agentId, targetPos);
+                Audio_PlaySFXAt(SFX_MELEE_HIT, targetPos);
             }
             if (gotWallBonus && wallElement == 3 /* Earth — only element with a real wall so far */)
             {
@@ -1474,22 +1511,8 @@ void GameScreen_Draw3D(const PlayerEntity *player)
     if (s_state == GAME_DEFEAT)
         return; // the fallen player isn't drawn
 
-    // Minions (ARCH_MINION pool agents — ai/ is pure logic, render lives
-    // here): small element-colored spirit orbs with a dark body, bobbing.
-    for (int i = 0; i < MAX_AGENTS; i++)
-    {
-        const Agent *a = Entity_GetAgent(i);
-        if (!a || a->archetype != ARCH_MINION)
-            continue;
-        Color c = MinionElementColor(a->currentElement);
-        float bob = 0.25f + 0.05f * sinf((float)GetTime() * 4.0f + (float)i);
-        Vector3 body = {a->position.x, a->position.y + bob, a->position.z};
-        Environment_DrawSmartShadow(a->position, ENV_SHAPE_SPHERE, 0.2f, 0.6f);
-        DrawSphereEx(body, 0.18f, 8, 8,
-                     (Color){(unsigned char)(20 + c.r / 6), (unsigned char)(20 + c.g / 6),
-                             (unsigned char)(20 + c.b / 6), 255});
-        DrawCircle3D(body, 0.26f, (Vector3){0, 1, 0}, (float)GetTime() * 90.0f + i * 40.0f, c);
-    }
+    // Minions & Open-World Hordes (instanced batch renderer — < 10 draw calls total)
+    HordeRenderer_Draw3D(s_hudCamera);
 
     // Other heroes (teammates + opponents: remote players and bots) and a
     // snapshot-mirrored boss (client has no boss/ module state — draw the
@@ -1556,7 +1579,7 @@ void GameScreen_Draw3D(const PlayerEntity *player)
     {
         Environment_DrawSmartShadow(player->position, ENV_SHAPE_SPHERE, 0.5f, 0.9f);
     }
-    if (s_mode == GAME_MODE_EXPLORE && s_exploreRealm == 3 && s_state == GAME_FIGHTING)
+    if (s_mode == GAME_MODE_EXPLORE && s_exploreRealm >= 0 && s_exploreRealm <= 3 && s_state == GAME_FIGHTING)
     {
         OW_Draw3D(player, s_hudCamera);
     }
@@ -1861,7 +1884,7 @@ void GameScreen_DrawHUD(const PlayerEntity *player)
     }
 
     // Match-state overlays
-    if (s_mode == GAME_MODE_EXPLORE && s_exploreRealm == 3 && s_state == GAME_FIGHTING)
+    if (s_mode == GAME_MODE_EXPLORE && s_exploreRealm >= 0 && s_exploreRealm <= 3 && s_state == GAME_FIGHTING)
     {
         OW_DrawHUD(player, s_hudCamera);
         int peerCount = (Net_GetMode() != NET_MODE_OFF) ? (Net_GetPeerCount() + 1) : 1;

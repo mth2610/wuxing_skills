@@ -42,39 +42,82 @@ void InitHelperResources(void)
     VFX_Presets_Init();
     s_helpersInitialized = true;
 }
-// Audio Preset Implementation — no real per-element SFX assets exist under
-// assets/ yet (verified: no .wav/.ogg files anywhere in assets/), so these
-// are stub/warning-only for now. Each preset warns once (not every call) via
-// a static "already warned" flag, then returns without playing or crashing.
-// Once real asset files land (e.g. assets/sounds/fire_cast.wav), replace the
-// TraceLog branch below with ResourceManager_LoadSound(path) + PlaySound().
-static bool s_castSoundWarned[8] = {false};
-static bool s_impactSoundWarned[8] = {false};
+// Audio Preset Implementation — per-EffectPresetType cast/impact SFX under
+// assets/audio/presets/ with 4-voice LoadSoundAlias polyphony and pitch jitter.
+#define PRESET_SFX_VOICES 4
+
+typedef struct {
+    bool  loaded;
+    bool  missing;
+    int   cursor;
+    Sound base;
+    Sound aliases[PRESET_SFX_VOICES - 1];
+} PresetSfxSlot;
+
+static const char *kPresetCastPaths[8] = {
+    [EFFECT_PRESET_FIRE_EXPLOSION]   = "assets/audio/presets/fire_cast.wav",
+    [EFFECT_PRESET_ICE_SHATTER]      = "assets/audio/presets/ice_cast.wav",
+    [EFFECT_PRESET_WATER_SPLASH]     = "assets/audio/presets/water_cast.wav",
+    [EFFECT_PRESET_LIGHTNING_IMPACT] = "assets/audio/presets/lightning_cast.wav",
+    [EFFECT_PRESET_EARTH_CRACK]      = "assets/audio/presets/earth_cast.wav",
+    [EFFECT_PRESET_WOOD_BLOOM]       = "assets/audio/presets/wood_cast.wav",
+    [EFFECT_PRESET_METAL_SHARD]      = "assets/audio/presets/metal_cast.wav",
+    [EFFECT_PRESET_TAIJI_BURST]      = "assets/audio/presets/taiji_cast.wav",
+};
+
+static const char *kPresetImpactPaths[8] = {
+    [EFFECT_PRESET_FIRE_EXPLOSION]   = "assets/audio/presets/fire_impact.wav",
+    [EFFECT_PRESET_ICE_SHATTER]      = "assets/audio/presets/ice_impact.wav",
+    [EFFECT_PRESET_WATER_SPLASH]     = "assets/audio/presets/water_impact.wav",
+    [EFFECT_PRESET_LIGHTNING_IMPACT] = "assets/audio/presets/lightning_impact.wav",
+    [EFFECT_PRESET_EARTH_CRACK]      = "assets/audio/presets/earth_impact.wav",
+    [EFFECT_PRESET_WOOD_BLOOM]       = "assets/audio/presets/wood_impact.wav",
+    [EFFECT_PRESET_METAL_SHARD]      = "assets/audio/presets/metal_impact.wav",
+    [EFFECT_PRESET_TAIJI_BURST]      = "assets/audio/presets/taiji_impact.wav",
+};
+
+static PresetSfxSlot s_castSfx[8] = { 0 };
+static PresetSfxSlot s_impactSfx[8] = { 0 };
+
+static void PlayPresetSlot(PresetSfxSlot *slot, const char *path,
+                           const char *stageName, EffectPresetType preset)
+{
+    if (!IsAudioDeviceReady() || path == NULL) return;
+    if (slot->missing) return;
+    if (!slot->loaded)
+    {
+        slot->base = ResourceManager_LoadSound(path);
+        slot->loaded = true;
+        if (!IsSoundValid(slot->base))
+        {
+            slot->missing = true;
+            TraceLog(LOG_WARNING, "AUDIO: no %s SFX asset for EffectPresetType %d (%s)",
+                     stageName, preset, path);
+            return;
+        }
+        for (int v = 0; v < PRESET_SFX_VOICES - 1; v++)
+            slot->aliases[v] = LoadSoundAlias(slot->base);
+    }
+    int idx = slot->cursor;
+    slot->cursor = (idx + 1) % PRESET_SFX_VOICES;
+    Sound *voice = (idx == 0) ? &slot->base : &slot->aliases[idx - 1];
+    if (!IsSoundValid(*voice)) voice = &slot->base;
+    if (!IsSoundValid(*voice)) return;
+    SetSoundVolume(*voice, 1.0f);
+    SetSoundPitch(*voice, 1.0f + ((float)GetRandomValue(-6, 6) * 0.01f));
+    PlaySound(*voice);
+}
 
 void PlayCastSound(EffectPresetType preset)
 {
-    if (preset < 0 || preset >= 8)
-        return;
-    if (!s_castSoundWarned[preset])
-    {
-        s_castSoundWarned[preset] = true;
-        TraceLog(LOG_WARNING, "AUDIO: no cast SFX asset for EffectPresetType %d yet (stub, not crashing)", preset);
-    }
-    // TODO: once assets/sounds/*.wav exist per element, load via
-    // ResourceManager_LoadSound(path) and PlaySound() here.
+    if (preset < 0 || preset >= 8) return;
+    PlayPresetSlot(&s_castSfx[preset], kPresetCastPaths[preset], "cast", preset);
 }
 
 void PlayImpactSound(EffectPresetType preset)
 {
-    if (preset < 0 || preset >= 8)
-        return;
-    if (!s_impactSoundWarned[preset])
-    {
-        s_impactSoundWarned[preset] = true;
-        TraceLog(LOG_WARNING, "AUDIO: no impact SFX asset for EffectPresetType %d yet (stub, not crashing)", preset);
-    }
-    // TODO: once assets/sounds/*.wav exist per element, load via
-    // ResourceManager_LoadSound(path) and PlaySound() here.
+    if (preset < 0 || preset >= 8) return;
+    PlayPresetSlot(&s_impactSfx[preset], kPresetImpactPaths[preset], "impact", preset);
 }
 
 // 2. Damage Volume Implementation

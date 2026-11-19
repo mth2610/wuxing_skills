@@ -17,7 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define OW_MAX_CUSTOM_SPAWNED 48
+#define OW_MAX_CUSTOM_SPAWNED 128
 
 typedef struct {
     bool              used;
@@ -216,17 +216,20 @@ bool OWSandbox_TriggerPreset(PlayerEntity *player, int presetIndex) {
     if (pr->actionKind == OW_SPAWN_MONSTER_PACK) {
         for (int i = 0; i < count; i++) {
             float ang = ((float)i / (float)count) * 2.0f * PI;
-            float r = 6.5f + (float)(i % 3) * 1.8f;
+            float r = (count > 20 ? 12.0f : 6.5f) + (float)(i % 5) * 2.4f;
             Vector3 sp = {
                 pa->position.x + cosf(ang) * r,
                 0.0f,
                 pa->position.z + sinf(ang) * r
             };
             if (DistXZ(sp, s_realm.safeCenter) <= s_realm.safeRadius + 1.5f) {
-                sp = FindSafeCombatPos(pa->position, 8.0f);
+                sp = FindSafeCombatPos(pa->position, 10.0f);
             }
             sp.y = MapManager_GetGroundHeightAt(sp.x, sp.z);
-            int id = AI_SpawnOneShotMonster(sp, pr->element, pr->monsterKind);
+            MonsterKind k = pr->monsterKind;
+            if (count >= 25 && (i % 7 == 0)) k = MONSTER_LEAPER;
+            else if (count >= 25 && (i % 11 == 0)) k = MONSTER_RANGED_CASTER;
+            int id = AI_SpawnOneShotMonster(sp, pr->element, k);
             RegisterSpawned(id, pr->actionKind, false);
         }
     } else if (pr->actionKind == OW_SPAWN_WORLD_BOSS) {

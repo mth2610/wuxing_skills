@@ -22,6 +22,7 @@ bool        OW_IsInSafeZone(Vector3 pos);
 float       OW_GetMightTimer(void);
 float       OW_GetXpBoostTimer(void);
 int         OW_GetKillStreak(void);
+void        OW_RecordKills(int count);
 Vector3     OW_GetGuideTarget(Vector3 playerPos);
 void        OW_TriggerGuidingWind(void);
 void        OW_SyncQuestEncounter(void);

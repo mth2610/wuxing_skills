@@ -2,54 +2,31 @@
 // Minion brain (MODULES_ROADMAP.md Module 8). Minions are ordinary
 // ARCH_MINION agents in the shared entities pool — this module only adds
 // BEHAVIOR: steady march toward the enemy boss (fallback: nearest enemy),
-// self-destruct AoE on contact. Pure logic — no VFX includes; explosions are
-// reported as poll events (same philosophy as Entity_OnDash) for the render
-// side (game/main) to compose. AI_API.md will document the contract.
+// self-destruct AoE on contact, Hero Bots, and Open-World Vampire-Survivors
+// Swarm AI + Proximity Wave Director. Pure logic — no rendering includes.
 #ifndef AI_H
 #define AI_H
 
 #include "entities/entities.h"
 
 void AI_Init(void);
-
-// Walks every active ARCH_MINION: steer toward the opposing team's boss
-// (nearest opposing agent when no boss lives), explode within trigger range
-// — team-aware Entity_ApplyAoEDamage + a poll event, then the minion dies.
 void AI_Update(float dt);
+int  AI_SpawnMinionWave(int bossAgentId, int count);
 
-// Spawn `count` minions in a ring around the boss agent, inheriting its
-// team and current element. Returns how many actually spawned (pool caps).
-int AI_SpawnMinionWave(int bossAgentId, int count);
-
-// Explosion events for the VFX layer — drained per frame by the consumer.
 typedef struct {
     Vector3 pos;
-    int     element; // minion's element at detonation (VFX preset pick)
+    int     element;
 } MinionExplosion;
 int AI_PollExplosions(MinionExplosion *out, int max);
 
-// --- Hero bots (Dot A4 — nguoi choi ao filling empty team slots) ---
-// A bot is an ordinary ARCH_HERO in the shared pool plus a brain here:
-// keep skill range to the nearest/weakest enemy hero, cast off the agent's
-// equippedSkills (the caller equips a loadout after spawning), dash away
-// from incoming enemy projectiles, never walk off the arena edge. Bots run
-// HOST-side only — to a connected client they are indistinguishable from
-// humans (same snapshot path). They do not respawn mid-round (elimination).
+// --- Hero bots (Dot A4) ---
 #define AI_MAX_HERO_BOTS 8
 
-// Spawns the hero agent + registers its brain. Returns the agentId (-1 on
-// pool/brain-slot exhaustion). Caller equips skills afterwards.
 int  AI_SpawnHeroBot(Vector3 pos, AgentTeam team);
-// Kill every bot's agent + free the brains (match reset / room close).
 void AI_ClearHeroBots(void);
-// Living bots on a side (dead brains are swept by AI_Update).
 int  AI_GetHeroBotCount(AgentTeam team);
-// Is this agent one of ours? (game/ uses it to tell roster-legitimate
-// heroes from leftovers when it sweeps the arena at round start.)
 bool AI_IsHeroBot(int agentId);
 
-// Bot casts this frame — drained by main.c and forwarded to the net layer
-// (VFX mirroring for connected clients). Same poll idiom as explosions.
 typedef struct {
     int     agentId;
     int     skillIndex;
@@ -57,14 +34,27 @@ typedef struct {
 } HeroBotCast;
 int AI_PollHeroCasts(HeroBotCast *out, int max);
 
-// --- PvE Explore Monster Camps (Mode 1: Giang Hồ Ngũ Hành) ---
-#define AI_MAX_CAMP_MONSTERS 48
+// --- PvE Explore Monster Camps & Vampire-Survivors Horde AI ---
+#define AI_MAX_CAMP_MONSTERS 224
+#define AI_MAX_MINION_BOLTS  128
+#define AI_MAX_HORDE_ZONES   24
 
 typedef enum {
-    MONSTER_SWARM_MELEE = 0, // Tiểu Yêu cận chiến
-    MONSTER_RANGED_CASTER,   // Pháp Yêu bắn đạn Ngũ Hành
-    MONSTER_ELITE_GUARD      // Tinh Anh Thủ Lĩnh
+    MONSTER_SWARM_MELEE = 0, // Tiểu Yêu Cắn/Cào (Fast swarmer, telegraphed bite lunge)
+    MONSTER_RANGED_CASTER,   // Pháp Yêu Phun Tia Nhỏ (Spitter — trivial bolt, no heavy CastSkill)
+    MONSTER_ELITE_GUARD,     // Thủ Lĩnh Bầy (Pack Alpha — rallies swarm, short charge/stomp)
+    MONSTER_LEAPER           // Yêu Thú Vồ (Flanking pouncer — predictive short leap-bite)
 } MonsterKind;
+
+typedef enum {
+    MON_STATE_GRAZE = 0,
+    MON_STATE_RALLY,
+    MON_STATE_CHASE,
+    MON_STATE_TELEGRAPH, // Pullback/squash warning before bite/leap/spit/charge
+    MON_STATE_STRIKE,    // Active lunge / leap / bolt release
+    MON_STATE_RECOVER,
+    MON_STATE_LEASH
+} MonsterAIState;
 
 typedef struct {
     Vector3     pos;
@@ -72,10 +62,62 @@ typedef struct {
     MonsterKind kind;
 } MonsterKillEvent;
 
+typedef struct {
+    Vector3     pos;
+    int         element;
+    MonsterKind kind;
+    bool        isBite;
+} MonsterStrikeEvent;
+
+// Read-only visual snapshot for instanced HordeRenderer (game/horde_renderer.c)
+typedef struct {
+    int            agentId;
+    Vector3        pos;
+    float          yaw;
+    float          scale;
+    float          animPhase;
+    float          telegraphFrac; // 0..1 during TELEGRAPH/STRIKE
+    float          hitFlash;      // 0..1 white hit pop
+    int            element;
+    MonsterKind    kind;
+    MonsterAIState state;
+} AIMonsterRenderInfo;
+
+typedef struct {
+    Vector3 pos;
+    Vector3 vel;
+    float   radius;
+    int     element;
+} AIMinionBoltRenderInfo;
+
+// Proximity Hunting Ground / Vampire-Survivors Wave Director
+typedef struct {
+    Vector3 center;
+    float   radius;          // Hunting zone radius (e.g. 30..65m)
+    int     element;
+    int     baseCount;       // Initial pack size when waking (e.g. 18..35)
+    int     maxConcurrent;   // Max active monsters for this zone (e.g. 45..70)
+    float   waveIntervalSec; // Surge cadence (e.g. 4.5s)
+    int     waveBatchSize;   // Monsters per surge wave (e.g. 8..14)
+    float   leaperRatio;     // 0..1 fraction of MONSTER_LEAPER
+    float   spitterRatio;    // 0..1 fraction of MONSTER_RANGED_CASTER
+    int     eliteCount;      // 0..2 Pack Alphas per zone
+} AIHordeZoneDef;
+
 int  AI_SpawnMonsterCamp(Vector3 center, int count, int element, MonsterKind kind);
 int  AI_SpawnOneShotMonster(Vector3 pos, int element, MonsterKind kind);
 void AI_ClearMonsterCamps(void);
 bool AI_IsCampMonster(int agentId);
 int  AI_PollMonsterKills(MonsterKillEvent *out, int max);
+int  AI_PollMonsterStrikes(MonsterStrikeEvent *out, int max);
+
+void AI_RegisterHordeZone(const AIHordeZoneDef *def);
+void AI_ClearHordeZones(void);
+void AI_SetSafeZone(Vector3 center, float radius);
+int  AI_GetActiveCampMonsterCount(void);
+int  AI_GetActiveHordeZoneIndex(Vector3 playerPos);
+
+int  AI_QueryMonsterRenderData(AIMonsterRenderInfo *out, int max);
+int  AI_QueryMinionBolts(AIMinionBoltRenderInfo *out, int max);
 
 #endif // AI_H

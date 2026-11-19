@@ -20,6 +20,40 @@ static Agent agentPool[MAX_AGENTS]; // 4 ally + 4 enemy AI
 // pinning its match map). Real-world-scaled: 1 unit = 1 meter.
 static Vector3 ARENA_CENTER = { 6.0f, 0.0f, 4.4f };
 static float   ARENA_RADIUS = 18.0f;
+static bool    s_usePlayableRect = false;
+static float   s_rectMinX = 0.0f, s_rectMaxX = 100.0f;
+static float   s_rectMinZ = 0.0f, s_rectMaxZ = 100.0f;
+
+// 2D XZ Spatial Hash Grid (zero-alloc flat buckets, O(1) nearby queries)
+#define SPATIAL_HASH_BUCKETS 1024
+#define SPATIAL_CELL_SIZE    2.5f
+static int          s_gridHead[SPATIAL_HASH_BUCKETS];
+static int          s_gridNext[MAX_AGENTS];
+static bool         s_gridDirty = true;
+static unsigned int s_visitedStamp[MAX_AGENTS];
+static unsigned int s_queryStamp = 1;
+
+static inline unsigned int SpatialHashBucket(int cx, int cz) {
+    unsigned int h = ((unsigned int)cx * 73856093u) ^ ((unsigned int)cz * 19349663u);
+    return h & (SPATIAL_HASH_BUCKETS - 1u);
+}
+
+void Entity_RebuildSpatialGrid(void) {
+    for (int b = 0; b < SPATIAL_HASH_BUCKETS; b++) s_gridHead[b] = -1;
+    const float invCell = 1.0f / SPATIAL_CELL_SIZE;
+    for (int i = 0; i < MAX_AGENTS; i++) {
+        if (!agentPool[i].active) {
+            s_gridNext[i] = -1;
+            continue;
+        }
+        int cx = (int)floorf(agentPool[i].position.x * invCell);
+        int cz = (int)floorf(agentPool[i].position.z * invCell);
+        unsigned int b = SpatialHashBucket(cx, cz);
+        s_gridNext[i] = s_gridHead[b];
+        s_gridHead[b] = i;
+    }
+    s_gridDirty = false;
+}
 static const float   GRAVITY = 5.0f; // below real 9.81 m/s² by design (floatier game feel)
 static const float   RING_OUT_KILL_Y = -2.0f;
 static const float   DEFAULT_MAX_MANA = 100.0f;
@@ -43,7 +77,11 @@ static const float   AUTO_TARGET_RADIUS = 10.0f;
 void Entity_Init(void) {
     for (int i = 0; i < MAX_AGENTS; i++) {
         agentPool[i] = (Agent){ 0 };
+        s_visitedStamp[i] = 0;
     }
+    s_usePlayableRect = false;
+    s_gridDirty = true;
+    Entity_RebuildSpatialGrid();
     SkillManager_SetAgentPosProvider(Entity_ProvideAgentPos);
     SkillManager_SetNearbyTargetsProvider(Entity_GetNearbyTargets);
 }
@@ -72,6 +110,11 @@ void Entity_Update(float dt) {
         if (a->stunTimer > 0.0f) {
             a->stunTimer -= dt;
             if (a->stunTimer < 0.0f) a->stunTimer = 0.0f;
+        }
+
+        if (a->hitFlashTimer > 0.0f) {
+            a->hitFlashTimer -= dt;
+            if (a->hitFlashTimer < 0.0f) a->hitFlashTimer = 0.0f;
         }
 
         // Thái Cực "Vô Sát" downside: the state lives on mana — a dry pool
@@ -105,6 +148,7 @@ void Entity_Update(float dt) {
             float step = (dt < a->dashTimer) ? dt : a->dashTimer;
             a->position.x += a->dashVelocity.x * step;
             a->position.z += a->dashVelocity.z * step;
+            s_gridDirty = true;
             if (a->vState == AGENT_GROUNDED) {
                 float gY = MapManager_GetGroundHeightAt(a->position.x, a->position.z);
                 MapManager_ResolveCollision(&a->position, 0.35f, 0.45f, &gY);
@@ -136,6 +180,7 @@ void Entity_Update(float dt) {
             }
             a->pullTimer -= dt;
             if (a->pullTimer < 0.0f) a->pullTimer = 0.0f;
+            s_gridDirty = true;
         }
 
         Entity_CheckRingOut(i);
@@ -145,14 +190,18 @@ void Entity_Update(float dt) {
             a->position.y += a->velocity.y * dt;
             if (a->position.y < RING_OUT_KILL_Y) {
                 a->active = false;
+                s_gridDirty = true;
             }
         } else if (a->vState == AGENT_JUMPING) {
             a->velocity.y -= GRAVITY * dt;
             a->position.x += a->velocity.x * dt;
             a->position.y += a->velocity.y * dt;
             a->position.z += a->velocity.z * dt;
+            s_gridDirty = true;
             float groundY = MapManager_GetGroundHeightAt(a->position.x, a->position.z);
-            MapManager_ResolveCollision(&a->position, 0.35f, 0.45f, &groundY);
+            if (a->archetype != ARCH_MINION) {
+                MapManager_ResolveCollision(&a->position, 0.35f, 0.45f, &groundY);
+            }
             if (a->position.y <= groundY) {
                 a->position.y = groundY;
                 a->velocity = (Vector3){ 0 };
@@ -170,6 +219,7 @@ void Entity_Unload(void) {
     for (int i = 0; i < MAX_AGENTS; i++) {
         agentPool[i] = (Agent){ 0 };
     }
+    s_gridDirty = true;
 }
 
 // Any hostile/forced action breaks Thiền Định.
@@ -189,6 +239,7 @@ void Entity_ApplyDamage(int agentId, float damage, Vector3 knockback) {
 
     CancelMeditate(a);
     a->health -= damage;
+    if (damage > 0.0f) a->hitFlashTimer = 0.12f;
     a->velocity.x += knockback.x;
     a->velocity.y += knockback.y;
     a->velocity.z += knockback.z;
@@ -211,6 +262,7 @@ void Entity_ApplyDamage(int agentId, float damage, Vector3 knockback) {
     if (a->health <= 0.0f) {
         a->health = 0.0f;
         a->active = false;
+        s_gridDirty = true;
     }
 }
 
@@ -252,6 +304,7 @@ void Entity_ApplyDamageFrom(int targetId, int attackerId, float baseDamage,
     }
 
     CancelMeditate(tgt);
+    if (dmg > 0.0f) tgt->hitFlashTimer = 0.12f;
     if (att != NULL && dmg > 0.0f) {
         tgt->lastAttackerId = attackerId;
     }
@@ -281,6 +334,7 @@ void Entity_ApplyDamageFrom(int targetId, int attackerId, float baseDamage,
     if (tgt->health <= 0.0f) {
         tgt->health = 0.0f;
         tgt->active = false;
+        s_gridDirty = true;
     }
 }
 
@@ -537,6 +591,7 @@ void Entity_NetSyncEnd(void) {
     for (int i = 0; i < MAX_AGENTS; i++) {
         if (agentPool[i].active && !s_netMark[i]) agentPool[i].active = false;
     }
+    s_gridDirty = true;
 }
 
 void Entity_SetElement(int agentId, int element) {
@@ -755,11 +810,23 @@ bool Entity_CheckRingOut(int agentId) {
     Agent *a = &agentPool[agentId];
     if (!a->active) return false;
 
-    float dx = a->position.x - ARENA_CENTER.x;
-    float dz = a->position.z - ARENA_CENTER.z;
-    float distSq = dx * dx + dz * dz;
+    bool outOfBounds = false;
+    if (s_usePlayableRect) {
+        if (a->position.x < s_rectMinX || a->position.x > s_rectMaxX ||
+            a->position.z < s_rectMinZ || a->position.z > s_rectMaxZ) {
+            outOfBounds = true;
+        } else if (a->vState == AGENT_GROUNDED) {
+            float gy = MapManager_GetGroundHeightAt(a->position.x, a->position.z);
+            if (gy < -50.0f) outOfBounds = true;
+        }
+    } else {
+        float dx = a->position.x - ARENA_CENTER.x;
+        float dz = a->position.z - ARENA_CENTER.z;
+        float distSq = dx * dx + dz * dz;
+        if (distSq > ARENA_RADIUS * ARENA_RADIUS) outOfBounds = true;
+    }
 
-    if (distSq > ARENA_RADIUS * ARENA_RADIUS) {
+    if (outOfBounds) {
         if (a->vState != AGENT_RING_OUT_FALLING) {
             a->vState = AGENT_RING_OUT_FALLING;
         }
@@ -784,47 +851,80 @@ void Entity_GetArenaBounds(Vector3 *outCenter, float *outRadius) {
     if (outRadius != NULL) *outRadius = ARENA_RADIUS;
 }
 
-int Entity_GetNearbyTargets(Vector3 center, float radius, int *outIds, int maxIds) {
-    if (outIds == NULL || maxIds <= 0) return 0;
+void Entity_SetPlayableRect(float minX, float maxX, float minZ, float maxZ) {
+    s_usePlayableRect = true;
+    s_rectMinX = minX;
+    s_rectMaxX = maxX;
+    s_rectMinZ = minZ;
+    s_rectMaxZ = maxZ;
+}
 
-    int count = 0;
+void Entity_ClearPlayableRect(void) {
+    s_usePlayableRect = false;
+}
+
+static int QueryNearbySpatial(Vector3 center, float radius, bool filterTeam, AgentTeam team,
+                              int *outIds, int maxIds) {
+    if (outIds == NULL || maxIds <= 0 || radius < 0.0f) return 0;
     float radiusSq = radius * radius;
 
-    for (int i = 0; i < MAX_AGENTS && count < maxIds; i++) {
-        Agent *a = &agentPool[i];
-        if (!a->active) continue;
-
-        float dx = a->position.x - center.x;
-        float dz = a->position.z - center.z;
-        float distSq = dx * dx + dz * dz;
-
-        if (distSq <= radiusSq) {
-            outIds[count++] = i;
+    // Large map-wide queries fall back to flat scan (avoids enumerating huge cell rectangles).
+    if (radius > 25.0f) {
+        int count = 0;
+        for (int i = 0; i < MAX_AGENTS && count < maxIds; i++) {
+            const Agent *a = &agentPool[i];
+            if (!a->active) continue;
+            if (filterTeam && a->team != team) continue;
+            float dx = a->position.x - center.x;
+            float dz = a->position.z - center.z;
+            if (dx * dx + dz * dz <= radiusSq) outIds[count++] = i;
         }
+        return count;
     }
 
+    if (s_gridDirty) Entity_RebuildSpatialGrid();
+
+    const float invCell = 1.0f / SPATIAL_CELL_SIZE;
+    int cx0 = (int)floorf((center.x - radius) * invCell);
+    int cx1 = (int)floorf((center.x + radius) * invCell);
+    int cz0 = (int)floorf((center.z - radius) * invCell);
+    int cz1 = (int)floorf((center.z + radius) * invCell);
+
+    unsigned int stamp = ++s_queryStamp;
+    if (stamp == 0) {
+        for (int i = 0; i < MAX_AGENTS; i++) s_visitedStamp[i] = 0;
+        stamp = ++s_queryStamp;
+    }
+
+    int count = 0;
+    for (int cz = cz0; cz <= cz1 && count < maxIds; cz++) {
+        for (int cx = cx0; cx <= cx1 && count < maxIds; cx++) {
+            unsigned int b = SpatialHashBucket(cx, cz);
+            for (int id = s_gridHead[b]; id >= 0; id = s_gridNext[id]) {
+                if (s_visitedStamp[id] == stamp) continue;
+                s_visitedStamp[id] = stamp;
+                const Agent *a = &agentPool[id];
+                if (!a->active) continue;
+                if (filterTeam && a->team != team) continue;
+                float dx = a->position.x - center.x;
+                float dz = a->position.z - center.z;
+                if (dx * dx + dz * dz <= radiusSq) {
+                    outIds[count++] = id;
+                    if (count >= maxIds) break;
+                }
+            }
+        }
+    }
     return count;
+}
+
+int Entity_GetNearbyTargets(Vector3 center, float radius, int *outIds, int maxIds) {
+    return QueryNearbySpatial(center, radius, false, TEAM_ALLY, outIds, maxIds);
 }
 
 int Entity_GetNearbyTargetsTeam(Vector3 center, float radius, AgentTeam filter,
                                 int *outIds, int maxIds) {
-    if (outIds == NULL || maxIds <= 0) return 0;
-
-    int count = 0;
-    float radiusSq = radius * radius;
-
-    for (int i = 0; i < MAX_AGENTS && count < maxIds; i++) {
-        Agent *a = &agentPool[i];
-        if (!a->active || a->team != filter) continue;
-
-        float dx = a->position.x - center.x;
-        float dz = a->position.z - center.z;
-        if (dx * dx + dz * dz <= radiusSq) {
-            outIds[count++] = i;
-        }
-    }
-
-    return count;
+    return QueryNearbySpatial(center, radius, true, filter, outIds, maxIds);
 }
 
 void Entity_AddModifier(int agentId, float speedMult, float duration) {
@@ -919,6 +1019,7 @@ int Entity_SpawnAgent(Vector3 position, float maxHealth, int element,
             a->inSafeZone = false;
             a->lastCastSkillIndex = -1;
             a->lastCastDamageScale = 1.0f;
+            a->hitFlashTimer = 0.0f;
             a->team = team;
             a->archetype = archetype;
             a->isMeditating = false;
@@ -933,6 +1034,7 @@ int Entity_SpawnAgent(Vector3 position, float maxHealth, int element,
             for (int m = 0; m < MAX_AGENT_MODIFIERS; m++) {
                 a->modifiers[m] = (AgentModifier){ 0 };
             }
+            s_gridDirty = true;
             return i;
         }
     }
@@ -952,6 +1054,7 @@ void Entity_SetPosition(int agentId, Vector3 position) {
         if (dx * dx + dy * dy + dz * dz > 1e-6f) CancelMeditate(a);
     }
     a->position = position;
+    s_gridDirty = true;
 }
 
 const Agent *Entity_GetAgent(int agentId) {

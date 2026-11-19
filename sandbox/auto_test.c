@@ -6,7 +6,7 @@
 #include <string.h>
 #include <math.h>
 
-#define AUTOTEST_MAX_CASES 32
+#define AUTOTEST_MAX_CASES 64
 #define AUTOTEST_DEFAULT_MAX_FRAMES 300 // 5s of simulated time at fixed 1/60 dt
 
 typedef struct {

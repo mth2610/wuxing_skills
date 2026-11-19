@@ -8,30 +8,38 @@
 
 // Spatial falloff: full volume at the listener, silent past this (meters).
 #define AUDIO_SFX_MAX_DIST 26.0f
+// Voice polyphony per SfxId via raylib LoadSoundAlias (0 extra wave memory).
+#define AUDIO_SFX_ALIASES 4
 
 // One path per SfxId (index-aligned with the enum). Drop the WAVs here and
 // they play — no code change. Kept .wav for low-latency one-shots.
 static const char *kSfxPath[SFX_COUNT] = {
-    [SFX_UI_CLICK]    = "assets/audio/sfx/ui_click.wav",
-    [SFX_CAST_WATER]  = "assets/audio/sfx/cast_water.wav",
-    [SFX_CAST_WOOD]   = "assets/audio/sfx/cast_wood.wav",
-    [SFX_CAST_FIRE]   = "assets/audio/sfx/cast_fire.wav",
-    [SFX_CAST_EARTH]  = "assets/audio/sfx/cast_earth.wav",
-    [SFX_CAST_METAL]  = "assets/audio/sfx/cast_metal.wav",
-    [SFX_CAST_TAIJI]  = "assets/audio/sfx/cast_taiji.wav",
-    [SFX_MELEE_HIT]   = "assets/audio/sfx/melee_hit.wav",
-    [SFX_SKILL_HIT]   = "assets/audio/sfx/skill_hit.wav",
-    [SFX_CLASH]       = "assets/audio/sfx/clash.wav",
-    [SFX_EXPLOSION]   = "assets/audio/sfx/explosion.wav",
-    [SFX_TAIJI_ENTER] = "assets/audio/sfx/taiji_enter.wav",
-    [SFX_RINGOUT]     = "assets/audio/sfx/ringout.wav",
-    [SFX_VICTORY]     = "assets/audio/sfx/victory.wav",
-    [SFX_DEFEAT]      = "assets/audio/sfx/defeat.wav",
+    [SFX_UI_CLICK]      = "assets/audio/sfx/ui_click.wav",
+    [SFX_CAST_WATER]    = "assets/audio/sfx/cast_water.wav",
+    [SFX_CAST_WOOD]     = "assets/audio/sfx/cast_wood.wav",
+    [SFX_CAST_FIRE]     = "assets/audio/sfx/cast_fire.wav",
+    [SFX_CAST_EARTH]    = "assets/audio/sfx/cast_earth.wav",
+    [SFX_CAST_METAL]    = "assets/audio/sfx/cast_metal.wav",
+    [SFX_CAST_TAIJI]    = "assets/audio/sfx/cast_taiji.wav",
+    [SFX_MELEE_HIT]     = "assets/audio/sfx/melee_hit.wav",
+    [SFX_SKILL_HIT]     = "assets/audio/sfx/skill_hit.wav",
+    [SFX_CLASH]         = "assets/audio/sfx/clash.wav",
+    [SFX_EXPLOSION]     = "assets/audio/sfx/explosion.wav",
+    [SFX_TAIJI_ENTER]   = "assets/audio/sfx/taiji_enter.wav",
+    [SFX_RINGOUT]       = "assets/audio/sfx/ringout.wav",
+    [SFX_VICTORY]       = "assets/audio/sfx/victory.wav",
+    [SFX_DEFEAT]        = "assets/audio/sfx/defeat.wav",
+    [SFX_MARTIAL_SWING] = "assets/audio/sfx/martial_swing.wav",
+    [SFX_AI_ALERT]      = "assets/audio/sfx/ai_alert.wav",
+    [SFX_AI_CAST]       = "assets/audio/sfx/ai_cast.wav",
+    [SFX_AI_THINK]      = "assets/audio/sfx/ai_think.wav",
 };
 
 static const char *kMusicPath[MUS_COUNT] = {
-    [MUS_NONE]        = NULL,
-    [MUS_ARENA_NIGHT] = "assets/audio/music/arena_night.ogg",
+    [MUS_NONE]           = NULL,
+    [MUS_ARENA_NIGHT]    = "assets/audio/music/arena_night.ogg",
+    [MUS_MENU_WUXIA]     = "assets/audio/music/menu_wuxia.ogg",
+    [MUS_COMBAT_INTENSE] = "assets/audio/music/combat_intense.ogg",
 };
 
 static bool     s_ready = false;      // audio device open
@@ -45,6 +53,8 @@ static bool     s_musicLoaded = false;
 // warns once (via the resource manager) and then costs nothing.
 static bool  s_sfxMissing[SFX_COUNT] = { false };
 static Sound s_sfx[SFX_COUNT];        // cached handles (also live in RM cache)
+static Sound s_sfxAliases[SFX_COUNT][AUDIO_SFX_ALIASES - 1];
+static int   s_sfxVoiceCursor[SFX_COUNT] = { 0 };
 static bool  s_sfxLoaded[SFX_COUNT] = { false };
 
 void Audio_Init(void) {
@@ -55,14 +65,25 @@ void Audio_Init(void) {
         return;
     }
     SetMasterVolume(s_master);
-    for (int i = 0; i < SFX_COUNT; i++) { s_sfxLoaded[i] = false; s_sfxMissing[i] = false; }
+    for (int i = 0; i < SFX_COUNT; i++) {
+        s_sfxLoaded[i] = false;
+        s_sfxMissing[i] = false;
+        s_sfxVoiceCursor[i] = 0;
+    }
     TraceLog(LOG_INFO, "[AUDIO] ready (drop assets under assets/audio/ to hear them)");
 }
 
 void Audio_Shutdown(void) {
     if (!s_ready) return;
     Audio_StopMusic();
-    // SFX Sounds are owned by ResourceManager's cache — it unloads them.
+    for (int i = 0; i < SFX_COUNT; i++) {
+        if (!s_sfxLoaded[i] || s_sfxMissing[i]) continue;
+        for (int v = 0; v < AUDIO_SFX_ALIASES - 1; v++) {
+            if (IsSoundValid(s_sfxAliases[i][v])) UnloadSoundAlias(s_sfxAliases[i][v]);
+        }
+        s_sfxLoaded[i] = false;
+    }
+    // Base SFX Sounds are owned by ResourceManager's cache — it unloads them.
     CloseAudioDevice();
     s_ready = false;
 }
@@ -91,8 +112,7 @@ SfxId Audio_CastSfxForElement(int element) {
     }
 }
 
-// Fetch (lazy-load) the Sound for id, or NULL-equivalent if the asset is
-// missing. Returns a pointer to a valid, playable Sound or NULL.
+// Fetch (lazy-load) the next round-robin Sound voice for id, or NULL if missing.
 static Sound *ResolveSfx(SfxId id) {
     if (id < 0 || id >= SFX_COUNT || s_sfxMissing[id]) return NULL;
     if (!s_sfxLoaded[id]) {
@@ -102,8 +122,14 @@ static Sound *ResolveSfx(SfxId id) {
             s_sfxMissing[id] = true; // file absent — stop retrying
             return NULL;
         }
+        for (int v = 0; v < AUDIO_SFX_ALIASES - 1; v++) {
+            s_sfxAliases[id][v] = LoadSoundAlias(s_sfx[id]);
+        }
     }
-    return IsSoundValid(s_sfx[id]) ? &s_sfx[id] : NULL;
+    int slot = s_sfxVoiceCursor[id];
+    s_sfxVoiceCursor[id] = (slot + 1) % AUDIO_SFX_ALIASES;
+    Sound *voice = (slot == 0) ? &s_sfx[id] : &s_sfxAliases[id][slot - 1];
+    return IsSoundValid(*voice) ? voice : (IsSoundValid(s_sfx[id]) ? &s_sfx[id] : NULL);
 }
 
 // Tiny pitch jitter keeps repeated hits/casts from sounding robotic.

@@ -1840,11 +1840,152 @@ static AutoTestResult AutoTest_DesertSandboxAndWeatherStep(int frameInCase, char
   PlayerEntity tmpPlayer = { 0 };
   tmpPlayer.agentId = Entity_SpawnAgent((Vector3){ 120.0f, 0.0f, 170.0f }, 100.0f, 3, TEAM_ALLY, ARCH_HERO);
   ok &= AutoTest_ExpectTrue(OWSandbox_TriggerPreset(&tmpPlayer, 0), "Spawn monster pack preset succeeds", outReason, outReasonSize);
-  ok &= AutoTest_ExpectTrue(OWSandbox_GetActiveCustomSpawnCount() == 8, "8 desert monsters spawned", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(OWSandbox_GetActiveCustomSpawnCount() == realm->spawnerPresets[0].count, "preset monster pack spawned", outReason, outReasonSize);
   OWSandbox_ClearCustomSpawns();
   ok &= AutoTest_ExpectTrue(OWSandbox_GetActiveCustomSpawnCount() == 0, "ClearCustomSpawns removes all spawned monsters", outReason, outReasonSize);
   Entity_ApplyDamage(tmpPlayer.agentId, 1e9f, (Vector3){ 0 });
 
+  return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
+}
+
+static AutoTestResult AutoTest_SpatialHashEquivalenceStep(int frameInCase, char *outReason, int outReasonSize)
+{
+  (void)frameInCase;
+  Entity_Init();
+  int ids[200];
+  int spawned = 0;
+  for (int i = 0; i < 200; i++) {
+    Vector3 p = {
+      (float)((i * 73) % 700) + 20.0f,
+      0.0f,
+      (float)((i * 137) % 1100) + 20.0f
+    };
+    AgentTeam team = (i % 3 == 0) ? TEAM_ALLY : TEAM_ENEMY;
+    ids[i] = Entity_SpawnAgent(p, 50.0f, i % 5, team, ARCH_MINION);
+    if (ids[i] >= 0) spawned++;
+  }
+  bool ok = AutoTest_ExpectTrue(spawned == 200, "spawned 200 test agents", outReason, outReasonSize);
+
+  for (int q = 0; q < 25; q++) {
+    Vector3 center = { (float)((q * 97) % 700) + 20.0f, 0.0f, (float)((q * 193) % 1100) + 20.0f };
+    float r = 2.0f + (float)(q % 6) * 3.5f;
+    int got[MAX_AGENTS];
+    int gotCount = Entity_GetNearbyTargets(center, r, got, MAX_AGENTS);
+
+    int expected = 0;
+    for (int i = 0; i < MAX_AGENTS; i++) {
+      const Agent *a = Entity_GetAgent(i);
+      if (!a) continue;
+      float dx = a->position.x - center.x;
+      float dz = a->position.z - center.z;
+      if (dx * dx + dz * dz <= r * r) expected++;
+    }
+    if (gotCount != expected) {
+      ok = AutoTest_ExpectTrue(false, "spatial hash query count matches brute-force", outReason, outReasonSize);
+      break;
+    }
+  }
+  for (int i = 0; i < 200; i++) {
+    if (ids[i] >= 0) Entity_ApplyDamage(ids[i], 1e9f, (Vector3){ 0 });
+  }
+  return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
+}
+
+static AutoTestResult AutoTest_HordeSwarmAIStressStep(int frameInCase, char *outReason, int outReasonSize)
+{
+  (void)frameInCase;
+  Entity_Init();
+  AI_Init();
+  Combat_Init();
+  Entity_SetPlayableRect(0.0f, 300.0f, 0.0f, 300.0f);
+
+  Vector3 safeC = { 200.0f, 0.0f, 200.0f };
+  AI_SetSafeZone(safeC, 18.0f);
+  int heroId = Entity_SpawnAgent((Vector3){ 100.0f, 0.0f, 100.0f }, 500.0f, 0, TEAM_ALLY, ARCH_HERO);
+  bool ok = AutoTest_ExpectTrue(heroId >= 0, "spawned test hero", outReason, outReasonSize);
+
+  AIHordeZoneDef hz = {
+    .center = { 100.0f, 0.0f, 100.0f },
+    .radius = 45.0f,
+    .element = 3,
+    .baseCount = 160,
+    .maxConcurrent = 180,
+    .waveIntervalSec = 4.0f,
+    .waveBatchSize = 10,
+    .leaperRatio = 0.2f,
+    .spitterRatio = 0.15f,
+    .eliteCount = 2
+  };
+  AI_RegisterHordeZone(&hz);
+
+  double t0 = GetTime();
+  for (int f = 0; f < 90; f++) {
+    Combat_BeginFrame();
+    Entity_Update(1.0f / 60.0f);
+    AI_Update(1.0f / 60.0f);
+    Combat_Update(1.0f / 60.0f);
+  }
+  double elapsedMs = (GetTime() - t0) * 1000.0;
+  double msPerTick = elapsedMs / 90.0;
+
+  AIMonsterRenderInfo rinfo[AI_MAX_CAMP_MONSTERS];
+  int activeCount = AI_QueryMonsterRenderData(rinfo, AI_MAX_CAMP_MONSTERS);
+  ok &= AutoTest_ExpectTrue(activeCount >= 120, "horde zone woke >= 120 simultaneous monsters", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(msPerTick < 6.0, "90-frame horde AI+Spatial+Combat tick under budget", outReason, outReasonSize);
+
+  // Check Boids separation: average nearest-neighbor distance > 0.65m
+  double nnSum = 0.0;
+  for (int i = 0; i < activeCount; i++) {
+    float bestSq = 1e9f;
+    for (int j = 0; j < activeCount; j++) {
+      if (i == j) continue;
+      float dx = rinfo[i].pos.x - rinfo[j].pos.x;
+      float dz = rinfo[i].pos.z - rinfo[j].pos.z;
+      float d2 = dx * dx + dz * dz;
+      if (d2 < bestSq) bestSq = d2;
+    }
+    nnSum += sqrt((double)bestSq);
+  }
+  double avgNN = (activeCount > 1) ? (nnSum / (double)activeCount) : 1.0;
+  ok &= AutoTest_ExpectTrue(avgNN > 0.65, "boids separation prevents stacking collapse", outReason, outReasonSize);
+
+  AI_ClearHordeZones();
+  AI_ClearMonsterCamps();
+  Entity_ClearPlayableRect();
+  Entity_ApplyDamage(heroId, 1e9f, (Vector3){ 0 });
+  return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
+}
+
+static AutoTestResult AutoTest_DemDualScaleTiledStep(int frameInCase, char *outReason, int outReasonSize)
+{
+  (void)frameInCase;
+  int sqIdx = -1;
+  for (int i = 0; i < MapManager_GetCount(); i++) {
+    if (strcmp(MapManager_GetName(i), "SONG_QUAO") == 0) { sqIdx = i; break; }
+  }
+  bool ok = AutoTest_ExpectTrue(sqIdx >= 0, "SONG_QUAO map registered", outReason, outReasonSize);
+  if (sqIdx < 0) return AUTOTEST_FAIL;
+
+  MapManager_SetScaleMode(MAP_SCALE_MOBA);
+  MapManager_SetActiveIndex(sqIdx);
+  Vector3 mobaCenter; float mobaRadius;
+  MapManager_GetActiveBounds(&mobaCenter, &mobaRadius);
+
+  MapManager_SetScaleMode(MAP_SCALE_OPEN_WORLD);
+  MapManager_SetActiveIndex(sqIdx);
+  Vector3 owCenter; float owRadius;
+  MapManager_GetActiveBounds(&owCenter, &owRadius);
+
+  ok &= AutoTest_ExpectTrue(owRadius >= mobaRadius * 3.8f, "Open World scale expands bounds 4x over MOBA", outReason, outReasonSize);
+  float rMinX, rMaxX, rMinZ, rMaxZ;
+  ok &= AutoTest_ExpectTrue(MapManager_GetActivePlayableRect(&rMinX, &rMaxX, &rMinZ, &rMaxZ), "Playable rect active", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue((rMaxX - rMinX) > 650.0f && (rMaxZ - rMinZ) > 1000.0f, "Open World spans > 650m x 1000m", outReason, outReasonSize);
+
+  Vector3 sp = MapManager_GetActiveSpawnPoint();
+  ok &= AutoTest_ExpectTrue(sp.y > -10.0f, "Open World spawn point has valid ground height", outReason, outReasonSize);
+
+  // Restore MOBA scale for remaining tests
+  MapManager_SetScaleMode(MAP_SCALE_MOBA);
   return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
 }
 
@@ -1882,5 +2023,8 @@ void AutoTestCases_Register(PlayerEntity *player)
   AutoTest_Register("datau_npc_cycle_and_guiding_wisp", AutoTest_DaTauNpcCycleAndWispStep, 5);
   AutoTest_Register("net_p2p_explore_optimization", AutoTest_NetP2PExploreOptStep, 5);
   AutoTest_Register("ow_desert_sandbox_and_weather", AutoTest_DesertSandboxAndWeatherStep, 5);
+  AutoTest_Register("spatial_hash_equivalence", AutoTest_SpatialHashEquivalenceStep, 5);
+  AutoTest_Register("horde_swarm_ai_stress", AutoTest_HordeSwarmAIStressStep, 5);
+  AutoTest_Register("dem_dual_scale_tiled", AutoTest_DemDualScaleTiledStep, 5);
 }
 

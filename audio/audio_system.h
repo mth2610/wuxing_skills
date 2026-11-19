@@ -32,12 +32,18 @@ typedef enum {
     SFX_RINGOUT,        // an agent falls off the arena
     SFX_VICTORY,        // match won
     SFX_DEFEAT,         // match lost
+    SFX_MARTIAL_SWING,  // múa võ — martial arts fist/kick/blade whoosh
+    SFX_AI_ALERT,       // AI / enemy aggro or tactical lock-on
+    SFX_AI_CAST,        // AI / boss skill channeling
+    SFX_AI_THINK,       // AI / Qi sense activation
     SFX_COUNT
 } SfxId;
 
 typedef enum {
     MUS_NONE = 0,
     MUS_ARENA_NIGHT,    // assets/audio/music/arena_night.ogg — looping bed
+    MUS_MENU_WUXIA,     // assets/audio/music/menu_wuxia.ogg — calm menu/lobby bed
+    MUS_COMBAT_INTENSE, // assets/audio/music/combat_intense.ogg — high-tension battle
     MUS_COUNT
 } MusicId;
 

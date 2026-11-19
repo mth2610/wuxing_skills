@@ -82,6 +82,18 @@ Vector3 MapManager_GetActiveSpawnPoint(void);
 // Returns the recommended arena center and radius for the currently active map.
 void MapManager_GetActiveBounds(Vector3 *outCenter, float *outRadius);
 
+// Dual-scale single-DEM mode: MOBA (1.0x compact arena) vs OPEN_WORLD (4.0x macro valleys)
+typedef enum {
+    MAP_SCALE_MOBA = 0,
+    MAP_SCALE_OPEN_WORLD
+} MapScaleMode;
+
+void         MapManager_SetScaleMode(MapScaleMode mode);
+MapScaleMode MapManager_GetScaleMode(void);
+float        MapManager_GetWorldScaleXZ(void);
+float        MapManager_GetWorldScaleY(void);
+bool         MapManager_GetActivePlayableRect(float *minX, float *maxX, float *minZ, float *maxZ);
+
 // --- Virtual Trigger Zones (MODULES_ROADMAP.md Module 2) ---
 // Map = pure data: a map declares WHERE its nature zones are; the gameplay
 // modifier rules (Thủy -50% cooldown in a river, etc.) live in the consumer

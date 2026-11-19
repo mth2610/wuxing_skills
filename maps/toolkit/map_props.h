@@ -68,9 +68,14 @@ typedef struct
     const float *verts;            // borrowed from Mesh.vertices
     const unsigned short *indices; // borrowed from Mesh.indices, may be NULL
     const float *normals;          // borrowed from Mesh.normals, may be NULL
+    // Direct O(1) heightfield lookup (used by tiled heightfields or large Open-World DEMs)
+    unsigned short *hfHeights;
+    int hfW, hfH;
+    float hfWidth, hfDepth, hfTotalHeight;
+    bool hfPacked16;
 } MapGroundLookup;
 
-#define MAP_GROUND_CHUNK_GRID 6
+#define MAP_GROUND_CHUNK_GRID 8
 #define MAP_GROUND_MAX_CHUNKS (MAP_GROUND_CHUNK_GRID * MAP_GROUND_CHUNK_GRID)
 
 typedef struct
@@ -108,6 +113,10 @@ MapGroundSurface MapProp_CreateGroundHeightfield16(const char *heightmapPath, fl
                                                    float totalHeight, float cliffDepth, float tileSize,
                                                    const char *splatMapPath, const char *grassTexPath,
                                                    const char *pathTexPath);
+MapGroundSurface MapProp_CreateGroundHeightfieldTiled(const char *heightmapPath, float width, float depth,
+                                                      float totalHeight, float cliffDepth, float tileSize,
+                                                      const char *splatMapPath, const char *grassTexPath,
+                                                      const char *pathTexPath);
 MapGroundSurface MapProp_CreateGroundHeightmapEx(const char *heightmapPath, float width, float depth,
                                                  float totalHeight, float cliffDepth, float tileSize,
                                                  const char *splatMapPath,

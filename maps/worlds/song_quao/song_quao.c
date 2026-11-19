@@ -22,10 +22,16 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define MAP_WIDTH SONG_QUAO_MAP_WIDTH
-#define MAP_DEPTH SONG_QUAO_MAP_DEPTH
-#define CLIFF_DEPTH SONG_QUAO_CLIFF_DEPTH
-#define CLOUD_SEA_Y -5.20f
+static float s_scaleXZ = 1.0f;
+static float s_scaleY = 1.0f;
+static float s_mapWidth = SONG_QUAO_MAP_WIDTH;
+static float s_mapDepth = SONG_QUAO_MAP_DEPTH;
+static float s_heightRange = SONG_QUAO_HEIGHT_RANGE;
+
+#define MAP_WIDTH s_mapWidth
+#define MAP_DEPTH s_mapDepth
+#define CLIFF_DEPTH (SONG_QUAO_CLIFF_DEPTH * s_scaleY)
+#define CLOUD_SEA_Y (-5.20f * s_scaleY)
 
 // Broad valley meadow coverage across the celestial island plateau and rolling hills
 // Sized above total accepted plateau tufts (~58k) so reservoir sampling never evicts foreground tufts (LANDMINES.md §135)
@@ -35,12 +41,12 @@
 #define PAMPAS_COUNT 420
 
 // Safe elevation floor above the sheer outer cliff abyss (-CLIFF_DEPTH)
-#define PLAYABLE_BASIN_MIN_Y (-2.40f)
-#define PLAYABLE_BASIN_FADE_Y (-1.65f)
+#define PLAYABLE_BASIN_MIN_Y (-2.40f * s_scaleY)
+#define PLAYABLE_BASIN_FADE_Y (-1.65f * s_scaleY)
 
 // Plateau grass elevation & slope thresholds aligned with ground_splat.fs wCliff
-#define GRASS_CLIFF_MIN_Y (-0.22f)
-#define GRASS_CLIFF_FADE_Y (-0.05f)
+#define GRASS_CLIFF_MIN_Y (-0.22f * s_scaleY)
+#define GRASS_CLIFF_FADE_Y (-0.05f * s_scaleY)
 #define GRASS_MIN_NORMAL_Y 0.76f
 #define GRASS_FULL_NORMAL_Y 0.86f
 
@@ -50,14 +56,15 @@
 #define SHADOW_HYSTERESIS_Y 0.50f
 #define SHADOW_FOCUS_RADIUS 18.0f
 
-static const Vector3 kMapCenter = {MAP_WIDTH * 0.5f, 0.0f, MAP_DEPTH * 0.5f};
+static Vector3 kMapCenter = {SONG_QUAO_MAP_WIDTH * 0.5f, 0.0f, SONG_QUAO_MAP_DEPTH * 0.5f};
 
-static const MapZone SONG_QUAO_ZONES[] = {
-    {NAT_RIVER, {SONG_QUAO_LAKE_CENTER_X, 0.0f, SONG_QUAO_LAKE_CENTER_Z}, SONG_QUAO_LAKE_RADIUS_X},
-    {NAT_FOREST, {94.15f, 0.0f, 150.0f}, 35.0f}, // Central basin plateau meadow
-    {NAT_FOREST, {110.0f, 0.0f, 100.0f}, 25.0f}, // North valley forest
-};
-#define SONG_QUAO_ZONE_COUNT (int)(sizeof(SONG_QUAO_ZONES) / sizeof(SONG_QUAO_ZONES[0]))
+static MapZone s_songQuaoZones[3];
+#define SONG_QUAO_ZONE_COUNT 3
+
+static MapRockItem s_scaledRocks[SONG_QUAO_ROCK_ITEM_COUNT];
+static MapFloraFlowerCluster s_scaledFlowerClusters[SONG_QUAO_FLOWER_CLUSTER_COUNT];
+static Vector3 s_floraWindowCenter = {0};
+static Vector3 s_staticShadowCenter = {-9999.0f, 0.0f, -9999.0f};
 
 // --- Map Scenery & Scaffolding ---
 static MapDemIsland s_dem;
@@ -137,11 +144,11 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
         return 0.0f;
 
     // 1. Lake water absolute clearance (radial basin)
-    const float invLakeRadX = 1.0f / SONG_QUAO_LAKE_RADIUS_X;
-    const float invLakeRadZ = 1.0f / SONG_QUAO_LAKE_RADIUS_Z;
-    float dxLake = (x - SONG_QUAO_LAKE_CENTER_X) * invLakeRadX;
-    float dzLake = (z - SONG_QUAO_LAKE_CENTER_Z) * invLakeRadZ;
-    if (dxLake * dxLake + dzLake * dzLake <= (1.22f * 1.22f) && pos.y <= SONG_QUAO_LAKE_WATER_Y + 0.04f)
+    const float invLakeRadX = 1.0f / (SONG_QUAO_LAKE_RADIUS_X * s_scaleXZ);
+    const float invLakeRadZ = 1.0f / (SONG_QUAO_LAKE_RADIUS_Z * s_scaleXZ);
+    float dxLake = (x - SONG_QUAO_LAKE_CENTER_X * s_scaleXZ) * invLakeRadX;
+    float dzLake = (z - SONG_QUAO_LAKE_CENTER_Z * s_scaleXZ) * invLakeRadZ;
+    if (dxLake * dxLake + dzLake * dzLake <= (1.22f * 1.22f) && pos.y <= SONG_QUAO_LAKE_WATER_Y * s_scaleY + 0.04f)
         return 0.0f;
 
     Color splat = MapDem_SampleSplat(&s_dem, x, z);
@@ -174,12 +181,12 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
     float shoreFade = MapMath_SmoothStep01(bankThreshold, bankThreshold + 0.24f, varShore);
 
     float rockSuppression = MapProp_EvaluateRockSuppression(
-        x, z, SONG_QUAO_ROCK_ITEMS, SONG_QUAO_ROCK_ITEM_COUNT);
+        x, z, s_scaledRocks, SONG_QUAO_ROCK_ITEM_COUNT);
     if (rockSuppression <= 0.001f)
         return 0.0f;
 
     float flowerSuppression = MapFlora_EvaluateFlowerSuppression(
-        x, z, SONG_QUAO_FLOWER_CLUSTERS, SONG_QUAO_FLOWER_CLUSTER_COUNT);
+        x, z, s_scaledFlowerClusters, SONG_QUAO_FLOWER_CLUSTER_COUNT);
     if (flowerSuppression <= 0.001f)
         return 0.0f;
 
@@ -250,7 +257,7 @@ static float SongQuaoEdgeTaper(float cx, float cz, void *userData)
                            ? 1.0f
                            : (0.68f + 0.32f * MapMath_SmoothStep01(GRASS_MIN_NORMAL_Y, 0.72f, normal.y));
     float rockSupp = MapProp_EvaluateRockSuppression(
-        cx, cz, SONG_QUAO_ROCK_ITEMS, SONG_QUAO_ROCK_ITEM_COUNT);
+        cx, cz, s_scaledRocks, SONG_QUAO_ROCK_ITEM_COUNT);
     float rockTaper = 0.20f + 0.80f * rockSupp;
     return shoreTaper * cliffTaper * slopeTaper * rockTaper * rimTaper;
 }
@@ -290,24 +297,36 @@ static bool SongQuaoIsFlowerExcluded(float x, float z, void *ctx)
         return true;
     if (SongQuaoSampleSignedShore(x, z) < 0.20f)
         return true;
-    if (MapProp_EvaluateRockSuppression(x, z, SONG_QUAO_ROCK_ITEMS, SONG_QUAO_ROCK_ITEM_COUNT) < 0.65f)
+    if (MapProp_EvaluateRockSuppression(x, z, s_scaledRocks, SONG_QUAO_ROCK_ITEM_COUNT) < 0.65f)
         return true;
     return false;
 }
 
 static void BuildFloraPlacements(void)
 {
+    Vector2 minB = {10.0f, 8.0f};
+    Vector2 maxB = {MAP_WIDTH - 10.0f, MAP_DEPTH - 8.0f};
+    float spacing = 0.43f;
+    if (s_scaleXZ > 1.5f)
+    {
+        float halfWin = 110.0f;
+        minB.x = fmaxf(10.0f, s_floraWindowCenter.x - halfWin);
+        minB.y = fmaxf(8.0f, s_floraWindowCenter.z - halfWin);
+        maxB.x = fminf(MAP_WIDTH - 10.0f, s_floraWindowCenter.x + halfWin);
+        maxB.y = fminf(MAP_DEPTH - 8.0f, s_floraWindowCenter.z + halfWin);
+        spacing = 0.62f;
+    }
     // 1. Lush interlocking meadow across the floating island plateau
     s_grassCount = MapFlora_GenerateMeadowPlacements(
         s_grassPlacements, GRASS_TUFT_CAPACITY, &s_ground, kMapCenter,
         (MapFloraMeadowConfig){
-            .minBounds = {10.0f, 8.0f},
-            .maxBounds = {MAP_WIDTH - 10.0f, MAP_DEPTH - 8.0f},
-            .spacing = 0.43f,
+            .minBounds = minB,
+            .maxBounds = maxB,
+            .spacing = spacing,
             .seed = 0x51a7c3u,
             .densityFn = SongQuaoGrassDensity,
             .ecology = &s_habitat,
-            .flowerClusters = SONG_QUAO_FLOWER_CLUSTERS,
+            .flowerClusters = s_scaledFlowerClusters,
             .flowerClusterCount = SONG_QUAO_FLOWER_CLUSTER_COUNT,
             .edgeTaperFn = SongQuaoEdgeTaper,
         });
@@ -326,7 +345,7 @@ static void BuildFloraPlacements(void)
             .maxWaterClearance = 0.34f,
             .minWetSplatAlpha = 82,
             .maxWetClearance = 0.46f,
-            .minClusterDistance = 0.085f,
+            .minClusterDistance = 0.085f * s_scaleXZ,
             .seed = 0x9371a5u,
         });
     TraceLog(LOG_INFO, "SONG_QUAO_REEDS: placements=%d capacity=%d",
@@ -337,9 +356,9 @@ static void BuildFloraPlacements(void)
         s_pampasPlacements, PAMPAS_COUNT, &s_ground, kMapCenter,
         (MapFloraPampasConfig){
             .span = {spanX, spanZ},
-            .clearingRadius = 11.5f,
+            .clearingRadius = 11.5f * s_scaleXZ,
             .dem = &s_dem,
-            .flowerClusters = SONG_QUAO_FLOWER_CLUSTERS,
+            .flowerClusters = s_scaledFlowerClusters,
             .flowerClusterCount = SONG_QUAO_FLOWER_CLUSTER_COUNT,
             .seed = 0x9371a5u,
         });
@@ -349,7 +368,7 @@ static void BuildFloraPlacements(void)
     // 4. Multi-species Wildflower Colonies
     MapFlora_GenerateFlowerPlacements(
         s_flowerPlacements, FLOWER_COUNT,
-        SONG_QUAO_FLOWER_CLUSTERS, SONG_QUAO_FLOWER_CLUSTER_COUNT,
+        s_scaledFlowerClusters, SONG_QUAO_FLOWER_CLUSTER_COUNT,
         SongQuaoSampleGroundHeight, SongQuaoIsFlowerExcluded, NULL, 0x9371a5u);
     s_flowerCount = FLOWER_COUNT;
 }
@@ -362,8 +381,17 @@ static void BuildRocks(void)
         "assets/textures/rocks/granite_roughness.png",
         SONG_QUAO_ROCK_ITEM_COUNT);
 
+    for (int i = 0; i < SONG_QUAO_ROCK_ITEM_COUNT; i++)
+    {
+        s_scaledRocks[i] = SONG_QUAO_ROCK_ITEMS[i];
+        s_scaledRocks[i].position.x *= s_scaleXZ;
+        s_scaledRocks[i].position.z *= s_scaleXZ;
+        s_scaledRocks[i].radiusScale *= (1.0f + 0.35f * (s_scaleXZ - 1.0f));
+        s_scaledRocks[i].heightScale *= (1.0f + 0.25f * (s_scaleY - 1.0f));
+    }
+
     MapProp_PopulateRockItems(&s_rocks, &s_ground, kMapCenter,
-                              SONG_QUAO_ROCK_ITEMS, SONG_QUAO_ROCK_ITEM_COUNT);
+                              s_scaledRocks, SONG_QUAO_ROCK_ITEM_COUNT);
 }
 
 static void UpdateSongQuaoWaterObstacles(Vector3 focusPos)
@@ -487,8 +515,9 @@ static void CaptureSongQuaoStaticShadows(void)
         return;
     if ((s_skipMask & MAP_SKIP_SHADOWCASTERS) || (s_skipMask & MAP_SKIP_ROCKS))
         return;
-    float staticRadius = 96.0f;
-    EnvShadow_BeginStaticCapture(kMapCenter, staticRadius);
+    float staticRadius = (s_scaleXZ > 1.5f) ? 140.0f : 96.0f;
+    Vector3 center = (s_scaleXZ > 1.5f) ? s_staticShadowCenter : kMapCenter;
+    EnvShadow_BeginStaticCapture(center, staticRadius);
     if (!EnvShadow_IsCapturing())
         return;
     Shader depthShader = EnvShadow_GetDepthShader();
@@ -498,6 +527,27 @@ static void CaptureSongQuaoStaticShadows(void)
 
 void InitSongQuaoMap(void)
 {
+    s_scaleXZ = MapManager_GetWorldScaleXZ();
+    s_scaleY  = MapManager_GetWorldScaleY();
+    s_mapWidth = SONG_QUAO_MAP_WIDTH * s_scaleXZ;
+    s_mapDepth = SONG_QUAO_MAP_DEPTH * s_scaleXZ;
+    s_heightRange = SONG_QUAO_HEIGHT_RANGE * s_scaleY;
+    kMapCenter = (Vector3){s_mapWidth * 0.5f, 0.0f, s_mapDepth * 0.5f};
+    s_floraWindowCenter = kMapCenter;
+    s_staticShadowCenter = kMapCenter;
+
+    s_songQuaoZones[0] = (MapZone){NAT_RIVER, {SONG_QUAO_LAKE_CENTER_X * s_scaleXZ, 0.0f, SONG_QUAO_LAKE_CENTER_Z * s_scaleXZ}, SONG_QUAO_LAKE_RADIUS_X * s_scaleXZ};
+    s_songQuaoZones[1] = (MapZone){NAT_FOREST, {94.15f * s_scaleXZ, 0.0f, 150.0f * s_scaleXZ}, 35.0f * s_scaleXZ};
+    s_songQuaoZones[2] = (MapZone){NAT_FOREST, {110.0f * s_scaleXZ, 0.0f, 100.0f * s_scaleXZ}, 25.0f * s_scaleXZ};
+
+    for (int i = 0; i < SONG_QUAO_FLOWER_CLUSTER_COUNT; i++)
+    {
+        s_scaledFlowerClusters[i] = SONG_QUAO_FLOWER_CLUSTERS[i];
+        s_scaledFlowerClusters[i].center.x *= s_scaleXZ;
+        s_scaledFlowerClusters[i].center.z *= s_scaleXZ;
+        s_scaledFlowerClusters[i].radius.x *= (1.0f + 0.45f * (s_scaleXZ - 1.0f));
+        s_scaledFlowerClusters[i].radius.y *= (1.0f + 0.45f * (s_scaleXZ - 1.0f));
+    }
     // Apply dedicated highland valley wind profile
     s_prevWindMacro = Wind_GetMacro();
     WindMacroConfig sqWind = {
@@ -647,8 +697,18 @@ void InitSongQuaoMap(void)
         EnvShadow_SetFocus(s_lastShadowFocus, SHADOW_FOCUS_RADIUS);
         EnvShadow_SetMapCasterCallback(DrawSongQuaoShadowCasters, NULL);
         EnvShadow_InvalidateStaticCache();
-        CaptureSongQuaoStaticShadows();
-        MapManager_SetZones(SONG_QUAO_ZONES, SONG_QUAO_ZONE_COUNT);
+        if (s_scaleXZ > 1.5f)
+    {
+        float sdx = camera.target.x - s_staticShadowCenter.x;
+        float sdz = camera.target.z - s_staticShadowCenter.z;
+        if (sdx * sdx + sdz * sdz > 70.0f * 70.0f)
+        {
+            s_staticShadowCenter = camera.target;
+            EnvShadow_InvalidateStaticCache();
+        }
+    }
+    CaptureSongQuaoStaticShadows();
+        MapManager_SetZones(s_songQuaoZones, SONG_QUAO_ZONE_COUNT);
         return;
     }
 
@@ -659,13 +719,13 @@ void InitSongQuaoMap(void)
     s_lastShadowFocus = kMapCenter;
     EnvShadow_SetFocus(kMapCenter, SHADOW_FOCUS_RADIUS);
 
-    MapDem_InitIsland(&s_dem, MAP_WIDTH, MAP_DEPTH, SONG_QUAO_HEIGHT_RANGE, CLIFF_DEPTH,
+    MapDem_InitIsland(&s_dem, MAP_WIDTH, MAP_DEPTH, s_heightRange, CLIFF_DEPTH,
                       "assets/maps/song_quao/song_quao_ecology_splat.png",
                       "assets/maps/song_quao/song_quao_water_height.png");
 
     s_ground = MapProp_CreateGroundHeightfield16(
         "assets/maps/song_quao/song_quao_heightfield.png", MAP_WIDTH, MAP_DEPTH,
-        CLIFF_DEPTH + SONG_QUAO_HEIGHT_RANGE, CLIFF_DEPTH, 3.6f,
+        CLIFF_DEPTH + s_heightRange, CLIFF_DEPTH, 3.6f,
         "assets/maps/song_quao/song_quao_ecology_splat.png",
         "assets/textures/verdant_meadow_substrate_diffuse.png",
         "assets/textures/dirt_diffuse.png");
@@ -737,18 +797,18 @@ void InitSongQuaoMap(void)
                               "assets/textures/rock_normal.png");
 
     s_sky = MapProp_CreateSkyDome();
-    s_cloudSea = MapProp_CreateCloudSea(1400.0f, 1400.0f, 65.0f);
+    s_cloudSea = MapProp_CreateCloudSea(1400.0f * s_scaleXZ, 1400.0f * s_scaleXZ, 65.0f * s_scaleXZ);
     MapProp_SetCloudSeaGroundBoundary(
-        &s_cloudSea, &s_ground, -4.85f,
+        &s_cloudSea, &s_ground, -4.85f * s_scaleY,
         &(MapBoundaryMistStyle){
-            .innerWidth = 1.2f,
-            .outerWidth = 3.6f,
-            .heightOffset = 0.22f,
-            .outerDrop = 0.42f,
+            .innerWidth = 1.2f * s_scaleXZ,
+            .outerWidth = 3.6f * s_scaleXZ,
+            .heightOffset = 0.22f * s_scaleY,
+            .outerDrop = 0.42f * s_scaleY,
             .opacity = 0.32f,
         });
     if (!(s_skipMask & MAP_SKIP_CLIFF))
-        s_cliff = MapProp_CreateCliffSkirt(&s_ground, kMapCenter, -0.45f, -26.0f);
+        s_cliff = MapProp_CreateCliffSkirt(&s_ground, kMapCenter, -0.45f * s_scaleY, -26.0f * s_scaleY);
 
     // [VISUAL AAA WATER]: Nước trong ngọc bích, phản chiếu vòm trời và đáy cát ven bờ
     s_river = MapProp_CreateTerrainWater("assets/maps/song_quao/song_quao_water.obj",
@@ -774,6 +834,17 @@ void InitSongQuaoMap(void)
                                              .shallowColor = {34, 88, 92, 96},
                                              .foamColor = {245, 250, 255, 220},
                                          });
+
+    if (s_river.ready && (s_scaleXZ != 1.0f || s_scaleY != 1.0f))
+    {
+        s_river.waterModel.transform = MatrixScale(s_scaleXZ, s_scaleY, s_scaleXZ);
+        s_river.boundsCenter = (Vector3){
+            s_river.boundsCenter.x * s_scaleXZ,
+            s_river.boundsCenter.y * s_scaleY,
+            s_river.boundsCenter.z * s_scaleXZ
+        };
+        s_river.boundsRadius *= s_scaleXZ;
+    }
 
     MapProp_SetWaterTerrainSource(&s_river, SongQuaoWaterBed, SongQuaoWaterSurface, NULL);
 
@@ -874,7 +945,7 @@ void InitSongQuaoMap(void)
     s_flora = MapProp_CreateFloraSystem(
         s_grassPlacements, s_grassCount,
         s_reedPlacements, s_reedCount,
-        s_flowerPlacements, SONG_QUAO_FLOWER_CLUSTERS, SONG_QUAO_FLOWER_CLUSTER_COUNT,
+        s_flowerPlacements, s_scaledFlowerClusters, SONG_QUAO_FLOWER_CLUSTER_COUNT,
         (MapFloraStyle){
             .grassRootColor = {35, 54, 20, 255},  // Deep velvety moss-jade root matching ground_splat.fs
             .grassTipColor = {102, 142, 50, 255}, // Natural sunlit olive-jade tips
@@ -901,8 +972,18 @@ void InitSongQuaoMap(void)
         });
 
     EnvShadow_SetMapCasterCallback(DrawSongQuaoShadowCasters, NULL);
+    if (s_scaleXZ > 1.5f)
+    {
+        float sdx = camera.target.x - s_staticShadowCenter.x;
+        float sdz = camera.target.z - s_staticShadowCenter.z;
+        if (sdx * sdx + sdz * sdz > 70.0f * 70.0f)
+        {
+            s_staticShadowCenter = camera.target;
+            EnvShadow_InvalidateStaticCache();
+        }
+    }
     CaptureSongQuaoStaticShadows();
-    MapManager_SetZones(SONG_QUAO_ZONES, SONG_QUAO_ZONE_COUNT);
+    MapManager_SetZones(s_songQuaoZones, SONG_QUAO_ZONE_COUNT);
     extern void ResolveCollisionSongQuaoMap(Vector3 *pos, float agentRadius, float stepHeight, float *inOutGroundY);
     MapManager_RegisterCollisionHooks("SONG_QUAO", ResolveCollisionSongQuaoMap);
 
@@ -955,6 +1036,16 @@ void UpdateSongQuaoMap(float dt)
         {
             s_lastShadowFocus = focus;
             EnvShadow_SetFocus(focus, SHADOW_FOCUS_RADIUS);
+        }
+    }
+    if (s_scaleXZ > 1.5f)
+    {
+        float sdx = camera.target.x - s_staticShadowCenter.x;
+        float sdz = camera.target.z - s_staticShadowCenter.z;
+        if (sdx * sdx + sdz * sdz > 70.0f * 70.0f)
+        {
+            s_staticShadowCenter = camera.target;
+            EnvShadow_InvalidateStaticCache();
         }
     }
     CaptureSongQuaoStaticShadows();

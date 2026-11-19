@@ -21,13 +21,20 @@
 #include <stddef.h>
 #include <stdlib.h>
 
-#define MAP_WIDTH NINH_THUAN_MAP_WIDTH
-#define MAP_DEPTH NINH_THUAN_MAP_DEPTH
-#define CLIFF_DEPTH NINH_THUAN_CLIFF_DEPTH
-#define CLOUD_SEA_Y -5.2f
+static float s_scaleXZ = 1.0f;
+static float s_scaleY = 1.0f;
+static float s_mapWidth = NINH_THUAN_MAP_WIDTH;
+static float s_mapDepth = NINH_THUAN_MAP_DEPTH;
+static float s_heightRange = NINH_THUAN_HEIGHT_RANGE;
+
+#define MAP_WIDTH s_mapWidth
+#define MAP_DEPTH s_mapDepth
+#define CLIFF_DEPTH (NINH_THUAN_CLIFF_DEPTH * s_scaleY)
+#define CLOUD_SEA_Y (-5.2f * s_scaleY)
 #define SHADOW_FOCUS_RADIUS 18.0f
 
-static const Vector3 kMapCenter = {MAP_WIDTH * 0.5f, 0.0f, MAP_DEPTH * 0.5f};
+static Vector3 kMapCenter = {NINH_THUAN_MAP_WIDTH * 0.5f, 0.0f, NINH_THUAN_MAP_DEPTH * 0.5f};
+static Vector3 s_staticShadowCenter = {-9999.0f, 0.0f, -9999.0f};
 
 static MapDemIsland s_dem = {0};
 static MapGroundSurface s_ground = {0};
@@ -48,13 +55,8 @@ static unsigned int s_skipMask = 0;
 static bool s_shadowWasEnabled = false;
 static bool s_ready = false;
 
-static const MapZone NINH_THUAN_ZONES[] = {
-    {.center = {NINH_THUAN_LAKE_CENTER_X, NINH_THUAN_LAKE_CENTER_Z}, .radius = 22.0f, .type = NAT_RIVER},
-    {.center = {135.0f, 195.0f}, .radius = 32.0f, .type = NAT_DESERT_ZONE},
-    {.center = {94.10f, 150.0f}, .radius = 45.0f, .type = NAT_DESERT_ZONE},
-    {.center = {65.0f, 95.0f},   .radius = 40.0f, .type = NAT_DESERT_ZONE},
-};
-#define NINH_THUAN_ZONE_COUNT ((int)(sizeof(NINH_THUAN_ZONES) / sizeof(NINH_THUAN_ZONES[0])))
+static MapZone s_ninhThuanZones[4];
+#define NINH_THUAN_ZONE_COUNT 4
 
 static float NinhThuanOasisBed(float x, float z, void *user)
 {
@@ -131,7 +133,9 @@ static void CaptureNinhThuanStaticShadows(void)
         return;
     if ((s_skipMask & MAP_SKIP_SHADOWCASTERS) || (s_skipMask & MAP_SKIP_ROCKS))
         return;
-    EnvShadow_BeginStaticCapture(kMapCenter, 155.0f);
+    float radius = (s_scaleXZ > 1.5f) ? 140.0f : 155.0f;
+    Vector3 center = (s_scaleXZ > 1.5f) ? s_staticShadowCenter : kMapCenter;
+    EnvShadow_BeginStaticCapture(center, radius);
     if (!EnvShadow_IsCapturing())
         return;
     Shader depthShader = EnvShadow_GetDepthShader();
@@ -166,8 +170,8 @@ static float NinhThuanDryGrassDensity(float x, float z, void *user)
         return 0.0f;
 
     // Sparse xerophytic grass tufts: clustered in sheltered rock-lee pockets & oasis fringe, leaving open dunes bare
-    float oasisDist = hypotf(x - NINH_THUAN_LAKE_CENTER_X, z - NINH_THUAN_LAKE_CENTER_Z);
-    float oasisFringe = (oasisDist < 24.0f) ? (1.0f - fmaxf(0.0f, (oasisDist - 12.0f) / 12.0f)) * 0.65f : 0.0f;
+    float oasisDist = hypotf(x - NINH_THUAN_LAKE_CENTER_X * s_scaleXZ, z - NINH_THUAN_LAKE_CENTER_Z * s_scaleXZ);
+    float oasisFringe = (oasisDist < 24.0f * s_scaleXZ) ? (1.0f - fmaxf(0.0f, (oasisDist - 12.0f * s_scaleXZ) / (12.0f * s_scaleXZ))) * 0.65f : 0.0f;
 
     float rockShelter = 0.0f;
     for (int i = 0; i < NINH_THUAN_ROCK_COUNT; i++)
@@ -175,13 +179,16 @@ static float NinhThuanDryGrassDensity(float x, float z, void *user)
         const MapRockItem *rk = &NINH_THUAN_ROCK_ITEMS[i];
         if (rk->archetype == MAP_ROCK_SCREE)
             continue;
-        float dx = x - rk->position.x;
-        float dz = z - rk->position.z;
+        float rkx = rk->position.x * s_scaleXZ;
+        float rkz = rk->position.z * s_scaleXZ;
+        float rScale = rk->radiusScale * (1.0f + 0.35f * (s_scaleXZ - 1.0f));
+        float dx = x - rkx;
+        float dz = z - rkz;
         float d2 = dx * dx + dz * dz;
-        float maxR = rk->radiusScale + 3.2f;
+        float maxR = rScale + 3.2f;
         if (d2 < maxR * maxR)
         {
-            float dist = sqrtf(d2) - rk->radiusScale * 0.90f;
+            float dist = sqrtf(d2) - rScale * 0.90f;
             if (dist < 0.05f)
                 return 0.0f; // never place inside boulder footprint
             float w = fmaxf(0.0f, 1.0f - dist / 2.8f);
@@ -206,24 +213,26 @@ static void BuildNinhThuanRocks(void)
     for (int i = 0; i < NINH_THUAN_ROCK_COUNT; i++)
     {
         const MapRockItem *item = &NINH_THUAN_ROCK_ITEMS[i];
-        Vector3 pos = item->position;
+        Vector3 pos = { item->position.x * s_scaleXZ, item->position.y * s_scaleY, item->position.z * s_scaleXZ };
+        float rScale = item->radiusScale * (1.0f + 0.35f * (s_scaleXZ - 1.0f));
+        float hScale = item->heightScale * (1.0f + 0.25f * (s_scaleY - 1.0f));
         Vector3 gPos = pos, gNorm = {0.0f, 1.0f, 0.0f};
         if (MapProp_SampleGroundSurface(&s_ground, kMapCenter, pos.x, pos.z, &gPos, &gNorm))
         {
             // Preserve elevated y for stacked perched corestones (tors), seated into the lower rock's sunk top
-            if (pos.y > gPos.y + 0.35f)
+            if (item->position.y * s_scaleY > gPos.y + 0.35f)
             {
-                float baseSink = (i > 0) ? (NINH_THUAN_ROCK_ITEMS[i - 1].heightScale * 0.22f) : 0.0f;
-                float contactOverlap = item->heightScale * 0.16f;
-                pos.y = item->position.y - baseSink - contactOverlap;
+                float baseSink = (i > 0) ? (NINH_THUAN_ROCK_ITEMS[i - 1].heightScale * (1.0f + 0.25f * (s_scaleY - 1.0f)) * 0.22f) : 0.0f;
+                float contactOverlap = hScale * 0.16f;
+                pos.y = item->position.y * s_scaleY - baseSink - contactOverlap;
             }
             else
             {
-                float sink = (item->archetype == MAP_ROCK_SCREE) ? item->heightScale * 0.18f : item->heightScale * 0.22f;
+                float sink = (item->archetype == MAP_ROCK_SCREE) ? hScale * 0.18f : hScale * 0.22f;
                 pos.y = gPos.y - sink;
             }
         }
-        MapProp_AddRockItem(&s_rocks, pos, item->radiusScale, item->heightScale, item->rotationDeg, item->archetype);
+        MapProp_AddRockItem(&s_rocks, pos, rScale, hScale, item->rotationDeg, item->archetype);
     }
 }
 
@@ -240,12 +249,12 @@ static void BuildNinhThuanFlora(void)
     const float grassSpacing = 1.25f;
     const int   maxGrass     = 3200;
 #else
-    const float grassSpacing = 0.64f;
+    const float grassSpacing = (s_scaleXZ > 1.5f) ? 1.35f : 0.64f;
     const int   maxGrass     = NINH_THUAN_MAX_GRASS;
 #endif
     MapMeadowDistribution dist = {
-        .minBounds = {12.0f, 12.0f},
-        .maxBounds = {MAP_WIDTH - 12.0f, MAP_DEPTH - 12.0f},
+        .minBounds = {12.0f * s_scaleXZ, 12.0f * s_scaleXZ},
+        .maxBounds = {MAP_WIDTH - 12.0f * s_scaleXZ, MAP_DEPTH - 12.0f * s_scaleXZ},
         .spacing = grassSpacing,
         .jitter = 0.26f,
         .minRadius = 0.14f,
@@ -264,9 +273,9 @@ static void BuildNinhThuanFlora(void)
     for (int i = 0; i < 24 && s_reedCount < NINH_THUAN_MAX_REEDS; i++)
     {
         float ang = (float)i * 0.2617994f;
-        float rDist = 13.5f + 4.5f * sinf((float)i * 1.7f);
-        float rx = NINH_THUAN_LAKE_CENTER_X + cosf(ang) * rDist;
-        float rz = NINH_THUAN_LAKE_CENTER_Z + sinf(ang) * rDist;
+        float rDist = (13.5f + 4.5f * sinf((float)i * 1.7f)) * s_scaleXZ;
+        float rx = NINH_THUAN_LAKE_CENTER_X * s_scaleXZ + cosf(ang) * rDist;
+        float rz = NINH_THUAN_LAKE_CENTER_Z * s_scaleXZ + sinf(ang) * rDist;
         Vector3 gp, gn;
         if (MapProp_SampleGroundSurface(&s_ground, kMapCenter, rx, rz, &gp, &gn) && gn.y > 0.78f && gp.y > 0.12f)
         {
@@ -308,6 +317,19 @@ static void BuildNinhThuanFlora(void)
 
 void InitNinhThuanMap(void)
 {
+    s_scaleXZ = MapManager_GetWorldScaleXZ();
+    s_scaleY  = MapManager_GetWorldScaleY();
+    s_mapWidth = NINH_THUAN_MAP_WIDTH * s_scaleXZ;
+    s_mapDepth = NINH_THUAN_MAP_DEPTH * s_scaleXZ;
+    s_heightRange = NINH_THUAN_HEIGHT_RANGE * s_scaleY;
+    kMapCenter = (Vector3){s_mapWidth * 0.5f, 0.0f, s_mapDepth * 0.5f};
+    s_staticShadowCenter = kMapCenter;
+
+    s_ninhThuanZones[0] = (MapZone){.center = {NINH_THUAN_LAKE_CENTER_X * s_scaleXZ, 0.0f, NINH_THUAN_LAKE_CENTER_Z * s_scaleXZ}, .radius = 22.0f * s_scaleXZ, .type = NAT_RIVER};
+    s_ninhThuanZones[1] = (MapZone){.center = {135.0f * s_scaleXZ, 0.0f, 195.0f * s_scaleXZ}, .radius = 32.0f * s_scaleXZ, .type = NAT_DESERT_ZONE};
+    s_ninhThuanZones[2] = (MapZone){.center = {94.10f * s_scaleXZ, 0.0f, 150.0f * s_scaleXZ}, .radius = 45.0f * s_scaleXZ, .type = NAT_DESERT_ZONE};
+    s_ninhThuanZones[3] = (MapZone){.center = {65.0f * s_scaleXZ, 0.0f, 95.0f * s_scaleXZ}, .radius = 40.0f * s_scaleXZ, .type = NAT_DESERT_ZONE};
+
     s_prevWindMacro = Wind_GetMacro();
     WindMacroConfig aridWind = {
         .baseDirection = {3.85f, 0.0f, 2.15f},
@@ -448,8 +470,18 @@ void InitNinhThuanMap(void)
         EnvShadow_SetFocus(s_lastShadowFocus, SHADOW_FOCUS_RADIUS);
         EnvShadow_SetMapCasterCallback(DrawNinhThuanShadowCasters, NULL);
         EnvShadow_InvalidateStaticCache();
-        CaptureNinhThuanStaticShadows();
-        MapManager_SetZones(NINH_THUAN_ZONES, NINH_THUAN_ZONE_COUNT);
+        if (s_scaleXZ > 1.5f)
+    {
+        float sdx = camera.target.x - s_staticShadowCenter.x;
+        float sdz = camera.target.z - s_staticShadowCenter.z;
+        if (sdx * sdx + sdz * sdz > 70.0f * 70.0f)
+        {
+            s_staticShadowCenter = camera.target;
+            EnvShadow_InvalidateStaticCache();
+        }
+    }
+    CaptureNinhThuanStaticShadows();
+        MapManager_SetZones(s_ninhThuanZones, NINH_THUAN_ZONE_COUNT);
         return;
     }
 
@@ -460,13 +492,13 @@ void InitNinhThuanMap(void)
     s_lastShadowFocus = kMapCenter;
     EnvShadow_SetFocus(kMapCenter, SHADOW_FOCUS_RADIUS);
 
-    MapDem_InitIsland(&s_dem, MAP_WIDTH, MAP_DEPTH, NINH_THUAN_HEIGHT_RANGE, CLIFF_DEPTH,
+    MapDem_InitIsland(&s_dem, MAP_WIDTH, MAP_DEPTH, s_heightRange, CLIFF_DEPTH,
                       "assets/maps/ninh_thuan/ninh_thuan_ecology_splat.png",
                       "assets/maps/ninh_thuan/ninh_thuan_water_height.png");
 
     s_ground = MapProp_CreateGroundHeightfield16(
         "assets/maps/ninh_thuan/ninh_thuan_heightfield.png", MAP_WIDTH, MAP_DEPTH,
-        CLIFF_DEPTH + NINH_THUAN_HEIGHT_RANGE, CLIFF_DEPTH, 3.6f,
+        CLIFF_DEPTH + s_heightRange, CLIFF_DEPTH, 3.6f,
         "assets/maps/ninh_thuan/ninh_thuan_ecology_splat.png",
         "assets/textures/dirt_diffuse.png",
         "assets/textures/dirt_diffuse.png");
@@ -524,11 +556,11 @@ void InitNinhThuanMap(void)
 
     s_sky = MapProp_CreateSkyDome();
     if (!(s_skipMask & MAP_SKIP_CLIFF))
-        s_cliff = MapProp_CreateCliffSkirt(&s_ground, kMapCenter, -0.45f, -26.0f);
+        s_cliff = MapProp_CreateCliffSkirt(&s_ground, kMapCenter, -0.45f * s_scaleY, -26.0f * s_scaleY);
 
     s_coastalSea = MapProp_CreateWaterPatch(
         (Vector3){kMapCenter.x, NINH_THUAN_SEA_Y, kMapCenter.z},
-        560.0f, 560.0f,
+        560.0f * s_scaleXZ, 560.0f * s_scaleXZ,
         (MapWaterConfig){
             .ecosystem = WATER_ECO_CUSTOM,
             .segments = 56,
@@ -661,9 +693,9 @@ void InitNinhThuanMap(void)
     s_oasis = MapProp_CreateTerrainWater("assets/maps/ninh_thuan/ninh_thuan_water.obj",
                                          (MapWaterConfig){
                                              .ecosystem = WATER_ECO_CUSTOM,
-                                             .center = {NINH_THUAN_LAKE_CENTER_X, 0.0f, NINH_THUAN_LAKE_CENTER_Z},
-                                             .radiusX = NINH_THUAN_LAKE_RADIUS_X,
-                                             .radiusZ = NINH_THUAN_LAKE_RADIUS_Z,
+                                             .center = {NINH_THUAN_LAKE_CENTER_X * s_scaleXZ, 0.0f, NINH_THUAN_LAKE_CENTER_Z * s_scaleXZ},
+                                             .radiusX = NINH_THUAN_LAKE_RADIUS_X * s_scaleXZ,
+                                             .radiusZ = NINH_THUAN_LAKE_RADIUS_Z * s_scaleXZ,
                                              .waveHeight = 0.008f,
                                              .waveScale = 1.15f,
                                              .waveSpeed = 0.45f,
@@ -681,6 +713,16 @@ void InitNinhThuanMap(void)
                                              .shallowColor = {42, 102, 88, 96},
                                              .foamColor = {245, 240, 224, 200},
                                          });
+    if (s_oasis.ready && (s_scaleXZ != 1.0f || s_scaleY != 1.0f))
+    {
+        s_oasis.waterModel.transform = MatrixScale(s_scaleXZ, s_scaleY, s_scaleXZ);
+        s_oasis.boundsCenter = (Vector3){
+            s_oasis.boundsCenter.x * s_scaleXZ,
+            s_oasis.boundsCenter.y * s_scaleY,
+            s_oasis.boundsCenter.z * s_scaleXZ
+        };
+        s_oasis.boundsRadius *= s_scaleXZ;
+    }
     MapProp_SetWaterTerrainSource(&s_oasis, NinhThuanOasisBed, NinhThuanOasisSurface, NULL);
 
     BuildNinhThuanRocks();
@@ -732,8 +774,18 @@ void InitNinhThuanMap(void)
     s_ready = true;
     EnvShadow_SetMapCasterCallback(DrawNinhThuanShadowCasters, NULL);
     EnvShadow_InvalidateStaticCache();
+    if (s_scaleXZ > 1.5f)
+    {
+        float sdx = camera.target.x - s_staticShadowCenter.x;
+        float sdz = camera.target.z - s_staticShadowCenter.z;
+        if (sdx * sdx + sdz * sdz > 70.0f * 70.0f)
+        {
+            s_staticShadowCenter = camera.target;
+            EnvShadow_InvalidateStaticCache();
+        }
+    }
     CaptureNinhThuanStaticShadows();
-    MapManager_SetZones(NINH_THUAN_ZONES, NINH_THUAN_ZONE_COUNT);
+    MapManager_SetZones(s_ninhThuanZones, NINH_THUAN_ZONE_COUNT);
     extern void ResolveCollisionNinhThuanMap(Vector3 *pos, float agentRadius, float stepHeight, float *inOutGroundY);
     MapManager_RegisterCollisionHooks("NINH_THUAN", ResolveCollisionNinhThuanMap);
 }
@@ -801,6 +853,16 @@ void UpdateNinhThuanMap(float dt)
     {
         s_lastShadowFocus = camera.target;
         EnvShadow_SetFocus(s_lastShadowFocus, SHADOW_FOCUS_RADIUS);
+    }
+    if (s_scaleXZ > 1.5f)
+    {
+        float sdx = camera.target.x - s_staticShadowCenter.x;
+        float sdz = camera.target.z - s_staticShadowCenter.z;
+        if (sdx * sdx + sdz * sdz > 70.0f * 70.0f)
+        {
+            s_staticShadowCenter = camera.target;
+            EnvShadow_InvalidateStaticCache();
+        }
     }
     CaptureNinhThuanStaticShadows();
 }

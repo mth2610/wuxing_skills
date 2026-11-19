@@ -1595,6 +1595,42 @@ static Vector2 Rock_ClosestPointOnTriangleXZ(Vector2 p, Vector2 a, Vector2 b, Ve
     return (Vector2){a.x + ab.x * v + ac.x * w, a.y + ab.y * v + ac.y * w};
 }
 
+// Lightweight cached spatial hash for O(1) rock collision queries (rebuilt only when sys/count changes)
+#define ROCK_HASH_BUCKETS 512
+#define ROCK_HASH_CELL    12.0f
+static const MapRockSystem *s_rockHashSys = NULL;
+static const MapRockItem *s_rockHashItems = NULL;
+static int s_rockHashCount = -1;
+static int s_rockHead[ROCK_HASH_BUCKETS];
+static int *s_rockNext = NULL;
+static int s_rockNextCap = 0;
+
+static inline unsigned int RockHashCell(int cx, int cz) {
+    return (((unsigned int)cx * 73856093u) ^ ((unsigned int)cz * 19349663u)) & (ROCK_HASH_BUCKETS - 1u);
+}
+
+static void EnsureRockCollisionHash(const MapRockSystem *sys) {
+    if (s_rockHashSys == sys && s_rockHashItems == sys->items && s_rockHashCount == sys->count) return;
+    if (sys->count > s_rockNextCap) {
+        RL_FREE(s_rockNext);
+        s_rockNextCap = sys->count + 64;
+        s_rockNext = (int *)RL_MALLOC((size_t)s_rockNextCap * sizeof(int));
+    }
+    for (int b = 0; b < ROCK_HASH_BUCKETS; b++) s_rockHead[b] = -1;
+    if (!s_rockNext) return;
+    const float invCell = 1.0f / ROCK_HASH_CELL;
+    for (int i = 0; i < sys->count; i++) {
+        int cx = (int)floorf(sys->items[i].position.x * invCell);
+        int cz = (int)floorf(sys->items[i].position.z * invCell);
+        unsigned int b = RockHashCell(cx, cz);
+        s_rockNext[i] = s_rockHead[b];
+        s_rockHead[b] = i;
+    }
+    s_rockHashSys = sys;
+    s_rockHashItems = sys->items;
+    s_rockHashCount = sys->count;
+}
+
 void MapProp_ResolveRockSystemCollision(const MapRockSystem *sys, Vector3 *pos,
                                         float agentRadius, float stepHeight,
                                         float *inOutGroundY)
@@ -1602,10 +1638,18 @@ void MapProp_ResolveRockSystemCollision(const MapRockSystem *sys, Vector3 *pos,
     if (!sys || !sys->ready || !sys->items || sys->count <= 0 || !pos)
         return;
 
+    EnsureRockCollisionHash(sys);
+    const float invCell = 1.0f / ROCK_HASH_CELL;
+    int px = (int)floorf(pos->x * invCell);
+    int pz = (int)floorf(pos->z * invCell);
+
     float supportY = inOutGroundY ? *inOutGroundY : pos->y;
-    for (int i = 0; i < sys->count; i++)
-    {
-        const MapRockItem *p = &sys->items[i];
+    for (int dzc = -1; dzc <= 1; dzc++) {
+        for (int dxc = -1; dxc <= 1; dxc++) {
+            unsigned int b = RockHashCell(px + dxc, pz + dzc);
+            for (int i = s_rockHead[b]; i >= 0; i = s_rockNext[i])
+            {
+                const MapRockItem *p = &sys->items[i];
         if (p->archetype == MAP_ROCK_SCREE && p->radiusScale < 0.35f)
             continue;
         if (p->radiusScale <= 1e-4f || p->heightScale <= 1e-4f)
@@ -1739,6 +1783,8 @@ void MapProp_ResolveRockSystemCollision(const MapRockSystem *sys, Vector3 *pos,
             dz = pos->z - p->position.z;
             lx = (dx * cosT - dz * sinT) * invR;
             lz = (dx * sinT + dz * cosT) * invR;
+        }
+        }
         }
     }
 

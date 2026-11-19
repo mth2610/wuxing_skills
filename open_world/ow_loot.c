@@ -4,11 +4,12 @@
 #include "game/quest_datau.h"
 #include "maps/map_manager.h"
 #include "skills/skill_manager.h"
+#include "raymath.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
-#define MAX_LOOT_ORBS 48
+#define MAX_LOOT_ORBS 160
 
 typedef struct {
     bool       active;
@@ -35,6 +36,46 @@ static int       s_nodeCount = 0;
 static OWLootOrb s_orbs[MAX_LOOT_ORBS];
 static int       s_realmElement = 3;
 static float     s_herbAutoTimer = 0.0f;
+static float     s_xpPopupTimer = 0.0f;
+static int       s_xpPopupAccum = 0;
+static int       s_goldPopupAccum = 0;
+
+static bool      s_orbInstInit = false;
+static Mesh      s_orbMesh = { 0 };
+static Shader    s_orbShader = { 0 };
+static Material  s_orbMat = { 0 };
+static int       s_orbLocTint = -1;
+
+static void EnsureOrbInstancingInit(void) {
+    if (s_orbInstInit) return;
+    static const char *ORB_VS =
+        "#version 330\n"
+        "in vec3 vertexPosition;\n"
+        "in vec3 vertexNormal;\n"
+        "in mat4 instanceTransform;\n"
+        "uniform mat4 mvp;\n"
+        "out vec3 fragNormal;\n"
+        "void main() {\n"
+        "    fragNormal = normalize(mat3(instanceTransform) * vertexNormal);\n"
+        "    gl_Position = mvp * instanceTransform * vec4(vertexPosition, 1.0);\n"
+        "}\n";
+    static const char *ORB_FS =
+        "#version 330\n"
+        "in vec3 fragNormal;\n"
+        "uniform vec4 u_tint;\n"
+        "out vec4 finalColor;\n"
+        "void main() {\n"
+        "    float d = dot(normalize(fragNormal), normalize(vec3(0.4, 0.8, 0.3))) * 0.4 + 0.6;\n"
+        "    finalColor = vec4(u_tint.rgb * d + u_tint.rgb * 0.25, 1.0);\n"
+        "}\n";
+    s_orbShader = LoadShaderFromMemory(ORB_VS, ORB_FS);
+    s_orbShader.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocationAttrib(s_orbShader, "instanceTransform");
+    s_orbLocTint = GetShaderLocation(s_orbShader, "u_tint");
+    s_orbMat = LoadMaterialDefault();
+    s_orbMat.shader = s_orbShader;
+    s_orbMesh = GenMeshCube(0.26f, 0.34f, 0.26f);
+    s_orbInstInit = true;
+}
 
 static float DistXZ(Vector3 a, Vector3 b) {
     float dx = a.x - b.x, dz = a.z - b.z;
@@ -203,22 +244,43 @@ void OWLoot_Update(const Agent *pa, float dt) {
     }
 
     PlayerProfile *prof = PlayerProfile_GetGlobal();
+    s_xpPopupTimer += dt;
+    if (s_xpPopupTimer >= 0.30f) {
+        if (s_xpPopupAccum > 0) {
+            AddFloatingText(pa->position, TextFormat("+%d XP", s_xpPopupAccum), (Color){ 130, 235, 255, 255 }, 14.0f, 1.1f);
+            s_xpPopupAccum = 0;
+        }
+        if (s_goldPopupAccum > 0) {
+            AddFloatingText((Vector3){ pa->position.x, pa->position.y + 0.5f, pa->position.z },
+                            TextFormat("+%d Vang", s_goldPopupAccum), GOLD, 14.0f, 1.1f);
+            s_goldPopupAccum = 0;
+        }
+        s_xpPopupTimer = 0.0f;
+    }
+
+    float magnetRange = (OW_GetKillStreak() >= 40) ? 9.5f : 6.5f;
     for (int i = 0; i < MAX_LOOT_ORBS; i++) {
         OWLootOrb *o = &s_orbs[i];
         if (!o->active) continue;
         o->age += dt;
+        if (o->age > 35.0f) { o->active = false; continue; }
         float dist = DistXZ(o->pos, pa->position);
-        if (dist <= 3.4f && o->age > 0.25f) {
+        if (dist <= magnetRange && o->age > 0.20f) {
             Vector3 dir = { pa->position.x - o->pos.x, (pa->position.y + 0.8f) - o->pos.y, pa->position.z - o->pos.z };
             float dlen = sqrtf(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
-            if (dlen < 0.75f) {
+            if (dlen < 0.85f) {
                 o->active = false;
                 if (o->kind == OW_LOOT_GOLD) {
                     prof->gold += o->amount;
-                    AddFloatingText(pa->position, TextFormat("+%d Vang", o->amount), GOLD, 15.0f, 1.2f);
+                    s_goldPopupAccum += o->amount;
+                } else if (o->kind == OW_LOOT_SKILL_XP) {
+                    if (pa->lastCastSkillIndex >= 0) {
+                        PlayerProfile_AddSkillXp(pa->lastCastSkillIndex, (uint32_t)o->amount);
+                    }
+                    s_xpPopupAccum += o->amount;
                 } else if (o->kind == OW_LOOT_STONE) {
                     prof->elementalStones[s_realmElement % 5] += o->amount;
-                    AddFloatingText(pa->position, TextFormat("+%d Hoang Tho Khoang", o->amount), ORANGE, 15.0f, 1.4f);
+                    AddFloatingText(pa->position, TextFormat("+%d Khoang Thach", o->amount), ORANGE, 15.0f, 1.4f);
                 } else if (o->kind == OW_LOOT_HERB) {
                     prof->herbs += o->amount;
                     AddFloatingText(pa->position, TextFormat("+%d Linh Thao", o->amount), GREEN, 15.0f, 1.4f);
@@ -229,10 +291,9 @@ void OWLoot_Update(const Agent *pa, float dt) {
                     prof->daTauTokens += o->amount;
                     AddFloatingText(pa->position, "+1 Lenh Bai Da Tau", SKYBLUE, 15.0f, 1.5f);
                 }
-                PlayerProfile_SaveGlobal();
                 continue;
             }
-            float pull = 12.0f * dt;
+            float pull = 16.5f * dt;
             o->pos.x += (dir.x / dlen) * pull;
             o->pos.y += (dir.y / dlen) * pull;
             o->pos.z += (dir.z / dlen) * pull;
@@ -274,14 +335,34 @@ void OWLoot_Draw3D(void) {
         }
     }
 
+    EnsureOrbInstancingInit();
+    static Matrix xf[6][MAX_LOOT_ORBS];
+    int cnt[6] = { 0 };
+    float tNow = (float)GetTime();
     for (int i = 0; i < MAX_LOOT_ORBS; i++) {
         const OWLootOrb *o = &s_orbs[i];
         if (!o->active) continue;
-        Color c = GOLD;
-        if (o->kind == OW_LOOT_STONE) c = ORANGE;
-        else if (o->kind == OW_LOOT_HERB) c = GREEN;
-        else if (o->kind == OW_LOOT_POTION_HEAL) c = RED;
-        else if (o->kind == OW_LOOT_DATAU_TOKEN) c = SKYBLUE;
-        DrawSphere(o->pos, 0.22f, c);
+        int k = (int)o->kind;
+        if (k < 0 || k >= 6) k = 0;
+        if (cnt[k] < MAX_LOOT_ORBS) {
+            Matrix R = MatrixRotateY(tNow * 2.5f + (float)i * 0.6f);
+            Matrix T = MatrixTranslate(o->pos.x, o->pos.y + 0.08f * sinf(tNow * 4.0f + (float)i), o->pos.z);
+            xf[k][cnt[k]++] = MatrixMultiply(R, T);
+        }
+    }
+    static const Vector4 kOrbColors[6] = {
+        { 1.0f, 0.84f, 0.20f, 1.0f }, // GOLD
+        { 1.0f, 0.55f, 0.15f, 1.0f }, // STONE
+        { 0.30f, 0.95f, 0.45f, 1.0f }, // HERB
+        { 1.0f, 0.25f, 0.25f, 1.0f }, // POTION
+        { 0.45f, 0.85f, 1.0f, 1.0f }, // TOKEN
+        { 0.35f, 0.92f, 1.0f, 1.0f }  // SKILL_XP
+    };
+    for (int k = 0; k < 6; k++) {
+        if (cnt[k] <= 0) continue;
+        BeginShaderMode(s_orbShader);
+        SetShaderValue(s_orbShader, s_orbLocTint, &kOrbColors[k], SHADER_UNIFORM_VEC4);
+        DrawMeshInstanced(s_orbMesh, s_orbMat, xf[k], cnt[k]);
+        EndShaderMode();
     }
 }

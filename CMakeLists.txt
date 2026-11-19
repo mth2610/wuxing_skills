@@ -296,12 +296,14 @@ add_executable(wuxing
     game/game_screen.c
     game/game_rules.c
     game/quest_datau.c
+    game/horde_renderer.c
     open_world/ow_world.c
     open_world/ow_loot.c
     open_world/ow_quest_npc.c
     open_world/ow_weather.c
     open_world/ow_sandbox_modes.c
     open_world/realms/ow_desert_earth.c
+    open_world/realms/ow_song_quao.c
 
     # --- Sandbox & Test Simulator ---
     sandbox/sandbox_core.c

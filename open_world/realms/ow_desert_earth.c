@@ -5,6 +5,7 @@
 
 static const OWRealmDef kDesertEarthRealm = {
     .realmId         = 3,
+    .scaleWithMap    = true,
     .safeCenter      = { 170.68f, 0.0f, 230.41f },
     .safeRadius      = 22.0f,
     .daTauNpcPos     = { 163.5f,  0.0f, 224.0f  },
@@ -54,11 +55,24 @@ static const OWRealmDef kDesertEarthRealm = {
     },
     .campCount = 5,
     .camps = {
-        { { 136.0f, 0.0f, 196.0f }, 4, 3, MONSTER_SWARM_MELEE },
-        { { 126.0f, 0.0f, 184.0f }, 3, 3, MONSTER_SWARM_MELEE },
-        { { 96.0f,  0.0f, 152.0f }, 3, 3, MONSTER_RANGED_CASTER },
-        { { 84.0f,  0.0f, 138.0f }, 3, 3, MONSTER_SWARM_MELEE },
+        { { 136.0f, 0.0f, 196.0f }, 6, 3, MONSTER_SWARM_MELEE },
+        { { 126.0f, 0.0f, 184.0f }, 5, 3, MONSTER_SWARM_MELEE },
+        { { 96.0f,  0.0f, 152.0f }, 4, 3, MONSTER_RANGED_CASTER },
+        { { 84.0f,  0.0f, 138.0f }, 5, 3, MONSTER_LEAPER },
         { { 66.0f,  0.0f, 96.0f  }, 2, 3, MONSTER_ELITE_GUARD }
+    },
+    .hordeZoneCount = 7,
+    .hordeZones = {
+        // Starter Dunes: approachable swarmer packs
+        { { 136.0f, 0.0f, 196.0f }, 18.0f, 3, 22, 46, 4.5f, 10, 0.15f, 0.10f, 0 },
+        { { 120.0f, 0.0f, 178.0f }, 20.0f, 3, 26, 54, 4.2f, 12, 0.20f, 0.12f, 1 },
+        // Relic Canyon: fast leapers + elemental spitters
+        { { 96.0f,  0.0f, 152.0f }, 22.0f, 3, 30, 62, 3.8f, 14, 0.25f, 0.18f, 1 },
+        { { 84.0f,  0.0f, 134.0f }, 20.0f, 3, 28, 58, 4.0f, 12, 0.22f, 0.16f, 1 },
+        // Blood Badlands: dense Vampire-Survivors chaos + Alpha Brutes
+        { { 65.0f,  0.0f, 95.0f  }, 24.0f, 3, 36, 75, 3.3f, 16, 0.28f, 0.18f, 2 },
+        { { 112.0f, 0.0f, 118.0f }, 22.0f, 3, 28, 60, 4.0f, 12, 0.22f, 0.15f, 1 },
+        { { 142.0f, 0.0f, 148.0f }, 20.0f, 3, 24, 52, 4.4f, 10, 0.18f, 0.12f, 1 }
     },
     .weatherProfileCount = 4,
     .weatherProfiles = {
@@ -134,20 +148,20 @@ static const OWRealmDef kDesertEarthRealm = {
     .spawnerPresetCount = 6,
     .spawnerPresets = {
         {
-            .label       = "NHA BAY SA YEU (8 QUAI)",
-            .bannerText  = "TE DAN VAN YEU NHA BAY SA YEU! CHUC CHIEN THANG!",
+            .label       = "NHA BAY SA YEU (36 QUAI)",
+            .bannerText  = "TE DAN VAN YEU NHA BAY SA YEU! SONG QUAI TRAN TOI!",
             .actionKind  = OW_SPAWN_MONSTER_PACK,
             .monsterKind = MONSTER_SWARM_MELEE,
-            .count       = 8,
+            .count       = 36,
             .element     = 3,
             .bossVariant = 0
         },
         {
-            .label       = "NHA DOI TINH ANH (3 CON)",
-            .bannerText  = "DOI TINH ANH HOANG THO XUAT CHIEN! LUYEN DAU PHAP!",
+            .label       = "TRIEU HOI SONG YEU (80 QUAI)",
+            .bannerText  = "DAI TRAN CUONG YEU! 80 QUAI TRAN RA KHAP SA MAC!",
             .actionKind  = OW_SPAWN_MONSTER_PACK,
-            .monsterKind = MONSTER_ELITE_GUARD,
-            .count       = 3,
+            .monsterKind = MONSTER_SWARM_MELEE,
+            .count       = 80,
             .element     = 3,
             .bossVariant = 0
         },

@@ -936,6 +936,12 @@ if __name__=='__main__':
     parser.add_argument('--prefix',default='song_quao')
     parser.add_argument('--out-dir',default='assets/maps/song_quao')
     parser.add_argument('--biome',choices=['wood_meadow','earth_arid'],default='wood_meadow')
+    parser.add_argument('--mode',choices=['moba','open_world'],default='moba',
+                        help='moba=300m compact arena (1x); open_world=1200m valley (4x XZ, 2.2x Y, high-res tiled grid)')
     args=parser.parse_args()
+    if args.mode=='open_world':
+        if args.max_dim==300: args.max_dim=1200.0
+        if args.height_range==16: args.height_range=35.2
+        if args.resolution_scale==1.0: args.resolution_scale=2.0
     process_dem(args.dem_path,args.max_dim,args.height_range,args.cliff_depth,args.cliff_margin,
                 args.resolution_scale,args.stream_ratio,args.prefix,args.out_dir,args.lake_level,args.biome)

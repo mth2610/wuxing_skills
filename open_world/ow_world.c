@@ -96,6 +96,11 @@ bool OW_IsInSafeZone(Vector3 pos) {
 float OW_GetMightTimer(void) { return s_mightTimer; }
 float OW_GetXpBoostTimer(void) { return s_xpBoostTimer; }
 int   OW_GetKillStreak(void) { return s_killStreak; }
+void  OW_RecordKills(int count) {
+    if (count <= 0) return;
+    s_killStreak += count;
+    s_killStreakTimer = 6.5f;
+}
 
 Vector3 OW_GetDaTauNpcPos(void) {
     Vector3 p = s_realm.daTauNpcPos;
@@ -213,9 +218,44 @@ static void UsePotionKey(PlayerEntity *player, PotionType type) {
     PlayerProfile_SaveGlobal();
 }
 
+static void ScaleRealmXZ(OWRealmDef *r, float s) {
+    if (!r || fabsf(s - 1.0f) < 0.01f) return;
+    r->safeCenter.x *= s; r->safeCenter.z *= s;
+    r->safeRadius   *= s;
+    r->daTauNpcPos.x *= s; r->daTauNpcPos.z *= s;
+    r->alchemistPos.x *= s; r->alchemistPos.z *= s;
+    r->stelePos.x *= s; r->stelePos.z *= s;
+    r->altarPos.x *= s; r->altarPos.z *= s;
+    r->duelBannerPos.x *= s; r->duelBannerPos.z *= s;
+    r->defaultStartPos.x *= s; r->defaultStartPos.z *= s;
+    r->dunesCenter.x *= s; r->dunesCenter.z *= s;
+    r->canyonCenter.x *= s; r->canyonCenter.z *= s;
+    r->badlandsCenter.x *= s; r->badlandsCenter.z *= s;
+    for (int i = 0; i < r->zoneCount && i < OW_MAX_ZONES; i++) {
+        r->zones[i].center.x *= s; r->zones[i].center.z *= s;
+        r->zones[i].radius   *= s;
+    }
+    for (int i = 0; i < r->nodeCount && i < OW_MAX_NODE_SPAWNS; i++) {
+        r->nodes[i].x *= s; r->nodes[i].z *= s;
+    }
+    for (int i = 0; i < r->windSurgeCount && i < OW_MAX_WIND_SURGES; i++) {
+        r->windSurges[i].x *= s; r->windSurges[i].z *= s;
+    }
+    for (int i = 0; i < r->campCount && i < OW_MAX_CAMPS; i++) {
+        r->camps[i].center.x *= s; r->camps[i].center.z *= s;
+    }
+    for (int i = 0; i < r->hordeZoneCount && i < OW_MAX_CAMPS; i++) {
+        r->hordeZones[i].center.x *= s; r->hordeZones[i].center.z *= s;
+        r->hordeZones[i].radius   *= s;
+    }
+}
+
 void OW_Init(const OWRealmDef *realm, bool spawnCamps) {
     if (!realm) return;
     s_realm = *realm;
+    if (s_realm.scaleWithMap) {
+        ScaleRealmXZ(&s_realm, MapManager_GetWorldScaleXZ());
+    }
     s_hasRealm = true;
 
     memset(s_emotes, 0, sizeof(s_emotes));
@@ -226,33 +266,38 @@ void OW_Init(const OWRealmDef *realm, bool spawnCamps) {
     s_emoteMenuOpen = false;
     s_tradeMenuOpen = false;
     s_clock = 0.0f;
-    s_lastPlayerPos = realm->defaultStartPos;
+    s_lastPlayerPos = s_realm.defaultStartPos;
     s_windActive = false;
     s_windElapsed = 0.0f;
     s_windAutoTimer = 1.5f;
     s_killStreak = 0;
     s_killStreakTimer = 0.0f;
 
-    DaTau_Init(realm->realmId);
+    DaTau_Init(s_realm.realmId);
     DaTau_SetNpcFlowEnabled(true);
 
-    OWLoot_Init(realm);
-    OWQuestNpc_Init(realm, spawnCamps);
-    OWWeather_Init(realm);
-    OWSandbox_Init(realm);
+    OWLoot_Init(&s_realm);
+    OWQuestNpc_Init(&s_realm, spawnCamps);
+    OWWeather_Init(&s_realm);
+    OWSandbox_Init(&s_realm);
 
-    s_windSurgeCount = realm->windSurgeCount;
+    s_windSurgeCount = s_realm.windSurgeCount;
     if (s_windSurgeCount > OW_MAX_WIND_SURGES) s_windSurgeCount = OW_MAX_WIND_SURGES;
     for (int i = 0; i < s_windSurgeCount; i++) {
-        Vector3 wp = realm->windSurges[i];
+        Vector3 wp = s_realm.windSurges[i];
         wp.y = MapManager_GetGroundHeightAt(wp.x, wp.z);
         s_windSurges[i] = (OWWindSurge){ .pos = wp, .cooldown = 0.0f };
     }
 
+    AI_ClearHordeZones();
+    AI_SetSafeZone(s_realm.safeCenter, s_realm.safeRadius);
     if (spawnCamps) {
-        for (int i = 0; i < realm->campCount && i < OW_MAX_CAMPS; i++) {
-            const OWCampSpawn *c = &realm->camps[i];
+        for (int i = 0; i < s_realm.campCount && i < OW_MAX_CAMPS; i++) {
+            const OWCampSpawn *c = &s_realm.camps[i];
             AI_SpawnMonsterCamp(c->center, c->count, c->element, c->kind);
+        }
+        for (int i = 0; i < s_realm.hordeZoneCount && i < OW_MAX_CAMPS; i++) {
+            AI_RegisterHordeZone(&s_realm.hordeZones[i]);
         }
     }
 
@@ -323,6 +368,11 @@ void OW_Update(PlayerEntity *player, float dt) {
             Entity_ApplyDamage(player->agentId, -15.0f * dt, (Vector3){ 0 });
         Entity_RestoreMana(player->agentId, 20.0f * dt);
     }
+
+    // Vampire-Survivors Frenzy Tiers based on Kill Streak
+    if (s_killStreak >= 80)      Entity_AddModifier(player->agentId, 1.35f, 0.4f);
+    else if (s_killStreak >= 40) Entity_AddModifier(player->agentId, 1.22f, 0.4f);
+    else if (s_killStreak >= 15) Entity_AddModifier(player->agentId, 1.10f, 0.4f);
 
     for (int i = 0; i < s_windSurgeCount; i++) {
         if (s_windSurges[i].cooldown > 0.0f) {
@@ -461,6 +511,16 @@ void OW_DrawHUD(const PlayerEntity *player, Camera3D cam) {
             : TextFormat("%s   ·   [B] Ky Ngo   ·   [V] %s", OW_GetZoneName(z), pkStr);
         WuxiaUI_DrawTextCentered(hudLine, zr, 13.0f,
                                  (pa->pkMode == PK_MODE_SLAUGHTER) ? (Color){ 255, 145, 135, 255 } : WUXIA_GOLD_BRIGHT);
+
+        int liveSwarm = AI_GetActiveCampMonsterCount();
+        if (liveSwarm > 0 || s_killStreak >= 3) {
+            Rectangle hr = { (float)sw * 0.5f - 150.0f, zy + 32.0f, 300.0f, 22.0f };
+            WuxiaUI_DrawPanel(hr, (s_killStreak >= 40) ? WUXIA_CRIMSON : WUXIA_GOLD, true);
+            const char *hTxt = (s_killStreak >= 3)
+                ? TextFormat("BAI QUAI: %d YEU  |  LIEN TRAM x%d", liveSwarm, s_killStreak)
+                : TextFormat("BAI QUAI QUANH DAY: %d YEU", liveSwarm);
+            WuxiaUI_DrawTextCentered(hTxt, hr, 11.5f, (s_killStreak >= 40) ? (Color){ 255, 195, 110, 255 } : WUXIA_GOLD_BRIGHT);
+        }
 
         const char *prompt = OWSandbox_GetNearbyPrompt(pa->position);
         if (!prompt) prompt = OWQuestNpc_GetNearbyPrompt(pa->position);

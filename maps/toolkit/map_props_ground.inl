@@ -89,6 +89,13 @@ static void GroundLookup_Free(MapGroundLookup *g)
         RL_FREE(g->cellItems);
         g->cellItems = NULL;
     }
+    if (g->hfHeights)
+    {
+        RL_FREE(g->hfHeights);
+        g->hfHeights = NULL;
+    }
+    g->hfW = 0;
+    g->hfH = 0;
     g->built = false;
 }
 
@@ -243,6 +250,41 @@ static bool GroundLookup_Sample(const MapGroundLookup *g, float lx, float lz,
 {
     if (!g || !g->built)
         return false;
+
+    if (g->hfHeights && g->hfW >= 2 && g->hfH >= 2)
+    {
+        if (lx < 0.0f || lz < 0.0f || lx > g->hfWidth || lz > g->hfDepth)
+            return false;
+        float u = (lx / g->hfWidth) * (float)(g->hfW - 1);
+        float v = (lz / g->hfDepth) * (float)(g->hfH - 1);
+        int ix = (int)u;
+        int iz = (int)v;
+        if (ix >= g->hfW - 1) ix = g->hfW - 2;
+        if (iz >= g->hfH - 1) iz = g->hfH - 2;
+        if (ix < 0) ix = 0;
+        if (iz < 0) iz = 0;
+        float tx = u - (float)ix;
+        float tz = v - (float)iz;
+        float scaleY = g->hfTotalHeight / 65535.0f;
+        int w = g->hfW;
+        float h00 = (float)g->hfHeights[iz * w + ix] * scaleY;
+        float h10 = (float)g->hfHeights[iz * w + ix + 1] * scaleY;
+        float h01 = (float)g->hfHeights[(iz + 1) * w + ix] * scaleY;
+        float h11 = (float)g->hfHeights[(iz + 1) * w + ix + 1] * scaleY;
+        float y = (tx + tz <= 1.0f)
+                      ? (h00 + tx * (h10 - h00) + tz * (h01 - h00))
+                      : (h11 + (1.0f - tx) * (h01 - h11) + (1.0f - tz) * (h10 - h11));
+        if (outY) *outY = y;
+        if (outNormal)
+        {
+            float dxStep = g->hfWidth / (float)(g->hfW - 1);
+            float dzStep = g->hfDepth / (float)(g->hfH - 1);
+            float dYdX = ((h10 - h00) * (1.0f - tz) + (h11 - h01) * tz) / dxStep;
+            float dYdZ = ((h01 - h00) * (1.0f - tx) + (h11 - h10) * tx) / dzStep;
+            *outNormal = Vector3Normalize((Vector3){-dYdX, 1.0f, -dYdZ});
+        }
+        return true;
+    }
 
     float relX = lx - g->minX;
     float relZ = lz - g->minZ;
@@ -720,12 +762,190 @@ static void Ground_BuildChunks(MapGroundSurface *ground, float width, float dept
     RL_FREE(vRemap);
 }
 
+MapGroundSurface MapProp_CreateGroundHeightfieldTiled(const char *heightmapPath, float width, float depth,
+                                                      float totalHeight, float cliffDepth, float tileSize,
+                                                      const char *splatMapPath, const char *grassTexPath,
+                                                      const char *pathTexPath)
+{
+    Image image = LoadImage(heightmapPath);
+    if (!image.data || image.width < 2 || image.height < 2)
+    {
+        if (image.data) UnloadImage(image);
+        TraceLog(LOG_WARNING, "Tiled heightfield load failed: %s", heightmapPath);
+        return (MapGroundSurface){0};
+    }
+
+    int w = image.width;
+    int h = image.height;
+    Color *pixels = LoadImageColors(image);
+    UnloadImage(image);
+    if (!pixels)
+        return (MapGroundSurface){0};
+
+    unsigned short *heights = (unsigned short *)RL_MALLOC((size_t)w * (size_t)h * sizeof(unsigned short));
+    if (!heights)
+    {
+        UnloadImageColors(pixels);
+        return (MapGroundSurface){0};
+    }
+    for (int i = 0; i < w * h; i++)
+    {
+        heights[i] = (unsigned short)(pixels[i].r * 256 + pixels[i].g);
+    }
+    UnloadImageColors(pixels);
+
+    // Build a minimal 1-tri placeholder model to own the shared Material & textures
+    Mesh dummy = GenMeshPlane(1.0f, 1.0f, 1, 1);
+    MapGroundSurface ground = SetupGroundMaterial(dummy, width, depth, tileSize, splatMapPath, grassTexPath, pathTexPath);
+    ground.drawOffset = (Vector3){-width * 0.5f, -cliffDepth, -depth * 0.5f};
+
+    // O(1) heightfield grid lookup
+    GroundLookup_Free(&ground.lookup);
+    ground.lookup.hfHeights = heights;
+    ground.lookup.hfW = w;
+    ground.lookup.hfH = h;
+    ground.lookup.hfWidth = width;
+    ground.lookup.hfDepth = depth;
+    ground.lookup.hfTotalHeight = totalHeight;
+    ground.lookup.hfPacked16 = true;
+    ground.lookup.built = true;
+
+    const float scaleY = totalHeight / 65535.0f;
+    const float dxStep = width / (float)(w - 1);
+    const float dzStep = depth / (float)(h - 1);
+
+    const int G = MAP_GROUND_CHUNK_GRID;
+    ground.chunkCount = 0;
+    for (int gz = 0; gz < G; gz++)
+    {
+        int z0 = (gz * (h - 1)) / G;
+        int z1 = ((gz + 1) * (h - 1)) / G;
+        int tw_h = z1 - z0 + 1;
+        if (tw_h < 2) continue;
+
+        for (int gx = 0; gx < G; gx++)
+        {
+            int x0 = (gx * (w - 1)) / G;
+            int x1 = ((gx + 1) * (w - 1)) / G;
+            int tw_w = x1 - x0 + 1;
+            if (tw_w < 2) continue;
+
+            Mesh cm = {0};
+            cm.vertexCount = tw_w * tw_h;
+            cm.triangleCount = (tw_w - 1) * (tw_h - 1) * 2;
+            cm.vertices = (float *)MemAlloc((unsigned int)cm.vertexCount * 3u * sizeof(float));
+            cm.normals = (float *)MemAlloc((unsigned int)cm.vertexCount * 3u * sizeof(float));
+            cm.texcoords = (float *)MemAlloc((unsigned int)cm.vertexCount * 2u * sizeof(float));
+            cm.indices = (unsigned short *)MemAlloc((unsigned int)cm.triangleCount * 3u * sizeof(unsigned short));
+            if (!cm.vertices || !cm.normals || !cm.texcoords || !cm.indices)
+            {
+                MemFree(cm.vertices); MemFree(cm.normals); MemFree(cm.texcoords); MemFree(cm.indices);
+                continue;
+            }
+
+            Vector3 bmin = {1e9f, 1e9f, 1e9f};
+            Vector3 bmax = {-1e9f, -1e9f, -1e9f};
+            for (int lz = 0; lz < tw_h; lz++)
+            {
+                int iz = z0 + lz;
+                int iz0 = (iz > 0) ? iz - 1 : iz;
+                int iz1 = (iz < h - 1) ? iz + 1 : iz;
+                float v = (float)iz / (float)(h - 1);
+                for (int lx = 0; lx < tw_w; lx++)
+                {
+                    int ix = x0 + lx;
+                    int ix0 = (ix > 0) ? ix - 1 : ix;
+                    int ix1 = (ix < w - 1) ? ix + 1 : ix;
+                    float u = (float)ix / (float)(w - 1);
+
+                    float vx = u * width;
+                    float vy = (float)heights[iz * w + ix] * scaleY;
+                    float vz = v * depth;
+                    int vi = lz * tw_w + lx;
+                    cm.vertices[vi * 3 + 0] = vx;
+                    cm.vertices[vi * 3 + 1] = vy;
+                    cm.vertices[vi * 3 + 2] = vz;
+                    cm.texcoords[vi * 2 + 0] = u;
+                    cm.texcoords[vi * 2 + 1] = v;
+
+                    float hL = (float)heights[iz * w + ix0] * scaleY;
+                    float hR = (float)heights[iz * w + ix1] * scaleY;
+                    float hD = (float)heights[iz0 * w + ix] * scaleY;
+                    float hU = (float)heights[iz1 * w + ix] * scaleY;
+                    float spanX = (float)(ix1 - ix0) * dxStep;
+                    float spanZ = (float)(iz1 - iz0) * dzStep;
+                    Vector3 n = Vector3Normalize((Vector3){-(hR - hL) / fmaxf(spanX, 1e-4f), 1.0f, -(hU - hD) / fmaxf(spanZ, 1e-4f)});
+                    cm.normals[vi * 3 + 0] = n.x;
+                    cm.normals[vi * 3 + 1] = n.y;
+                    cm.normals[vi * 3 + 2] = n.z;
+
+                    if (vx < bmin.x) bmin.x = vx;
+                    if (vy < bmin.y) bmin.y = vy;
+                    if (vz < bmin.z) bmin.z = vz;
+                    if (vx > bmax.x) bmax.x = vx;
+                    if (vy > bmax.y) bmax.y = vy;
+                    if (vz > bmax.z) bmax.z = vz;
+                }
+            }
+
+            int idxCursor = 0;
+            for (int lz = 0; lz < tw_h - 1; lz++)
+            {
+                for (int lx = 0; lx < tw_w - 1; lx++)
+                {
+                    int a = lz * tw_w + lx;
+                    int b = a + tw_w;
+                    int c = a + 1;
+                    int d = b + 1;
+                    float ya = cm.vertices[a * 3 + 1];
+                    float yb = cm.vertices[b * 3 + 1];
+                    float yc = cm.vertices[c * 3 + 1];
+                    float yd = cm.vertices[d * 3 + 1];
+                    if (totalHeight >= 15.0f && (ya <= 0.75f && yb <= 0.75f && yc <= 0.75f && yd <= 0.75f))
+                        continue;
+                    cm.indices[idxCursor++] = (unsigned short)a;
+                    cm.indices[idxCursor++] = (unsigned short)b;
+                    cm.indices[idxCursor++] = (unsigned short)d;
+                    cm.indices[idxCursor++] = (unsigned short)a;
+                    cm.indices[idxCursor++] = (unsigned short)d;
+                    cm.indices[idxCursor++] = (unsigned short)c;
+                }
+            }
+            cm.triangleCount = idxCursor / 3;
+            if (cm.triangleCount <= 0)
+            {
+                MemFree(cm.vertices); MemFree(cm.normals); MemFree(cm.texcoords); MemFree(cm.indices);
+                continue;
+            }
+
+            UploadMesh(&cm, false);
+            Vector3 center = {(bmin.x + bmax.x) * 0.5f, (bmin.y + bmax.y) * 0.5f, (bmin.z + bmax.z) * 0.5f};
+            Vector3 half = {(bmax.x - bmin.x) * 0.5f, (bmax.y - bmin.y) * 0.5f, (bmax.z - bmin.z) * 0.5f};
+            ground.chunks[ground.chunkCount++] = (MapGroundChunk){
+                .mesh = cm,
+                .center = center,
+                .radius = sqrtf(half.x * half.x + half.y * half.y + half.z * half.z) + 0.5f,
+            };
+        }
+    }
+
+    ground.ready = (ground.chunkCount > 0);
+    TraceLog(LOG_INFO, "GROUND_TILED: grid=%dx%d chunks=%d size=%.1fx%.1fm", w, h, ground.chunkCount, width, depth);
+    return ground;
+}
+
 MapGroundSurface MapProp_CreateGroundHeightfield16(const char *heightmapPath, float width, float depth,
                                                    float totalHeight, float cliffDepth, float tileSize,
                                                    const char *splatMapPath, const char *grassTexPath,
                                                    const char *pathTexPath)
 {
     Image image = LoadImage(heightmapPath);
+    if (image.data && (size_t)image.width * (size_t)image.height > 65535u)
+    {
+        UnloadImage(image);
+        return MapProp_CreateGroundHeightfieldTiled(heightmapPath, width, depth, totalHeight, cliffDepth,
+                                                   tileSize, splatMapPath, grassTexPath, pathTexPath);
+    }
     const char *legacy = getenv("WUXING_GROUND_MESH");
     Mesh mesh = Ground_CreateIndexedHeightfield(image, (Vector3){width, totalHeight, depth},
                                                 true, !legacy || strcmp(legacy, "legacy") != 0);
@@ -1191,7 +1411,16 @@ void MapProp_DrawGroundShadowCaster(MapGroundSurface *ground, Vector3 worldCente
     Shader previous = ground->model.materials[0].shader;
     ground->model.materials[0].shader = depthShader;
     Vector3 pos = Vector3Add(worldCenter, ground->drawOffset);
-    DrawModel(ground->model, pos, 1.0f, WHITE);
+    if (ground->chunkCount > 0)
+    {
+        Matrix transform = MatrixTranslate(pos.x, pos.y, pos.z);
+        for (int c = 0; c < ground->chunkCount; c++)
+            DrawMesh(ground->chunks[c].mesh, ground->model.materials[0], transform);
+    }
+    else
+    {
+        DrawModel(ground->model, pos, 1.0f, WHITE);
+    }
     rlDrawRenderBatchActive();
     ground->model.materials[0].shader = previous;
 }

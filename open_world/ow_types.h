@@ -14,7 +14,7 @@
 #define OW_MAX_ZONES            4
 #define OW_MAX_NODE_SPAWNS      24
 #define OW_MAX_WIND_SURGES      4
-#define OW_MAX_CAMPS            8
+#define OW_MAX_CAMPS            16
 #define OW_MAX_WEATHER_PROFILES 4
 #define OW_MAX_SPAWNER_PRESETS  6
 
@@ -30,7 +30,8 @@ typedef enum {
     OW_LOOT_STONE,
     OW_LOOT_HERB,
     OW_LOOT_POTION_HEAL,
-    OW_LOOT_DATAU_TOKEN
+    OW_LOOT_DATAU_TOKEN,
+    OW_LOOT_SKILL_XP
 } OWLootKind;
 
 typedef struct {
@@ -128,6 +129,9 @@ typedef struct {
     int                 windSurgeCount;
     OWCampSpawn         camps[OW_MAX_CAMPS];
     int                 campCount;
+    AIHordeZoneDef      hordeZones[OW_MAX_CAMPS];
+    int                 hordeZoneCount;
+    bool                scaleWithMap;  // true = authored at 1x base coords, scaled by MapManager_GetWorldScaleXZ()
     OWWeatherProfileDef weatherProfiles[OW_MAX_WEATHER_PROFILES];
     int                 weatherProfileCount;
     OWSpawnerPresetDef  spawnerPresets[OW_MAX_SPAWNER_PRESETS];
