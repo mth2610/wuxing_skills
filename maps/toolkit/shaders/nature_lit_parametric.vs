@@ -169,9 +169,8 @@ void main()
     fragHeight = h;
     fragTexCoord = bladeSurfaceUV;
 
-    // [TỐI ƯU ALU & SỬA LỖI RANH GIỚI BÓNG]: Đồng bộ cự ly tính ma trận bóng (36.5m) vượt qua
-    // ngưỡng tắt hoàn toàn shadowFade (36.0m) trong nature_surface.glsl, gán w = -1.0 khi ngoài vùng.
-    if (s_cachedDistToCam <= 36.5) {
+    // Đồng bộ cự ly tính ma trận bóng (41.0m) vượt qua ngưỡng tắt shadowFade (40.0m) trong nature_surface.glsl
+    if (s_cachedDistToCam <= 41.0) {
         vec4 world4 = vec4(world, 1.0);
         v_lightSpace = u_lightVP * world4;
         v_staticLightSpace = u_staticLightVP * world4;

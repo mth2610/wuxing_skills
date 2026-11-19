@@ -2010,9 +2010,6 @@ int main(int argc, char **argv) {
         VFXTest_Draw3D();
 
         if ((!renderVFXMode || renderVFXIndex == -1) && !VFXTest_ShouldHideCharacterRef()) {
-            if (!EnvShadow_IsEnabled()) {
-                Environment_DrawSmartShadow(player.position, ENV_SHAPE_SPHERE, 0.45f, 0.85f);
-            }
             if (CharacterModel_IsLoaded()) {
                 CharacterModel_Draw(&player.anim, player.position, s_vfxPlayerYaw, 1.0f, WHITE);
             } else {
@@ -2031,9 +2028,6 @@ int main(int argc, char **argv) {
         GameScreen_Draw3D(&player);
         Boss_Draw();
         Formation_Draw();
-    }
-    if (!EnvShadow_IsEnabled()) {
-        LiquidFlow_DrawSmartShadows();
     }
     MapManager_DrawTransparent();
     Afterimage_Draw();

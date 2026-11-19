@@ -31,9 +31,9 @@ static float s_heightRange = NINH_THUAN_HEIGHT_RANGE;
 #define MAP_DEPTH s_mapDepth
 #define CLIFF_DEPTH (NINH_THUAN_CLIFF_DEPTH * s_scaleY)
 #define CLOUD_SEA_Y (-5.2f * s_scaleY)
-#define SHADOW_FOCUS_RADIUS 18.0f
-#define SHADOW_SNAP_STEP 2.0f
-#define SHADOW_HYSTERESIS_XZ 1.50f
+#define SHADOW_FOCUS_RADIUS 22.0f
+#define SHADOW_SNAP_STEP 0.25f
+#define SHADOW_HYSTERESIS_XZ 0.50f
 #define SHADOW_HYSTERESIS_Y 0.50f
 
 static Vector3 kMapCenter = {NINH_THUAN_MAP_WIDTH * 0.5f, 0.0f, NINH_THUAN_MAP_DEPTH * 0.5f};
@@ -96,9 +96,16 @@ static float NinhThuanCoastalSurface(float x, float z, void *user)
 static void DrawNinhThuanShadowCasters(Shader depthShader, void *user)
 {
     (void)user;
-    if ((s_skipMask & MAP_SKIP_SHADOWCASTERS) || (s_skipMask & MAP_SKIP_ROCKS))
+    if (s_skipMask & MAP_SKIP_SHADOWCASTERS)
         return;
-    if (!s_rocks.ready || !s_rocks.items || s_rocks.count <= 0)
+
+    if (!(s_skipMask & MAP_SKIP_FLORA))
+    {
+        MapProp_DrawFloraShadowCasters(&s_flora);
+    }
+
+    if ((s_skipMask & MAP_SKIP_ROCKS) || EnvShadow_HasStaticCache() ||
+        !s_rocks.ready || !s_rocks.items || s_rocks.count <= 0)
         return;
 
     /* Submit nearby large boulders to the dynamic shadow pass using the exact
@@ -549,8 +556,8 @@ void InitNinhThuanMap(void)
     s_shadowWasEnabled = EnvShadow_IsEnabled();
     EnvShadow_SetEnabled(true);
 #endif
-    s_lastShadowFocus = kMapCenter;
-    EnvShadow_SetFocus(kMapCenter, SHADOW_FOCUS_RADIUS);
+    s_lastShadowFocus = camera.target;
+    EnvShadow_SetFocus(s_lastShadowFocus, SHADOW_FOCUS_RADIUS);
 
     MapDem_InitIsland(&s_dem, MAP_WIDTH, MAP_DEPTH, s_heightRange, CLIFF_DEPTH,
                       "assets/maps/ninh_thuan/ninh_thuan_ecology_splat.png",
@@ -864,29 +871,14 @@ void DrawNinhThuanMap(void)
     MapProp_ResetNatureRenderStats();
     PropLit_UpdateLighting();
 
-    bool useFakeRockShadows = !EnvShadow_IsEnabled() && GfxQuality_Get() != GFX_UNLIT;
-    if (!useFakeRockShadows)
-    {
-        if (!(s_skipMask & MAP_SKIP_ROCKS))
-            MapProp_DrawRockSystem(&s_rocks, false);
-        if (!(s_skipMask & MAP_SKIP_GROUND))
-            MapProp_DrawGround(&s_ground, kMapCenter);
-        if (!(s_skipMask & MAP_SKIP_CLIFF))
-            MapProp_DrawCliffSkirt(&s_cliff, camera);
-        if (!(s_skipMask & MAP_SKIP_FLORA))
-            MapProp_DrawFloraSystem(&s_flora);
-    }
-    else
-    {
-        if (!(s_skipMask & MAP_SKIP_GROUND))
-            MapProp_DrawGround(&s_ground, kMapCenter);
-        if (!(s_skipMask & MAP_SKIP_CLIFF))
-            MapProp_DrawCliffSkirt(&s_cliff, camera);
-        if (!(s_skipMask & MAP_SKIP_ROCKS))
-            MapProp_DrawRockSystem(&s_rocks, true);
-        if (!(s_skipMask & MAP_SKIP_FLORA))
-            MapProp_DrawFloraSystem(&s_flora);
-    }
+    if (!(s_skipMask & MAP_SKIP_ROCKS))
+        MapProp_DrawRockSystem(&s_rocks, false);
+    if (!(s_skipMask & MAP_SKIP_GROUND))
+        MapProp_DrawGround(&s_ground, kMapCenter);
+    if (!(s_skipMask & MAP_SKIP_CLIFF))
+        MapProp_DrawCliffSkirt(&s_cliff, camera);
+    if (!(s_skipMask & MAP_SKIP_FLORA))
+        MapProp_DrawFloraSystem(&s_flora);
 
     /* s_coastalSea sits over s_cliff / deep abyss, so DrawWaterBed is redundant here */
     if (!(s_skipMask & MAP_SKIP_SKY))

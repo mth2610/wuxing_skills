@@ -403,10 +403,18 @@ bool ModularSystem_GetSocketMatrix(Vector3 charPos, float charYaw, float charSca
     return ModularSystem_GetSocketMatrixEx(charPos, charYaw, charScale, slot, NULL, NULL, localOffset, outMatrix);
 }
 
+#include "rlgl.h"
+
+extern bool EnvShadow_IsCapturing(void);
+extern Shader EnvShadow_GetDepthShader(void);
+
 void ModularInstance_Draw(ModularInstance *inst)
 {
     if (!inst || !inst->active)
         return;
+
+    const bool isShadow = EnvShadow_IsCapturing();
+    const Shader depthShader = isShadow ? EnvShadow_GetDepthShader() : (Shader){0};
 
     static int s_clothEnabled = -1;
     if (s_clothEnabled < 0)
@@ -493,12 +501,29 @@ void ModularInstance_Draw(ModularInstance *inst)
                                                                &inst->animState, item->localOffset);
                 Matrix finalMat = MatrixMultiply(localToModel, modelToWorld);
 
-                for (int m = 0; m < item->model.meshCount; m++)
+                if (isShadow)
                 {
-                    DrawMesh(item->model.meshes[m], item->model.materials[m], finalMat);
+                    rlDisableBackfaceCulling();
+                    for (int m = 0; m < item->model.meshCount; m++)
+                    {
+                        int matIdx = (item->model.meshMaterial && m < item->model.meshCount) ? item->model.meshMaterial[m] : 0;
+                        if (matIdx < 0 || matIdx >= item->model.materialCount)
+                            matIdx = 0;
+                        Material shadowMat = item->model.materials[matIdx];
+                        shadowMat.shader = depthShader;
+                        DrawMesh(item->model.meshes[m], shadowMat, finalMat);
+                    }
+                    rlEnableBackfaceCulling();
+                }
+                else
+                {
+                    for (int m = 0; m < item->model.meshCount; m++)
+                    {
+                        DrawMesh(item->model.meshes[m], item->model.materials[m], finalMat);
+                    }
                 }
 
-                if (s == MODULAR_SLOT_WEAPON_R && dt > 1.0e-5f)
+                if (!isShadow && s == MODULAR_SLOT_WEAPON_R && dt > 1.0e-5f)
                 {
                     bool isAttackAnim = (inst->animState.currentSlot == CHAR_ANIM_SWORD_SLASH ||
                                          inst->animState.currentSlot == CHAR_ANIM_SWORD_THRUST ||
@@ -513,12 +538,15 @@ void ModularInstance_Draw(ModularInstance *inst)
         }
     }
 
-    // 4. Fade and draw weapon trail in emission pass
-    if (!weaponSampled && dt > 1.0e-5f)
+    // 4. Fade and draw weapon trail in emission pass (never during shadow capture)
+    if (!isShadow)
     {
-        WeaponTrail_Fade(&inst->weaponTrail, dt);
+        if (!weaponSampled && dt > 1.0e-5f)
+        {
+            WeaponTrail_Fade(&inst->weaponTrail, dt);
+        }
+        WeaponTrail_Draw(&inst->weaponTrail);
     }
-    WeaponTrail_Draw(&inst->weaponTrail);
 }
 
 void ModularInstance_DrawWithState(ModularInstance *inst, const CharacterAnimState *state,

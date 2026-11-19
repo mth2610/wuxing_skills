@@ -1284,6 +1284,9 @@ static void BoneDebugDump(Model m, ModelAnimation anim, const char *tag, int fra
     }
 }
 
+extern bool EnvShadow_IsCapturing(void);
+extern Shader EnvShadow_GetDepthShader(void);
+
 static void CharacterModel_DrawCustomInternal(Model customModel, const CharacterAnimState *state, Vector3 position,
                                               float yawRadians, float scale, Color tint,
                                               bool deflateTorso, bool deflateLegs,
@@ -1318,8 +1321,26 @@ static void CharacterModel_DrawCustomInternal(Model customModel, const Character
     }
 
     float yawDegrees = yawRadians * RAD2DEG;
-    DrawModelEx(customModel, position, (Vector3){0.0f, 1.0f, 0.0f}, yawDegrees,
-                (Vector3){scale, scale, scale}, tint);
+    if (EnvShadow_IsCapturing() && customModel.materialCount > 0 && customModel.materials != NULL)
+    {
+        Shader depthShader = EnvShadow_GetDepthShader();
+        Shader savedShaders[16];
+        int matCount = customModel.materialCount < 16 ? customModel.materialCount : 16;
+        for (int i = 0; i < matCount; i++)
+        {
+            savedShaders[i] = customModel.materials[i].shader;
+            customModel.materials[i].shader = depthShader;
+        }
+        DrawModelEx(customModel, position, (Vector3){0.0f, 1.0f, 0.0f}, yawDegrees,
+                    (Vector3){scale, scale, scale}, tint);
+        for (int i = 0; i < matCount; i++)
+            customModel.materials[i].shader = savedShaders[i];
+    }
+    else
+    {
+        DrawModelEx(customModel, position, (Vector3){0.0f, 1.0f, 0.0f}, yawDegrees,
+                    (Vector3){scale, scale, scale}, tint);
+    }
 }
 
 void CharacterModel_DrawCustomEx(Model customModel, const CharacterAnimState *state, Vector3 position, float yawRadians, float scale, Color tint, bool deflateTorso, bool deflateLegs)

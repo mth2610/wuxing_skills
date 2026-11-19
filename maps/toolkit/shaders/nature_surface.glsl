@@ -41,8 +41,8 @@ float FoliageShadowVisibility(vec4 lightSpace, vec4 staticLightSpace,
                               vec3 normal, vec3 lightDir, vec3 worldPosition,
                               float distToCam)
 {
-    // Smooth distance fade beyond the active shadow cascade (covers foreground + midground 22m..34m)
-    float shadowFade = 1.0 - clamp((distToCam - 22.0) * (1.0 / 12.0), 0.0, 1.0);
+    // Smooth distance fade beyond the active shadow cascade (covers foreground + midground 26m..40m)
+    float shadowFade = 1.0 - clamp((distToCam - 26.0) * (1.0 / 14.0), 0.0, 1.0);
     if (shadowFade <= 0.0)
         return 1.0;
 
@@ -55,7 +55,7 @@ float FoliageShadowVisibility(vec4 lightSpace, vec4 staticLightSpace,
         if (all(greaterThan(projected, vec3(0.0))) && all(lessThan(projected, vec3(1.0)))) {
             float edgeFade = MapShadowCoverageFadeWidth(projected.xy, 0.22);
             if (edgeFade > 0.0) {
-                float bias = clamp(0.0028 + slope * 0.0035, 0.0025, 0.0065);
+                float bias = clamp(0.0024 + slope * 0.0032, 0.0022, 0.0058);
                 float sampleDyn = (u_shadowFilterQuality >= 1.5 && distToCam < 28.0)
                     ? MapShadowCompareBilinear(shadowMap, projected.xy, projected.z - bias, u_shadowTexel)
                     : MapShadowCompare(shadowMap, projected.xy, projected.z - bias);
@@ -71,8 +71,8 @@ float FoliageShadowVisibility(vec4 lightSpace, vec4 staticLightSpace,
         if (all(greaterThan(projected, vec3(0.0))) && all(lessThan(projected, vec3(1.0)))) {
             float edgeFade = MapShadowCoverageFadeWidth(projected.xy, 0.12);
             if (edgeFade > 0.0) {
-                float bias = clamp(0.0025 + slope * 0.0030, 0.0020, 0.0055);
-                float sampleStatic = (u_shadowFilterQuality >= 1.5 && distToCam < 16.0)
+                float bias = clamp(0.0022 + slope * 0.0028, 0.0018, 0.0050);
+                float sampleStatic = (u_shadowFilterQuality >= 1.5 && distToCam < 20.0)
                     ? MapShadowCompareBilinear(staticShadowMap, projected.xy, projected.z - bias, u_staticShadowTexel)
                     : MapShadowCompare(staticShadowMap, projected.xy, projected.z - bias);
                 float rawStatic = mix(1.0, sampleStatic, edgeFade);
@@ -81,8 +81,8 @@ float FoliageShadowVisibility(vec4 lightSpace, vec4 staticLightSpace,
         }
     }
 
-    // Physical botanical shadow floor: soft velvety olive shadows without dark row banding
-    float translucentVis = mix(0.48, 1.0, rawCombined);
+    // Physical botanical shadow floor: crisp sunlit-vs-shaded contrast without black crush
+    float translucentVis = mix(0.42, 1.0, rawCombined);
     return mix(1.0, translucentVis, shadowFade);
 }
 

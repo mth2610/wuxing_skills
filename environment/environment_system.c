@@ -676,18 +676,11 @@ void Environment_EndShadowBatch(void)
 
 void Environment_DrawSmartShadow(Vector3 pos, EnvShadowShapeType shape, float width, float height)
 {
-    EnvShadowPrep prep;
-    if (!EnvPrepareShadow(pos, shape, &prep))
-        return;
-
-    if (s_shadowBatchOpen)
-    {
-        EnvEmitShadow(pos, shape, width, height, &prep);
-        return;
-    }
-    EnvShadowStateBegin();
-    EnvEmitShadow(pos, shape, width, height, &prep);
-    EnvShadowStateEnd();
+    (void)pos;
+    (void)shape;
+    (void)width;
+    (void)height;
+    // Fake blob shadows are disabled engine-wide; real shadow maps (EnvShadow) are the sole shadow path.
 }
 
 Vector3 Environment_GetSunDirection(void) { return s_sunDirection; }

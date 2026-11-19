@@ -1531,7 +1531,6 @@ void GameScreen_Draw3D(const PlayerEntity *player)
             continue;
         if (a->archetype == ARCH_HERO)
         {
-            Environment_DrawSmartShadow(a->position, ENV_SHAPE_SPHERE, 0.5f, 0.9f);
             // Ally = cool tint, enemy = warm tint — reads friend/foe at a
             // glance without labels (No Tutorial).
             Color tint = (a->team == myTeam) ? (Color){150, 200, 255, 255}
@@ -1567,7 +1566,6 @@ void GameScreen_Draw3D(const PlayerEntity *player)
             Color c = MinionElementColor(a->currentElement);
             float bob = 0.9f + 0.12f * sinf((float)GetTime() * 1.3f);
             Vector3 core = {a->position.x, a->position.y + bob, a->position.z};
-            Environment_DrawSmartShadow(a->position, ENV_SHAPE_SPHERE, 0.9f, 1.2f);
             DrawSphereEx(core, 0.55f, 12, 12,
                          (Color){(unsigned char)(10 + c.r / 8), (unsigned char)(10 + c.g / 8),
                                  (unsigned char)(10 + c.b / 8), 255});
@@ -1575,16 +1573,12 @@ void GameScreen_Draw3D(const PlayerEntity *player)
         }
     }
 
-    if (!EnvShadow_IsEnabled())
-    {
-        Environment_DrawSmartShadow(player->position, ENV_SHAPE_SPHERE, 0.5f, 0.9f);
-    }
     if (s_mode == GAME_MODE_EXPLORE && s_exploreRealm >= 0 && s_exploreRealm <= 3 && s_state == GAME_FIGHTING)
     {
         OW_Draw3D(player, s_hudCamera);
     }
     int lockedTarget = UI_GetManualTarget();
-    if (lockedTarget >= 0)
+    if (!EnvShadow_IsCapturing() && lockedTarget >= 0)
     {
         const Agent *lt = Entity_GetAgent(lockedTarget);
         if (lt)
@@ -1604,8 +1598,11 @@ void GameScreen_Draw3D(const PlayerEntity *player)
                    : (s_pillarCapture <= -20.0f) ? (Color){ 245, 95, 75, 255 }
                    : (Color){ 235, 215, 130, 255 };
         DrawCylinder((Vector3){ pBase.x, pBase.y + 1.8f, pBase.z }, 0.65f, 0.85f, 3.6f, 12, (Color){ 32, 34, 46, 255 });
-        DrawCylinderWires((Vector3){ pBase.x, pBase.y + 1.8f, pBase.z }, 0.68f, 0.88f, 3.6f, 12, pCol);
-        DrawCircle3D((Vector3){ pBase.x, pBase.y + 0.12f, pBase.z }, 8.0f, (Vector3){ 0, 1, 0 }, 0.0f, Fade(pCol, 0.45f));
+        if (!EnvShadow_IsCapturing())
+        {
+            DrawCylinderWires((Vector3){ pBase.x, pBase.y + 1.8f, pBase.z }, 0.68f, 0.88f, 3.6f, 12, pCol);
+            DrawCircle3D((Vector3){ pBase.x, pBase.y + 0.12f, pBase.z }, 8.0f, (Vector3){ 0, 1, 0 }, 0.0f, Fade(pCol, 0.45f));
+        }
 
         if (s_spiritOrbActive)
         {

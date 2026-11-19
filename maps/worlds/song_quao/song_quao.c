@@ -1058,31 +1058,16 @@ void DrawSongQuaoMap(void)
     MapProp_ResetNatureRenderStats();
     PropLit_UpdateLighting();
 
-    bool useFakeRockShadows = !EnvShadow_IsEnabled();
-    if (!useFakeRockShadows)
-    {
-        // Thứ tự chuẩn Early-Z / TBDR HSR:
-        // Vẽ Đá & Địa hình mặt đất trước để Depth Buffer cắt bỏ toàn bộ cỏ/hoa bị khuất sau đồi.
-        if (!(s_skipMask & MAP_SKIP_ROCKS))
-            MapProp_DrawRockSystem(&s_rocks, false);
-        if (!(s_skipMask & MAP_SKIP_GROUND))
-            MapProp_DrawGround(&s_ground, kMapCenter);
-        if (!(s_skipMask & MAP_SKIP_CLIFF))
-            MapProp_DrawCliffSkirt(&s_cliff, camera);
-        if (!(s_skipMask & MAP_SKIP_FLORA))
-            MapProp_DrawFloraSystem(&s_flora);
-    }
-    else
-    {
-        if (!(s_skipMask & MAP_SKIP_GROUND))
-            MapProp_DrawGround(&s_ground, kMapCenter);
-        if (!(s_skipMask & MAP_SKIP_CLIFF))
-            MapProp_DrawCliffSkirt(&s_cliff, camera);
-        if (!(s_skipMask & MAP_SKIP_ROCKS))
-            MapProp_DrawRockSystem(&s_rocks, true);
-        if (!(s_skipMask & MAP_SKIP_FLORA))
-            MapProp_DrawFloraSystem(&s_flora);
-    }
+    // Thứ tự chuẩn Early-Z / TBDR HSR:
+    // Vẽ Đá & Địa hình mặt đất trước để Depth Buffer cắt bỏ toàn bộ cỏ/hoa bị khuất sau đồi.
+    if (!(s_skipMask & MAP_SKIP_ROCKS))
+        MapProp_DrawRockSystem(&s_rocks, false);
+    if (!(s_skipMask & MAP_SKIP_GROUND))
+        MapProp_DrawGround(&s_ground, kMapCenter);
+    if (!(s_skipMask & MAP_SKIP_CLIFF))
+        MapProp_DrawCliffSkirt(&s_cliff, camera);
+    if (!(s_skipMask & MAP_SKIP_FLORA))
+        MapProp_DrawFloraSystem(&s_flora);
 
     if (!(s_skipMask & MAP_SKIP_CLOUDSEA))
         MapProp_DrawCloudSea(&s_cloudSea, kMapCenter, CLOUD_SEA_Y);
