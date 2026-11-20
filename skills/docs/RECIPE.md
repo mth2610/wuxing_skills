@@ -240,5 +240,6 @@ WUXING_VERIFY=<skill_name> ./wuxing
 - [ ] Status effect applied → `StatusVFX_Attach` (not just a one-time burst)
 - [ ] Chain skill → zero-targets case handled gracefully (`SkillHelper_ChainTargets` returns 0)
 - [ ] Pool overflow check: run with F3 overlay — no red rows after a full cast sequence
+- [ ] Counterplay fairness (`VO_HOC_BALANCE.md` §2.1): NO instant distant ground eruption/sky drop without telegraph — either travel from caster (dodgeable/clashable), self-centered at caster, or distant telegraph `>= 0.60s` with clear ground warning VFX
 
 See `WUXING_ART_DIRECTION.md` for full aesthetic law reference.

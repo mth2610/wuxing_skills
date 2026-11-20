@@ -14,11 +14,13 @@ static bool s_dirty = false;
 static float s_dirtyFlushTimer = 0.0f;
 
 static const char *kDefaultStarterSkills[PROFILE_SKILL_SLOTS] = {
-    "ICE_CRYSTAL_LANCE",
-    "INFERNO_SURGE",
-    "EARTH_DISC_VOLLEY",
-    "METAL_BLADE_STORM",
-    "VINE_SNARE"
+    "TTQP_PHA_LANG_QUYEN",
+    "TTQP_NGHICH_LUU_CAM_NA",
+    "TTQP_BANG_TRIEU_DAO_HAI",
+    "TTQP_HAN_UYEN_QUYEN_TOAN",
+    "TTQP_NO_HAI_LONG_QUYEN",
+    "TTQP_THUY_KINH_QUYEN_THUAN",
+    "TTQP_TRIEU_TICH_LINH_TUYEN"
 };
 
 static uint32_t ComputeProfileHash(const PlayerProfile *p) {
@@ -118,6 +120,16 @@ bool PlayerProfile_LoadFromFile(PlayerProfile *out, const char *filePath) {
         snprintf(key, sizeof(key), "stone_%d", e);
         ParseJsonInt(text, key, &out->elementalStones[e]);
     }
+    for (int st = 0; st < PROFILE_MAX_SETS; st++) {
+        char key[32];
+        snprintf(key, sizeof(key), "scroll_%d", st);
+        ParseJsonInt(text, key, &out->setScrolls[st]);
+    }
+    ParseJsonInt(text, "pvpMatchesToday", &out->pvpMatchesToday);
+    int dayStamp = 0;
+    if (ParseJsonInt(text, "pvpDayStamp", &dayStamp) && dayStamp >= 0) {
+        out->pvpDayStamp = (uint32_t)dayStamp;
+    }
 
     for (int s = 0; s < PROFILE_SKILL_SLOTS; s++) {
         char key[32];
@@ -173,6 +185,13 @@ bool PlayerProfile_SaveToFile(const PlayerProfile *p, const char *filePath) {
     for (int e = 0; e < 5; e++) {
         fprintf(f, "  \"stone_%d\": %d,\n", e, p->elementalStones[e]);
     }
+    for (int st = 0; st < PROFILE_MAX_SETS; st++) {
+        if (p->setScrolls[st] > 0) {
+            fprintf(f, "  \"scroll_%d\": %d,\n", st, p->setScrolls[st]);
+        }
+    }
+    fprintf(f, "  \"pvpMatchesToday\": %d,\n", p->pvpMatchesToday);
+    fprintf(f, "  \"pvpDayStamp\": %u,\n", (unsigned int)p->pvpDayStamp);
     for (int s = 0; s < PROFILE_SKILL_SLOTS; s++) {
         fprintf(f, "  \"slot_%d\": \"%s\",\n", s, p->equippedSkillNames[s]);
     }

@@ -2,6 +2,7 @@
 // Pure logic — no rendering includes.
 #include "ai/ai.h"
 #include "skills/skill_manager.h" // hero bots cast off equippedSkills
+#include "skills/vo_hoc/vo_hoc_codex.h"
 #include "combat/combat.h"      // projectile snapshot + minion bolt clash submission
 #include "maps/map_manager.h"
 #include <math.h>
@@ -192,10 +193,13 @@ static void UpdateHeroBots(float dt) {
                 int skillIndex = me->equippedSkills[(start + k) % AGENT_SKILL_SLOTS];
                 if (skillIndex < 0 || !SkillManager_CanCast(skillIndex, bot->agentId))
                     continue;
+                if (VoHoc_GetSkillRoleByName(GetRegisteredSkillName(skillIndex)) == VH_ROLE_SUPPORT &&
+                    me->health > me->maxHealth * 0.70f)
+                    continue;
                 if (CastSkill(skillIndex, bot->agentId, me->position,
                               target->position,
                               (SkillParams){ .level = 1, .quantity = 1, .sizeScale = 1.0f })) {
-                    SkillManager_TriggerCooldown(skillIndex, bot->agentId, 1.0f);
+                    SkillManager_TriggerCooldown(skillIndex, bot->agentId, Skill_GetCooldown(skillIndex));
                     if (s_botCastCount < 16)
                         s_botCasts[s_botCastCount++] = (HeroBotCast){
                             bot->agentId, skillIndex, target->position };

@@ -48,8 +48,8 @@ static int GetSandboxTouchSkillIndex(int slot) {
     return (idx >= 0) ? idx : GetSkillAtOrderIndex(slot);
 }
 
-static void BuildSandboxTouchSlots(UITouchSkillSlot outSlots[5]) {
-    for (int k = 0; k < 5; k++) {
+static void BuildSandboxTouchSlots(UITouchSkillSlot outSlots[7]) {
+    for (int k = 0; k < 7; k++) {
         int idx = GetSandboxTouchSkillIndex(k);
         outSlots[k].skillIndex = idx;
         if (idx >= 0) {
@@ -274,7 +274,7 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
         UI_SetTouchControlsEnabled(g_showTouchControls);
     }
 
-    UITouchSkillSlot touchSlots[5];
+    UITouchSkillSlot touchSlots[7];
     BuildSandboxTouchSlots(touchSlots);
     UI_PollTouchCombat(touchSlots, &s_sandboxTouchInput);
     if (s_sandboxTouchInput.pointerOverUI) {
@@ -1069,7 +1069,7 @@ void DrawSandboxTouchControls(const PlayerEntity* player) {
     (void)player;
     if (!UI_IsTouchControlsEnabled()) return;
 
-    UITouchSkillSlot touchSlots[5];
+    UITouchSkillSlot touchSlots[7];
     BuildSandboxTouchSlots(touchSlots);
     UI_DrawTouchCombat(touchSlots, &s_sandboxTouchInput);
 

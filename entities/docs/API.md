@@ -407,3 +407,13 @@ void Entity_SetStealth(int agentId, bool stealthed); // zone rule setter (game/)
 - Networking
 
 These will each get their own section added to this document when their prerequisites exist — do not pre-build them speculatively.
+
+---
+
+## 19. Võ Học Extensions (7-Slot Loadout, Shield, Heal, Extended CC/DR, Status DoTs, Marks)
+
+- **Loadout size:** `AGENT_SKILL_SLOTS = 7` (`AGENT_STRIKE_SLOTS = 5` slots `0..4`, `AGENT_BUFF_SLOTS = 2` slots `5..6`).
+- **Shield & Heal:** `Entity_AddShield(id, amount, duration)`, `Entity_GetShield(id)` (absorbs damage before HP), `Entity_Heal(id, amount)` (clamped to `maxHealth`, reduced 40% while `STATUS_POISON` is active).
+- **Extended CC & Hard-CC DR (4s window: 1.0 → 0.5 → 0.25 → 0.0):** `Entity_ApplyFreeze`/`Entity_IsFrozen`, `Entity_ApplyRoot`/`Entity_IsRooted`, `Entity_ApplySilence`/`Entity_IsSilenced`, `Entity_Cleanse`. Hard-CC DR applies inside `Entity_ApplyStun` and `Entity_ApplyFreeze`.
+- **Status Effects (`AgentStatusType`):** `STATUS_BURN`, `STATUS_POISON`, `STATUS_BLEED`, `STATUS_VULNERABLE`, `STATUS_WEAKEN` via `Entity_ApplyStatus` / `Entity_HasStatus`.
+- **Elemental Marks:** `Entity_AddMark`, `Entity_GetMarkStacks`, `Entity_ConsumeMarks`, `Entity_SetMarkImmune`.

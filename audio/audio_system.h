@@ -50,6 +50,7 @@ typedef enum {
 // InitAudioDevice + reset state. Safe to call once after InitWindow. If the
 // audio device fails to open, every other call becomes a no-op.
 void Audio_Init(void);
+void Audio_StopAllAndUnloadAliases(void); // Call BEFORE ResourceManager_Unload so aliases don't dangle on CoreAudio IOThread
 void Audio_Shutdown(void);
 // Per-frame: streams the active music + nothing else. Call in the main loop.
 void Audio_Update(float dt);

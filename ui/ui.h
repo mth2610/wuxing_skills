@@ -70,15 +70,15 @@ typedef struct {
     bool  dodgeHeld;
     bool  dodgePressed;
     bool  meditateHeld;
-    bool  skillHeld[5];
-    bool  skillPressed[5];
+    bool  skillHeld[7];
+    bool  skillPressed[7];
     bool  pointerOverUI;
 } UITouchCombatInput;
 
 void UI_SetTouchControlsEnabled(bool enabled);
 bool UI_IsTouchControlsEnabled(void);
 void UI_FormatShortSkillName(const char *fullName, char *outBuf, int bufSize);
-void UI_PollTouchCombat(const UITouchSkillSlot slots[5], UITouchCombatInput *outInput);
-void UI_DrawTouchCombat(const UITouchSkillSlot slots[5], const UITouchCombatInput *input);
+void UI_PollTouchCombat(const UITouchSkillSlot slots[7], UITouchCombatInput *outInput);
+void UI_DrawTouchCombat(const UITouchSkillSlot slots[7], const UITouchCombatInput *input);
 
 #endif // UI_H

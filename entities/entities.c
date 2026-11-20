@@ -117,6 +117,75 @@ void Entity_Update(float dt) {
             a->stunTimer -= dt;
             if (a->stunTimer < 0.0f) a->stunTimer = 0.0f;
         }
+        if (a->freezeTimer > 0.0f) {
+            a->freezeTimer -= dt;
+            if (a->freezeTimer < 0.0f) a->freezeTimer = 0.0f;
+        }
+        if (a->rootTimer > 0.0f) {
+            a->rootTimer -= dt;
+            if (a->rootTimer < 0.0f) a->rootTimer = 0.0f;
+        }
+        if (a->silenceTimer > 0.0f) {
+            a->silenceTimer -= dt;
+            if (a->silenceTimer < 0.0f) a->silenceTimer = 0.0f;
+        }
+        if (a->ccDrTimer > 0.0f) {
+            a->ccDrTimer -= dt;
+            if (a->ccDrTimer <= 0.0f) {
+                a->ccDrTimer = 0.0f;
+                a->ccDrCount = 0;
+            }
+        }
+        if (a->shieldTimer > 0.0f) {
+            a->shieldTimer -= dt;
+            if (a->shieldTimer <= 0.0f) {
+                a->shieldTimer = 0.0f;
+                a->shield = 0.0f;
+            }
+        }
+        for (int e = 0; e < 5; e++) {
+            if (a->markTimer[e] > 0.0f) {
+                a->markTimer[e] -= dt;
+                if (a->markTimer[e] <= 0.0f) {
+                    a->markTimer[e] = 0.0f;
+                    a->marks[e] = 0;
+                }
+            }
+            if (a->markImmune[e] > 0.0f) {
+                a->markImmune[e] -= dt;
+                if (a->markImmune[e] < 0.0f) a->markImmune[e] = 0.0f;
+            }
+        }
+        for (int st = 0; st < STATUS_TYPE_COUNT; st++) {
+            AgentStatusSlot *s = &a->statuses[st];
+            if (s->duration <= 0.0f) continue;
+            if (st == STATUS_BURN || st == STATUS_POISON || st == STATUS_BLEED) {
+                float dotDmg = s->potency * (float)(s->stacks > 0 ? s->stacks : 1) * dt;
+                if (dotDmg > 0.0f) {
+                    if (a->shield > 0.0f) {
+                        float ab = (a->shield >= dotDmg) ? dotDmg : a->shield;
+                        a->shield -= ab;
+                        dotDmg -= ab;
+                        if (a->shield <= 0.001f) { a->shield = 0.0f; a->shieldTimer = 0.0f; }
+                    }
+                    a->health -= dotDmg;
+                    if (a->health <= 0.0f) {
+                        a->health = 0.0f;
+                        a->active = false;
+                        s_gridDirty = true;
+                        break;
+                    }
+                }
+            }
+            s->duration -= dt;
+            if (s->duration <= 0.0f) {
+                s->duration = 0.0f;
+                s->potency = 0.0f;
+                s->stacks = 0;
+                s->attackerId = -1;
+            }
+        }
+        if (!a->active) continue;
 
         if (a->hitFlashTimer > 0.0f) {
             a->hitFlashTimer -= dt;
@@ -293,8 +362,20 @@ void Entity_ApplyDamage(int agentId, float damage, Vector3 knockback) {
     if (a->pveBonusesActive && a->pveBonuses.damageTakenMult > 0.0f) {
         damage *= a->pveBonuses.damageTakenMult;
     }
+    if (damage > 0.0f && a->statuses[STATUS_VULNERABLE].duration > 0.0f) {
+        damage *= (1.0f + a->statuses[STATUS_VULNERABLE].potency);
+    }
 
     CancelMeditate(a);
+    if (damage > 0.0f && a->shield > 0.0f) {
+        float absorbed = (a->shield >= damage) ? damage : a->shield;
+        a->shield -= absorbed;
+        damage -= absorbed;
+        if (a->shield <= 0.001f) {
+            a->shield = 0.0f;
+            a->shieldTimer = 0.0f;
+        }
+    }
     a->health -= damage;
     if (damage > 0.0f) a->hitFlashTimer = 0.12f;
     if (!a->isStatic) {
@@ -362,11 +443,28 @@ void Entity_ApplyDamageFrom(int targetId, int attackerId, float baseDamage,
     if (!isHeroVsHero && tgt->pveBonusesActive && tgt->pveBonuses.damageTakenMult > 0.0f && dmg > 0.0f) {
         dmg *= tgt->pveBonuses.damageTakenMult;
     }
+    if (dmg > 0.0f && att != NULL && att->statuses[STATUS_WEAKEN].duration > 0.0f) {
+        float w = att->statuses[STATUS_WEAKEN].potency;
+        if (w > 0.8f) w = 0.8f;
+        dmg *= (1.0f - w);
+    }
+    if (dmg > 0.0f && tgt->statuses[STATUS_VULNERABLE].duration > 0.0f) {
+        dmg *= (1.0f + tgt->statuses[STATUS_VULNERABLE].potency);
+    }
 
     CancelMeditate(tgt);
     if (dmg > 0.0f) tgt->hitFlashTimer = 0.12f;
     if (att != NULL && dmg > 0.0f) {
         tgt->lastAttackerId = attackerId;
+    }
+    if (dmg > 0.0f && tgt->shield > 0.0f) {
+        float absorbed = (tgt->shield >= dmg) ? dmg : tgt->shield;
+        tgt->shield -= absorbed;
+        dmg -= absorbed;
+        if (tgt->shield <= 0.001f) {
+            tgt->shield = 0.0f;
+            tgt->shieldTimer = 0.0f;
+        }
     }
     bool isNonLethalSpar = (att != NULL && att->archetype == ARCH_HERO && tgt->archetype == ARCH_HERO &&
                             att->team == tgt->team &&
@@ -549,19 +647,185 @@ void Entity_ApplyLaunch(int agentId, float verticalForce, Vector3 horizontalVelo
     a->vState = AGENT_JUMPING;
 }
 
+static float ApplyHardCcDr(Agent *a, float duration) {
+    if (!a || duration <= 0.0f) return 0.0f;
+    float mult = 1.0f;
+    if (a->ccDrCount == 1) mult = 0.50f;
+    else if (a->ccDrCount == 2) mult = 0.25f;
+    else if (a->ccDrCount >= 3) mult = 0.0f;
+    a->ccDrCount++;
+    a->ccDrTimer = 4.0f;
+    return duration * mult;
+}
+
 void Entity_ApplyStun(int agentId, float duration) {
     if (agentId < 0 || agentId >= MAX_AGENTS) return;
     Agent *a = &agentPool[agentId];
     if (!a->active) return;
     CancelMeditate(a);
-    a->stunTimer = duration;
+    float eff = ApplyHardCcDr(a, duration);
+    if (eff > a->stunTimer) a->stunTimer = eff;
 }
 
 bool Entity_IsStunned(int agentId) {
     if (agentId < 0 || agentId >= MAX_AGENTS) return false;
     Agent *a = &agentPool[agentId];
     if (!a->active) return false;
-    return a->stunTimer > 0.0f;
+    return a->stunTimer > 0.0f || a->freezeTimer > 0.0f;
+}
+
+void Entity_ApplyFreeze(int agentId, float duration) {
+    if (agentId < 0 || agentId >= MAX_AGENTS) return;
+    Agent *a = &agentPool[agentId];
+    if (!a->active) return;
+    CancelMeditate(a);
+    float eff = ApplyHardCcDr(a, duration);
+    if (eff > a->freezeTimer) a->freezeTimer = eff;
+}
+
+bool Entity_IsFrozen(int agentId) {
+    if (agentId < 0 || agentId >= MAX_AGENTS) return false;
+    Agent *a = &agentPool[agentId];
+    return a->active && a->freezeTimer > 0.0f;
+}
+
+void Entity_ApplyRoot(int agentId, float duration) {
+    if (agentId < 0 || agentId >= MAX_AGENTS || duration <= 0.0f) return;
+    Agent *a = &agentPool[agentId];
+    if (!a->active) return;
+    if (duration > a->rootTimer) a->rootTimer = duration;
+}
+
+bool Entity_IsRooted(int agentId) {
+    if (agentId < 0 || agentId >= MAX_AGENTS) return false;
+    Agent *a = &agentPool[agentId];
+    return a->active && a->rootTimer > 0.0f;
+}
+
+void Entity_ApplySilence(int agentId, float duration) {
+    if (agentId < 0 || agentId >= MAX_AGENTS || duration <= 0.0f) return;
+    Agent *a = &agentPool[agentId];
+    if (!a->active) return;
+    if (duration > a->silenceTimer) a->silenceTimer = duration;
+}
+
+bool Entity_IsSilenced(int agentId) {
+    if (agentId < 0 || agentId >= MAX_AGENTS) return false;
+    Agent *a = &agentPool[agentId];
+    return a->active && a->silenceTimer > 0.0f;
+}
+
+void Entity_Cleanse(int agentId) {
+    if (agentId < 0 || agentId >= MAX_AGENTS) return;
+    Agent *a = &agentPool[agentId];
+    if (!a->active) return;
+    a->stunTimer = 0.0f;
+    a->freezeTimer = 0.0f;
+    a->rootTimer = 0.0f;
+    a->silenceTimer = 0.0f;
+    a->pullTimer = 0.0f;
+    for (int m = 0; m < MAX_AGENT_MODIFIERS; m++) {
+        if (a->modifiers[m].duration > 0.0f && a->modifiers[m].speedMult > 0.0f &&
+            a->modifiers[m].speedMult < 1.0f) {
+            a->modifiers[m].duration = 0.0f;
+            a->modifiers[m].speedMult = 0.0f;
+        }
+    }
+    for (int st = 0; st < STATUS_TYPE_COUNT; st++) {
+        a->statuses[st].duration = 0.0f;
+        a->statuses[st].potency = 0.0f;
+        a->statuses[st].stacks = 0;
+        a->statuses[st].attackerId = -1;
+    }
+}
+
+void Entity_AddShield(int agentId, float amount, float duration) {
+    if (agentId < 0 || agentId >= MAX_AGENTS || amount <= 0.0f || duration <= 0.0f) return;
+    Agent *a = &agentPool[agentId];
+    if (!a->active) return;
+    if (amount > a->shield) a->shield = amount;
+    if (duration > a->shieldTimer) a->shieldTimer = duration;
+}
+
+float Entity_GetShield(int agentId) {
+    if (agentId < 0 || agentId >= MAX_AGENTS) return 0.0f;
+    Agent *a = &agentPool[agentId];
+    return (a->active && a->shieldTimer > 0.0f) ? a->shield : 0.0f;
+}
+
+void Entity_Heal(int agentId, float amount) {
+    if (agentId < 0 || agentId >= MAX_AGENTS || amount <= 0.0f) return;
+    Agent *a = &agentPool[agentId];
+    if (!a->active || a->health <= 0.0f) return;
+    if (a->statuses[STATUS_POISON].duration > 0.0f) {
+        amount *= 0.60f; /* Poison reduces healing by 40% */
+    }
+    a->health += amount;
+    if (a->health > a->maxHealth) a->health = a->maxHealth;
+}
+
+void Entity_ApplyStatus(int agentId, AgentStatusType type, float potency,
+                        float duration, int attackerId) {
+    if (agentId < 0 || agentId >= MAX_AGENTS) return;
+    if (type < 0 || type >= STATUS_TYPE_COUNT || duration <= 0.0f || potency <= 0.0f) return;
+    Agent *a = &agentPool[agentId];
+    if (!a->active) return;
+    AgentStatusSlot *s = &a->statuses[type];
+    if (s->duration > 0.0f) {
+        if (type == STATUS_BURN || type == STATUS_POISON || type == STATUS_BLEED) {
+            if (s->stacks < 3) s->stacks++;
+        } else {
+            s->stacks = 1;
+        }
+        if (potency > s->potency) s->potency = potency;
+        if (duration > s->duration) s->duration = duration;
+    } else {
+        s->stacks = 1;
+        s->potency = potency;
+        s->duration = duration;
+    }
+    s->attackerId = attackerId;
+}
+
+bool Entity_HasStatus(int agentId, AgentStatusType type) {
+    if (agentId < 0 || agentId >= MAX_AGENTS) return false;
+    if (type < 0 || type >= STATUS_TYPE_COUNT) return false;
+    Agent *a = &agentPool[agentId];
+    return a->active && a->statuses[type].duration > 0.0f;
+}
+
+int Entity_AddMark(int agentId, int element, int stacks, int maxStacks, float duration) {
+    if (agentId < 0 || agentId >= MAX_AGENTS) return 0;
+    if (element < 0 || element >= 5 || stacks <= 0 || maxStacks <= 0 || duration <= 0.0f) return 0;
+    Agent *a = &agentPool[agentId];
+    if (!a->active || a->markImmune[element] > 0.0f) return a->marks[element];
+    a->marks[element] += stacks;
+    if (a->marks[element] > maxStacks) a->marks[element] = maxStacks;
+    if (duration > a->markTimer[element]) a->markTimer[element] = duration;
+    return a->marks[element];
+}
+
+int Entity_GetMarkStacks(int agentId, int element) {
+    if (agentId < 0 || agentId >= MAX_AGENTS || element < 0 || element >= 5) return 0;
+    Agent *a = &agentPool[agentId];
+    return (a->active && a->markTimer[element] > 0.0f) ? a->marks[element] : 0;
+}
+
+int Entity_ConsumeMarks(int agentId, int element) {
+    if (agentId < 0 || agentId >= MAX_AGENTS || element < 0 || element >= 5) return 0;
+    Agent *a = &agentPool[agentId];
+    if (!a->active) return 0;
+    int removed = a->marks[element];
+    a->marks[element] = 0;
+    a->markTimer[element] = 0.0f;
+    return removed;
+}
+
+void Entity_SetMarkImmune(int agentId, int element, float duration) {
+    if (agentId < 0 || agentId >= MAX_AGENTS || element < 0 || element >= 5) return;
+    Agent *a = &agentPool[agentId];
+    if (!a->active) return;
+    if (duration > a->markImmune[element]) a->markImmune[element] = duration;
 }
 
 void Entity_ApplyPull(int agentId, Vector3 targetPos, float speed, float duration) {
@@ -828,7 +1092,7 @@ bool Entity_IsCrowdControlled(int agentId) {
     if (agentId < 0 || agentId >= MAX_AGENTS) return false;
     Agent *a = &agentPool[agentId];
     if (!a->active) return false;
-    return a->stunTimer > 0.0f || a->vState != AGENT_GROUNDED || a->pullTimer > 0.0f;
+    return a->stunTimer > 0.0f || a->freezeTimer > 0.0f || a->vState != AGENT_GROUNDED || a->pullTimer > 0.0f;
 }
 
 bool Entity_TrySpendMana(int agentId, float amount) {

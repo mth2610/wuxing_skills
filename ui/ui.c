@@ -230,19 +230,27 @@ void UI_DrawOverlay(int agentId) {
     int sw = GetScreenWidth();
     int sh = GetScreenHeight();
 
-    // --- Skill slot chips (keys 1-5) — hidden on touch screens where the circular arc is used ---
+    // --- Skill slot chips (keys 1-5 Strike | 6-7 Buff) — hidden on touch screens ---
     if (self != NULL && !UI_IsTouchControlsEnabled()) {
         int chipW = sw / 10;
-        if (chipW < 108) chipW = 108;
-        if (chipW > 142) chipW = 142;
-        const int chipH = 42, gap = 8;
-        int x0 = sw / 2 - (chipW * AGENT_SKILL_SLOTS + gap * (AGENT_SKILL_SLOTS - 1)) / 2;
+        if (chipW < 104) chipW = 104;
+        if (chipW > 136) chipW = 136;
+        const int chipH = 42, gap = 8, groupGap = 20;
+        int totalW = chipW * AGENT_SKILL_SLOTS + gap * (AGENT_SKILL_SLOTS - 2) + groupGap;
+        int x0 = sw / 2 - totalW / 2;
         int y = sh - chipH - 14;
         for (int slot = 0; slot < AGENT_SKILL_SLOTS; slot++) {
-            int x = x0 + slot * (chipW + gap);
+            bool isBuff = (slot >= AGENT_STRIKE_SLOTS);
+            int x = x0 + slot * (chipW + gap) + (isBuff ? (groupGap - gap) : 0);
+            if (slot == AGENT_STRIKE_SLOTS) {
+                int divX = x - groupGap / 2;
+                DrawLine(divX, y + 4, divX, y + chipH - 4, (Color){ 110, 210, 200, 140 });
+            }
             int skillIdx = self->equippedSkills[slot];
             bool ready = (skillIdx >= 0) && SkillManager_CanCast(skillIdx, agentId);
-            Color back = ready ? (Color){ 20, 24, 34, 225 } : (Color){ 14, 15, 20, 215 };
+            Color back = ready
+                ? (isBuff ? (Color){ 16, 30, 38, 225 } : (Color){ 20, 24, 34, 225 })
+                : (Color){ 14, 15, 20, 215 };
             Rectangle chipRec = { (float)x, (float)y, (float)chipW, (float)chipH };
             DrawRectangleRec(chipRec, back);
 
@@ -253,11 +261,16 @@ void UI_DrawOverlay(int agentId) {
             if (skillIdx >= 0) {
                 DrawRectangle(x + 2, y + chipH - 4, chipW - 4, 3, c);
             }
-            DrawRectangleLinesEx(chipRec, 1.5f,
-                                 ready ? (Color){ 195, 170, 105, 215 } : (Color){ 75, 80, 95, 170 });
+            Color borderCol = ready
+                ? (isBuff ? (Color){ 95, 220, 205, 225 } : (Color){ 195, 170, 105, 215 })
+                : (Color){ 75, 80, 95, 170 };
+            DrawRectangleLinesEx(chipRec, 1.5f, borderCol);
 
-            DrawText(TextFormat("[%d]", slot + 1), x + 6, y + 5, 10,
-                     ready ? (Color){ 210, 195, 145, 235 } : (Color){ 120, 120, 130, 200 });
+            const char *tag = isBuff ? TextFormat("[%d-B%d]", slot + 1, slot - AGENT_STRIKE_SLOTS + 1)
+                                     : TextFormat("[%d]", slot + 1);
+            DrawText(tag, x + 6, y + 5, 10,
+                     ready ? (isBuff ? (Color){ 125, 235, 220, 240 } : (Color){ 210, 195, 145, 235 })
+                           : (Color){ 120, 120, 130, 200 });
             if (skillIdx >= 0) {
                 const char *sname = GetRegisteredSkillName(skillIdx);
                 int fontSize = 11;
@@ -363,7 +376,7 @@ static Vector2 s_touchJoyKnob      = { 0, 0 };
 static bool    s_prevTouchAttack   = false;
 static bool    s_prevTouchKhinh    = false;
 static bool    s_prevTouchDodge    = false;
-static bool    s_prevTouchSkill[5] = { false, false, false, false, false };
+static bool    s_prevTouchSkill[7] = { false, false, false, false, false, false, false };
 
 void UI_SetTouchControlsEnabled(bool enabled) {
     s_touchControlsEnabled = enabled;
@@ -410,8 +423,9 @@ typedef struct {
     float   dodgeR;
     Vector2 meditateCenter;
     float   meditateR;
-    Vector2 skillCenter[5];
+    Vector2 skillCenter[7];
     float   skillR;
+    float   buffR;
 } TouchCombatLayout;
 
 static TouchCombatLayout ComputeTouchCombatLayout(void) {
@@ -436,16 +450,23 @@ static TouchCombatLayout ComputeTouchCombatLayout(void) {
     L.dodgeCenter  = (Vector2){ sw - 282.0f * s, sh - 54.0f * s };
     L.dodgeR       = 25.0f * s;
 
-    L.meditateCenter = (Vector2){ sw - 48.0f * s, sh - 268.0f * s };
+    /* Move Meditate above the left joystick to keep the upper-right free for Buffs */
+    L.meditateCenter = (Vector2){ 62.0f * s, sh - 232.0f * s };
     L.meditateR      = 22.0f * s;
 
-    float arcR = 132.0f * s;
-    L.skillR   = 26.0f * s;
+    /* 5 Strike skills [0..4] on a clean arc around Basic Attack (178°..78°, step 25°) */
+    float arcR = 136.0f * s;
+    L.skillR   = 25.0f * s;
     for (int k = 0; k < 5; k++) {
-        float angleRad = (176.0f - (float)k * 26.5f) * (PI / 180.0f);
+        float angleRad = (178.0f - (float)k * 25.0f) * (PI / 180.0f);
         L.skillCenter[k].x = L.attackCenter.x + cosf(angleRad) * arcR;
         L.skillCenter[k].y = L.attackCenter.y - sinf(angleRad) * arcR;
     }
+
+    /* 2 Buff/Support slots [5..6] separated into a dedicated upper-right vertical column */
+    L.buffR = 24.0f * s;
+    L.skillCenter[5] = (Vector2){ sw - 46.0f * s, sh - 308.0f * s }; /* B1 (Key 6) */
+    L.skillCenter[6] = (Vector2){ sw - 46.0f * s, sh - 372.0f * s }; /* B2 (Key 7) */
     return L;
 }
 
@@ -454,14 +475,14 @@ static float Dist2D(Vector2 a, Vector2 b) {
     return sqrtf(dx * dx + dy * dy);
 }
 
-void UI_PollTouchCombat(const UITouchSkillSlot slots[5], UITouchCombatInput *outInput) {
+void UI_PollTouchCombat(const UITouchSkillSlot slots[7], UITouchCombatInput *outInput) {
     if (!outInput) return;
     memset(outInput, 0, sizeof(*outInput));
     if (!s_touchControlsEnabled) {
         s_prevTouchAttack = false;
         s_prevTouchKhinh  = false;
         s_prevTouchDodge  = false;
-        for (int k = 0; k < 5; k++) s_prevTouchSkill[k] = false;
+        for (int k = 0; k < 7; k++) s_prevTouchSkill[k] = false;
         return;
     }
 
@@ -517,7 +538,7 @@ void UI_PollTouchCombat(const UITouchSkillSlot slots[5], UITouchCombatInput *out
     bool khinhNow    = false;
     bool dodgeNow    = false;
     bool meditateNow = false;
-    bool skillNow[5] = { false, false, false, false, false };
+    bool skillNow[7] = { false, false, false, false, false, false, false };
 
     for (int i = 0; i < count; i++) {
         if (i == joyIdx) continue;
@@ -542,9 +563,10 @@ void UI_PollTouchCombat(const UITouchSkillSlot slots[5], UITouchCombatInput *out
             outInput->pointerOverUI = true;
             continue;
         }
-        for (int k = 0; k < 5; k++) {
+        for (int k = 0; k < 7; k++) {
             bool hasSkill = (slots == NULL) || (slots[k].skillIndex >= 0);
-            if (hasSkill && Dist2D(pt, L.skillCenter[k]) <= L.skillR * 1.35f) {
+            float btnR = (k < 5) ? L.skillR : L.buffR;
+            if (hasSkill && Dist2D(pt, L.skillCenter[k]) <= btnR * 1.35f) {
                 skillNow[k] = true;
                 outInput->pointerOverUI = true;
                 break;
@@ -566,7 +588,7 @@ void UI_PollTouchCombat(const UITouchSkillSlot slots[5], UITouchCombatInput *out
 
     outInput->meditateHeld = meditateNow;
 
-    for (int k = 0; k < 5; k++) {
+    for (int k = 0; k < 7; k++) {
         outInput->skillHeld[k]    = skillNow[k];
         outInput->skillPressed[k] = skillNow[k] && !s_prevTouchSkill[k];
         s_prevTouchSkill[k]       = skillNow[k];
@@ -607,7 +629,7 @@ static void DrawWuxiaTouchCircleBtn(Vector2 center, float radius, Color accent, 
     }
 }
 
-void UI_DrawTouchCombat(const UITouchSkillSlot slots[5], const UITouchCombatInput *input) {
+void UI_DrawTouchCombat(const UITouchSkillSlot slots[7], const UITouchCombatInput *input) {
     if (!s_touchControlsEnabled) return;
 
     rlDrawRenderBatchActive();
@@ -656,18 +678,28 @@ void UI_DrawTouchCombat(const UITouchSkillSlot slots[5], const UITouchCombatInpu
     Color medAccent = (Color){ 130, 195, 255, 235 };
     DrawWuxiaTouchCircleBtn(L.meditateCenter, L.meditateR, medAccent, medActive, true, NULL, "THIEN", s * 0.85f);
 
-    // 4. 5 Skill Buttons (with cooldown seconds when on CD)
-    for (int k = 0; k < 5; k++) {
+    // 4. 5 Strike Buttons [0..4] on arc + 2 Buff Buttons [5..6] in dedicated upper-right column
+    for (int k = 0; k < 7; k++) {
         if (slots && slots[k].skillIndex < 0) continue;
+        bool isBuff = (k >= 5);
         bool held = input ? input->skillHeld[k] : s_prevTouchSkill[k];
         bool ready = slots ? slots[k].ready : true;
         float cd = slots ? slots[k].cooldownRemain : 0.0f;
-        Color col = slots ? slots[k].color : (Color){ 120, 190, 255, 230 };
+        Color col = isBuff
+            ? (Color){ 85, 225, 205, 240 }
+            : (slots ? slots[k].color : (Color){ 120, 190, 255, 230 });
         const char *lbl = (!ready && cd > 0.05f)
             ? TextFormat("%.1fs", cd)
-            : ((slots && slots[k].shortLabel[0]) ? slots[k].shortLabel : TextFormat("S%d", k + 1));
-        DrawWuxiaTouchCircleBtn(L.skillCenter[k], L.skillR, col, held, ready,
-                                TextFormat("%d", k + 1), lbl, s * 0.92f);
+            : ((slots && slots[k].shortLabel[0]) ? slots[k].shortLabel
+                                                 : (isBuff ? TextFormat("B%d", k - 4) : TextFormat("S%d", k + 1)));
+        const char *topTag = isBuff ? TextFormat("B%d", k - 4) : TextFormat("%d", k + 1);
+        float btnR = isBuff ? L.buffR : L.skillR;
+        if (isBuff) {
+            /* Subtle outer jade aura halo to visually separate Buff slots from Strike arc */
+            DrawRing(L.skillCenter[k], btnR + 1.5f * s, btnR + 3.2f * s, 0.0f, 360.0f, 32,
+                     ColorAlpha((Color){ 95, 235, 215, 255 }, ready ? 0.55f : 0.16f));
+        }
+        DrawWuxiaTouchCircleBtn(L.skillCenter[k], btnR, col, held, ready, topTag, lbl, s * 0.90f);
     }
 
     EndMode2D();

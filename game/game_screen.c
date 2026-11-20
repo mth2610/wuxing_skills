@@ -76,19 +76,20 @@ static float s_failoverBannerTimer = 0.0f;
 static Camera3D s_hudCamera = { 0 };
 static UITouchCombatInput s_gameTouchInput = {0};
 
-static void BuildGameTouchSlots(const PlayerEntity *player, UITouchSkillSlot outSlots[5])
+static void BuildGameTouchSlots(const PlayerEntity *player, UITouchSkillSlot outSlots[7])
 {
     const Agent *a = player ? Entity_GetAgent(player->agentId) : NULL;
-    for (int k = 0; k < 5; k++)
+    for (int k = 0; k < 7; k++)
     {
         outSlots[k].skillIndex = -1;
         outSlots[k].shortLabel[0] = '\0';
         outSlots[k].color = (Color){120, 180, 230, 255};
         outSlots[k].ready = false;
+        outSlots[k].cooldownRemain = 0.0f;
     }
     if (!a) return;
 
-    for (int k = 0; k < AGENT_SKILL_SLOTS && k < 5; k++)
+    for (int k = 0; k < AGENT_SKILL_SLOTS && k < 7; k++)
     {
         int idx = a->equippedSkills[k];
         if (idx >= 0)
@@ -97,6 +98,7 @@ static void BuildGameTouchSlots(const PlayerEntity *player, UITouchSkillSlot out
             UI_FormatShortSkillName(GetRegisteredSkillName(idx), outSlots[k].shortLabel, sizeof(outSlots[k].shortLabel));
             outSlots[k].color = GetRegisteredSkillColor(idx);
             outSlots[k].ready = SkillManager_CanCast(idx, player->agentId);
+            outSlots[k].cooldownRemain = SkillManager_GetCooldownRemaining(idx, player->agentId);
         }
     }
 }
@@ -332,11 +334,13 @@ static void EquipDefaultLoadout(int agentId)
         const char *name;
         int element;
     } kLoadout[AGENT_SKILL_SLOTS] = {
-        {"ICE_CRYSTAL_LANCE", 0},  // Thủy
-        {"INFERNO_SURGE", 2},      // Hỏa
-        {"EARTH_DISC_VOLLEY", 3},  // Thổ
-        {"METAL_BLADE_STORM", 4},  // Kim
-        {"VINE_SNARE", 1},         // Mộc
+        {"TTQP_PHA_LANG_QUYEN", 0},        // Thủy (Đả 1)
+        {"TTQP_NGHICH_LUU_CAM_NA", 0},     // Thủy (Đả 2)
+        {"TTQP_BANG_TRIEU_DAO_HAI", 0},    // Thủy (Đả 3)
+        {"TTQP_HAN_UYEN_QUYEN_TOAN", 0},   // Thủy (Đả 4)
+        {"TTQP_NO_HAI_LONG_QUYEN", 0},     // Thủy (Đả 5)
+        {"TTQP_THUY_KINH_QUYEN_THUAN", 0}, // Thủy (Trợ 1)
+        {"TTQP_TRIEU_TICH_LINH_TUYEN", 0}, // Thủy (Trợ 2)
     };
     const PlayerProfile *prof = PlayerProfile_GetGlobal();
     for (int slot = 0; slot < AGENT_SKILL_SLOTS; slot++)
@@ -1221,6 +1225,21 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
                 Audio_PlaySFX(SFX_VICTORY);
             else if (s_state == GAME_DEFEAT)
                 Audio_PlaySFX(SFX_DEFEAT);
+            if (IsModePvP(s_mode) && (s_state == GAME_VICTORY || s_state == GAME_DEFEAT)) {
+                PlayerProfile *prof = PlayerProfile_GetGlobal();
+                const Agent *pa = player ? Entity_GetAgent(player->agentId) : NULL;
+                if (prof) {
+                    bool won = (s_state == GAME_VICTORY);
+                    float mult = (prof->pvpMatchesToday < 10) ? 1.0f : 0.25f;
+                    prof->gold += (int)((won ? 180.0f : 120.0f) * mult);
+                    prof->daTauPoints += (int)((won ? 30.0f : 20.0f) * mult);
+                    int el = (pa && pa->currentElement >= 0 && pa->currentElement < 5) ? pa->currentElement : 0;
+                    prof->elementalStones[el] += (prof->pvpMatchesToday < 10) ? 2 : 1;
+                    prof->pvpMatchesToday++;
+                    PlayerProfile_MarkDirty();
+                    PlayerProfile_FlushIfDirty(0.0f, true);
+                }
+            }
             s_prevLogged = s_state;
         }
     }
@@ -1277,7 +1296,7 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
         s_desktopMeditateReq = false;
     }
 
-    UITouchSkillSlot touchSlots[5];
+    UITouchSkillSlot touchSlots[7];
     BuildGameTouchSlots(player, touchSlots);
     int touchExtraSkillIdx = -1;
     if (s_state == GAME_FIGHTING && !UI_IsLoadoutOpen() && !UI_Hub_IsModalOpen())
@@ -1301,7 +1320,7 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
             intent.dash = true;
         if (s_gameTouchInput.meditateHeld)
             intent.meditate = true;
-        for (int k = 0; k < 4; k++)
+        for (int k = 0; k < 7; k++)
         {
             if (s_gameTouchInput.skillPressed[k] && intent.castSkillSlot < 0)
             {
@@ -1309,8 +1328,6 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
                 break;
             }
         }
-        if (s_gameTouchInput.skillPressed[4] && touchSlots[4].skillIndex >= 0)
-            touchExtraSkillIdx = touchSlots[4].skillIndex;
     }
     else
     {
@@ -1446,7 +1463,7 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
                     if (played)
                     {
                         float cdMult = GameRules_CooldownMult(pc->currentElement, Map_QueryZoneAt(player->position));
-                        SkillManager_TriggerCooldown(castIdx, player->agentId, 1.0f * cdMult);
+                        SkillManager_TriggerCooldown(castIdx, player->agentId, Skill_GetCooldown(castIdx) * cdMult);
                         Control_FaceTowards(intent.aimPoint);
                         float castSecs = Skill_GetCastAnimSeconds(castIdx);
                         char animClip[64];
@@ -1493,7 +1510,7 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
                 SkillParams sp = {.level = 1, .quantity = 1, .sizeScale = 1.0f};
                 if (CastSkill(touchExtraSkillIdx, player->agentId, player->position, intent.aimPoint, sp))
                 {
-                    SkillManager_TriggerCooldown(touchExtraSkillIdx, player->agentId, 1.0f);
+                    SkillManager_TriggerCooldown(touchExtraSkillIdx, player->agentId, Skill_GetCooldown(touchExtraSkillIdx));
                     Control_FaceTowards(intent.aimPoint);
                     castIdx = touchExtraSkillIdx;
                 }
@@ -2227,7 +2244,7 @@ void GameScreen_DrawHUD(const PlayerEntity *player)
 
     if (s_state == GAME_FIGHTING && !UI_IsLoadoutOpen() && !UI_Hub_IsModalOpen())
     {
-        UITouchSkillSlot touchSlots[5];
+        UITouchSkillSlot touchSlots[7];
         BuildGameTouchSlots(player, touchSlots);
         UI_DrawTouchCombat(touchSlots, &s_gameTouchInput);
     }

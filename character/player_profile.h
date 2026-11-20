@@ -14,7 +14,10 @@
 #include <stdint.h>
 
 #define MAX_PROFILE_SKILLS 64
-#define PROFILE_SKILL_SLOTS 5
+#define PROFILE_SKILL_SLOTS 7
+#define PROFILE_STRIKE_SLOTS 5
+#define PROFILE_BUFF_SLOTS   2
+#define PROFILE_MAX_SETS     16
 #define PROFILE_SKILL_NAME_LEN 48
 #define PLAYER_PROFILE_DEFAULT_SAVE_PATH "assets/saves/player_profile.json"
 
@@ -33,6 +36,9 @@ typedef struct {
     int      herbs;                                // Linh Thảo Sa Mạc (nguyên liệu Đan Dược)
     int      potions[POTION_TYPE_COUNT];           // Túi Đan Dược
     int      elementalStones[5];                   // 0=Water,1=Wood,2=Fire,3=Earth,4=Metal
+    int      setScrolls[PROFILE_MAX_SETS];         // Tàn Quyển theo bộ võ học
+    int      pvpMatchesToday;                      // Đếm trận PvP trong ngày (giới hạn 10 trận 100%)
+    uint32_t pvpDayStamp;                          // YYYYMMDD hoặc day index
     int      daTauStreak;
     int      daTauTotalCompleted;
     bool     skillUnlocked[MAX_PROFILE_SKILLS];

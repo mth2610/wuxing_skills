@@ -82,15 +82,17 @@ static float s_vfxPlayerYaw = 0.0f;
 static int   s_vfxAnimIndex = -1;
 static float s_vfxAnimBannerTimer = 0.0f;
 
-static void BuildVfxTouchSlots(UITouchSkillSlot outSlots[5]) {
-    static const char *kTouchSkills[5] = {
-        "ICE_CRYSTAL_LANCE",
-        "INFERNO_SURGE",
-        "EARTH_DISC_VOLLEY",
-        "METAL_BLADE_STORM",
-        "VINE_SNARE"
+static void BuildVfxTouchSlots(UITouchSkillSlot outSlots[7]) {
+    static const char *kTouchSkills[7] = {
+        "TTQP_PHA_LANG_QUYEN",
+        "TTQP_NGHICH_LUU_CAM_NA",
+        "TTQP_BANG_TRIEU_DAO_HAI",
+        "TTQP_HAN_UYEN_QUYEN_TOAN",
+        "TTQP_NO_HAI_LONG_QUYEN",
+        "TTQP_THUY_KINH_QUYEN_THUAN",
+        "TTQP_TRIEU_TICH_LINH_TUYEN"
     };
-    for (int k = 0; k < 5; k++) {
+    for (int k = 0; k < 7; k++) {
         int idx = Skill_GetIndexByName(kTouchSkills[k]);
         if (idx < 0) idx = GetSkillAtOrderIndex(k);
         outSlots[k].skillIndex = idx;
@@ -1334,7 +1336,7 @@ int main(int argc, char **argv) {
         }
 
         static UITouchCombatInput s_vfxTouchInput = {0};
-        UITouchSkillSlot vfxTouchSlots[5];
+        UITouchSkillSlot vfxTouchSlots[7];
         BuildVfxTouchSlots(vfxTouchSlots);
 
         float inputX = 0.0f;
@@ -2224,7 +2226,7 @@ int main(int argc, char **argv) {
         } else if (currentScreen == SCREEN_VFX_TESTER && (!renderVFXMode || captureVFXUI)) {
             VFXTest_DrawHUD();
             if (!renderVFXMode) {
-                UITouchSkillSlot vfxTouchSlots[5];
+                UITouchSkillSlot vfxTouchSlots[7];
                 BuildVfxTouchSlots(vfxTouchSlots);
                 UI_DrawTouchCombat(vfxTouchSlots, NULL);
             }
@@ -2440,6 +2442,7 @@ int main(int argc, char **argv) {
   UnloadSkillManager();
   DamageVolume_Unload();
   EmitterSystem_Unload();
+  Audio_StopAllAndUnloadAliases();
   ResourceManager_Unload();
   MapManager_Unload();
   Net_Shutdown();

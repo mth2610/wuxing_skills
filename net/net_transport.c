@@ -654,8 +654,9 @@ static void HostSpawnPeerHero(int idx) {
     if (p->agentId < 0) return;
     // Same default loadout the local player gets (game/game_screen.c).
     static const struct { const char *name; int element; } kLoadout[AGENT_SKILL_SLOTS] = {
-        { "ICE_CRYSTAL_LANCE", 0 }, { "INFERNO_SURGE", 2 }, { "EARTH_DISC_VOLLEY", 3 },
-        { "METAL_BLADE_STORM", 4 }, { "VINE_SNARE", 1 },
+        { "TTQP_PHA_LANG_QUYEN", 0 }, { "TTQP_NGHICH_LUU_CAM_NA", 0 }, { "TTQP_BANG_TRIEU_DAO_HAI", 0 },
+        { "TTQP_HAN_UYEN_QUYEN_TOAN", 0 }, { "TTQP_NO_HAI_LONG_QUYEN", 0 },
+        { "TTQP_THUY_KINH_QUYEN_THUAN", 0 }, { "TTQP_TRIEU_TICH_LINH_TUYEN", 0 },
     };
     for (int slot = 0; slot < AGENT_SKILL_SLOTS; slot++) {
         int skillIdx = Skill_GetIndexByName(kLoadout[slot].name);

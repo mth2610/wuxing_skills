@@ -81,6 +81,11 @@ static float s_skillManaCost[MAX_SKILLS];
 static bool s_skillManaCostSet[MAX_SKILLS];
 #define DEFAULT_MANA_COST 5.0f
 
+// Per-skill base cooldown override — see RegisterSkillCooldown/Skill_GetCooldown.
+static float s_skillCooldown[MAX_SKILLS];
+static bool s_skillCooldownSet[MAX_SKILLS];
+#define DEFAULT_SKILL_COOLDOWN 1.0f
+
 // Per-skill cast-flourish duration — see RegisterSkillCastAnimSeconds.
 static float s_skillCastAnimSecs[MAX_SKILLS];
 static bool s_skillCastAnimSecsSet[MAX_SKILLS];
@@ -1346,6 +1351,16 @@ bool SkillManager_CanCast(int skillIndex, int agentId)
   return skillCooldownRemaining[skillIndex][agentId] <= 0.0f;
 }
 
+float SkillManager_GetCooldownRemaining(int skillIndex, int agentId)
+{
+  if (skillIndex < 0 || skillIndex >= MAX_SKILLS)
+    return 0.0f;
+  if (agentId < 0 || agentId >= SKILL_MANAGER_MAX_AGENTS)
+    return 0.0f;
+  float rem = skillCooldownRemaining[skillIndex][agentId];
+  return (rem > 0.0f) ? rem : 0.0f;
+}
+
 void SkillManager_TriggerCooldown(int skillIndex, int agentId, float cooldownSeconds)
 {
   if (skillIndex < 0 || skillIndex >= MAX_SKILLS)
@@ -1370,6 +1385,25 @@ void SkillManager_ResetAgentCooldowns(int agentId)
       skillCooldownRemaining[s][agentId] = 0.0f;
       if (skillCooldownPendingCount[s] > 0)
         skillCooldownPendingCount[s]--;
+    }
+  }
+}
+
+void SkillManager_ReduceAgentCooldowns(int agentId, float seconds)
+{
+  if (agentId < 0 || agentId >= SKILL_MANAGER_MAX_AGENTS || seconds <= 0.0f)
+    return;
+  for (int s = 0; s < MAX_SKILLS; s++)
+  {
+    if (skillCooldownRemaining[s][agentId] > 0.0f)
+    {
+      skillCooldownRemaining[s][agentId] -= seconds;
+      if (skillCooldownRemaining[s][agentId] <= 0.0f)
+      {
+        skillCooldownRemaining[s][agentId] = 0.0f;
+        if (skillCooldownPendingCount[s] > 0)
+          skillCooldownPendingCount[s]--;
+      }
     }
   }
 }
@@ -1632,6 +1666,24 @@ float Skill_GetManaCost(int skillIndex)
   if (!s_skillManaCostSet[skillIndex])
     return DEFAULT_MANA_COST;
   return s_skillManaCost[skillIndex];
+}
+
+void RegisterSkillCooldown(int skillIndex, float seconds)
+{
+  if (skillIndex < 0 || skillIndex >= MAX_SKILLS)
+    return;
+  if (seconds < 0.0f) seconds = 0.0f;
+  s_skillCooldown[skillIndex] = seconds;
+  s_skillCooldownSet[skillIndex] = true;
+}
+
+float Skill_GetCooldown(int skillIndex)
+{
+  if (skillIndex < 0 || skillIndex >= MAX_SKILLS)
+    return DEFAULT_SKILL_COOLDOWN;
+  if (!s_skillCooldownSet[skillIndex])
+    return DEFAULT_SKILL_COOLDOWN;
+  return s_skillCooldown[skillIndex];
 }
 
 void RegisterSkillCastAnimSeconds(int skillIndex, float seconds)

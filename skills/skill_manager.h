@@ -138,6 +138,7 @@ void SkillManager_EndShader(void);
 // not lock out agent 7's Fireball. Pass any stable int if a caster has no
 // real agentId yet (e.g. 0) — just be consistent per-caster.
 bool SkillManager_CanCast(int skillIndex, int agentId);
+float SkillManager_GetCooldownRemaining(int skillIndex, int agentId);
 
 // Free-cast mode (net client mirror): CastSkill skips the mana gate while
 // on. The connected client re-plays the host's cast events purely for VFX —
@@ -150,6 +151,7 @@ void SkillManager_TriggerCooldown(int skillIndex, int agentId, float cooldownSec
 // freshly spawned agent inherits the dead occupant's cooldowns (a skill's
 // internal CanCast gate then silently eats casts).
 void SkillManager_ResetAgentCooldowns(int agentId);
+void SkillManager_ReduceAgentCooldowns(int agentId, float seconds);
 
 // Optional abort/interrupt registration (CORE_ISSUES.md Item 14). A skill may
 // call this in addition to RegisterSkill() if it wants to support being
@@ -285,6 +287,11 @@ bool SkillManager_FindNearbyWall(Vector3 casterPos, float checkRadius, Vector3 *
 // cost on every CastSkill() call (see core/skill_manager.c's CastSkill).
 void RegisterSkillManaCost(int skillIndex, float cost);
 float Skill_GetManaCost(int skillIndex);
+
+// Per-skill base cooldown (seconds, PvP Lv.1). Legacy skills that never register
+// keep DEFAULT_SKILL_COOLDOWN (1.0f).
+void RegisterSkillCooldown(int skillIndex, float seconds);
+float Skill_GetCooldown(int skillIndex);
 
 // Per-skill cast-flourish duration (seconds) — how long the caster's cast
 // animation (character/character_model.h CHAR_ANIM_CAST) should take for

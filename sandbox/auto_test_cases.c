@@ -2,6 +2,9 @@
 
 #include "sandbox/auto_test.h"
 #include "skills/skill_manager.h"
+#include "skills/vo_hoc/vo_hoc_codex.h"
+#include "skills/vo_hoc/vo_hoc_sets.h"
+#include "core/liquid/liquid_swe.h"
 #include "core/material/material_system.h"
 #include "maps/map_manager.h"
 #include "entities/entities.h"
@@ -1542,23 +1545,123 @@ static AutoTestResult AutoTest_LoadoutFiveSlotsStep(int frameInCase, char *outRe
   if (frameInCase > 0) return AUTOTEST_PASS;
 
   int a = Entity_SpawnAgent((Vector3){ 6.0f, 0.0f, 4.4f }, 100.0f, 0, TEAM_ALLY, ARCH_HERO);
-  bool ok = AutoTest_ExpectTrue(a >= 0, "spawned 5-slot loadout agent", outReason, outReasonSize);
-  ok &= AutoTest_ExpectTrue(AGENT_SKILL_SLOTS == 5, "AGENT_SKILL_SLOTS is 5", outReason, outReasonSize);
+  bool ok = AutoTest_ExpectTrue(a >= 0, "spawned 7-slot loadout agent", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(AGENT_SKILL_SLOTS == 7, "AGENT_SKILL_SLOTS is 7 (5 Strike + 2 Buff)", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(AGENT_STRIKE_SLOTS == 5 && AGENT_BUFF_SLOTS == 2,
+                            "5 strike + 2 buff slots", outReason, outReasonSize);
 
-  // 2 Âm (Water, Wood) + 2 Dương (Fire, Metal) + 1 Trung Hòa (Earth) -> Thái Cực!
-  Entity_SetEquippedSkill(a, 0, 10, 0); // Water (Âm)
-  Entity_SetEquippedSkill(a, 1, 11, 1); // Wood  (Âm)
-  Entity_SetEquippedSkill(a, 2, 12, 2); // Fire  (Dương)
-  Entity_SetEquippedSkill(a, 3, 13, 4); // Metal (Dương)
-  Entity_SetEquippedSkill(a, 4, 14, 3); // Earth (Trung Hòa)
-  ok &= AutoTest_ExpectTrue(Entity_IsTaijiActive(a), "5-slot 2am+2duong+1tho enters taiji", outReason, outReasonSize);
+  /* Equip 7 skills across slots 0..6 and verify majority element computation */
+  for (int s = 0; s < 5; s++) Entity_SetEquippedSkill(a, s, 10 + s, 0); /* 5 Water */
+  Entity_SetEquippedSkill(a, 5, 15, 2);
+  Entity_SetEquippedSkill(a, 6, 16, 2);
+  ok &= AutoTest_ExpectTrue(Entity_GetAgent(a)->currentElement == 0, "7-slot majority = Water", outReason, outReasonSize);
 
-  // Swap Earth for Fire -> 3 Dương + 2 Âm -> exits Thái Cực, Fire majority
-  Entity_SetEquippedSkill(a, 4, 15, 2);
-  ok &= AutoTest_ExpectTrue(!Entity_IsTaijiActive(a), "unbalanced 5-slot exits taiji", outReason, outReasonSize);
-  ok &= AutoTest_ExpectTrue(Entity_GetAgent(a)->currentElement == 2, "5-slot majority = Fire", outReason, outReasonSize);
+  /* Role slot guard: Strike skills only in 0..4, Support skills only in 5..6 */
+  ok &= AutoTest_ExpectTrue(VoHoc_IsSkillRoleCompatibleWithSlot("TTQP_PHA_LANG_QUYEN", 0),
+                            "strike allowed in slot 0", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(!VoHoc_IsSkillRoleCompatibleWithSlot("TTQP_PHA_LANG_QUYEN", 5),
+                            "strike rejected in buff slot 5", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(VoHoc_IsSkillRoleCompatibleWithSlot("TTQP_THUY_KINH_QUYEN_THUAN", 5),
+                            "support allowed in buff slot 5", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(!VoHoc_IsSkillRoleCompatibleWithSlot("TTQP_THUY_KINH_QUYEN_THUAN", 0),
+                            "support rejected in strike slot 0", outReason, outReasonSize);
 
   Entity_ApplyDamage(a, 1e9f, (Vector3){ 0 });
+  return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
+}
+
+static AutoTestResult AutoTest_VoHocBudgetStep(int frameInCase, char *outReason, int outReasonSize) {
+  if (frameInCase > 0) return AUTOTEST_PASS;
+  char err[256] = { 0 };
+  bool valid = VoHoc_ValidateAll(err, (int)sizeof(err));
+  if (!valid) {
+    snprintf(outReason, (size_t)outReasonSize, "VoHoc_ValidateAll failed: %s", err);
+    return AUTOTEST_FAIL;
+  }
+  int cnt = 0;
+  const VoHocSkillDef *defs = VoHoc_GetAllSkills(&cnt);
+  bool ok = AutoTest_ExpectTrue(cnt >= 7 && defs != NULL, "at least 7 VoHoc skills defined", outReason, outReasonSize);
+  for (int i = 0; i < cnt; i++) {
+    int idx = Skill_GetIndexByName(defs[i].skillName);
+    ok &= AutoTest_ExpectTrue(idx >= 0, defs[i].skillName, outReason, outReasonSize);
+  }
+  return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
+}
+
+static AutoTestResult AutoTest_VoHocEntitiesExtStep(int frameInCase, char *outReason, int outReasonSize) {
+  if (frameInCase > 0) return AUTOTEST_PASS;
+  int a = Entity_SpawnAgent((Vector3){ 6.0f, 0.0f, 4.4f }, 100.0f, 0, TEAM_ALLY, ARCH_HERO);
+  int b = Entity_SpawnAgent((Vector3){ 8.0f, 0.0f, 4.4f }, 100.0f, 2, TEAM_ENEMY, ARCH_HERO);
+  bool ok = AutoTest_ExpectTrue(a >= 0 && b >= 0, "spawned test agents", outReason, outReasonSize);
+
+  /* Shield absorbs damage before HP */
+  Entity_AddShield(a, 30.0f, 4.0f);
+  Entity_ApplyDamage(a, 20.0f, (Vector3){ 0 });
+  ok &= AutoTest_ExpectTrue(fabsf(Entity_GetShield(a) - 10.0f) < 0.1f && fabsf(Entity_GetAgent(a)->health - 100.0f) < 0.1f,
+                            "shield absorbed 20 dmg", outReason, outReasonSize);
+  Entity_ApplyDamage(a, 25.0f, (Vector3){ 0 });
+  ok &= AutoTest_ExpectTrue(Entity_GetShield(a) <= 0.01f && fabsf(Entity_GetAgent(a)->health - 85.0f) < 0.1f,
+                            "overflow damage hits HP", outReason, outReasonSize);
+
+  /* Poison reduces healing by 40% */
+  Entity_ApplyStatus(a, STATUS_POISON, 2.0f, 3.0f, b);
+  Entity_Heal(a, 10.0f); /* +6 HP instead of +10 */
+  ok &= AutoTest_ExpectTrue(fabsf(Entity_GetAgent(a)->health - 91.0f) < 0.2f,
+                            "poison reduced heal by 40%", outReason, outReasonSize);
+
+  /* Cleanse clears Poison & Root */
+  Entity_ApplyRoot(a, 1.0f);
+  Entity_Cleanse(a);
+  ok &= AutoTest_ExpectTrue(!Entity_HasStatus(a, STATUS_POISON) && !Entity_IsRooted(a),
+                            "cleanse cleared poison & root", outReason, outReasonSize);
+
+  /* Hard CC Diminishing Returns: 0.8 -> 0.4 -> 0.2 -> 0.0 */
+  Entity_ApplyFreeze(b, 0.8f);
+  ok &= AutoTest_ExpectTrue(fabsf(Entity_GetAgent(b)->freezeTimer - 0.8f) < 0.05f, "DR 1st=0.8s", outReason, outReasonSize);
+  Entity_Update(0.85f);
+  Entity_ApplyFreeze(b, 0.8f);
+  ok &= AutoTest_ExpectTrue(fabsf(Entity_GetAgent(b)->freezeTimer - 0.4f) < 0.05f, "DR 2nd=0.4s", outReason, outReasonSize);
+  Entity_Update(0.45f);
+  Entity_ApplyFreeze(b, 0.8f);
+  ok &= AutoTest_ExpectTrue(fabsf(Entity_GetAgent(b)->freezeTimer - 0.2f) < 0.05f, "DR 3rd=0.2s", outReason, outReasonSize);
+  Entity_Update(0.25f);
+  Entity_ApplyFreeze(b, 0.8f);
+  ok &= AutoTest_ExpectTrue(Entity_GetAgent(b)->freezeTimer <= 0.01f, "DR 4th=immune", outReason, outReasonSize);
+
+  /* 3 Triều Ấn triggers Freeze & Mark Immune */
+  Entity_Update(4.5f); /* decay DR window */
+  ok &= AutoTest_ExpectTrue(!VoHoc_ApplyWaterMark(a, b, 2), "2 marks no freeze yet", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(VoHoc_ApplyWaterMark(a, b, 1), "3rd mark triggers freeze", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(Entity_IsFrozen(b), "target frozen on 3rd mark", outReason, outReasonSize);
+
+  Entity_ApplyDamage(a, 1e9f, (Vector3){ 0 });
+  Entity_ApplyDamage(b, 1e9f, (Vector3){ 0 });
+  return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
+}
+
+static AutoTestResult AutoTest_SkillCooldownRegistryStep(int frameInCase, char *outReason, int outReasonSize) {
+  if (frameInCase > 0) return AUTOTEST_PASS;
+  int idx = Skill_GetIndexByName("TTQP_HAN_UYEN_QUYEN_TOAN");
+  bool ok = AutoTest_ExpectTrue(idx >= 0, "TTQP_HAN_UYEN_QUYEN_TOAN registered", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(fabsf(Skill_GetCooldown(idx) - 8.0f) < 0.05f, "codex cooldown=8.0s", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(fabsf(Skill_GetManaCost(idx) - 26.0f) < 0.05f, "codex mana=26", outReason, outReasonSize);
+  return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
+}
+
+static AutoTestResult AutoTest_LiquidSweWiringStep(int frameInCase, char *outReason, int outReasonSize) {
+  if (frameInCase > 0) return AUTOTEST_PASS;
+  LiquidSWEDesc desc = LiquidSWE_DefaultDesc();
+  desc.pattern = LIQUID_SWE_PATTERN_CURLING_WAVE;
+  desc.source = (Vector3){ 6.0f, 0.0f, 4.4f };
+  desc.target = (Vector3){ 12.0f, 0.0f, 4.4f };
+  desc.duration = 1.0f;
+  int h = LiquidSWE_Spawn(&desc);
+  bool ok = AutoTest_ExpectTrue(h >= 0, "LiquidSWE_Spawn returned valid handle", outReason, outReasonSize);
+  LiquidSWE_Update(0.05f);
+  float maxH = 0.0f, vol = 0.0f, foam = 0.0f;
+  ok &= AutoTest_ExpectTrue(LiquidSWE_GetStats(h, &maxH, &vol, &foam) && vol > 0.0f,
+                            "LiquidSWE simulated water volume > 0", outReason, outReasonSize);
+  LiquidSWE_Kill(h);
   return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
 }
 
@@ -2053,5 +2156,9 @@ void AutoTestCases_Register(PlayerEntity *player)
   AutoTest_Register("spatial_hash_equivalence", AutoTest_SpatialHashEquivalenceStep, 5);
   AutoTest_Register("horde_swarm_ai_stress", AutoTest_HordeSwarmAIStressStep, 5);
   AutoTest_Register("dem_dual_scale_tiled", AutoTest_DemDualScaleTiledStep, 5);
+  AutoTest_Register("vo_hoc_budget", AutoTest_VoHocBudgetStep, 5);
+  AutoTest_Register("vo_hoc_entities_ext", AutoTest_VoHocEntitiesExtStep, 5);
+  AutoTest_Register("skill_cooldown_registry", AutoTest_SkillCooldownRegistryStep, 5);
+  AutoTest_Register("liquid_swe_wiring", AutoTest_LiquidSweWiringStep, 5);
 }
 

@@ -5,6 +5,7 @@
 #include "character/player_profile.h"
 #include "character/wardrobe_system.h"
 #include "skills/skill_manager.h"
+#include "skills/vo_hoc/vo_hoc_codex.h"
 #include "net/net_transport.h"
 #include "raylib.h"
 #include <stdio.h>
@@ -109,50 +110,56 @@ void UI_Hub_UpdateDrawModal(void) {
     }
 
     if (s_modalTab == 0) {
-        // Left: 5 Equipped Slots
-        DrawText("5 CHIEU THUC CHIEN DAU:", (int)p.x + 22, (int)p.y + 106, 14, LIGHTGRAY);
+        // Left: 7 Equipped Slots (5 Strike [1..5] + 2 Buff/Support [6..7])
+        DrawText("7 CHIEU THUC (5 DANH [1-5] + 2 BUFF [6-7]):", (int)p.x + 22, (int)p.y + 102, 13, LIGHTGRAY);
+        int eqIds[PROFILE_SKILL_SLOTS];
         for (int s = 0; s < PROFILE_SKILL_SLOTS; s++) {
-            Rectangle sr = { p.x + 20, p.y + 130 + s * 74, 260, 64 };
+            Rectangle sr = { p.x + 20, p.y + 122 + s * 54, 265, 48 };
             bool sel = (s == s_selectedSlot);
+            bool isBuffSlot = (s >= PROFILE_STRIKE_SLOTS);
             int idx = Skill_GetIndexByName(prof->equippedSkillNames[s]);
+            eqIds[s] = idx;
             const char *sname = (idx >= 0) ? GetRegisteredSkillName(idx) : "(Trong)";
             int lvl = (idx >= 0) ? prof->skillLevel[idx] : 1;
             Color sc = (idx >= 0) ? GetRegisteredSkillColor(idx) : GRAY;
-            DrawRectangleRec(sr, sel ? (Color){ 45, 42, 30, 255 } : (Color){ 24, 26, 36, 255 });
-            DrawRectangleLinesEx(sr, sel ? 2.5f : 1.0f, sel ? GOLD : (Color){ 90, 95, 115, 200 });
-            DrawText(TextFormat("O [%d] (PvE Lv.%d | PvP Lv.1)", s + 1, lvl),
-                     (int)sr.x + 10, (int)sr.y + 8, 12, (Color){ 200, 195, 165, 255 });
-            DrawText(sname, (int)sr.x + 10, (int)sr.y + 26, 15, sc);
-            if (idx >= 0 && lvl < 10) {
-                uint32_t req = PlayerProfile_XpForNextLevel(lvl);
-                float xpFrac = (req > 0) ? ((float)prof->skillXp[idx] / (float)req) : 0.0f;
-                if (xpFrac > 1.0f) xpFrac = 1.0f;
-                DrawRectangle((int)sr.x + 10, (int)sr.y + 48, 236, 7, (Color){ 12, 14, 20, 240 });
-                DrawRectangle((int)sr.x + 10, (int)sr.y + 48, (int)(236.0f * xpFrac), 7, (Color){ 110, 220, 245, 240 });
-            } else if (idx >= 0) {
-                DrawText("HOA CANH (MAX)", (int)sr.x + 10, (int)sr.y + 46, 10, GOLD);
-            }
+            DrawRectangleRec(sr, sel ? (Color){ 45, 42, 30, 255 } : (isBuffSlot ? (Color){ 20, 32, 42, 255 } : (Color){ 24, 26, 36, 255 }));
+            DrawRectangleLinesEx(sr, sel ? 2.5f : 1.0f, sel ? GOLD : (isBuffSlot ? (Color){ 90, 170, 210, 220 } : (Color){ 90, 95, 115, 200 }));
+            DrawText(TextFormat("%s [%d] (PvE Lv.%d | PvP Lv.1)", isBuffSlot ? "BUFF" : "DANH", s + 1, lvl),
+                     (int)sr.x + 8, (int)sr.y + 5, 11, isBuffSlot ? SKYBLUE : (Color){ 200, 195, 165, 255 });
+            DrawText(sname, (int)sr.x + 8, (int)sr.y + 22, 13, sc);
             if (CheckCollisionPointRec(GetMousePosition(), sr) && IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
                 s_selectedSlot = s;
             }
         }
 
-        // Right: Unlocked Skills
-        DrawText("VO HOC DA HOC (BAM DE LAP VAO O DANG CHON):", (int)p.x + 305, (int)p.y + 106, 14, LIGHTGRAY);
+        // Loadout balance summary (Radar 4 truc + Q + Set Tier; ignores Taiji)
+        VoHocLoadoutSummary sum = VoHoc_EvalLoadout(eqIds, PROFILE_SKILL_SLOTS);
+        const char *tierTxt = (sum.setTier >= VO_HOC_TIER_MAJOR_COUNT) ? "DAI THANH (7/7)"
+                            : ((sum.setTier >= VO_HOC_TIER_MINOR_COUNT) ? "TIEU THANH (4/7)" : "TRON BO");
+        DrawText(TextFormat("Bo: %s | Q=%.2f | Cong:%d Thu:%d Khong:%d Tro:%d",
+                            tierTxt, sum.avgQ, sum.radar[0], sum.radar[1], sum.radar[2], sum.radar[3]),
+                 (int)p.x + 305, (int)p.y + 102, 12, (Color){ 150, 235, 225, 255 });
+
+        // Right: Skills compatible with selected slot role (Strike vs Buff)
+        bool needBuff = (s_selectedSlot >= PROFILE_STRIKE_SLOTS);
+        DrawText(needBuff ? "CHON CHIEU BUFF / TRO (O 6-7):" : "CHON CHIEU DANH (O 1-5):",
+                 (int)p.x + 305, (int)p.y + 118, 12, LIGHTGRAY);
         int vis = 0;
         int total = GetRegisteredSkillCount();
         for (int i = 0; i < total && i < MAX_PROFILE_SKILLS; i++) {
             if (!IsSkillSelectable(i)) continue;
+            const char *name = GetRegisteredSkillName(i);
+            if (!VoHoc_IsSkillRoleCompatibleWithSlot(name, s_selectedSlot)) continue;
             int col = vis % 2;
             int row = vis / 2;
-            Rectangle kr = { p.x + 305 + col * 265, p.y + 130 + row * 56, 255, 48 };
-            bool unl = true; // Temporarily unlock all martial arts for free selection
-            const char *name = GetRegisteredSkillName(i);
+            if (row >= 7) break;
+            Rectangle kr = { p.x + 305 + col * 265, p.y + 136 + row * 50, 255, 44 };
+            bool unl = prof->skillUnlocked[i];
             Color c = unl ? GetRegisteredSkillColor(i) : DARKGRAY;
             if (DrawWuxiaBtn(kr, TextFormat("%s%s", name, unl ? TextFormat(" [Lv.%d]", prof->skillLevel[i]) : " [KHOA]"),
                              unl ? c : (Color){ 60, 60, 70, 200 },
                              unl ? (Color){ 24, 28, 38, 255 } : (Color){ 16, 16, 22, 220 },
-                             unl ? WHITE : GRAY, 12)) {
+                             unl ? WHITE : GRAY, 11)) {
                 if (unl) {
                     PlayerProfile_EquipSkillSlot(s_selectedSlot, i);
                     PlayerProfile_SaveGlobal();
@@ -161,11 +168,12 @@ void UI_Hub_UpdateDrawModal(void) {
             vis++;
         }
     } else {
-        // Tab 2: Dã Tẩu Shop — Unlock skills or buy Wardrobe gear + Elemental Stones
+        // Tab 2: Dã Tẩu Shop — Unlock skills (300G + 6 Stones or 1 Set Scroll; 50% off 1st in set)
         DrawText("MO KHOA VO HOC MOI & DOI VAT PHAM DA TAU:", (int)p.x + 22, (int)p.y + 104, 14, (Color){ 245, 215, 120, 255 });
-        DrawText(TextFormat("Linh Thach: Thuy[%d]  Moc[%d]  Hoa[%d]  Tho[%d]  Kim[%d]",
+        DrawText(TextFormat("Linh Thach: Thuy[%d]  Moc[%d]  Hoa[%d]  Tho[%d]  Kim[%d]  | Tan Quyen Thuy[%d]",
                             prof->elementalStones[0], prof->elementalStones[1], prof->elementalStones[2],
-                            prof->elementalStones[3], prof->elementalStones[4]),
+                            prof->elementalStones[3], prof->elementalStones[4],
+                            prof->setScrolls[VH_SET_THUY_TRIEU_QUYEN_PHAP]),
                  (int)p.x + 22, (int)p.y + 124, 12, (Color){ 165, 225, 245, 255 });
         int vis = 0;
         int total = GetRegisteredSkillCount();
@@ -175,13 +183,22 @@ void UI_Hub_UpdateDrawModal(void) {
             int row = vis / 2;
             if (row >= 3) break;
             Rectangle kr = { p.x + 20 + col * 405, p.y + 146 + row * 54, 390, 46 };
-            int costGold = 200;
-            int costPts  = 40;
-            const char *lbl = TextFormat("Hoc: %s (%d Vang + %d Diem)", GetRegisteredSkillName(i), costGold, costPts);
-            if (DrawWuxiaBtn(kr, lbl, (Color){ 210, 175, 95, 220 }, (Color){ 26, 30, 42, 255 }, WHITE, 12)) {
-                if (prof->gold >= costGold && prof->daTauPoints >= costPts) {
+            int costGold = 300, elem = 0, costStones = 6;
+            VoHocSetId setId = VH_SET_NONE;
+            const char *skName = GetRegisteredSkillName(i);
+            VoHoc_GetSkillUnlockCost(skName, prof->skillUnlocked, total, &costGold, &elem, &costStones, &setId);
+            bool hasScroll = (setId > VH_SET_NONE && setId < PROFILE_MAX_SETS && prof->setScrolls[setId] > 0);
+            const char *lbl = hasScroll
+                ? TextFormat("Hoc: %s (1 Tan Quyen)", skName)
+                : TextFormat("Hoc: %s (%dV + %d Thach)", skName, costGold, costStones);
+            if (DrawWuxiaBtn(kr, lbl, (Color){ 210, 175, 95, 220 }, (Color){ 26, 30, 42, 255 }, WHITE, 11)) {
+                if (hasScroll) {
+                    prof->setScrolls[setId]--;
+                    PlayerProfile_UnlockSkill(i);
+                    PlayerProfile_SaveGlobal();
+                } else if (prof->gold >= costGold && prof->elementalStones[elem] >= costStones) {
                     prof->gold -= costGold;
-                    prof->daTauPoints -= costPts;
+                    prof->elementalStones[elem] -= costStones;
                     PlayerProfile_UnlockSkill(i);
                     PlayerProfile_SaveGlobal();
                 }

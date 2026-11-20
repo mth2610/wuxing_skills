@@ -21,11 +21,29 @@ typedef enum { TEAM_ALLY = 0, TEAM_ENEMY, TEAM_NEUTRAL } AgentTeam;
 // pools; archetype is a tag consumed by ai/boss/game layers, not entities.
 typedef enum { ARCH_HERO = 0, ARCH_MINION, ARCH_BOSS } AgentArchetype;
 
-// Equipped-skill loadout size — source of the Vô Hệ (elementless) rule:
-// currentElement = majority element across equipped slots.
-#define AGENT_SKILL_SLOTS 5
+// Equipped-skill loadout size: 5 Strike slots [0..4] + 2 Buff/Support slots [5..6]
+#define AGENT_SKILL_SLOTS  7
+#define AGENT_STRIKE_SLOTS 5
+#define AGENT_BUFF_SLOTS   2
 
 #define MAX_AGENT_MODIFIERS 4
+
+// Status effects (DoTs & combat debuffs — see VO_HOC_BALANCE.md §4.2)
+typedef enum {
+    STATUS_BURN = 0,       // Bốc hỏa: DoT damage/s (max 3 stacks)
+    STATUS_POISON,         // Dính độc: DoT damage/s + 40% healing reduction
+    STATUS_BLEED,          // Chảy máu: DoT damage/s
+    STATUS_VULNERABLE,     // Phá giáp: +potency fraction damage taken
+    STATUS_WEAKEN,         // Suy yếu: -potency fraction damage dealt
+    STATUS_TYPE_COUNT
+} AgentStatusType;
+
+typedef struct {
+    float potency;         // DPS for DoT, or fraction (e.g. 0.25f) for Vuln/Weaken
+    float duration;        // seconds remaining; <= 0 inactive
+    int   stacks;          // 1..3 for stackable DoTs
+    int   attackerId;      // source agentId (-1 if none)
+} AgentStatusSlot;
 
 // PvE-only gear/attribute bonuses (disabled / normalized to 0 in PvP modes).
 typedef enum {
@@ -66,13 +84,23 @@ typedef struct {
     AgentModifier modifiers[MAX_AGENT_MODIFIERS];
 
     // --- Crowd control (see §12 in ENTITIES_API.md) ---
-    float   stunTimer;   // seconds remaining; <=0 = not stunned. Orthogonal to
-                          // vState — an agent can be airborne AND stunned.
-                          // Entities only ticks this down; enforcing "can't
-                          // act while stunned" is the caller's job.
+    float   stunTimer;    // seconds remaining; <=0 = not stunned.
+    float   freezeTimer;  // seconds remaining; <=0 = not frozen (Hard CC, subject to DR)
+    float   rootTimer;    // seconds remaining; <=0 = not rooted (Soft CC, blocks movement)
+    float   silenceTimer; // seconds remaining; <=0 = not silenced (Soft CC, blocks casting)
+    int     ccDrCount;    // Hard-CC diminishing returns count within 4s window
+    float   ccDrTimer;    // 4s DR decay window
     Vector3 pullTarget;   // world position being pulled toward
     float   pullTimer;    // seconds remaining; <=0 = not being pulled
     float   pullSpeed;    // units/sec toward pullTarget, XZ-plane only
+
+    // --- Shield, Status Effects (DoT/Debuff) & Elemental Marks ---
+    float           shield;
+    float           shieldTimer;
+    AgentStatusSlot statuses[STATUS_TYPE_COUNT];
+    int             marks[5];         // 0=Water,1=Wood,2=Fire,3=Earth,4=Metal
+    float           markTimer[5];
+    float           markImmune[5];
 
     // --- Mana (see §13 in ENTITIES_API.md) ---
     float   mana;
@@ -207,6 +235,28 @@ void Entity_ApplyPull(int agentId, Vector3 targetPos, float speed, float duratio
 // Convenience combined read for external movement/input systems deciding
 // whether to skip their own position writes this frame.
 bool Entity_IsCrowdControlled(int agentId);
+
+// --- Extended CC, Shield, Heal, Status & Elemental Marks (VO_HOC_BALANCE.md) ---
+void  Entity_ApplyFreeze(int agentId, float duration);
+bool  Entity_IsFrozen(int agentId);
+void  Entity_ApplyRoot(int agentId, float duration);
+bool  Entity_IsRooted(int agentId);
+void  Entity_ApplySilence(int agentId, float duration);
+bool  Entity_IsSilenced(int agentId);
+void  Entity_Cleanse(int agentId);
+
+void  Entity_AddShield(int agentId, float amount, float duration);
+float Entity_GetShield(int agentId);
+void  Entity_Heal(int agentId, float amount);
+
+void  Entity_ApplyStatus(int agentId, AgentStatusType type, float potency,
+                         float duration, int attackerId);
+bool  Entity_HasStatus(int agentId, AgentStatusType type);
+
+int   Entity_AddMark(int agentId, int element, int stacks, int maxStacks, float duration);
+int   Entity_GetMarkStacks(int agentId, int element);
+int   Entity_ConsumeMarks(int agentId, int element);
+void  Entity_SetMarkImmune(int agentId, int element, float duration);
 
 // --- Mana (see ENTITIES_API.md §13) ---
 // Spawned agents get mana = maxMana = 100.0f by default (Entity_SpawnAgent).

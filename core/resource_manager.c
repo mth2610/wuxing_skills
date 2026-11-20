@@ -153,10 +153,13 @@ void ResourceManager_Unload(void) {
       s_shaders[i].fsPath[0] = '\0';
     }
   }
-  // Unload all sounds
+  // Unload all sounds (stop first so CoreAudio/miniaudio IOThread never reads freed PCM)
   for (int i = 0; i < MAX_CACHED_SOUNDS; i++) {
     if (s_sounds[i].active) {
-      UnloadSound(s_sounds[i].sound);
+      if (IsAudioDeviceReady()) {
+        StopSound(s_sounds[i].sound);
+        UnloadSound(s_sounds[i].sound);
+      }
       s_sounds[i].active = false;
       s_sounds[i].path[0] = '\0';
     }

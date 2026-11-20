@@ -61,6 +61,8 @@ PlayerIntent Control_ReadIntent(void) {
     else if (IsKeyPressed(KEY_THREE)) intent.castSkillSlot = 2;
     else if (IsKeyPressed(KEY_FOUR))  intent.castSkillSlot = 3;
     else if (IsKeyPressed(KEY_FIVE))  intent.castSkillSlot = 4;
+    else if (IsKeyPressed(KEY_SIX))   intent.castSkillSlot = 5;
+    else if (IsKeyPressed(KEY_SEVEN)) intent.castSkillSlot = 6;
 
     // Basic attack: random đấm/đá/chưởng per press (matches the pre-intent
     // behavior; a real combo system picks deliberately later).
@@ -99,7 +101,7 @@ void Control_Apply(const PlayerIntent *in, float dt) {
     bool canRun = !a->staminaExhausted && a->stamina > 0.0f;
     float baseMoveSpeed = canRun ? RUN_SPEED_MPS : WALK_SPEED_MPS;
     if (len > 0.0001f && a->vState == AGENT_GROUNDED &&
-        !Entity_IsCrowdControlled(s_agentId) && a->dashTimer <= 0.0f) {
+        !Entity_IsCrowdControlled(s_agentId) && !Entity_IsRooted(s_agentId) && a->dashTimer <= 0.0f) {
         float speed = baseMoveSpeed * Entity_GetSpeedMult(s_agentId) * s_moveMult;
         Vector3 pos = a->position;
         pos.x += (in->moveDir.x / len) * speed * dt;
@@ -130,7 +132,7 @@ void Control_Apply(const PlayerIntent *in, float dt) {
         }
     }
 
-    if (in->dash) {
+    if (in->dash && !Entity_IsRooted(s_agentId)) {
         // Dash along the move direction, or facing when standing still.
         Vector3 dir = (len > 0.0001f)
             ? (Vector3){ in->moveDir.x, 0.0f, in->moveDir.y }
@@ -141,7 +143,7 @@ void Control_Apply(const PlayerIntent *in, float dt) {
     if (in->meditate) Entity_StartMeditate(s_agentId);
 
     if (in->castSkillSlot >= 0 && in->castSkillSlot < AGENT_SKILL_SLOTS &&
-        !Entity_IsStunned(s_agentId)) {
+        !Entity_IsStunned(s_agentId) && !Entity_IsSilenced(s_agentId)) {
         int skillIndex = a->equippedSkills[in->castSkillSlot];
         if (skillIndex >= 0 && SkillManager_CanCast(skillIndex, s_agentId)) {
             int lvl = s_skillLevelFn ? s_skillLevelFn(skillIndex) : 1;
@@ -169,7 +171,7 @@ void Control_Apply(const PlayerIntent *in, float dt) {
             // cast starts the cooldown.
             if (CastSkill(skillIndex, s_agentId, a->position, in->aimPoint, params)) {
                 SkillManager_TriggerCooldown(skillIndex, s_agentId,
-                                             DEFAULT_CAST_COOLDOWN * s_cdMult * skillCdMult);
+                                             Skill_GetCooldown(skillIndex) * s_cdMult * skillCdMult);
                 // Face the cast direction — the character turning toward its
                 // target is the read that a skill actually fired.
                 float fdx = in->aimPoint.x - a->position.x;

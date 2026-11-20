@@ -57,6 +57,8 @@ PROJECT_SOURCE_FILES   := main.c \
                           skills/skill_manager.c \
                           skills/skill_helper.c \
                           skills/skill_curve.c \
+                          skills/vo_hoc/vo_hoc_codex.c \
+                          skills/vo_hoc/vo_hoc_sets.c \
                           core/resource_manager.c \
                           core/color_gradient.c \
                           core/float_curve.c \

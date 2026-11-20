@@ -6,6 +6,13 @@
 
 #include "skills/wood/vine_snare_skill/vine_snare_skill.h"
 #include "skills/water/ice_crystal_lance_skill/ice_crystal_lance_skill.h"
+#include "skills/water/ttqp_pha_lang_quyen_skill/ttqp_pha_lang_quyen_skill.h"
+#include "skills/water/ttqp_bang_trieu_dao_hai_skill/ttqp_bang_trieu_dao_hai_skill.h"
+#include "skills/water/ttqp_han_uyen_quyen_toan_skill/ttqp_han_uyen_quyen_toan_skill.h"
+#include "skills/water/ttqp_nghich_luu_cam_na_skill/ttqp_nghich_luu_cam_na_skill.h"
+#include "skills/water/ttqp_no_hai_long_quyen_skill/ttqp_no_hai_long_quyen_skill.h"
+#include "skills/water/ttqp_trieu_tich_linh_tuyen_skill/ttqp_trieu_tich_linh_tuyen_skill.h"
+#include "skills/water/ttqp_thuy_kinh_quyen_thuan_skill/ttqp_thuy_kinh_quyen_thuan_skill.h"
 #include "skills/metal/metal_blade_storm_skill/metal_blade_storm_skill.h"
 #include "skills/taiji/galaxy_spiral_skill/galaxy_spiral_skill.h"
 #include "skills/earth/earth_disc_volley_skill/earth_disc_volley_skill.h"
@@ -15,6 +22,13 @@
 static inline void RegisterGeneratedSkills(void) {
     RegisterSkill("VINE_SNARE", ELEMENT_COLOR_WOOD, InitVineSnareSkill, CastVineSnareSkill, UpdateVineSnareSkill, DrawVineSnareSkill, UnloadVineSnareSkill);
     RegisterSkill("ICE_CRYSTAL_LANCE", ELEMENT_COLOR_WATER, InitIceCrystalLanceSkill, CastIceCrystalLanceSkill, UpdateIceCrystalLanceSkill, DrawIceCrystalLanceSkill, UnloadIceCrystalLanceSkill);
+    RegisterSkill("TTQP_PHA_LANG_QUYEN", ELEMENT_COLOR_WATER, InitTtqpPhaLangQuyenSkill, CastTtqpPhaLangQuyenSkill, UpdateTtqpPhaLangQuyenSkill, DrawTtqpPhaLangQuyenSkill, UnloadTtqpPhaLangQuyenSkill);
+    RegisterSkill("TTQP_BANG_TRIEU_DAO_HAI", ELEMENT_COLOR_WATER, InitTtqpBangTrieuDaoHaiSkill, CastTtqpBangTrieuDaoHaiSkill, UpdateTtqpBangTrieuDaoHaiSkill, DrawTtqpBangTrieuDaoHaiSkill, UnloadTtqpBangTrieuDaoHaiSkill);
+    RegisterSkill("TTQP_HAN_UYEN_QUYEN_TOAN", ELEMENT_COLOR_WATER, InitTtqpHanUyenQuyenToanSkill, CastTtqpHanUyenQuyenToanSkill, UpdateTtqpHanUyenQuyenToanSkill, DrawTtqpHanUyenQuyenToanSkill, UnloadTtqpHanUyenQuyenToanSkill);
+    RegisterSkill("TTQP_NGHICH_LUU_CAM_NA", ELEMENT_COLOR_WATER, InitTtqpNghichLuuCamNaSkill, CastTtqpNghichLuuCamNaSkill, UpdateTtqpNghichLuuCamNaSkill, DrawTtqpNghichLuuCamNaSkill, UnloadTtqpNghichLuuCamNaSkill);
+    RegisterSkill("TTQP_NO_HAI_LONG_QUYEN", ELEMENT_COLOR_WATER, InitTtqpNoHaiLongQuyenSkill, CastTtqpNoHaiLongQuyenSkill, UpdateTtqpNoHaiLongQuyenSkill, DrawTtqpNoHaiLongQuyenSkill, UnloadTtqpNoHaiLongQuyenSkill);
+    RegisterSkill("TTQP_TRIEU_TICH_LINH_TUYEN", ELEMENT_COLOR_WATER, InitTtqpTrieuTichLinhTuyenSkill, CastTtqpTrieuTichLinhTuyenSkill, UpdateTtqpTrieuTichLinhTuyenSkill, DrawTtqpTrieuTichLinhTuyenSkill, UnloadTtqpTrieuTichLinhTuyenSkill);
+    RegisterSkill("TTQP_THUY_KINH_QUYEN_THUAN", ELEMENT_COLOR_WATER, InitTtqpThuyKinhQuyenThuanSkill, CastTtqpThuyKinhQuyenThuanSkill, UpdateTtqpThuyKinhQuyenThuanSkill, DrawTtqpThuyKinhQuyenThuanSkill, UnloadTtqpThuyKinhQuyenThuanSkill);
     RegisterSkill("METAL_BLADE_STORM", ELEMENT_COLOR_METAL, InitMetalBladeStormSkill, CastMetalBladeStormSkill, UpdateMetalBladeStormSkill, DrawMetalBladeStormSkill, UnloadMetalBladeStormSkill);
     RegisterSkill("GALAXY_SPIRAL", ELEMENT_COLOR_TAIJI, InitGalaxySpiralSkill, CastGalaxySpiralSkill, UpdateGalaxySpiralSkill, DrawGalaxySpiralSkill, UnloadGalaxySpiralSkill);
     RegisterSkill("EARTH_DISC_VOLLEY", ELEMENT_COLOR_EARTH, InitEarthDiscVolleySkill, CastEarthDiscVolleySkill, UpdateEarthDiscVolleySkill, DrawEarthDiscVolleySkill, UnloadEarthDiscVolleySkill);

@@ -116,26 +116,38 @@ void Audio_Init(void) {
     TraceLog(LOG_INFO, "[AUDIO] ready (drop assets under assets/audio/ to hear them)");
 }
 
-void Audio_Shutdown(void) {
+void Audio_StopAllAndUnloadAliases(void) {
     if (!s_ready) return;
     Audio_StopMusic();
+    for (int i = 0; i < SFX_COUNT; i++) {
+        if (!s_sfxLoaded[i] || s_sfxMissing[i]) continue;
+        for (int var = 0; var < s_sfxVariantCount[i]; var++) {
+            for (int v = 0; v < AUDIO_SFX_ALIASES - 1; v++) {
+                if (IsSoundValid(s_sfxAliases[i][var][v])) {
+                    StopSound(s_sfxAliases[i][var][v]);
+                    UnloadSoundAlias(s_sfxAliases[i][var][v]);
+                    s_sfxAliases[i][var][v] = (Sound){ 0 };
+                }
+            }
+            if (IsSoundValid(s_sfx[i][var])) {
+                StopSound(s_sfx[i][var]);
+            }
+        }
+        s_sfxVariantCount[i] = 0;
+        s_sfxLoaded[i] = false;
+    }
+}
+
+void Audio_Shutdown(void) {
+    if (!s_ready) return;
+    Audio_StopAllAndUnloadAliases();
     for (int i = 0; i < s_musicTrackCount; i++) {
         free(s_musicTracks[i]);
         s_musicTracks[i] = NULL;
     }
     s_musicTrackCount = 0;
     s_lastTrackIdx = -1;
-    for (int i = 0; i < SFX_COUNT; i++) {
-        if (!s_sfxLoaded[i] || s_sfxMissing[i]) continue;
-        for (int var = 0; var < s_sfxVariantCount[i]; var++) {
-            for (int v = 0; v < AUDIO_SFX_ALIASES - 1; v++) {
-                if (IsSoundValid(s_sfxAliases[i][var][v])) UnloadSoundAlias(s_sfxAliases[i][var][v]);
-            }
-        }
-        s_sfxVariantCount[i] = 0;
-        s_sfxLoaded[i] = false;
-    }
-    // Base SFX Sounds are owned by ResourceManager's cache — it unloads them.
+    // Base SFX Sounds are owned by ResourceManager's cache — already unloaded before CloseAudioDevice.
     CloseAudioDevice();
     s_ready = false;
 }

@@ -28,6 +28,7 @@ C / Raylib 6.0 game project. Rendering backend: **Vulkan 1.1 via `rlvk` (priorit
 - `WUXING_ART_DIRECTION.md` — Art style and aesthetic laws
 - `assets/TEXTURE_PACKING.md` — **What each RGBA channel of a VFX sheet may carry.** Normative and machine-enforced (`scripts/validate_vfx_surface_registry.py` runs at CMake configure time and fails the build). Read before adding or changing any texture in `assets/vfx_surface_profiles.json`.
 - `nguhanhtyvo_kehoach.md` — Game design doc (source of truth for gameplay intent)
+- `VO_HOC_BALANCE.md` — Normative martial-arts (Võ Học) balance spec & UL budget rules (machine-checked by `vo_hoc_budget` autotest)
 
 ## Agent working protocol
 
