@@ -1765,28 +1765,55 @@ static AutoTestResult AutoTest_NetP2PExploreOptStep(int frameInCase, char *outRe
 
   int h  = Entity_SpawnAgent((Vector3){ 10.0f, 0.0f, 10.0f }, 100.0f, 3, TEAM_ALLY, ARCH_HERO);
   int m1 = Entity_SpawnAgent((Vector3){ 25.0f, 0.0f, 10.0f }, 50.0f,  3, TEAM_ENEMY, ARCH_MINION);
-  int m2 = Entity_SpawnAgent((Vector3){ 120.0f, 0.0f, 10.0f }, 50.0f, 3, TEAM_ENEMY, ARCH_MINION); // > 55m
-  int b1 = Entity_SpawnAgent((Vector3){ 140.0f, 0.0f, 10.0f }, 500.0f, 3, TEAM_ENEMY, ARCH_BOSS);   // > 55m but BOSS!
+  int m2 = Entity_SpawnAgent((Vector3){ 120.0f, 0.0f, 10.0f }, 50.0f, 3, TEAM_ENEMY, ARCH_MINION); // > 45m
+  int b1 = Entity_SpawnAgent((Vector3){ 140.0f, 0.0f, 10.0f }, 500.0f, 3, TEAM_ENEMY, ARCH_BOSS);   // > 45m but BOSS!
   Entity_SetDuelFlag(h, true);
+  unsigned char monMeta = (unsigned char)((MONSTER_LEAPER & 0x3u) |
+                                          ((MON_STATE_TELEGRAPH & 0x7u) << 2) |
+                                          ((5u & 0x7u) << 5));
+  Entity_SetNetMonsterMeta(m1, monMeta);
+  Entity_SetFacingYaw(m1, 1.57f);
+
+  // Verify client-authoritative pose round-trips in PlayerIntent
+  PlayerIntent poseIn = { 0 };
+  poseIn.castSkillSlot = -1;
+  poseIn.hasClientPose = true;
+  poseIn.clientInAir   = true;
+  poseIn.clientDashing = true;
+  poseIn.clientPos     = (Vector3){ 42.5f, 1.25f, -18.0f };
+  poseIn.clientYaw     = 2.0f;
+  unsigned char ibuf[64];
+  int ilen = Net_PackIntent(&poseIn, ibuf, (int)sizeof(ibuf));
+  PlayerIntent poseOut = { 0 };
+  bool okPose = (ilen == 33) && Net_UnpackIntent(&poseOut, ibuf, ilen) &&
+                poseOut.hasClientPose && poseOut.clientInAir && poseOut.clientDashing &&
+                fabsf(poseOut.clientPos.x - 42.5f) < 0.1f &&
+                fabsf(poseOut.clientPos.z + 18.0f) < 0.1f;
 
   unsigned char buf[1024];
   int bytes = Net_PackAgentSnapshotFor((Vector3){ 10.0f, 0.0f, 10.0f }, NET_INTEREST_RADIUS, buf, (int)sizeof(buf));
-  bool ok = AutoTest_ExpectTrue(bytes > 0 && bytes <= 4 + 4 * 18, "quantized packet <= 18B/agent", outReason, outReasonSize);
+  bool ok = AutoTest_ExpectTrue(okPose, "client pose round-trips in 33B intent", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(bytes > 0 && bytes <= 4 + 4 * 18, "quantized packet <= 18B/agent", outReason, outReasonSize);
 
   NetAgentState out[16];
   int n = Net_UnpackAgentSnapshot(out, 16, buf, bytes);
   bool hasHero = false, hasNearMinion = false, hasFarMinion = false, hasFarBoss = false, duelPreserved = false;
+  bool hasMonMeta = false;
   for (int i = 0; i < n; i++) {
     if (out[i].agentId == h) {
       hasHero = true;
       duelPreserved = (out[i].flags & 8) != 0;
     }
-    if (out[i].agentId == m1) hasNearMinion = true;
+    if (out[i].agentId == m1) {
+      hasNearMinion = true;
+      hasMonMeta = (out[i].flags == monMeta) && (fabsf(out[i].yaw - 1.57f) < 0.1f);
+    }
     if (out[i].agentId == m2) hasFarMinion = true;
     if (out[i].agentId == b1) hasFarBoss = true;
   }
   ok &= AutoTest_ExpectTrue(hasHero && duelPreserved, "hero & duelFlag synced", outReason, outReasonSize);
-  ok &= AutoTest_ExpectTrue(hasNearMinion && !hasFarMinion, "interest culling filters >55m minions", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(hasNearMinion && !hasFarMinion, "interest culling filters >45m minions", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(hasMonMeta, "monster kind/telegraph/yaw replicated in 18B snapshot", outReason, outReasonSize);
   ok &= AutoTest_ExpectTrue(hasFarBoss, "distant boss always synced", outReason, outReasonSize);
 
   Entity_ApplyDamage(h, 1e9f, (Vector3){ 0 });

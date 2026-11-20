@@ -119,5 +119,6 @@ int  AI_GetActiveHordeZoneIndex(Vector3 playerPos);
 
 int  AI_QueryMonsterRenderData(AIMonsterRenderInfo *out, int max);
 int  AI_QueryMinionBolts(AIMinionBoltRenderInfo *out, int max);
+void AI_ClientVisualTick(float dt);
 
 #endif // AI_H

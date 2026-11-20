@@ -28,6 +28,8 @@ typedef struct {
 } BossSlot;
 
 static BossSlot s_slots[BOSS_MAX_INSTANCES];
+static BossCastEvent s_bossCasts[16];
+static int           s_bossCastCount = 0;
 
 static void UpdateBossSlot(BossSlot *b, float dt) {
     if (b->def == NULL || b->agentId < 0) return;
@@ -133,6 +135,7 @@ static void UpdateBossSlot(BossSlot *b, float dt) {
                     }
                     pos.y = MapManager_GetGroundHeightAt(pos.x, pos.z);
                     Entity_SetPosition(b->agentId, pos);
+                    Entity_SetFacingYaw(b->agentId, atan2f(dx, dz));
                     self = Entity_GetAgent(b->agentId);
                 }
             }
@@ -147,6 +150,11 @@ static void UpdateBossSlot(BossSlot *b, float dt) {
             SkillManager_TriggerCooldown(skillIdx, b->agentId,
                                          (b->def->castIntervalSeconds > 0.0f)
                                              ? b->def->castIntervalSeconds : 3.0f);
+            if (s_bossCastCount < 16) {
+                s_bossCasts[s_bossCastCount++] = (BossCastEvent){
+                    .agentId = b->agentId, .skillIndex = skillIdx, .aim = victim->position
+                };
+            }
         }
     }
 }
@@ -241,3 +249,11 @@ void Boss_Draw(void) {
 int Boss_GetPhase(void)   { return Boss_GetSlotPhase(0); }
 int Boss_GetAgentId(void) { return Boss_GetSlotAgentId(0); }
 bool Boss_IsAlive(void)   { return Boss_IsSlotAlive(0); }
+
+int Boss_PollCasts(BossCastEvent *out, int max) {
+    if (out == NULL || max <= 0) { s_bossCastCount = 0; return 0; }
+    int n = (s_bossCastCount < max) ? s_bossCastCount : max;
+    for (int i = 0; i < n; i++) out[i] = s_bossCasts[i];
+    s_bossCastCount = 0;
+    return n;
+}

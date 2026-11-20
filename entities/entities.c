@@ -122,6 +122,10 @@ void Entity_Update(float dt) {
             a->hitFlashTimer -= dt;
             if (a->hitFlashTimer < 0.0f) a->hitFlashTimer = 0.0f;
         }
+        if (a->dodgeGraceTimer > 0.0f) {
+            a->dodgeGraceTimer -= dt;
+            if (a->dodgeGraceTimer < 0.0f) a->dodgeGraceTimer = 0.0f;
+        }
 
         // Thái Cực "Vô Sát" downside: the state lives on mana — a dry pool
         // exits it (Lôi's huge cost is the intended drain). Checked BEFORE
@@ -496,6 +500,7 @@ bool Entity_PerformJump(int agentId, float verticalForce, Vector3 horizontalVelo
     CancelMeditate(a);
     a->velocity = (Vector3){ horizontalVelocity.x, verticalForce, horizontalVelocity.z };
     a->vState = AGENT_JUMPING;
+    if (a->dodgeGraceTimer < 0.45f) a->dodgeGraceTimer = 0.45f;
     return true;
 }
 
@@ -507,6 +512,13 @@ void Entity_SetRunning(int agentId, bool running) {
 bool Entity_IsRunning(int agentId) {
     const Agent *a = Entity_GetAgent(agentId);
     return a ? (a->isRunning && !a->staminaExhausted) : false;
+}
+
+void Entity_ArmDodgeGrace(int agentId, float duration) {
+    if (agentId < 0 || agentId >= MAX_AGENTS) return;
+    Agent *a = &agentPool[agentId];
+    if (!a->active) return;
+    if (duration > a->dodgeGraceTimer) a->dodgeGraceTimer = duration;
 }
 
 void Entity_Dash(int agentId, Vector3 direction, float speed) {
@@ -524,6 +536,7 @@ void Entity_Dash(int agentId, Vector3 direction, float speed) {
                                  (direction.z / len) * speed };
     a->dashTimer = DASH_DURATION;
     a->dashCooldown = DASH_COOLDOWN;
+    if (a->dodgeGraceTimer < 0.55f) a->dodgeGraceTimer = 0.55f;
     Entity_OnDash(agentId);
 }
 
@@ -692,6 +705,29 @@ void Entity_NetSyncEnd(void) {
         if (agentPool[i].active && !s_netMark[i]) agentPool[i].active = false;
     }
     s_gridDirty = true;
+}
+
+void Entity_SetFacingYaw(int agentId, float yawRadians) {
+    if (agentId < 0 || agentId >= MAX_AGENTS) return;
+    if (!agentPool[agentId].active) return;
+    agentPool[agentId].facingYaw = yawRadians;
+}
+
+void Entity_SetNetMonsterMeta(int agentId, unsigned char packedMeta) {
+    if (agentId < 0 || agentId >= MAX_AGENTS) return;
+    if (!agentPool[agentId].active) return;
+    agentPool[agentId].netMonsterMeta = packedMeta;
+}
+
+void Entity_TickClientVisuals(float dt) {
+    if (dt <= 0.0f) return;
+    for (int i = 0; i < MAX_AGENTS; i++) {
+        if (!agentPool[i].active) continue;
+        if (agentPool[i].hitFlashTimer > 0.0f) {
+            agentPool[i].hitFlashTimer -= dt;
+            if (agentPool[i].hitFlashTimer < 0.0f) agentPool[i].hitFlashTimer = 0.0f;
+        }
+    }
 }
 
 void Entity_SetElement(int agentId, int element) {
@@ -1173,6 +1209,7 @@ int Entity_SpawnAgent(Vector3 position, float maxHealth, int element,
             a->lastCastSkillIndex = -1;
             a->lastCastDamageScale = 1.0f;
             a->hitFlashTimer = 0.0f;
+            a->dodgeGraceTimer = 0.0f;
             a->team = team;
             a->archetype = archetype;
             a->isMeditating = false;

@@ -441,6 +441,7 @@ static void ResetMatch(PlayerEntity *player)
     ApplyModeBalanceToPlayer(player->agentId);
 
     Boss_ClearAll();
+    PlayerProfile_FlushIfDirty(0.0f, true);
 }
 
 GameState GameScreen_GetState(void)
@@ -525,15 +526,6 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
     }
 
     // --- Match state machine (Module 7) ---
-    if (s_mode == GAME_MODE_EXPLORE && s_exploreRealm >= 0 && s_exploreRealm <= 3 && s_state == GAME_FIGHTING)
-    {
-        OW_DrawHUD(player, s_hudCamera);
-        int peerCount = (Net_GetMode() != NET_MODE_OFF) ? (Net_GetPeerCount() + 1) : 1;
-        if (peerCount > NET_EXPLORE_MAX_PLAYERS) peerCount = NET_EXPLORE_MAX_PLAYERS;
-        DrawText(TextFormat("CO-OP EOS P2P: %d/%d", peerCount, NET_EXPLORE_MAX_PLAYERS),
-                 20, 98, 13, (Color){ 140, 235, 195, 255 });
-    }
-
     if (s_state == GAME_ARENA_INTRO)
     {
         static MapScaleMode s_lastAppliedScale = MAP_SCALE_MOBA;
@@ -809,6 +801,15 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
             }
             if (s_mode == GAME_MODE_EXPLORE)
             {
+                if (Entity_GetAgent(player->agentId) == NULL)
+                {
+                    s_playerRespawnTimer += dt;
+                    if (s_playerRespawnTimer > 5.0f) s_playerRespawnTimer = 5.0f;
+                }
+                else
+                {
+                    s_playerRespawnTimer = 0.0f;
+                }
                 DaTau_Update(dt);
                 DaTau_TickZoneHold(dt, Entity_GetAgent(player->agentId) != NULL);
                 if (s_exploreRealm >= 0 && s_exploreRealm <= 3) {
@@ -847,8 +848,9 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
                             PlayerProfile_AddSkillXp(me->equippedSkills[0], (uint32_t)rewards[r].xp);
                         DaTau_OnMonsterKilled(rewards[r].monsterKind, rewards[r].element, rewards[r].isBoss);
                     }
-                    PlayerProfile_SaveGlobal();
+                    PlayerProfile_MarkDirty();
                 }
+                PlayerProfile_FlushIfDirty(dt, false);
             }
             // Match outcome comes from the host, stated from the HOST's
             // perspective — map it through team membership: same side as
@@ -980,6 +982,10 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
                     OW_RecordKills(nk);
                     PlayerProfile *prof = PlayerProfile_GetGlobal();
                     int orbBudget = 10;
+                    int netGoldTotal = 0;
+                    int netXpTotal = 0;
+                    int netLastKind = 0;
+                    int netLastElem = s_exploreRealm;
                     for (int k = 0; k < nk; k++)
                     {
                         int goldGain = (kills[k].kind == MONSTER_ELITE_GUARD) ? 60 : 12;
@@ -1004,10 +1010,17 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
                         if (kills[k].kind == MONSTER_ELITE_GUARD)
                             prof->elementalStones[s_exploreRealm % 5] += 1;
                         DaTau_OnMonsterKilled((int)kills[k].kind, kills[k].element, false);
-                        Net_HostNotifyKillReward((int)kills[k].kind, kills[k].element, false, goldGain, (int)xpGain);
+                        netGoldTotal += goldGain;
+                        netXpTotal += (int)xpGain;
+                        netLastKind = (int)kills[k].kind;
+                        netLastElem = kills[k].element;
                     }
-                    PlayerProfile_SaveGlobal();
+                    if (netGoldTotal > 0 || netXpTotal > 0) {
+                        Net_HostNotifyKillReward(netLastKind, netLastElem, false, netGoldTotal, netXpTotal);
+                    }
+                    PlayerProfile_MarkDirty();
                 }
+                PlayerProfile_FlushIfDirty(dt, false);
             }
         }
         else if (s_mode == GAME_MODE_PVP_ESCORT_1V1 || s_mode == GAME_MODE_PVP_ESCORT_2V2)
@@ -1384,6 +1397,34 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
 
         SyncRemoteWardrobeAndCasts(player->agentId);
 
+        {
+            static float s_lastStrikeVfxTime = 0.0f;
+            float nowT = (float)GetTime();
+            int dustSpawned = 0;
+            MonsterStrikeEvent strikes[16];
+            int nst = AI_PollMonsterStrikes(strikes, 16);
+            for (int si = 0; si < nst; si++)
+            {
+                float sdx = strikes[si].pos.x - player->position.x;
+                float sdz = strikes[si].pos.z - player->position.z;
+                if (sdx * sdx + sdz * sdz > 20.0f * 20.0f) continue;
+                if (strikes[si].isBite)
+                {
+                    if (dustSpawned < 1 && (nowT - s_lastStrikeVfxTime) >= 0.16f) {
+                        VFX_ComposeImpactDust(strikes[si].pos, VC_MAT_EARTH, 0.55f, 0.40f);
+                        Audio_PlaySFXAt(SFX_MELEE_HIT, strikes[si].pos);
+                        s_lastStrikeVfxTime = nowT;
+                        dustSpawned++;
+                    }
+                }
+                else if (dustSpawned < 2)
+                {
+                    Audio_PlaySFXAt(SFX_AI_CAST, strikes[si].pos);
+                    dustSpawned++;
+                }
+            }
+        }
+
         if (Net_ClientDrivesWorld())
         {
             if (touchExtraSkillIdx >= 0 && intent.castSkillSlot < 0)
@@ -1426,6 +1467,16 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
             // Apply local jump/dash & facing immediately so Khinh Công and movement feel 60 FPS native.
             Control_UpdateFacingFromIntent(&intent);
             NetPred_OnLocalIntent(player->agentId, &intent);
+            NetPred_ApplyLocalPreview(player->agentId, &intent, dt);
+            const Agent *curSelf = Entity_GetAgent(player->agentId);
+            if (curSelf)
+            {
+                intent.hasClientPose = true;
+                intent.clientPos     = curSelf->position;
+                intent.clientYaw     = Control_GetYaw();
+                intent.clientInAir   = NetPred_IsLocalAirborne(NULL);
+                intent.clientDashing = NetPred_IsLocalDashing();
+            }
             Net_ClientSubmitIntent(&intent);
         }
         else
@@ -1612,8 +1663,14 @@ void GameScreen_Draw3D(const PlayerEntity *player)
     if (s_state == GAME_DEFEAT)
         return; // the fallen player isn't drawn
 
-    // Minions & Open-World Hordes (instanced batch renderer — < 10 draw calls total)
-    HordeRenderer_Draw3D(s_hudCamera);
+    // Minions & Open-World Hordes (instanced batch renderer — < 10 draw calls total).
+    // Never run inside EnvShadow_BeginCapture(): HordeRenderer binds its own lit
+    // shaders (EndShaderMode() would unbind EnvShadow_GetDepthShader()) and
+    // already draws its own instanced ground shadow discs.
+    if (!EnvShadow_IsCapturing())
+    {
+        HordeRenderer_Draw3D(s_hudCamera);
+    }
 
     // Other heroes (teammates + opponents: remote players and bots) and a
     // snapshot-mirrored boss (client has no boss/ module state — draw the
@@ -1650,7 +1707,9 @@ void GameScreen_Draw3D(const PlayerEntity *player)
                     float dy = a->position.y - s_remotePrevPos[i].y;
                     float dz = a->position.z - s_remotePrevPos[i].z;
                     float moved = sqrtf(dx * dx + dz * dz);
-                    if (moved > 0.001f)
+                    if (fabsf(a->facingYaw) > 0.0001f)
+                        s_remoteYaw[i] = a->facingYaw;
+                    else if (moved > 0.001f)
                         s_remoteYaw[i] = atan2f(dx, dz);
 
                     float groundY = MapManager_GetGroundHeightAt(a->position.x, a->position.z);
@@ -1693,7 +1752,8 @@ void GameScreen_Draw3D(const PlayerEntity *player)
         }
     }
 
-    if (s_mode == GAME_MODE_EXPLORE && s_exploreRealm >= 0 && s_exploreRealm <= 3 && s_state == GAME_FIGHTING)
+    if (!EnvShadow_IsCapturing() &&
+        s_mode == GAME_MODE_EXPLORE && s_exploreRealm >= 0 && s_exploreRealm <= 3 && s_state == GAME_FIGHTING)
     {
         OW_Draw3D(player, s_hudCamera);
     }
@@ -1843,19 +1903,22 @@ void GameScreen_DrawHUD(const PlayerEntity *player)
     // Module 9 overlay: skill slot chips + auto-aim reticle.
     UI_DrawOverlay(player->agentId);
 
-    // Floating 2D HP bars for nearby enemies (monsters & bosses)
+    // Floating 2D HP bars for nearby enemies (damaged/targeted monsters, bosses, & hostile heroes)
     if (s_state == GAME_FIGHTING && (s_mode == GAME_MODE_EXPLORE || s_mode == GAME_MODE_PVP_ESCORT_1V1 || s_mode == GAME_MODE_PVP_ESCORT_2V2))
     {
+        int manualTgt = UI_GetManualTarget();
         for (int i = 0; i < MAX_AGENTS; i++)
         {
             if (i == player->agentId) continue;
             const Agent *ea = Entity_GetAgent(i);
             if (!ea || ea->maxHealth <= 0.0f || ea->isStatic) continue;
+            if (ea->archetype == ARCH_MINION && i != manualTgt && ea->health >= ea->maxHealth - 0.1f)
+                continue;
             bool isHostileHero = (ea->archetype == ARCH_HERO) && Entity_CanDamageTarget(player->agentId, i);
             if (ea->archetype == ARCH_HERO && !isHostileHero) continue;
             float dx = ea->position.x - player->position.x;
             float dz = ea->position.z - player->position.z;
-            if (dx * dx + dz * dz > 28.0f * 28.0f) continue;
+            if (dx * dx + dz * dz > 24.0f * 24.0f) continue;
             float headOff = (ea->archetype == ARCH_BOSS) ? 2.2f : (ea->archetype == ARCH_HERO) ? 2.05f : 1.1f;
             Vector3 head = { ea->position.x, ea->position.y + headOff, ea->position.z };
             Vector2 sp = GetWorldToScreen(head, s_hudCamera);
@@ -2028,14 +2091,87 @@ void GameScreen_DrawHUD(const PlayerEntity *player)
         WuxiaUI_DrawText(w, (float)sw * 0.5f - WuxiaUI_MeasureText(w, 20.0f) * 0.5f, 24.0f, 20.0f, WUXIA_GOLD_BRIGHT);
     }
 
-    // Match-state overlays
+    // Match-state overlays & Live Performance / P2P Telemetry Bar
     if (s_mode == GAME_MODE_EXPLORE && s_exploreRealm >= 0 && s_exploreRealm <= 3 && s_state == GAME_FIGHTING)
     {
         OW_DrawHUD(player, s_hudCamera);
+    }
+
+    if (s_state == GAME_FIGHTING)
+    {
+        static float s_hudFrameMsAvg = 16.6f;
+        static int   s_targetFpsCap  = 60;
+        float curMs = GetFrameTime() * 1000.0f;
+        if (curMs > 0.1f && curMs < 250.0f)
+            s_hudFrameMsAvg += (curMs - s_hudFrameMsAvg) * 0.08f;
+
+        if (IsKeyPressed(KEY_F4))
+        {
+            s_targetFpsCap = (s_targetFpsCap == 60) ? 45 : (s_targetFpsCap == 45) ? 30 : 60;
+            SetTargetFPS(s_targetFpsCap);
+        }
+
+        int liveMonsters = 0;
+        for (int i = 0; i < MAX_AGENTS; i++)
+        {
+            const Agent *ma = Entity_GetAgent(i);
+            if (ma && ma->archetype == ARCH_MINION && !ma->isStatic) liveMonsters++;
+        }
+
         int peerCount = (Net_GetMode() != NET_MODE_OFF) ? (Net_GetPeerCount() + 1) : 1;
-        if (peerCount > NET_EXPLORE_MAX_PLAYERS) peerCount = NET_EXPLORE_MAX_PLAYERS;
-        WuxiaUI_DrawText(TextFormat("CO-OP EOS P2P: %d/%d", peerCount, NET_EXPLORE_MAX_PLAYERS),
-                         20.0f, 86.0f, 13.0f, WUXIA_JADE);
+        int maxPeers  = (s_mode == GAME_MODE_EXPLORE) ? NET_EXPLORE_MAX_PLAYERS : NET_MAX_PLAYERS;
+        if (peerCount > maxPeers) peerCount = maxPeers;
+
+        int pingMs = Net_GetPingMs();
+        int snapHz = Net_GetSnapshotRxHz();
+        const char *netPath = Net_GetConnectionPathLabel();
+
+        Color fpsCol = (s_hudFrameMsAvg <= 18.0f) ? (Color){ 95, 240, 145, 255 }
+                     : (s_hudFrameMsAvg <= 34.0f) ? (Color){ 255, 215, 95, 255 }
+                                                  : (Color){ 255, 95, 85, 255 };
+        Color pingCol = (pingMs <= 45)  ? (Color){ 95, 240, 145, 255 }
+                      : (pingMs <= 110) ? (Color){ 255, 215, 95, 255 }
+                                        : (Color){ 255, 95, 85, 255 };
+
+        bool touchHud = UI_IsTouchControlsEnabled();
+        float teleX = 16.0f;
+        float teleY = touchHud ? 186.0f : 124.0f;
+        Rectangle teleBox = { teleX, teleY, 324.0f, 44.0f };
+        DrawRectangleRec(teleBox, (Color){ 10, 14, 22, 215 });
+        DrawRectangleLinesEx(teleBox, 1.0f, (Color){ 90, 130, 165, 180 });
+
+        DrawText(TextFormat("FPS: %d (%.1f ms)  |  QUAI: %d  |  PHONG: %d/%d",
+                            GetFPS(), s_hudFrameMsAvg, liveMonsters, peerCount, maxPeers),
+                 (int)teleX + 8, (int)teleY + 6, 12, fpsCol);
+
+        if (Net_GetMode() == NET_MODE_OFF)
+        {
+            DrawText("NET: SOLO OFFLINE (0 ms)",
+                     (int)teleX + 8, (int)teleY + 24, 12, (Color){ 165, 210, 235, 255 });
+        }
+        else
+        {
+            DrawText(TextFormat("NET: %s  |  PING: %d ms  |  SNAP: %d/s",
+                                netPath, pingMs, snapHz),
+                     (int)teleX + 8, (int)teleY + 24, 12, pingCol);
+        }
+
+        // Interactive FPS Cap button ([F4]: 60 -> 45 -> 30 FPS) + Shadow Toggle ([J])
+        Rectangle capBtn = { teleX + 330.0f, teleY, 92.0f, 21.0f };
+        if (WuxiaUI_DrawButton(capBtn, TextFormat("CAP:%d [F4]", s_targetFpsCap),
+                               (s_targetFpsCap < 60) ? WUXIA_GOLD : WUXIA_AZURE,
+                               s_targetFpsCap < 60, 10.5f))
+        {
+            s_targetFpsCap = (s_targetFpsCap == 60) ? 45 : (s_targetFpsCap == 45) ? 30 : 60;
+            SetTargetFPS(s_targetFpsCap);
+        }
+        bool shdOn = EnvShadow_IsEnabled();
+        Rectangle shdBtn = { teleX + 330.0f, teleY + 23.0f, 92.0f, 21.0f };
+        if (WuxiaUI_DrawButton(shdBtn, shdOn ? "BONG:BAT [J]" : "BONG:TAT [J]",
+                               shdOn ? WUXIA_JADE : WUXIA_CRIMSON, shdOn, 10.5f))
+        {
+            EnvShadow_SetEnabled(!shdOn);
+        }
     }
 
     if (s_state == GAME_ARENA_INTRO)

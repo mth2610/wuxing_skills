@@ -45,6 +45,8 @@ typedef struct {
 void           PlayerProfile_InitGlobal(const char *savePath);
 PlayerProfile *PlayerProfile_GetGlobal(void);
 bool           PlayerProfile_SaveGlobal(void);
+void           PlayerProfile_MarkDirty(void);
+void           PlayerProfile_FlushIfDirty(float dt, bool forceNow);
 bool           PlayerProfile_LoadFromFile(PlayerProfile *out, const char *filePath);
 bool           PlayerProfile_SaveToFile(const PlayerProfile *p, const char *filePath);
 

@@ -27,6 +27,9 @@ void NetPred_Tick(float dt, int localHeroId);
 // Returns true while the client's local predicted Khinh Công jump is airborne.
 bool NetPred_IsLocalAirborne(float *outVelY);
 
+// Returns true while the client's local predicted dash burst (i-frame) is active.
+bool NetPred_IsLocalDashing(void);
+
 // Consumes 1 (first jump) or 2 (2nd air-jump somersault) for client jump animation.
 int NetPred_ConsumeLocalJumpFired(void);
 

@@ -130,6 +130,9 @@ typedef struct {
     int            lastCastSkillIndex;  // Last skill cast by this agent (for direct use-based XP)
     float          lastCastDamageScale; // PvE skill-level damage multiplier (ignored vs ARCH_HERO)
     float          hitFlashTimer;       // Brief white hit-flash feedback (seconds remaining)
+    float          dodgeGraceTimer;     // I-frame grace window after Dash/Jump (seconds remaining)
+    float          facingYaw;           // World facing angle in radians (replicated in 18B snapshot)
+    unsigned char  netMonsterMeta;      // Packed [bits 0..1 kind | bits 2..4 aiState | bits 5..7 telegraph]
 } Agent;
 
 // Sized for the real target scale (up to 6 real players + a mixed pool of
@@ -168,6 +171,7 @@ bool Entity_PerformJump(int agentId, float verticalForce, Vector3 horizontalVelo
 void Entity_SetRunning(int agentId, bool running);
 bool Entity_IsRunning(int agentId);
 void Entity_Dash(int agentId, Vector3 direction, float speed);
+void Entity_ArmDodgeGrace(int agentId, float duration);
 bool Entity_CheckRingOut(int agentId);
 
 // Ring-out bounds are PER-MAP now (default: DEFAULT_ARENA's circle, center
@@ -311,6 +315,9 @@ void Entity_NetSyncAgent(int agentId, Vector3 pos, float health, float maxHealth
                          AgentTeam team, AgentArchetype archetype,
                          bool taiji, bool meditating, bool stealthed, bool duelFlag);
 void Entity_NetSyncEnd(void);
+void Entity_SetFacingYaw(int agentId, float yawRadians);
+void Entity_SetNetMonsterMeta(int agentId, unsigned char packedMeta);
+void Entity_TickClientVisuals(float dt);
 
 // --- Speed multiplier read (Module 1) ---
 // Product of all active modifier slots' speedMult (>0 && duration>0).

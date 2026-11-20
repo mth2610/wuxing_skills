@@ -245,6 +245,9 @@ void AI_Update(float dt) {
         pos.z += (dz / dist) * speed * dt;
         pos.y = MapManager_GetGroundHeightAt(pos.x, pos.z);
         Entity_SetPosition(i, pos);
+        Entity_SetFacingYaw(i, atan2f(dx, dz));
+        Entity_SetNetMonsterMeta(i, (unsigned char)((MONSTER_RANGED_CASTER & 0x3u) |
+                                                    ((MON_STATE_CHASE & 0x7u) << 2)));
     }
 }
 
@@ -318,14 +321,14 @@ static void SpawnMinionBolt(int ownerId, int element, Vector3 startPos, Vector3 
     float len = sqrtf(dx * dx + dz * dz);
     if (len < 0.01f) return;
 
-    float speed = 11.5f;
+    float speed = 8.4f;
     s_bolts[slot] = (AIMinionBolt){
         .active       = true,
         .ownerAgentId = ownerId,
         .element      = element,
         .pos          = (Vector3){ startPos.x, startPos.y + 0.65f, startPos.z },
         .vel          = (Vector3){ (dx / len) * speed, 0.0f, (dz / len) * speed },
-        .radius       = 0.28f,
+        .radius       = 0.24f,
         .damage       = 6.0f,
         .knockback    = 1.2f,
         .life         = 2.2f
@@ -357,6 +360,22 @@ static void UpdateMinionBolts(float dt) {
         float gy = MapManager_GetGroundHeightAt(b->pos.x, b->pos.z);
         if (gy < -50.0f) { b->active = false; continue; }
         b->pos.y = gy + 0.65f;
+
+        // If the bolt reaches an ally hero who is currently dashing, jumping,
+        // or inside their post-dodge grace window, let the bolt pass harmlessly
+        // instead of submitting a combat collider that would hit them.
+        bool skipForDodge = false;
+        int nearHeroes[8];
+        int nh = Entity_GetNearbyTargetsTeam(b->pos, b->radius + 0.55f, TEAM_ALLY, nearHeroes, 8);
+        for (int h = 0; h < nh; h++) {
+            const Agent *ha = Entity_GetAgent(nearHeroes[h]);
+            if (ha && ha->archetype == ARCH_HERO &&
+                (ha->dashTimer > 0.0f || ha->dodgeGraceTimer > 0.0f || ha->vState == AGENT_JUMPING)) {
+                skipForDodge = true;
+                break;
+            }
+        }
+        if (skipForDodge) continue;
 
         if (!Combat_SubmitProjectile(b->ownerAgentId, (CombatElement)b->element,
                                      b->pos, b->radius, b->damage, b->knockback,
@@ -893,18 +912,22 @@ static void UpdateCampMonsters(float dt) {
         }
 
         if (me->vState != AGENT_GROUNDED || Entity_IsCrowdControlled(cm->agentId)) {
-            // Leaper landing strike check while airborne
+            // Leaper landing strike check while airborne: forward cone + dodge grace check
             if (cm->kind == MONSTER_LEAPER && cm->aiState == MON_STATE_STRIKE && !cm->strikeDealt) {
                 if (cm->targetId >= 0) {
                     const Agent *t = Entity_GetAgent(cm->targetId);
                     if (t) {
                         float ldx = t->position.x - me->position.x;
                         float ldz = t->position.z - me->position.z;
-                        if (ldx * ldx + ldz * ldz <= 1.85f * 1.85f) {
+                        float lDistSq = ldx * ldx + ldz * ldz;
+                        float lDot = ldx * cm->strikeDir.x + ldz * cm->strikeDir.z;
+                        if (lDistSq <= 1.45f * 1.45f && (lDistSq < 0.01f || lDot >= sqrtf(lDistSq) * 0.35f)) {
                             cm->strikeDealt = true;
-                            Vector3 kb = (Vector3){ cm->strikeDir.x * 2.0f, 0.0f, cm->strikeDir.z * 2.0f };
-                            Entity_ApplyDamage(cm->targetId, 8.0f, kb);
-                            PushStrikeEvent(t->position, cm->element, cm->kind, true);
+                            if (t->dashTimer <= 0.0f && t->dodgeGraceTimer <= 0.0f && t->vState != AGENT_JUMPING) {
+                                Vector3 kb = (Vector3){ cm->strikeDir.x * 2.0f, 0.0f, cm->strikeDir.z * 2.0f };
+                                Entity_ApplyDamage(cm->targetId, 8.0f, kb);
+                            }
+                            PushStrikeEvent(me->position, cm->element, cm->kind, true);
                         }
                     }
                 }
@@ -1008,42 +1031,39 @@ static void UpdateCampMonsters(float dt) {
         float dirX = (dist > 0.001f) ? (dx / dist) : 0.0f;
         float dirZ = (dist > 0.001f) ? (dz / dist) : 1.0f;
 
-        // Handle active TELEGRAPH -> STRIKE -> RECOVER combat state machine
+        // Handle active TELEGRAPH -> STRIKE -> RECOVER combat state machine.
+        // Direction (cm->strikeDir & cm->yaw) is LOCKED at telegraph start so
+        // dodging sideways during the red telegraph window reliably evades the attack!
         if (cm->aiState == MON_STATE_TELEGRAPH) {
             cm->stateTimer -= dt;
-            cm->yaw = atan2f(dirX, dirZ);
             if (cm->stateTimer <= 0.0f) {
                 cm->aiState = MON_STATE_STRIKE;
                 cm->strikeDealt = false;
-                cm->strikeDir = (Vector3){ dirX, 0.0f, dirZ };
                 if (cm->kind == MONSTER_RANGED_CASTER) {
-                    // Predictive spit bolt (no heavy CastSkill!)
-                    Vector3 aimPos = t->position;
-                    for (int h = 0; h < heroCount; h++) {
-                        if (heroes[h].agentId == cm->targetId) {
-                            aimPos.x += heroes[h].vel.x * 0.25f;
-                            aimPos.z += heroes[h].vel.z * 0.25f;
-                            break;
-                        }
-                    }
+                    // Fire strictly along locked telegraphed strikeDir (1:1 identical on Host and Client!)
+                    Vector3 aimPos = {
+                        me->position.x + cm->strikeDir.x * 10.0f,
+                        me->position.y,
+                        me->position.z + cm->strikeDir.z * 10.0f
+                    };
                     SpawnMinionBolt(cm->agentId, cm->element, me->position, aimPos);
                     PushStrikeEvent(me->position, cm->element, cm->kind, false);
                     cm->strikeDealt = true;
-                    cm->stateTimer = 0.12f;
-                    cm->attackCooldown = 1.85f;
+                    cm->stateTimer = 0.14f;
+                    cm->attackCooldown = 1.95f;
                 } else if (cm->kind == MONSTER_LEAPER) {
-                    Vector3 leapVel = { dirX * 9.0f, 0.0f, dirZ * 9.0f };
-                    Entity_ApplyLaunch(cm->agentId, 3.8f, leapVel);
+                    Vector3 leapVel = { cm->strikeDir.x * 7.8f, 0.0f, cm->strikeDir.z * 7.8f };
+                    Entity_ApplyLaunch(cm->agentId, 3.6f, leapVel);
                     PushStrikeEvent(me->position, cm->element, cm->kind, true);
                     cm->stateTimer = 0.35f;
-                    cm->attackCooldown = 1.4f;
+                    cm->attackCooldown = 1.5f;
                 } else if (cm->kind == MONSTER_ELITE_GUARD) {
-                    cm->stateTimer = 0.35f;
-                    cm->attackCooldown = 1.6f;
+                    cm->stateTimer = 0.32f;
+                    cm->attackCooldown = 1.7f;
                 } else {
-                    // Fast Swarmer bite lunge
+                    // Swarmer bite lunge along locked strikeDir
                     cm->stateTimer = 0.16f;
-                    cm->attackCooldown = 0.85f;
+                    cm->attackCooldown = 0.95f;
                 }
             }
             continue;
@@ -1052,7 +1072,7 @@ static void UpdateCampMonsters(float dt) {
         if (cm->aiState == MON_STATE_STRIKE) {
             cm->stateTimer -= dt;
             if (cm->kind == MONSTER_SWARM_MELEE || cm->kind == MONSTER_ELITE_GUARD) {
-                float lungeSpd = (cm->kind == MONSTER_ELITE_GUARD) ? 8.5f : 9.8f;
+                float lungeSpd = (cm->kind == MONSTER_ELITE_GUARD) ? 6.8f : 7.2f;
                 Vector3 pos = me->position;
                 pos.x += cm->strikeDir.x * lungeSpd * dt;
                 pos.z += cm->strikeDir.z * lungeSpd * dt;
@@ -1062,20 +1082,29 @@ static void UpdateCampMonsters(float dt) {
                     MapManager_ResolveCollision(&pos, 0.32f, 0.45f, &pos.y);
                     Entity_SetPosition(cm->agentId, pos);
                 }
-                if (!cm->strikeDealt && dist <= (cm->kind == MONSTER_ELITE_GUARD ? 2.4f : 1.75f)) {
+                float hdx = t->position.x - pos.x;
+                float hdz = t->position.z - pos.z;
+                float hDist = sqrtf(hdx * hdx + hdz * hdz);
+                float hitRad = (cm->kind == MONSTER_ELITE_GUARD) ? 1.80f : 1.32f;
+                float fwdDot = (hDist > 0.01f) ? ((hdx * cm->strikeDir.x + hdz * cm->strikeDir.z) / hDist) : 1.0f;
+                // Require target to be inside the forward strike cone (fwdDot >= 0.42f, ~65 deg half-angle)
+                // and not currently dashing, jumping, or in post-dodge grace window.
+                if (!cm->strikeDealt && hDist <= hitRad && fwdDot >= 0.42f) {
                     cm->strikeDealt = true;
-                    float dmg = (cm->kind == MONSTER_ELITE_GUARD) ? 14.0f : 5.0f;
-                    Vector3 kb = { cm->strikeDir.x * 1.5f, 0.0f, cm->strikeDir.z * 1.5f };
-                    Entity_ApplyDamage(cm->targetId, dmg, kb);
-                    if (cm->kind == MONSTER_ELITE_GUARD) {
-                        Entity_ApplyLaunch(cm->targetId, 2.8f, kb);
+                    if (t->dashTimer <= 0.0f && t->dodgeGraceTimer <= 0.0f && t->vState != AGENT_JUMPING) {
+                        float dmg = (cm->kind == MONSTER_ELITE_GUARD) ? 14.0f : 5.0f;
+                        Vector3 kb = { cm->strikeDir.x * 1.5f, 0.0f, cm->strikeDir.z * 1.5f };
+                        Entity_ApplyDamage(cm->targetId, dmg, kb);
+                        if (cm->kind == MONSTER_ELITE_GUARD) {
+                            Entity_ApplyLaunch(cm->targetId, 2.8f, kb);
+                        }
                     }
-                    PushStrikeEvent(t->position, cm->element, cm->kind, true);
+                    PushStrikeEvent(pos, cm->element, cm->kind, true);
                 }
             }
             if (cm->stateTimer <= 0.0f) {
                 cm->aiState = MON_STATE_RECOVER;
-                cm->stateTimer = (cm->kind == MONSTER_ELITE_GUARD) ? 0.85f : 0.45f;
+                cm->stateTimer = (cm->kind == MONSTER_ELITE_GUARD) ? 0.85f : 0.48f;
             }
             continue;
         }
@@ -1086,28 +1115,36 @@ static void UpdateCampMonsters(float dt) {
             continue;
         }
 
-        // CHASE / RALLY state: check strike trigger
+        // CHASE / RALLY state: check strike trigger & lock telegraph direction immediately
         cm->aiState = MON_STATE_CHASE;
         if (cm->attackCooldown <= 0.0f && !Entity_IsStunned(cm->agentId)) {
-            if (cm->kind == MONSTER_RANGED_CASTER && dist <= 12.5f && dist >= 3.0f) {
+            if (cm->kind == MONSTER_RANGED_CASTER && dist <= 12.0f && dist >= 3.0f) {
                 cm->aiState = MON_STATE_TELEGRAPH;
-                cm->telegraphMax = 0.38f;
+                cm->telegraphMax = 0.48f;
                 cm->stateTimer = cm->telegraphMax;
+                cm->strikeDir = (Vector3){ dirX, 0.0f, dirZ };
+                cm->yaw = atan2f(dirX, dirZ);
                 continue;
-            } else if (cm->kind == MONSTER_LEAPER && dist <= 6.8f && dist >= 2.8f) {
+            } else if (cm->kind == MONSTER_LEAPER && dist <= 6.5f && dist >= 2.8f) {
                 cm->aiState = MON_STATE_TELEGRAPH;
-                cm->telegraphMax = 0.32f;
+                cm->telegraphMax = 0.48f;
                 cm->stateTimer = cm->telegraphMax;
+                cm->strikeDir = (Vector3){ dirX, 0.0f, dirZ };
+                cm->yaw = atan2f(dirX, dirZ);
                 continue;
-            } else if (cm->kind == MONSTER_ELITE_GUARD && dist <= 5.5f) {
+            } else if (cm->kind == MONSTER_ELITE_GUARD && dist <= 4.8f) {
                 cm->aiState = MON_STATE_TELEGRAPH;
-                cm->telegraphMax = 0.50f;
+                cm->telegraphMax = 0.58f;
                 cm->stateTimer = cm->telegraphMax;
+                cm->strikeDir = (Vector3){ dirX, 0.0f, dirZ };
+                cm->yaw = atan2f(dirX, dirZ);
                 continue;
-            } else if (cm->kind == MONSTER_SWARM_MELEE && dist <= 2.4f) {
+            } else if (cm->kind == MONSTER_SWARM_MELEE && dist <= 2.15f) {
                 cm->aiState = MON_STATE_TELEGRAPH;
-                cm->telegraphMax = 0.24f;
+                cm->telegraphMax = 0.45f;
                 cm->stateTimer = cm->telegraphMax;
+                cm->strikeDir = (Vector3){ dirX, 0.0f, dirZ };
+                cm->yaw = atan2f(dirX, dirZ);
                 continue;
             }
         }
@@ -1201,6 +1238,72 @@ static void UpdateCampMonsters(float dt) {
         Entity_SetPosition(cm->agentId, cand);
         cm->yaw = atan2f(steerX, steerZ);
         cm->animPhase += baseSpd * dt * 3.8f;
+    }
+
+    // Replicate monster kind, AI state, telegraph fraction, and facing yaw onto
+    // Agent so net/net.c packs them into the 18B snapshot at 0 extra byte cost.
+    for (int i = 0; i < AI_MAX_CAMP_MONSTERS; i++) {
+        const CampMonster *cm = &s_campMonsters[i];
+        if (!cm->used || cm->agentId < 0 || !Entity_GetAgent(cm->agentId)) continue;
+        float tFrac = 0.0f;
+        if (cm->aiState == MON_STATE_TELEGRAPH && cm->telegraphMax > 0.01f) {
+            tFrac = 1.0f - (cm->stateTimer / cm->telegraphMax);
+            if (tFrac < 0.0f) tFrac = 0.0f;
+            if (tFrac > 1.0f) tFrac = 1.0f;
+        } else if (cm->aiState == MON_STATE_STRIKE) {
+            tFrac = 1.0f;
+        }
+        unsigned int tQuant = (unsigned int)(tFrac * 7.0f + 0.5f);
+        if (tQuant > 7u) tQuant = 7u;
+        unsigned char packed = (unsigned char)(((unsigned int)cm->kind & 0x3u) |
+                                               (((unsigned int)cm->aiState & 0x7u) << 2) |
+                                               ((tQuant & 0x7u) << 5));
+        Entity_SetNetMonsterMeta(cm->agentId, packed);
+        Entity_SetFacingYaw(cm->agentId, cm->yaw);
+    }
+}
+
+void AI_ClientVisualTick(float dt) {
+    if (dt <= 0.0f) return;
+    static unsigned char s_clientPrevState[MAX_AGENTS];
+    for (int i = 0; i < MAX_AGENTS; i++) {
+        const Agent *a = Entity_GetAgent(i);
+        if (!a || a->archetype != ARCH_MINION || a->isStatic) {
+            s_clientPrevState[i] = 0;
+            continue;
+        }
+        MonsterKind kind = (MonsterKind)(a->netMonsterMeta & 0x3u);
+        MonsterAIState st = (MonsterAIState)((a->netMonsterMeta >> 2) & 0x7u);
+        if (st == MON_STATE_STRIKE && s_clientPrevState[i] != (unsigned char)MON_STATE_STRIKE) {
+            float dirX = sinf(a->facingYaw);
+            float dirZ = cosf(a->facingYaw);
+            if (kind == MONSTER_RANGED_CASTER) {
+                Vector3 aimPos = { a->position.x + dirX * 10.0f, a->position.y, a->position.z + dirZ * 10.0f };
+                SpawnMinionBolt(i, a->currentElement, a->position, aimPos);
+                PushStrikeEvent(a->position, a->currentElement, kind, false);
+            } else {
+                Vector3 bitePos = { a->position.x + dirX * 1.15f, a->position.y, a->position.z + dirZ * 1.15f };
+                PushStrikeEvent(bitePos, a->currentElement, kind, true);
+            }
+        }
+        s_clientPrevState[i] = (unsigned char)st;
+    }
+
+    // Advance client-side visual minion bolts at 60 FPS
+    for (int i = 0; i < AI_MAX_MINION_BOLTS; i++) {
+        AIMinionBolt *b = &s_bolts[i];
+        if (!b->active) continue;
+        b->life -= dt;
+        if (b->life <= 0.0f) { b->active = false; continue; }
+        b->pos.x += b->vel.x * dt;
+        b->pos.z += b->vel.z * dt;
+        float gy = MapManager_GetGroundHeightAt(b->pos.x, b->pos.z);
+        if (gy < -50.0f) { b->active = false; continue; }
+        b->pos.y = gy + 0.65f;
+        int hitIds[4];
+        if (Entity_GetNearbyTargetsTeam(b->pos, b->radius + 0.35f, TEAM_ALLY, hitIds, 4) > 0) {
+            b->active = false;
+        }
     }
 }
 

@@ -37,6 +37,9 @@ bool    Net_IsPeerConnected(void);
 //   CLIENT: send the local intent @30Hz, apply arriving snapshots to the
 //         local pool (Entity_Net* sync — deactivates unmirrored agents).
 void Net_Tick(float dt);
+// Lightweight mid-frame IO poll (services incoming UDP packets & ping replies
+// between render passes so 30 FPS frames don't add +33ms of polling jitter).
+void Net_PumpSubFrame(void);
 
 // Explore mode toggle: enables 55m interest-culled snapshots & 5-player cap.
 void Net_SetExploreMode(bool on);
@@ -179,5 +182,10 @@ void Net_VoiceSetMutedAll(bool muted);
 bool Net_VoiceIsMutedAll(void);
 bool Net_VoiceIsAnyoneSpeaking(void);
 int  Net_VoiceGetSpeakingCount(void);
+
+// --- Live P2P Telemetry (Ping RTT, Snapshot Hz, Direct vs Relay path) ---
+int         Net_GetPingMs(void);
+int         Net_GetSnapshotRxHz(void);
+const char *Net_GetConnectionPathLabel(void);
 
 #endif // NET_TRANSPORT_H

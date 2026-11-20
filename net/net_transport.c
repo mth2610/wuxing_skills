@@ -19,9 +19,10 @@
 #include <string.h>
 
 // Channels: 0 = unreliable stream (intents / snapshots), 1 = reliable
-// control (hello / match state / roster).
+// control (hello / match state / roster), 2 = fast probe (PING / PONG on EOS).
 #define NET_CH_STREAM  0
 #define NET_CH_CONTROL 1
+#define NET_CH_PROBE   2
 
 #define NET_SNAPSHOT_HZ 30.0f
 #define NET_INTENT_HZ   60.0f
@@ -56,8 +57,23 @@ static const Vector3 REMOTE_SPAWN = { 54.0f, 0.0f, 41.0f };
                           // keeps proving liveness — the host drops a peer
                           // silent for NET_PEER_TIMEOUT (EOS has no
                           // process-kill disconnect event of its own).
+#define NET_CTRL_PONG  11 // host → client 2Hz reply to NET_CTRL_PING for exact UDP RTT
+#define NET_CTRL_PING  12 // client → host 2Hz pure-UDP probe on NET_CH_STREAM
 #define NET_PEER_TIMEOUT 8.0f
 typedef struct { unsigned char type, version, value; } NetCtrl;
+
+extern const char *Net_EosGetNetworkPathLabel(void);
+
+static int    s_pingMs         = 0;
+static double s_lastJoinSendAt = 0.0;
+static double s_pingSendAt[256];
+static int    s_rttRing[24];
+static int    s_rttRingCount   = 0;
+static int    s_rttRingIdx     = 0;
+static unsigned char s_joinSeq = 0;
+static int    s_snapRxWindow   = 0;
+static int    s_snapRxHz       = 0;
+static float  s_snapRxTimer    = 0.0f;
 
 // --- Session state -----------------------------------------------------------
 
@@ -76,6 +92,7 @@ typedef struct {
     unsigned char team;       // 0/1 — auto-balanced at join (lobby reassigns in A2)
     PlayerIntent  held;       // last held-state intent (movement)
     float         silentFor;  // seconds since their last packet (liveness)
+    float         respawnTimer; // 5s auto-respawn timer when hero dies in Explore mode
 } HostPeer;
 static HostPeer s_peers[NET_MAX_PLAYERS - 1];
 
@@ -210,7 +227,41 @@ void Net_Stop(void) {
     s_botCount[0] = s_botCount[1] = 0;
     s_matchStart = false;
     s_exploreMode = false;
+    s_pingMs = 0;
+    s_rttRingCount = 0;
+    s_rttRingIdx = 0;
+    s_snapRxWindow = 0;
+    s_snapRxHz = 0;
+    s_snapRxTimer = 0.0f;
     NetPred_Reset();
+}
+
+int Net_GetPingMs(void) {
+    if (s_mode == NET_MODE_OFF) return 0;
+    if (s_mode == NET_MODE_CLIENT && s_link != NULL) return (int)s_link->roundTripTime;
+    if (s_mode == NET_MODE_HOST && s_host != NULL) {
+        for (int i = 0; i < NET_MAX_PLAYERS - 1; i++) {
+            if (s_peers[i].used && s_peers[i].enetPeer != NULL)
+                return (int)s_peers[i].enetPeer->roundTripTime;
+        }
+    }
+    return s_pingMs;
+}
+
+int Net_GetSnapshotRxHz(void) {
+    if (s_mode == NET_MODE_OFF) return 0;
+    if (s_mode == NET_MODE_HOST) return s_connected ? (int)NET_SNAPSHOT_HZ : 0;
+    return s_snapRxHz;
+}
+
+const char *Net_GetConnectionPathLabel(void) {
+    if (s_mode == NET_MODE_OFF) return "SOLO";
+    if (s_backendSend != NULL) {
+        if (!s_connected || (s_mode == NET_MODE_HOST && Net_GetPeerCount() == 0))
+            return "EOS HOST (0 KHACH)";
+        return Net_EosGetNetworkPathLabel();
+    }
+    return s_connected ? "LAN ENET" : "LAN HOST";
 }
 
 void Net_SetExploreMode(bool on) { s_exploreMode = on; }
@@ -258,10 +309,12 @@ void Net_ClientSubmitIntent(const PlayerIntent *intent) {
         s_clientIntent.basicAttack = keepAtk;
     }
 
-    // Immediate zero-queue flush for discrete actions (skills, attacks, Khinh Công, dash, meditate)
+    // Immediate flush for discrete actions (skills, attacks, Khinh Công, dash,
+    // meditate) OR when the 60Hz intent interval has elapsed, so intents sent
+    // during GameScreen_Update leave on the same frame with zero queueing lag.
     bool hasEdge = (s_clientIntent.castSkillSlot >= 0 || s_clientIntent.basicAttack > 0 ||
                     s_clientIntent.jump || s_clientIntent.dash || s_clientIntent.meditate);
-    if (hasEdge && s_connected) {
+    if ((hasEdge || s_sendAccum >= 1.0f / NET_INTENT_HZ) && s_connected) {
         unsigned char buf[128];
         int bytes = Net_PackIntent(&s_clientIntent, buf, (int)sizeof(buf));
         if (bytes > 0) {
@@ -665,6 +718,28 @@ static void HostApplyRemoteEdges(int idx, const PlayerIntent *in) {
     const Agent *a = Entity_GetAgent(agentId);
     if (a == NULL) return;
 
+    // Hybrid Client-Authoritative Hero Pose: trust client's smooth local
+    // movement within a speed/latency sanity envelope (<= 8.5m) so melee,
+    // skills, and monster hitboxes evaluate at the client's true position.
+    if (in->hasClientPose && !Entity_IsCrowdControlled(agentId)) {
+        float dx = in->clientPos.x - a->position.x;
+        float dz = in->clientPos.z - a->position.z;
+        if (dx * dx + dz * dz <= 8.5f * 8.5f) {
+            Vector3 pos = in->clientPos;
+            float gy = MapManager_GetGroundHeightAt(pos.x, pos.z);
+            MapManager_ResolveCollision(&pos, 0.35f, 0.45f, &gy);
+            if (!in->clientInAir && a->vState == AGENT_GROUNDED) {
+                pos.y = gy;
+            } else if (pos.y < gy) {
+                pos.y = gy;
+            }
+            Entity_SetPosition(agentId, pos);
+            a = Entity_GetAgent(agentId);
+            if (a == NULL) return;
+        }
+        Entity_SetFacingYaw(agentId, in->clientYaw);
+    }
+
     if (in->jump && (a->vState == AGENT_GROUNDED || a->vState == AGENT_JUMPING) &&
         !Entity_IsCrowdControlled(agentId)) {
         float len = sqrtf(in->moveDir.x * in->moveDir.x + in->moveDir.y * in->moveDir.y);
@@ -675,10 +750,20 @@ static void HostApplyRemoteEdges(int idx, const PlayerIntent *in) {
         }
         float vForce = (a->vState == AGENT_JUMPING) ? (REMOTE_JUMP_FORCE * 1.05f) : REMOTE_JUMP_FORCE;
         Entity_PerformJump(agentId, vForce, hv);
+        Entity_ArmDodgeGrace(agentId, 0.50f);
     }
-    if (in->dash) {
-        Vector3 dir = { in->moveDir.x, 0.0f, in->moveDir.y };
-        Entity_Dash(agentId, dir, REMOTE_DASH_MPS); // gated inside
+    if (in->hasClientPose && in->clientInAir) {
+        Entity_ArmDodgeGrace(agentId, 0.25f);
+    }
+    if (in->dash || (in->hasClientPose && in->clientDashing)) {
+        Entity_ArmDodgeGrace(agentId, 0.60f);
+        if (a->dashTimer <= 0.0f) {
+            float len = sqrtf(in->moveDir.x * in->moveDir.x + in->moveDir.y * in->moveDir.y);
+            Vector3 dir = (len > 0.0001f)
+                ? (Vector3){ in->moveDir.x, 0.0f, in->moveDir.y }
+                : (Vector3){ sinf(a->facingYaw), 0.0f, cosf(a->facingYaw) };
+            Entity_Dash(agentId, dir, REMOTE_DASH_MPS); // gated inside, arms dashTimer i-frames
+        }
     }
     if (in->meditate) Entity_StartMeditate(agentId);
 
@@ -713,10 +798,21 @@ static void HostApplyRemoteEdges(int idx, const PlayerIntent *in) {
 
 static void HostMoveRemotes(float dt) {
     for (int i = 0; i < NET_MAX_PLAYERS - 1; i++) {
-        if (!s_peers[i].used || s_peers[i].agentId < 0) continue;
+        if (!s_peers[i].used) continue;
+        const Agent *a = (s_peers[i].agentId >= 0) ? Entity_GetAgent(s_peers[i].agentId) : NULL;
+        if (a == NULL) {
+            if (s_exploreMode) {
+                s_peers[i].respawnTimer += dt;
+                if (s_peers[i].respawnTimer >= 5.0f) {
+                    s_peers[i].respawnTimer = 0.0f;
+                    HostSpawnPeerHero(i);
+                    HostBroadcastRoster();
+                }
+            }
+            continue;
+        }
+        s_peers[i].respawnTimer = 0.0f;
         const PlayerIntent *in = &s_peers[i].held;
-        const Agent *a = Entity_GetAgent(s_peers[i].agentId);
-        if (a == NULL) continue;
         // Zone rule (Đợt A5): Mộc ẩn hình trong Rừng — same as the local player.
         Entity_SetStealth(s_peers[i].agentId,
                           GameRules_GrantsStealth(a->currentElement,
@@ -729,7 +825,11 @@ static void HostMoveRemotes(float dt) {
             pos.x += (in->moveDir.x / len) * speed * dt;
             pos.z += (in->moveDir.y / len) * speed * dt;
             pos.y = MapManager_GetGroundHeightAt(pos.x, pos.z);
+            MapManager_ResolveCollision(&pos, 0.35f, 0.45f, &pos.y);
             Entity_SetPosition(s_peers[i].agentId, pos);
+            if (!in->hasClientPose) {
+                Entity_SetFacingYaw(s_peers[i].agentId, atan2f(in->moveDir.x, in->moveDir.y));
+            }
         }
     }
 }
@@ -750,6 +850,7 @@ static void ClientStoreSnapshot(const unsigned char *data, int len) {
     static bool s_loggedFirst = false;
     int n = Net_UnpackAgentSnapshot(s_snapLatest, MAX_AGENTS, data, len);
     if (n < 0) return;
+    s_snapRxWindow++;
     NetPred_OnSnapshot(s_snapLatest, n, s_localHeroId);
     if (!s_loggedFirst) {
         s_loggedFirst = true;
@@ -797,6 +898,12 @@ static void HandlePacket(ENetPeer *ep, void *ref, int channel,
         }
         s_peers[idx].silentFor = 0.0f; // any packet proves liveness
         if (channel == NET_CH_STREAM) {
+            if (len == (int)sizeof(NetCtrl) && data[0] == NET_CTRL_PING &&
+                data[1] == NET_PROTOCOL_VERSION) {
+                NetCtrl pong = { NET_CTRL_PONG, NET_PROTOCOL_VERSION, data[2] };
+                SendToPeer(&s_peers[idx], NET_CH_STREAM, &pong, (int)sizeof(pong), false);
+                return;
+            }
             PlayerIntent in;
             if (Net_UnpackIntent(&in, data, len)) {
                 HostApplyRemoteEdges(idx, &in);
@@ -846,7 +953,13 @@ static void HandlePacket(ENetPeer *ep, void *ref, int channel,
                 PackWardrobePacket(fwd, agentId, slotCount, data + 4);
                 HostBroadcast(NET_CH_CONTROL, fwd, (int)sizeof(fwd), true);
             }
-        } // other NET_CH_CONTROL from a client = the JOIN knock — no payload
+        } else if (channel == NET_CH_CONTROL &&
+                   len == (int)sizeof(NetCtrl) &&
+                   data[0] == NET_CTRL_JOIN &&
+                   data[1] == NET_PROTOCOL_VERSION) {
+            NetCtrl pong = { NET_CTRL_PONG, NET_PROTOCOL_VERSION, data[2] };
+            SendToPeer(&s_peers[idx], NET_CH_CONTROL, &pong, (int)sizeof(pong), false);
+        }
     } else if (s_mode == NET_MODE_CLIENT) {
         if (channel == NET_CH_CONTROL) {
             if (len == NET_CAST_PACKET_BYTES && data[0] == NET_CTRL_CAST &&
@@ -917,6 +1030,11 @@ static void HandlePacket(ENetPeer *ep, void *ref, int channel,
                     } else if (ctrl.type == NET_CTRL_START) {
                         s_matchStart = true;
                         TraceLog(LOG_INFO, "[NET] match start received");
+                    } else if (ctrl.type == NET_CTRL_PONG && ctrl.value == s_joinSeq) {
+                        int rtt = (int)((GetTime() - s_lastJoinSendAt) * 1000.0);
+                        if (rtt >= 0 && rtt < 5000) {
+                            s_pingMs = (s_pingMs > 0) ? ((s_pingMs * 3 + rtt) / 4) : rtt;
+                        }
                     }
                 }
             } else {
@@ -926,6 +1044,43 @@ static void HandlePacket(ENetPeer *ep, void *ref, int channel,
                 if (n >= 0) s_clientRosterCount = n;
             }
         } else if (channel == NET_CH_STREAM) {
+            if (len == (int)sizeof(NetCtrl) && data[0] == NET_CTRL_PONG &&
+                data[1] == NET_PROTOCOL_VERSION) {
+                unsigned char pseq = data[2];
+                double sentAt = s_pingSendAt[pseq];
+                if (sentAt > 0.0) {
+                    int rtt = (int)((GetTime() - sentAt) * 1000.0 + 0.5);
+                    if (rtt >= 1 && rtt < 2000) {
+                        // Minimum-filter over the last 24 PONGs (~1.5s window):
+                        // eliminates Host/Client render-frame phase wait (which
+                        // only adds positive delay) and locks onto true wire RTT!
+                        s_rttRing[s_rttRingIdx] = rtt;
+                        s_rttRingIdx = (s_rttRingIdx + 1) % 24;
+                        if (s_rttRingCount < 24) s_rttRingCount++;
+                        int minRtt = s_rttRing[0];
+                        for (int k = 1; k < s_rttRingCount; k++) {
+                            if (s_rttRing[k] < minRtt) minRtt = s_rttRing[k];
+                        }
+                        if (s_pingMs <= 0 || minRtt <= s_pingMs) {
+                            s_pingMs = minRtt;
+                        } else {
+                            s_pingMs = (s_pingMs * 3 + minRtt) / 4;
+                        }
+                    }
+                }
+                return;
+            }
+            // Piggyback a fast PING probe onto every arriving snapshot:
+            // since a snapshot means the Host JUST called EosSend/EOS_Platform_Tick,
+            // the Host's main thread is guaranteed to be awake in its update phase!
+            {
+                s_joinSeq++;
+                double nowT = GetTime();
+                s_lastJoinSendAt = nowT;
+                s_pingSendAt[s_joinSeq] = nowT;
+                NetCtrl ping = { NET_CTRL_PING, NET_PROTOCOL_VERSION, s_joinSeq };
+                ClientSendToHost(NET_CH_STREAM, &ping, (int)sizeof(ping), false);
+            }
             ClientStoreSnapshot(data, len);
         }
     }
@@ -950,11 +1105,10 @@ void NetTransport_SetBackend(NetMode mode, NetBackendSendFn send,
 
 // --- Tick -------------------------------------------------------------------
 
-void Net_Tick(float dt) {
+void Net_PumpSubFrame(void) {
     if (s_mode == NET_MODE_OFF) return;
-
     if (s_backendTick != NULL) {
-        s_backendTick(dt); // pumps the backend; events land in Handle* above
+        s_backendTick(0.0f);
     } else if (s_host != NULL) {
         ENetEvent ev;
         while (enet_host_service(s_host, &ev, 0) > 0) {
@@ -973,9 +1127,13 @@ void Net_Tick(float dt) {
                 default: break;
             }
         }
-    } else {
-        return;
     }
+}
+
+void Net_Tick(float dt) {
+    if (s_mode == NET_MODE_OFF) return;
+    Net_PumpSubFrame();
+    if (s_backendTick == NULL && s_host == NULL) return;
 
     if (!s_connected) return;
     s_sendAccum += dt;
@@ -1003,35 +1161,47 @@ void Net_Tick(float dt) {
         if (s_sendAccum >= 1.0f / NET_SNAPSHOT_HZ) {
             s_sendAccum = 0.0f;
             static unsigned char buf[16 * 1024];
-            if (s_exploreMode) {
-                // Per-client interest-culled snapshot (55m around each player)
-                for (int i = 0; i < NET_MAX_PLAYERS - 1; i++) {
-                    if (!s_peers[i].used) continue;
-                    const Agent *pa = (s_peers[i].agentId >= 0) ? Entity_GetAgent(s_peers[i].agentId) : NULL;
-                    Vector3 focus = pa ? pa->position : (Vector3){ 0 };
-                    int bytes = Net_PackAgentSnapshotFor(focus, NET_INTEREST_RADIUS, buf, (int)sizeof(buf));
-                    if (bytes > 0) SendToPeer(&s_peers[i], NET_CH_STREAM, buf, bytes, false);
-                }
-            } else {
-                int bytes = Net_PackAgentSnapshot(buf, (int)sizeof(buf));
-                if (bytes > 0) HostBroadcast(NET_CH_STREAM, buf, bytes, false);
+            float cullRadius = s_exploreMode ? NET_INTEREST_RADIUS : 65.0f;
+            // Always send per-client priority-culled single-packet snapshots
+            // (all Heroes + Bosses first, then up to 54 closest/attacking
+            // monsters <= 60 total entities = 1084B <= 1167B EOS MTU) so
+            // snapshots never fragment in either Open World or MOBA.
+            for (int i = 0; i < NET_MAX_PLAYERS - 1; i++) {
+                if (!s_peers[i].used) continue;
+                const Agent *pa = (s_peers[i].agentId >= 0) ? Entity_GetAgent(s_peers[i].agentId) : NULL;
+                Vector3 focus = pa ? pa->position : MapManager_GetActiveSpawnPoint();
+                int bytes = Net_PackAgentSnapshotFor(focus, cullRadius, buf, (int)sizeof(buf));
+                if (bytes > 0) SendToPeer(&s_peers[i], NET_CH_STREAM, buf, bytes, false);
             }
         }
     } else { // client
-        if (s_clientIntentValid) {
-            NetPred_ApplyLocalPreview(s_localHeroId, &s_clientIntent, dt);
+        s_snapRxTimer += dt;
+        if (s_snapRxTimer >= 1.0f) {
+            s_snapRxHz = s_snapRxWindow;
+            s_snapRxWindow = 0;
+            s_snapRxTimer = 0.0f;
         }
         NetPred_Tick(dt, s_localHeroId); // 60 FPS smooth interpolation & prediction reconciliation
-        // 1Hz knock/heartbeat: the first packet opens the EOS P2P
-        // connection (nothing else flows while everyone idles in the
-        // lobby); afterwards it keeps the host's liveness sweep fed.
+        // 1Hz knock/heartbeat on control channel + 2Hz pure-UDP ping probe on
+        // stream channel (measures true UDP datagram RTT without SCTP queue jitter).
         {
             static float s_joinAccum = 1e9f; // first knock immediately
+            static float s_pingAccum = 0.0f;
             s_joinAccum += dt;
+            s_pingAccum += dt;
             if (s_joinAccum >= 1.0f) {
                 s_joinAccum = 0.0f;
                 NetCtrl join = { NET_CTRL_JOIN, NET_PROTOCOL_VERSION, 0 };
                 ClientSendToHost(NET_CH_CONTROL, &join, (int)sizeof(join), true);
+            }
+            if (s_pingAccum >= 0.25f) {
+                s_pingAccum = 0.0f;
+                s_joinSeq++;
+                double nowT = GetTime();
+                s_lastJoinSendAt = nowT;
+                s_pingSendAt[s_joinSeq] = nowT;
+                NetCtrl ping = { NET_CTRL_PING, NET_PROTOCOL_VERSION, s_joinSeq };
+                ClientSendToHost(NET_CH_STREAM, &ping, (int)sizeof(ping), false);
             }
         }
         if (s_clientIntentValid && s_sendAccum >= 1.0f / NET_INTENT_HZ) {

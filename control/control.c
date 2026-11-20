@@ -179,6 +179,7 @@ void Control_Apply(const PlayerIntent *in, float dt) {
             }
         }
     }
+    Entity_SetFacingYaw(s_agentId, s_yaw);
 }
 
 float Control_GetYaw(void) {

@@ -417,6 +417,8 @@ int main(int argc, char **argv) {
   int         netJoinPort     = NET_DEFAULT_PORT;
   bool        netHostOnline   = false;  // --host-online (EOS, prints join code)
   const char *netJoinCode     = NULL;   // --join-online <code>
+  int         exploreRealmArg = -1;     // --explore-realm <0..4>
+  int         exploreMaxFrames= 0;      // --explore-frames <N> (0 = interactive)
   for (int i = 1; i < argc; i++) {
       if (strcmp(argv[i], "--host") == 0)
           netHostPort = (i + 1 < argc && argv[i+1][0] != '-') ? atoi(argv[++i]) : NET_DEFAULT_PORT;
@@ -428,6 +430,10 @@ int main(int argc, char **argv) {
           netHostOnline = true;
       else if (strcmp(argv[i], "--join-online") == 0 && i + 1 < argc)
           netJoinCode = argv[++i];
+      else if (strcmp(argv[i], "--explore-realm") == 0 && i + 1 < argc)
+          exploreRealmArg = atoi(argv[++i]);
+      else if (strcmp(argv[i], "--explore-frames") == 0 && i + 1 < argc)
+          exploreMaxFrames = atoi(argv[++i]);
       else if (strcmp(argv[i], "--render-vfx") == 0 && i + 1 < argc)
           { renderVFXIndex = atoi(argv[++i]); renderVFXMode = true; }
       else if (strcmp(argv[i], "--render-guide") == 0)
@@ -872,6 +878,17 @@ int main(int argc, char **argv) {
   } GameScreen;
   GameScreen currentScreen = SCREEN_MAIN_MENU;
   if (netRequested) currentScreen = SCREEN_LOBBY; // PvP run: gather in the room
+  if (exploreRealmArg >= 0 && exploreRealmArg < 5) {
+      if (Net_OnlineAvailable() && Net_GetMode() == NET_MODE_OFF) {
+          if (Net_JoinOrHostExploreRealm(exploreRealmArg, roomCode, (int)sizeof(roomCode))) {
+              GameScreen_SetOnlineCode(roomCode);
+          }
+      }
+      GameScreen_SetExploreRealm(exploreRealmArg);
+      GameScreen_SetMode(GAME_MODE_EXPLORE);
+      GameScreen_Init(&player);
+      currentScreen = SCREEN_GAME;
+  }
 
   // Main-menu online (EOS) UI state — TAO PHONG / NHAP MA buttons. Actions
   // are queued one frame (menuOnlinePending) so the "DANG KET NOI" overlay
@@ -1609,6 +1626,11 @@ int main(int argc, char **argv) {
         }
         if (!renderVFXMode) CameraFX_Update(&camera, dt);
     } else if (currentScreen == SCREEN_GAME) {
+        // Pump network BEFORE GameScreen_Update so arriving snapshots, hero ID
+        // assignment, and 60 FPS remote interpolation are up-to-date before
+        // GameScreen_Update integrates local input and locks the camera.
+        Net_Tick(dt);
+
         // Spatial-audio ears follow the local player; night bed loops (both
         // no-ops until assets/audio/ has files — Audio_PlayMusic self-guards
         // against restarting the same track).
@@ -1675,7 +1697,11 @@ int main(int argc, char **argv) {
     // Net transport pump — host applies remote intents / broadcasts
     // snapshots; a connected client mirrors the host pool instead of
     // simulating (Net_ClientDrivesWorld skips the local gameplay ticks).
-    Net_Tick(dt);
+    if (currentScreen != SCREEN_GAME) {
+        Net_Tick(dt);
+    } else {
+        Net_PumpSubFrame();
+    }
 
     // Entities tick — owned HERE for every screen (it used to live inside
     // UpdateSandbox only, so in SCREEN_GAME timers never ticked: one dash
@@ -1688,10 +1714,12 @@ int main(int argc, char **argv) {
         Boss_Update(dt);
         Formation_Update(dt);
         Combat_Update(dt);
+    } else {
+        AI_ClientVisualTick(dt);
     }
 
-    // Hero-bot casts → net mirror (Đợt A5): ai/ is net-blind, so main.c
-    // ferries its cast events to connected clients (no-op offline).
+    // Hero-bot & Boss casts → net mirror (Đợt A5): ai/ and boss/ are net-blind,
+    // so main.c ferries their cast events to connected clients (no-op offline).
     {
         HeroBotCast botCasts[16];
         int nCasts = AI_PollHeroCasts(botCasts, 16);
@@ -1700,6 +1728,14 @@ int main(int argc, char **argv) {
             if (ba) Audio_PlaySFXAt(SFX_AI_CAST, ba->position);
             Net_HostNotifyCast(botCasts[ci].agentId, botCasts[ci].skillIndex,
                                botCasts[ci].aim);
+        }
+        BossCastEvent bossCasts[16];
+        int nBossCasts = Boss_PollCasts(bossCasts, 16);
+        for (int bi = 0; bi < nBossCasts; bi++) {
+            const Agent *ba = Entity_GetAgent(bossCasts[bi].agentId);
+            if (ba) Audio_PlaySFXAt(SFX_AI_CAST, ba->position);
+            Net_HostNotifyCast(bossCasts[bi].agentId, bossCasts[bi].skillIndex,
+                               bossCasts[bi].aim);
         }
     }
 
@@ -1797,6 +1833,7 @@ int main(int argc, char **argv) {
     LiquidImpact_Update(dt);
     ParticleManager_Update(dt);
     GranularSim_Update(dt);
+    Net_PumpSubFrame();
     if (benchmarkVisible) updateTime[5] = GetTime();
     GasSystem_Update(dt);
     if (benchmarkVisible) updateTime[6] = GetTime();
@@ -1904,6 +1941,7 @@ int main(int argc, char **argv) {
     }
     if (benchmarkVisible) profileTime[3] = GetTime();
     PASS_MARK("shadow");
+    Net_PumpSubFrame();
 
     // ── BRIGHT-BACKGROUND HARNESS ────────────────────────────────────────────
     //
@@ -1964,6 +2002,7 @@ int main(int argc, char **argv) {
         // paints over ClearBackground, so clearing alone leaves the same dark
         // sky and the test silently measures nothing.
         MapManager_DrawActive();
+        Net_PumpSubFrame();
     }
     if (!g_isDebuggerCapturing && currentScreen == SCREEN_SKILL_SANDBOX) {
         DrawSandbox3D(&player, &enemy, mouseTarget3D, &uiState);
@@ -2031,6 +2070,7 @@ int main(int argc, char **argv) {
         GameScreen_Draw3D(&player);
         Boss_Draw();
         Formation_Draw();
+        Net_PumpSubFrame();
     }
     MapManager_DrawTransparent();
     Afterimage_Draw();
@@ -2040,6 +2080,7 @@ int main(int argc, char **argv) {
 
     MyEndMode3D();
     SceneTargets_End();
+    Net_PumpSubFrame();
     SceneTargets_SnapshotDepth(); // soft particles: snapshot this frame's depth for next frame's sampling
 
     /* SSF & 3D metaball fluid producers submit their streams/blobs before the
@@ -2136,6 +2177,7 @@ int main(int argc, char **argv) {
     PASS_MARK("exposure");
 
     PostFX_Draw(&postFXConfig);
+    Net_PumpSubFrame();
     if (benchmarkVisible) profileTime[9] = GetTime();
     PASS_MARK("post");
     /* Chứng: CÙNG dải màu đó, tính bằng CPU qua đường cong ACES per-channel, vẽ
@@ -2312,6 +2354,21 @@ int main(int argc, char **argv) {
 
     if (autoTestMode)     AutoTest_RunFrame();
     if (visualVerifyMode) VisualVerify_RunFrame(g_totalElapsed);
+    if (exploreMaxFrames > 0) {
+        static int s_expFrame = 0;
+        s_expFrame++;
+        if ((s_expFrame % 30) == 0) {
+            TraceLog(LOG_INFO, "[EXPLORE_PROBE] frame=%d mode=%s path=%s ping=%dms snapHz=%d peers=%d hero=%d",
+                     s_expFrame,
+                     Net_GetMode() == NET_MODE_CLIENT ? "CLIENT" : (Net_GetMode() == NET_MODE_HOST ? "HOST" : "OFF"),
+                     Net_GetConnectionPathLabel(),
+                     Net_GetPingMs(),
+                     Net_GetSnapshotRxHz(),
+                     Net_GetPeerCount(),
+                     Net_GetLocalHeroAgentId());
+        }
+        if (s_expFrame >= exploreMaxFrames) break;
+    }
     if (renderVFXMode) {
         static double s_benchTimeSum = 0.0;
         static int s_benchCount = 0;

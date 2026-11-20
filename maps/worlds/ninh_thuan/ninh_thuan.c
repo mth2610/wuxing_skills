@@ -286,13 +286,14 @@ static void BuildNinhThuanFlora(void)
     const int maxGrass = NINH_THUAN_MAX_GRASS;
     if (s_scaleXZ > 1.5f)
     {
-        // Sliding 220m x 220m Open World flora window around s_floraWindowCenter (zero reservoir eviction)
-        float halfWin = 110.0f;
+        // Cover the entire active Open World desert play area once at init
+        // (zero mid-gameplay flora unload/rebuild stalls).
+        float halfWin = 220.0f;
         minB.x = fmaxf(12.0f * s_scaleXZ, s_floraWindowCenter.x - halfWin);
         minB.y = fmaxf(12.0f * s_scaleXZ, s_floraWindowCenter.z - halfWin);
         maxB.x = fminf(MAP_WIDTH - 12.0f * s_scaleXZ, s_floraWindowCenter.x + halfWin);
         maxB.y = fminf(MAP_DEPTH - 12.0f * s_scaleXZ, s_floraWindowCenter.z + halfWin);
-        grassSpacing = 0.78f;
+        grassSpacing = 1.25f;
     }
 #endif
     MapMeadowDistribution dist = {
@@ -367,7 +368,7 @@ static void BuildNinhThuanFlora(void)
             .lodDistance = 26.0f,
             .midLodDistance = 18.0f,
             .drawDistance = 48.0f,
-            .shadowDistance = 24.0f,
+            .shadowDistance = (s_scaleXZ > 1.5f) ? -1.0f : 24.0f,
             .grassState = MAP_GRASS_STATE_DRY,
             .dryness = 0.84f,
             .reedRootColor = {38, 62, 26, 255},
@@ -916,18 +917,6 @@ void UpdateNinhThuanMap(float dt)
 {
     if (!s_ready)
         return;
-
-    if (s_scaleXZ > 1.5f)
-    {
-        float fdx = camera.target.x - s_floraWindowCenter.x;
-        float fdz = camera.target.z - s_floraWindowCenter.z;
-        if (fdx * fdx + fdz * fdz > 65.0f * 65.0f)
-        {
-            s_floraWindowCenter = camera.target;
-            MapProp_UnloadFloraSystem(&s_flora);
-            BuildNinhThuanFlora();
-        }
-    }
 
     MapProp_UpdateFloraSystem(&s_flora, camera.target, dt);
     MapProp_UpdateWaterSurface(&s_coastalSea, dt);

@@ -309,12 +309,12 @@ static void BuildFloraPlacements(void)
     float spacing = 0.30f;
     if (s_scaleXZ > 1.5f)
     {
-        float halfWin = 110.0f;
+        float halfWin = 160.0f;
         minB.x = fmaxf(10.0f, s_floraWindowCenter.x - halfWin);
         minB.y = fmaxf(8.0f, s_floraWindowCenter.z - halfWin);
         maxB.x = fminf(MAP_WIDTH - 10.0f, s_floraWindowCenter.x + halfWin);
         maxB.y = fminf(MAP_DEPTH - 8.0f, s_floraWindowCenter.z + halfWin);
-        spacing = 0.62f;
+        spacing = 0.88f;
     }
     // 1. Lush interlocking meadow across the floating island plateau
     s_grassCount = MapFlora_GenerateMeadowPlacements(
@@ -967,10 +967,10 @@ void InitSongQuaoMap(void)
             .bladesPerClump = 6,
             .bladeSegments = 4,
             .bladeWidthScale = 0.060f,
-            .lodDistance = 24.0f,
-            .midLodDistance = 18.0f,
-            .drawDistance = 58.0f,
-            .shadowDistance = 24.0f,
+            .lodDistance = (s_scaleXZ > 1.5f) ? 18.0f : 24.0f,
+            .midLodDistance = (s_scaleXZ > 1.5f) ? 13.0f : 18.0f,
+            .drawDistance = (s_scaleXZ > 1.5f) ? 42.0f : 58.0f,
+            .shadowDistance = (s_scaleXZ > 1.5f) ? -1.0f : 24.0f,
             .grassState = MAP_GRASS_STATE_LUSH,
             .reedRootColor = {22, 36, 16, 255},
             .reedTipColor = {104, 138, 58, 255},

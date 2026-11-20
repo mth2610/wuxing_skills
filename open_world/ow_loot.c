@@ -105,7 +105,7 @@ static void CompleteNodeHarvest(OWNode *n) {
         OWLoot_SpawnOrb(n->pos, OW_LOOT_POTION_HEAL, 1);
     }
     DaTau_OnForageCollected(1);
-    PlayerProfile_SaveGlobal();
+    PlayerProfile_MarkDirty();
 }
 
 void OWLoot_Init(const OWRealmDef *realm) {

@@ -34,3 +34,4 @@ bool Net_VoiceIsMutedAll(void) { return false; }
 bool Net_VoiceIsAnyoneSpeaking(void) { return false; }
 void Net_Shutdown(void) { Net_Stop(); }
 int  Net_VoiceGetSpeakingCount(void) { return 0; }
+const char *Net_EosGetNetworkPathLabel(void) { return "LAN"; }

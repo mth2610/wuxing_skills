@@ -883,22 +883,51 @@ void HordeRenderer_Draw3D(Camera3D cam) {
     static AIMonsterRenderInfo monsters[AI_MAX_CAMP_MONSTERS];
     int mCount = AI_QueryMonsterRenderData(monsters, AI_MAX_CAMP_MONSTERS);
 
-    static AIMonsterRenderInfo waveMinions[64];
+    static AIMonsterRenderInfo waveMinions[AI_MAX_CAMP_MONSTERS];
+    static Vector3 s_clientPrevMonPos[MAX_AGENTS];
+    static float   s_clientMonAnimPhase[MAX_AGENTS];
+    static bool    s_clientMonInit[MAX_AGENTS];
     int wCount = 0;
-    for (int i = 0; i < MAX_AGENTS && wCount < 64; i++) {
+    for (int i = 0; i < MAX_AGENTS && wCount < AI_MAX_CAMP_MONSTERS; i++) {
         const Agent *a = Entity_GetAgent(i);
-        if (!a || a->archetype != ARCH_MINION || a->isStatic || AI_IsCampMonster(i)) continue;
+        if (!a || a->archetype != ARCH_MINION || a->isStatic || AI_IsCampMonster(i)) {
+            s_clientMonInit[i] = false;
+            continue;
+        }
+        MonsterKind kind = (MonsterKind)(a->netMonsterMeta & 0x3u);
+        MonsterAIState st = (MonsterAIState)((a->netMonsterMeta >> 2) & 0x7u);
+        unsigned int tQuant = (a->netMonsterMeta >> 5) & 0x7u;
+        float tFrac = (st == MON_STATE_STRIKE) ? 1.0f : ((float)tQuant / 7.0f);
+        float scale = 0.92f;
+        if (kind == MONSTER_ELITE_GUARD) scale = 1.65f;
+        else if (kind == MONSTER_LEAPER) scale = 1.05f;
+        else if (kind == MONSTER_RANGED_CASTER) scale = 0.95f;
+
+        if (!s_clientMonInit[i]) {
+            s_clientPrevMonPos[i] = a->position;
+            s_clientMonAnimPhase[i] = (float)(i % 19) * 0.37f;
+            s_clientMonInit[i] = true;
+        } else {
+            float mdx = a->position.x - s_clientPrevMonPos[i].x;
+            float mdz = a->position.z - s_clientPrevMonPos[i].z;
+            float moved = sqrtf(mdx * mdx + mdz * mdz);
+            if (moved > 0.001f && moved < 2.0f) {
+                s_clientMonAnimPhase[i] += moved * 3.8f;
+            }
+            s_clientPrevMonPos[i] = a->position;
+        }
+
         waveMinions[wCount++] = (AIMonsterRenderInfo){
             .agentId       = i,
             .pos           = a->position,
-            .yaw           = 0.0f,
-            .scale         = 0.85f,
-            .animPhase     = (float)GetTime() * 4.5f + (float)i,
-            .telegraphFrac = 0.0f,
+            .yaw           = a->facingYaw,
+            .scale         = scale,
+            .animPhase     = s_clientMonAnimPhase[i],
+            .telegraphFrac = tFrac,
             .hitFlash      = (a->hitFlashTimer > 0.0f) ? (a->hitFlashTimer / 0.12f) : 0.0f,
             .element       = a->currentElement,
-            .kind          = MONSTER_RANGED_CASTER,
-            .state         = MON_STATE_CHASE
+            .kind          = kind,
+            .state         = st
         };
     }
 
@@ -906,8 +935,14 @@ void HordeRenderer_Draw3D(Camera3D cam) {
     static int    cntKind[4];
     static Matrix xfShadow[HORDE_MAX_INSTANCES];
     static int    cntShadow = 0;
+    static Matrix xfWarnDisc[HORDE_MAX_INSTANCES];
+    static int    cntWarnDisc = 0;
+    static Matrix xfWarnBeam[HORDE_MAX_INSTANCES];
+    static int    cntWarnBeam = 0;
     for (int k = 0; k < 4; k++) cntKind[k] = 0;
     cntShadow = 0;
+    cntWarnDisc = 0;
+    cntWarnBeam = 0;
 
     float now = (float)GetTime();
     const float maxDrawDistSq = 72.0f * 72.0f;
@@ -932,16 +967,21 @@ void HordeRenderer_Draw3D(Camera3D cam) {
             Matrix M = MatrixMultiply(MatrixMultiply(S, R), T);
 
             if (s_skinned[k].ready) {
-                M.m3 = ComputeSkinnedFrameRow(&s_skinned[k], m, now);
+                M.m3  = ComputeSkinnedFrameRow(&s_skinned[k], m, now);
+                M.m7  = m->telegraphFrac;
+                M.m11 = m->hitFlash;
+                M.m15 = (float)m->state;
+                if (cntKind[k] < HORDE_MAX_INSTANCES) {
+                    xfKind[k][cntKind[k]++] = M;
+                }
             } else {
-                M.m3 = m->animPhase;
-            }
-            M.m7  = m->telegraphFrac;
-            M.m11 = m->hitFlash;
-            M.m15 = (float)m->state;
-
-            if (cntKind[k] < HORDE_MAX_INSTANCES) {
-                xfKind[k][cntKind[k]++] = M;
+                M.m3  = m->animPhase;
+                M.m7  = m->telegraphFrac;
+                M.m11 = m->hitFlash;
+                M.m15 = (float)m->state;
+                if (cntKind[k] < HORDE_MAX_INSTANCES) {
+                    xfKind[k][cntKind[k]++] = M;
+                }
             }
 
             if (cntShadow < HORDE_MAX_INSTANCES) {
@@ -951,6 +991,34 @@ void HordeRenderer_Draw3D(Camera3D cam) {
                 Matrix MS = MatrixMultiply(SS, TS);
                 MS.m3 = 0.0f; MS.m7 = 0.0f; MS.m11 = 0.0f; MS.m15 = 0.0f;
                 xfShadow[cntShadow++] = MS;
+            }
+
+            if ((m->state == MON_STATE_TELEGRAPH || m->state == MON_STATE_STRIKE) &&
+                m->telegraphFrac > 0.05f) {
+                float dirX = sinf(m->yaw);
+                float dirZ = cosf(m->yaw);
+                if (k == MONSTER_RANGED_CASTER || k == MONSTER_LEAPER) {
+                    if (cntWarnBeam < HORDE_MAX_INSTANCES) {
+                        float beamLen = (k == MONSTER_RANGED_CASTER) ? 7.5f : 4.8f;
+                        float beamW   = (k == MONSTER_RANGED_CASTER) ? 0.55f : 0.95f;
+                        Matrix SB = MatrixScale(beamW, 0.05f, beamLen * (0.35f + 0.65f * m->telegraphFrac));
+                        Matrix RB = MatrixRotateY(m->yaw);
+                        float midDist = beamLen * (0.20f + 0.32f * m->telegraphFrac);
+                        Matrix TB = MatrixTranslate(m->pos.x + dirX * midDist, m->pos.y + 0.08f, m->pos.z + dirZ * midDist);
+                        Matrix MB = MatrixMultiply(MatrixMultiply(SB, RB), TB);
+                        MB.m3 = 0.0f; MB.m7 = m->telegraphFrac; MB.m11 = 0.0f; MB.m15 = 3.0f;
+                        xfWarnBeam[cntWarnBeam++] = MB;
+                    }
+                } else if (cntWarnDisc < HORDE_MAX_INSTANCES) {
+                    float warnR = (k == MONSTER_ELITE_GUARD) ? (2.6f + 0.8f * m->telegraphFrac)
+                                                             : (1.55f + 0.45f * m->telegraphFrac);
+                    float fwdOff = (k == MONSTER_ELITE_GUARD) ? 1.05f : 0.72f;
+                    Matrix SW = MatrixScale(warnR, 1.0f, warnR);
+                    Matrix TW = MatrixTranslate(m->pos.x + dirX * fwdOff, m->pos.y + 0.06f, m->pos.z + dirZ * fwdOff);
+                    Matrix MW = MatrixMultiply(SW, TW);
+                    MW.m3 = 0.0f; MW.m7 = m->telegraphFrac; MW.m11 = 0.0f; MW.m15 = 3.0f;
+                    xfWarnDisc[cntWarnDisc++] = MW;
+                }
             }
         }
     }
@@ -992,6 +1060,16 @@ void HordeRenderer_Draw3D(Camera3D cam) {
     DrawInstancedBatch(s_meshShadow, -1, xfShadow, cntShadow,
                        (Vector4){ 0.05f, 0.04f, 0.03f, 0.52f },
                        (Vector4){ 0.0f, 0.0f, 0.0f, 0.0f });
+    if (cntWarnDisc > 0) {
+        DrawInstancedBatch(s_meshShadow, -1, xfWarnDisc, cntWarnDisc,
+                           (Vector4){ 1.0f, 0.22f, 0.08f, 0.50f },
+                           (Vector4){ 1.15f, 0.24f, 0.08f, 0.0f });
+    }
+    if (cntWarnBeam > 0) {
+        DrawInstancedBatch(s_meshShadow, -1, xfWarnBeam, cntWarnBeam,
+                           (Vector4){ 1.0f, 0.26f, 0.10f, 0.55f },
+                           (Vector4){ 1.25f, 0.28f, 0.08f, 0.0f });
+    }
 
     for (int k = 0; k < 4; k++) {
         if (s_skinned[k].ready) {

@@ -27,6 +27,12 @@ typedef struct {
     // game/ runs it locally, the net host runs it for remote players.
     int     basicAttack;
     Vector3 aimPoint;      // ground point being aimed at (mouse ray / auto-target)
+    // Optional client-authoritative kinematic pose for zero-rubberband P2P:
+    bool    hasClientPose;
+    bool    clientInAir;
+    bool    clientDashing;
+    Vector3 clientPos;
+    float   clientYaw;
 } PlayerIntent;
 
 // Attach the controller to an agent in the entities pool.

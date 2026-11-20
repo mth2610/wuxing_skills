@@ -391,10 +391,15 @@ void OW_Update(PlayerEntity *player, float dt) {
         } else {
             float delta = s_prevHeroHp[i] - ha->health;
             if (delta >= 0.8f) {
+                static float s_lastHeroHitDust = 0.0f;
+                float nowT = (float)GetTime();
                 Vector3 txtPos = { ha->position.x, ha->position.y + 1.9f, ha->position.z };
                 AddFloatingText(txtPos, TextFormat("-%.0f", delta),
                                 (Color){ 255, 95, 70, 255 }, 20.0f, 0.9f);
-                VFX_ComposeImpactDust(ha->position, VC_MAT_EARTH, 0.9f, 0.7f);
+                if (nowT - s_lastHeroHitDust >= 0.18f) {
+                    VFX_ComposeImpactDust(ha->position, VC_MAT_EARTH, 0.65f, 0.45f);
+                    s_lastHeroHitDust = nowT;
+                }
             }
             s_prevHeroHp[i] = ha->health;
         }
@@ -537,32 +542,34 @@ void OW_Update(PlayerEntity *player, float dt) {
     if (IsKeyPressed(KEY_H)) s_tradeMenuOpen = !s_tradeMenuOpen;
 }
 
+static void DrawSafeZoneRingCached(void) {
+    static Vector3 s_ringPts[49];
+    static Vector3 s_cachedCenter = { -99999.0f, 0.0f, -99999.0f };
+    static float   s_cachedRadius = -1.0f;
+    const int segs = 48;
+    if (fabsf(s_realm.safeCenter.x - s_cachedCenter.x) > 0.05f ||
+        fabsf(s_realm.safeCenter.z - s_cachedCenter.z) > 0.05f ||
+        fabsf(s_realm.safeRadius - s_cachedRadius) > 0.05f) {
+        s_cachedCenter = s_realm.safeCenter;
+        s_cachedRadius = s_realm.safeRadius;
+        float step = (2.0f * PI) / (float)segs;
+        for (int i = 0; i <= segs; i++) {
+            float a = (float)i * step;
+            float x = s_realm.safeCenter.x + cosf(a) * s_realm.safeRadius;
+            float z = s_realm.safeCenter.z + sinf(a) * s_realm.safeRadius;
+            s_ringPts[i] = (Vector3){ x, MapManager_GetGroundHeightAt(x, z) + 0.14f, z };
+        }
+    }
+    Color ringCol = (Color){ 90, 235, 175, 135 };
+    for (int i = 1; i <= segs; i++) {
+        DrawLine3D(s_ringPts[i - 1], s_ringPts[i], ringCol);
+    }
+}
+
 void OW_Draw3D(const PlayerEntity *player, Camera3D cam) {
     if (!s_hasRealm) return;
 
-    // Terrain-conforming safe zone perimeter arc
-    {
-        const int segs = 48;
-        Color ringCol = (Color){ 90, 235, 175, 135 };
-        float step = (2.0f * PI) / (float)segs;
-        Vector3 prev = {
-            s_realm.safeCenter.x + s_realm.safeRadius,
-            0.0f,
-            s_realm.safeCenter.z
-        };
-        prev.y = MapManager_GetGroundHeightAt(prev.x, prev.z) + 0.14f;
-        for (int i = 1; i <= segs; i++) {
-            float a = (float)i * step;
-            Vector3 cur = {
-                s_realm.safeCenter.x + cosf(a) * s_realm.safeRadius,
-                0.0f,
-                s_realm.safeCenter.z + sinf(a) * s_realm.safeRadius
-            };
-            cur.y = MapManager_GetGroundHeightAt(cur.x, cur.z) + 0.14f;
-            DrawLine3D(prev, cur, ringCol);
-            prev = cur;
-        }
-    }
+    DrawSafeZoneRingCached();
 
     OWQuestNpc_Draw3D();
 
@@ -703,9 +710,9 @@ void OW_DrawHUD(const PlayerEntity *player, Camera3D cam) {
     }
 
     if (s_mightTimer > 0.0f)
-        DrawText(TextFormat("HOANG THO HO THE: %.0fs", s_mightTimer), 20, 125, 13, ORANGE);
+        DrawText(TextFormat("HOANG THO HO THE: %.0fs", s_mightTimer), 20, 176, 13, ORANGE);
     if (s_xpBoostTimer > 0.0f)
-        DrawText(TextFormat("NGO DAO x2 SKILL XP: %.0fs", s_xpBoostTimer), 20, 142, 13, (Color){ 130, 255, 210, 255 });
+        DrawText(TextFormat("NGO DAO x2 SKILL XP: %.0fs", s_xpBoostTimer), 20, 193, 13, (Color){ 130, 255, 210, 255 });
     if (s_killStreak >= 2)
         DrawText(TextFormat("LIEN TRAM x%d (+25%% EXP)", s_killStreak), sw - 220, 210, 16, GOLD);
 

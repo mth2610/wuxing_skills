@@ -69,6 +69,7 @@ static EOS_NotificationId s_notifyRequest        = EOS_INVALID_NOTIFICATIONID;
 static EOS_NotificationId s_notifyClosed         = EOS_INVALID_NOTIFICATIONID;
 static EOS_NotificationId s_notifyEstablished    = EOS_INVALID_NOTIFICATIONID;
 static EOS_NotificationId s_notifyRtcParticipant = EOS_INVALID_NOTIFICATIONID;
+static const char        *s_eosNetPathLabel      = "EOS...";
 
 static const EOS_P2P_SocketId s_socketId = {
     .ApiVersion = EOS_P2P_SOCKETID_API_LATEST,
@@ -242,16 +243,15 @@ static bool EnsureLoggedIn(void) {
         s_rtc      = EOS_Platform_GetRTCInterface(s_platform);
         s_rtcAudio = s_rtc ? EOS_RTC_GetAudioInterface(s_rtc) : NULL;
 
-        // Relay control (must be set BEFORE any connection opens). NAT punch
-        // fails on many home routers (symmetric/strict NAT), and when it
-        // does the two players just never see each other. Epic's relay is
-        // free and always reachable, so DEFAULT to forcing it — internet
-        // play "just works" at the cost of a few ms. WUXING_EOS_DIRECT=1
-        // asks for direct-when-possible (AllowRelays) for LAN/low-latency.
+        // Relay control (must be set BEFORE any connection opens). Default to
+        // EOS_RC_AllowRelays so peers on the same LAN/ISP/city connect via
+        // direct low-latency UDP hole-punching first, automatically falling
+        // back to Epic's free TURN relay only when symmetric/strict NAT blocks
+        // direct packets. Set WUXING_EOS_FORCE_RELAY=1 to force relay-only.
         EOS_P2P_SetRelayControlOptions rc = { 0 };
         rc.ApiVersion   = EOS_P2P_SETRELAYCONTROL_API_LATEST;
-        rc.RelayControl = (getenv("WUXING_EOS_DIRECT") != NULL)
-                              ? EOS_RC_AllowRelays : EOS_RC_ForceRelays;
+        rc.RelayControl = (getenv("WUXING_EOS_FORCE_RELAY") != NULL)
+                              ? EOS_RC_ForceRelays : EOS_RC_AllowRelays;
         EOS_EResult rcr = EOS_P2P_SetRelayControl(s_p2p, &rc);
         TraceLog(LOG_INFO, "[EOS] relay control = %s (%s)",
                  rc.RelayControl == EOS_RC_ForceRelays ? "FORCE" : "ALLOW",
@@ -315,6 +315,7 @@ static bool EnsureLoggedIn(void) {
 #define MAX_LOGICAL  (16 * 1024)                           // matches transport buf
 
 static unsigned char s_sendSeq[2]; // per channel
+static double        s_lastEosTickAt = 0.0;
 
 typedef struct {
     unsigned char seq, count;
@@ -326,6 +327,32 @@ typedef struct {
 static Reassembly s_reasm[2][4];
 static int s_reasmNext[2] = { 0, 0 };
 
+typedef struct {
+    void         *peerRef;
+    unsigned char lastSeq;
+    bool          used;
+} StreamSeqTrack;
+static StreamSeqTrack s_streamSeq[NET_MAX_PLAYERS];
+
+static bool AcceptStreamSeq(void *peerRef, unsigned char seq) {
+    int freeSlot = -1;
+    for (int i = 0; i < NET_MAX_PLAYERS; i++) {
+        if (s_streamSeq[i].used && s_streamSeq[i].peerRef == peerRef) {
+            unsigned char diff = (unsigned char)(seq - s_streamSeq[i].lastSeq);
+            if (diff == 0 || diff >= 128u) return false; // drop duplicate / out-of-order older UDP packet
+            s_streamSeq[i].lastSeq = seq;
+            return true;
+        }
+        if (!s_streamSeq[i].used && freeSlot < 0) freeSlot = i;
+    }
+    int slot = (freeSlot >= 0) ? freeSlot : 0;
+    s_streamSeq[slot] = (StreamSeqTrack){ .peerRef = peerRef, .lastSeq = seq, .used = true };
+    return true;
+}
+
+static void EosDrainReceivedPackets(void);
+static int  s_inDrain = 0;
+
 // peerRef: the target ProductUserId (host role); NULL = the lobby owner
 // (client role — its only link).
 static bool EosSend(void *peerRef, int channel, const void *data, int len, bool reliable) {
@@ -334,6 +361,7 @@ static bool EosSend(void *peerRef, int channel, const void *data, int len, bool 
         return false;
     const unsigned char *src = (const unsigned char *)data;
     int count = (len + FRAG_PAYLOAD - 1) / FRAG_PAYLOAD;
+    bool isProbe = (count == 1 && len == 3 && (src[0] == 11 || src[0] == 12));
     unsigned char seq = s_sendSeq[channel & 1]++;
 
     EOS_P2P_SendPacketOptions opt = { 0 };
@@ -344,7 +372,7 @@ static bool EosSend(void *peerRef, int channel, const void *data, int len, bool 
     opt.Channel      = (uint8_t)channel;
     // Queue while the NAT punch is still completing (client's first intents).
     opt.bAllowDelayedDelivery = EOS_TRUE;
-    opt.Reliability = reliable ? EOS_PR_ReliableUnordered : EOS_PR_UnreliableUnordered;
+    opt.Reliability = reliable ? EOS_PR_ReliableOrdered : EOS_PR_UnreliableUnordered;
     opt.bDisableAutoAcceptConnection = EOS_FALSE;
 
     for (int i = 0; i < count; i++) {
@@ -355,6 +383,16 @@ static bool EosSend(void *peerRef, int channel, const void *data, int len, bool 
         opt.Data = pkt;
         opt.DataLengthBytes = (uint32_t)(chunk + FRAG_HEADER);
         if (EOS_P2P_SendPacket(s_p2p, &opt) != EOS_Success) return false;
+    }
+    // Flush the EOS P2P queue to the OS UDP socket immediately instead of
+    // letting outgoing packets wait 16-33ms until next frame's EosTick.
+    if (s_platform != NULL) {
+        double now = NowSeconds();
+        if (isProbe || (now - s_lastEosTickAt >= 0.0005)) {
+            s_lastEosTickAt = now;
+            EOS_Platform_Tick(s_platform);
+            if (!s_inDrain) EosDrainReceivedPackets();
+        }
     }
     return true;
 }
@@ -367,7 +405,9 @@ static void ReceiveFragment(void *peerRef, int channel,
     int payloadLen = pktLen - FRAG_HEADER;
     if (count == 0 || idx >= count || count > MAX_LOGICAL / FRAG_PAYLOAD + 1) return;
 
-    if (count == 1) { // whole packet — the common case (intents, ctrl, roster)
+    if (count == 1) { // whole packet — the common case (intents, snapshots, ctrl, roster)
+        bool isProbe = (payloadLen == 3 && (payload[0] == 11 || payload[0] == 12));
+        if ((channel & 1) == 0 && !isProbe && !AcceptStreamSeq(peerRef, seq)) return;
         NetTransport_BackendPacket(peerRef, channel, payload, payloadLen);
         return;
     }
@@ -450,9 +490,16 @@ static void EOS_CALL OnConnectionEstablished(const EOS_P2P_OnPeerConnectionEstab
     const char *net =
         data->NetworkType == EOS_NCT_DirectConnection  ? "DIRECT" :
         data->NetworkType == EOS_NCT_RelayedConnection ? "RELAY"  : "none";
+    s_eosNetPathLabel =
+        data->NetworkType == EOS_NCT_DirectConnection  ? "EOS DIRECT" :
+        data->NetworkType == EOS_NCT_RelayedConnection ? "EOS RELAY"  : "EOS P2P";
     TraceLog(LOG_INFO, "[EOS] P2P ESTABLISHED via %s (host=%d, %s)",
              net, s_isHost ? 1 : 0,
              data->ConnectionType == EOS_CET_Reconnection ? "reconnect" : "new");
+}
+
+const char *Net_EosGetNetworkPathLabel(void) {
+    return s_eosNetPathLabel;
 }
 
 static void EOS_CALL OnNATType(const EOS_P2P_OnQueryNATTypeCompleteInfo *data) {
@@ -491,10 +538,9 @@ static void RegisterP2PNotifies(void) {
 
 // --- Backend tick/stop (installed into the transport core) -------------------
 
-static void EosTick(float dt) {
-    (void)dt;
-    EOS_Platform_Tick(s_platform);
-
+static void EosDrainReceivedPackets(void) {
+    if (s_p2p == NULL || s_localPuid == NULL || s_inDrain) return;
+    s_inDrain = 1;
     EOS_P2P_ReceivePacketOptions opt = { 0 };
     opt.ApiVersion       = EOS_P2P_RECEIVEPACKET_API_LATEST;
     opt.LocalUserId      = s_localPuid;
@@ -515,6 +561,14 @@ static void EosTick(float dt) {
         ReceiveFragment(s_isHost ? (void *)peer : NULL, (int)channel,
                         data, (int)bytes);
     }
+    s_inDrain = 0;
+}
+
+static void EosTick(float dt) {
+    (void)dt;
+    s_lastEosTickAt = NowSeconds();
+    EOS_Platform_Tick(s_platform);
+    EosDrainReceivedPackets();
 }
 
 static void EOS_CALL OnRtcParticipantUpdated(const EOS_RTCAudio_ParticipantUpdatedCallbackInfo *data) {
@@ -660,7 +714,9 @@ static void EosStop(void) {
         s_lobbyId[0] = '\0';
     }
     s_hostPuid = NULL;
+    s_eosNetPathLabel = "EOS...";
     memset(s_reasm, 0, sizeof(s_reasm));
+    memset(s_streamSeq, 0, sizeof(s_streamSeq));
     // Platform + login stay up for the process — re-hosting skips auth.
 }
 

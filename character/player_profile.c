@@ -10,6 +10,8 @@
 static PlayerProfile s_profile = {0};
 static char s_savePath[256] = PLAYER_PROFILE_DEFAULT_SAVE_PATH;
 static bool s_initialized = false;
+static bool s_dirty = false;
+static float s_dirtyFlushTimer = 0.0f;
 
 static const char *kDefaultStarterSkills[PROFILE_SKILL_SLOTS] = {
     "ICE_CRYSTAL_LANCE",
@@ -209,8 +211,23 @@ PlayerProfile *PlayerProfile_GetGlobal(void) {
 
 bool PlayerProfile_SaveGlobal(void) {
     if (!s_initialized) return false;
+    s_dirty = false;
+    s_dirtyFlushTimer = 0.0f;
     s_profile.integrityHash = ComputeProfileHash(&s_profile);
     return PlayerProfile_SaveToFile(&s_profile, s_savePath);
+}
+
+void PlayerProfile_MarkDirty(void) {
+    if (!s_initialized) PlayerProfile_InitGlobal(s_savePath);
+    s_dirty = true;
+}
+
+void PlayerProfile_FlushIfDirty(float dt, bool forceNow) {
+    if (!s_initialized || !s_dirty) return;
+    s_dirtyFlushTimer += dt;
+    if (forceNow || s_dirtyFlushTimer >= 12.0f) {
+        PlayerProfile_SaveGlobal();
+    }
 }
 
 bool PlayerProfile_UnlockSkill(int skillIndex) {

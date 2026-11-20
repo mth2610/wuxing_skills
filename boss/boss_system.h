@@ -70,6 +70,13 @@ int  Boss_GetSlotPhase(int slot);
 bool Boss_IsSlotAlive(int slot);
 void Boss_ClearAll(void);
 
+typedef struct {
+    int     agentId;
+    int     skillIndex;
+    Vector3 aim;
+} BossCastEvent;
+int  Boss_PollCasts(BossCastEvent *out, int max);
+
 // --- Boss defs (one extern per boss/<name>_def.c data file) ---
 extern const BossDef BOSS_HAC_DIEN_TON_GIA;
 extern const BossDef BOSS_MOC_LINH;
