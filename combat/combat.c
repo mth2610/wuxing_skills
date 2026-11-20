@@ -85,13 +85,11 @@ bool Combat_SubmitProjectile(int ownerAgentId, CombatElement elem,
 }
 
 int Combat_DeflectProjectilesInRadius(Vector3 center, float radius, int deflectorAgentId) {
-    const Agent *deflector = Entity_GetAgent(deflectorAgentId);
-    AgentTeam ownTeam = deflector ? deflector->team : TEAM_NEUTRAL;
-
     int destroyed = 0;
     for (int i = 0; i < s_projCount; i++) {
         CombatProjectile *p = &s_projs[i];
-        if (p->dead || p->team == ownTeam) continue;
+        if (p->dead) continue;
+        if (deflectorAgentId >= 0 && !Entity_CanDamageTarget(deflectorAgentId, p->ownerAgentId)) continue;
         float dx = p->pos.x - center.x;
         float dz = p->pos.z - center.z;
         if (dx * dx + dz * dz > radius * radius) continue;
@@ -118,14 +116,7 @@ void Combat_Update(float dt) {
             CombatProjectile *a = &s_projs[i];
             CombatProjectile *b = &s_projs[j];
             if (a->ownerAgentId == b->ownerAgentId) continue;
-            if (a->team == b->team) {
-                const Agent *oa = Entity_GetAgent(a->ownerAgentId);
-                const Agent *ob = Entity_GetAgent(b->ownerAgentId);
-                bool bothSpar = (oa && ob && oa->pkMode == PK_MODE_SPAR && ob->pkMode == PK_MODE_SPAR);
-                bool duelClash = bothSpar || (oa && ob && oa->duelFlag && ob->duelFlag &&
-                                              !oa->inSafeZone && !ob->inSafeZone);
-                if (!duelClash) continue;
-            }
+            if (a->team == b->team && !Entity_CanDamageTarget(a->ownerAgentId, b->ownerAgentId)) continue;
             if (!CheckCollisionSpheres(a->pos, a->radius, b->pos, b->radius)) continue;
 
             Vector3 mid = { (a->pos.x + b->pos.x) * 0.5f,

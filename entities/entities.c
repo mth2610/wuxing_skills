@@ -311,30 +311,6 @@ void Entity_Update(float dt) {
             }
         }
     }
-
-    // End Spar (Tỉ Thí) cleanly when any sparring hero reaches 1 HP:
-    // return ALL sparring heroes to PK_MODE_PEACE and restore their pre-Spar HP.
-    bool sparEnded = false;
-    for (int i = 0; i < MAX_AGENTS; i++) {
-        if (agentPool[i].active && agentPool[i].archetype == ARCH_HERO &&
-            agentPool[i].pkMode == PK_MODE_SPAR &&
-            (agentPool[i].sparDefeated || agentPool[i].health <= 1.01f)) {
-            sparEnded = true;
-            break;
-        }
-    }
-    if (sparEnded) {
-        for (int j = 0; j < MAX_AGENTS; j++) {
-            Agent *ha = &agentPool[j];
-            if (!ha->active || ha->archetype != ARCH_HERO || ha->pkMode != PK_MODE_SPAR) continue;
-            ha->pkMode = PK_MODE_PEACE;
-            ha->duelFlag = false;
-            ha->sparDefeated = false;
-            float saved = (s_preSparHealth[j] > 1.0f) ? s_preSparHealth[j] : ha->maxHealth;
-            if (saved > ha->maxHealth) saved = ha->maxHealth;
-            ha->health = saved;
-        }
-    }
 }
 
 void Entity_Draw(void) {
@@ -543,14 +519,27 @@ bool Entity_ConsumeSparDefeated(int agentId, int *outAttackerId) {
     return true;
 }
 
+void Entity_RestorePreSparHealth(int agentId) {
+    if (agentId < 0 || agentId >= MAX_AGENTS || !agentPool[agentId].active) return;
+    Agent *ha = &agentPool[agentId];
+    float saved = (s_preSparHealth[agentId] > 1.0f) ? s_preSparHealth[agentId] : ha->maxHealth;
+    if (saved < ha->maxHealth * 0.5f) saved = ha->maxHealth * 0.5f;
+    if (saved > ha->maxHealth) saved = ha->maxHealth;
+    ha->health = saved;
+    ha->sparDefeated = false;
+    s_preSparHealth[agentId] = 0.0f;
+}
+
 void Entity_SetSafeZone(int agentId, bool inSafe) {
     if (agentId < 0 || agentId >= MAX_AGENTS || !agentPool[agentId].active) return;
     agentPool[agentId].inSafeZone = inSafe;
-    if (inSafe) {
-        agentPool[agentId].duelFlag = false;
+    // Entering Safe Zone suppresses lethal Đồ Sát (PK_MODE_SLAUGHTER) and
+    // clears infamy, but MUST preserve non-lethal Tỉ Thí (PK_MODE_SPAR) which
+    // is explicitly allowed anywhere including Safe Zone.
+    if (inSafe && agentPool[agentId].pkMode == PK_MODE_SLAUGHTER) {
         agentPool[agentId].pkMode = PK_MODE_PEACE;
+        agentPool[agentId].duelFlag = false;
         agentPool[agentId].infamyLevel = 0;
-        agentPool[agentId].sparDefeated = false;
     }
 }
 
@@ -1399,29 +1388,31 @@ void Entity_ApplyAoEDamage(Vector3 center, float radius, float damage,
             Entity_ApplyDamage(id, damage, knockback);
         }
     }
+}
 
-    // End Spar (Tỉ Thí) cleanly when any sparring hero reaches 1 HP:
-    // return ALL sparring heroes to PK_MODE_PEACE and restore their pre-Spar HP.
-    bool sparEnded = false;
-    for (int i = 0; i < MAX_AGENTS; i++) {
-        if (agentPool[i].active && agentPool[i].archetype == ARCH_HERO &&
-            agentPool[i].pkMode == PK_MODE_SPAR &&
-            (agentPool[i].sparDefeated || agentPool[i].health <= 1.01f)) {
-            sparEnded = true;
-            break;
+void Entity_ApplyAoEDamageFrom(int attackerId, Vector3 center, float radius,
+                               float damage, float knockbackStrength) {
+    const Agent *att = Entity_GetAgent(attackerId);
+    if (!att) return;
+
+    int ids[MAX_AGENTS];
+    int count = Entity_GetNearbyTargets(center, radius, ids, MAX_AGENTS);
+
+    for (int i = 0; i < count; i++) {
+        int id = ids[i];
+        if (!Entity_CanDamageTarget(attackerId, id)) continue;
+        const Agent *a = &agentPool[id];
+
+        float dx = a->position.x - center.x;
+        float dz = a->position.z - center.z;
+        float len = sqrtf(dx * dx + dz * dz);
+
+        Vector3 knockback = { 0.0f, 0.0f, 0.0f };
+        if (len > 0.0001f) {
+            knockback.x = (dx / len) * knockbackStrength;
+            knockback.z = (dz / len) * knockbackStrength;
         }
-    }
-    if (sparEnded) {
-        for (int j = 0; j < MAX_AGENTS; j++) {
-            Agent *ha = &agentPool[j];
-            if (!ha->active || ha->archetype != ARCH_HERO || ha->pkMode != PK_MODE_SPAR) continue;
-            ha->pkMode = PK_MODE_PEACE;
-            ha->duelFlag = false;
-            ha->sparDefeated = false;
-            float saved = (s_preSparHealth[j] > 1.0f) ? s_preSparHealth[j] : ha->maxHealth;
-            if (saved > ha->maxHealth) saved = ha->maxHealth;
-            ha->health = saved;
-        }
+        Entity_ApplyDamageFrom(id, attackerId, damage, 0.0f, knockback);
     }
 }
 
@@ -1468,6 +1459,11 @@ int Entity_SpawnAgent(Vector3 position, float maxHealth, int element,
             a->pveBonusesActive = false;
             a->pveBonuses = (AgentPvEBonuses){ 0 };
             a->duelFlag = false;
+            a->pkMode = PK_MODE_PEACE;
+            a->infamyLevel = 0;
+            a->sparDefeated = false;
+            a->lastAttackerId = -1;
+            s_preSparHealth[i] = 0.0f;
             a->inSafeZone = false;
             a->isStatic = false;
             a->lastCastSkillIndex = -1;

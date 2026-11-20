@@ -414,14 +414,16 @@ void UpdateSandStormSkill(float dt, Vector3 enemyPos, float enemyRadius)
             }
 
             if (!inst->hitApplied) {
-                AgentTeam enemyTeam = ((AgentTeam)inst->casterTeam == TEAM_ALLY) ? TEAM_ENEMY : TEAM_ALLY;
-                int hits[4];
-                int hitCount = Entity_GetNearbyTargetsTeam(inst->tornadoPos, inst->hitRadius, enemyTeam, hits, 4);
-                if (hitCount > 0) {
-                    Vector3 kb = {inst->forward.x * 3.5f, 2.2f, inst->forward.z * 3.5f};
-                    for (int h = 0; h < hitCount; h++) {
-                        Entity_ApplyDamage(hits[h], inst->damage, kb);
-                    }
+                int hits[8];
+                int hitCount = Entity_GetNearbyTargets(inst->tornadoPos, inst->hitRadius, hits, 8);
+                bool anyHit = false;
+                Vector3 kb = {inst->forward.x * 3.5f, 2.2f, inst->forward.z * 3.5f};
+                for (int h = 0; h < hitCount; h++) {
+                    if (!Entity_CanDamageTarget(inst->ownerAgentId, hits[h])) continue;
+                    Entity_ApplyDamageFrom(hits[h], inst->ownerAgentId, inst->damage, 0.0f, kb);
+                    anyHit = true;
+                }
+                if (anyHit) {
                     inst->hitApplied = true;
                 }
             }

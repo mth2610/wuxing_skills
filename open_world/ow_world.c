@@ -69,6 +69,7 @@ static bool  s_touchDuelReq     = false;
 #define OW_EMOTE_SPAR_DECLINE 12
 static bool  s_sparInvitePending = false;
 static int   s_sparInviteFromId  = -1;
+static int   s_sparPartnerId     = -1;
 static float s_sparCountdown     = 0.0f;
 static bool  s_sparStarting      = false;
 static float s_prevHeroHp[MAX_AGENTS];
@@ -352,8 +353,9 @@ void OW_Update(PlayerEntity *player, float dt) {
         } else if (sev[i].emoteId == OW_EMOTE_SPAR_ACCEPT) {
             if (player && sev[i].agentId != player->agentId) {
                 s_sparInvitePending = false;
-                s_sparCountdown = 3.0f;
-                s_sparStarting  = true;
+                s_sparPartnerId     = sev[i].agentId;
+                s_sparCountdown     = 3.0f;
+                s_sparStarting      = true;
                 OW_SetBanner("DOI PHUONG DA DONG Y! CHUAN BI TY THI...", 2.0f);
             }
         } else if (sev[i].emoteId == OW_EMOTE_SPAR_DECLINE) {
@@ -365,16 +367,16 @@ void OW_Update(PlayerEntity *player, float dt) {
         }
     }
 
-    // Countdown 3..2..1 -> Activate Tỉ Thí (PK_MODE_SPAR)
+    // Countdown 3..2..1 -> Activate Tỉ Thí (PK_MODE_SPAR) for BOTH players
     if (s_sparStarting) {
         s_sparCountdown -= dt;
         if (s_sparCountdown <= 0.0f) {
             s_sparStarting  = false;
             s_sparCountdown = 0.0f;
             if (player) {
-                OWSandbox_SetPkMode(player, PK_MODE_SPAR);
-                OW_SetBanner("BAT DAU TY THI! (DUNG O 1 HP)", 2.2f);
+                OWSandbox_StartSparWith(player, s_sparPartnerId);
             }
+            s_sparPartnerId = -1;
         }
     }
 
@@ -440,20 +442,18 @@ void OW_Update(PlayerEntity *player, float dt) {
     s_lastPlayerPos = pa->position;
 
     bool inSafe = OW_IsInSafeZone(pa->position);
-    if (!Net_ClientDrivesWorld()) {
-        for (int i = 0; i < MAX_AGENTS; i++) {
-            const Agent *ha = Entity_GetAgent(i);
-            if (ha && ha->archetype == ARCH_HERO) {
-                Entity_SetSafeZone(i, OW_IsInSafeZone(ha->position));
-            }
+    for (int i = 0; i < MAX_AGENTS; i++) {
+        const Agent *ha = Entity_GetAgent(i);
+        if (ha && ha->archetype == ARCH_HERO) {
+            Entity_SetSafeZone(i, OW_IsInSafeZone(ha->position));
         }
+    }
+    if (!Net_ClientDrivesWorld()) {
         if (inSafe && pa->pkMode != PK_MODE_SPAR) {
             if (pa->health < pa->maxHealth)
                 Entity_ApplyDamage(player->agentId, -15.0f * dt, (Vector3){ 0 });
             Entity_RestoreMana(player->agentId, 20.0f * dt);
         }
-    } else {
-        Entity_SetSafeZone(player->agentId, inSafe);
     }
 
     // Vampire-Survivors Frenzy Tiers based on Kill Streak
@@ -780,8 +780,9 @@ void OW_DrawHUD(const PlayerEntity *player, Camera3D cam) {
         Rectangle btnNo  = { sb.x + 202.0f, sb.y + 52.0f, 154.0f, 40.0f };
         if (WuxiaUI_DrawButton(btnYes, "DONG Y", (Color){ 46, 156, 88, 255 }, false, 15.0f)) {
             s_sparInvitePending = false;
-            s_sparCountdown = 3.0f;
-            s_sparStarting  = true;
+            s_sparPartnerId     = s_sparInviteFromId;
+            s_sparCountdown     = 3.0f;
+            s_sparStarting      = true;
             Net_SendSocialState(player->agentId, OW_EMOTE_SPAR_ACCEPT, false);
         }
         if (WuxiaUI_DrawButton(btnNo, "TU CHOI", WUXIA_CRIMSON, false, 15.0f)) {

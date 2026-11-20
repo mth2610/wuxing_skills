@@ -122,7 +122,7 @@ Vector3 UI_GetAutoAimPoint(int agentId, bool *hasTarget) {
     int bestProj = -1;
     float bestSq = AIM_PROJECTILE_RANGE * AIM_PROJECTILE_RANGE;
     for (int i = 0; i < n; i++) {
-        if (projs[i].team == self->team) continue;
+        if (!Entity_CanDamageTarget(agentId, projs[i].ownerAgentId)) continue;
         float dx = projs[i].pos.x - self->position.x;
         float dz = projs[i].pos.z - self->position.z;
         float dSq = dx * dx + dz * dz;

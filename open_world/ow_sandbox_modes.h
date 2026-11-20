@@ -19,6 +19,8 @@ void OWSandbox_ClearCustomSpawns(void);
 void OWSandbox_CyclePkMode(PlayerEntity *player);
 // Directly set a PK mode (enforces Safe Zone check)
 bool OWSandbox_SetPkMode(PlayerEntity *player, AgentPkMode mode);
+// Start a 1v1 Tỉ Thí with a specific hero (works anywhere, incl. Safe Zone)
+void OWSandbox_StartSparWith(PlayerEntity *player, int opponentId);
 const char *OWSandbox_GetPkModeLabel(AgentPkMode mode);
 
 // Execute a data-driven spawner preset from OWRealmDef->spawnerPresets[]

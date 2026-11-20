@@ -190,8 +190,8 @@ void UpdateIceCrystalLanceSkill(float dt, Vector3 enemyPos, float enemyRadius) {
                 if (anyEnemy || inst->distTraveled >= inst->distTotal) {
                     if (anyEnemy) {
                         inst->hitDealt = true;
-                        Entity_ApplyAoEDamage(inst->headPos, 2.3f * inst->sizeScale,
-                                              inst->damage, inst->knockback, inst->casterTeam);
+                        Entity_ApplyAoEDamageFrom(inst->ownerAgentId, inst->headPos, 2.3f * inst->sizeScale,
+                                                  inst->damage, inst->knockback);
                         VFX_ComposeGroundWave((Vector3){ inst->headPos.x, inst->headPos.y - 0.5f, inst->headPos.z },
                                               VC_MAT_WATER, 2.4f * inst->sizeScale, 0.75f,
                                               VFX_GroundHeightFromMap, NULL);

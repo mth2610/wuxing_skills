@@ -241,8 +241,8 @@ void UpdateMetalBladeStormSkill(float dt, Vector3 enemyPos, float enemyRadius)
                 float hitDist = MBS_HIT_RADIUS * inst->sizeScale + enemyRadius;
                 Vector3 enemyChest = { enemyPos.x, bPos.y, enemyPos.z };
                 if (anyEnemy || (enemyRadius > 0.0f && Vector3Distance(bPos, enemyChest) <= hitDist)) {
-                    Entity_ApplyAoEDamage(bPos, 1.35f * inst->sizeScale,
-                                          inst->damagePerBlade, inst->knockback, inst->casterTeam);
+                    Entity_ApplyAoEDamageFrom(inst->ownerAgentId, bPos, 1.35f * inst->sizeScale,
+                                              inst->damagePerBlade, inst->knockback);
                     VFX_MetalBlades_ImpactBlade(inst->bladesHandle, b, bPos);
                     PlayImpactSound(EFFECT_PRESET_METAL_SHARD);
                     inst->bladeAlive[b] = false;

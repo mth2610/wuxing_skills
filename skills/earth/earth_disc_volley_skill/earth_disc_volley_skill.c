@@ -347,13 +347,24 @@ void UpdateEarthDiscVolleySkill(float dt, Vector3 enemyPos, float enemyRadius) {
             disc->pos = Vector3Add(disc->pos, Vector3Scale(disc->vel, dt));
             disc->distTraveled += stepDist;
 
-            bool hitEnemy = (Vector3Distance(disc->pos, enemyPos) <= (disc->radius + enemyRadius));
+            int hitIds[8];
+            int hitCount = Entity_GetNearbyTargets(disc->pos, disc->radius + 0.65f, hitIds, 8);
+            bool hitEnemy = false;
+            for (int h = 0; h < hitCount; h++) {
+                if (Entity_CanDamageTarget(inst->ownerAgentId, hitIds[h])) {
+                    hitEnemy = true;
+                    break;
+                }
+            }
+            if (!hitEnemy && enemyRadius > 0.0f) {
+                hitEnemy = (Vector3Distance(disc->pos, enemyPos) <= (disc->radius + enemyRadius));
+            }
             bool outOfRange = (disc->distTraveled >= disc->maxRange);
 
             if (hitEnemy || outOfRange) {
                 if (hitEnemy) {
-                    Entity_ApplyAoEDamage(disc->pos, 1.35f * inst->sizeScale,
-                                          inst->damagePerDisc, inst->knockback, inst->casterTeam);
+                    Entity_ApplyAoEDamageFrom(inst->ownerAgentId, disc->pos, 1.35f * inst->sizeScale,
+                                              inst->damagePerDisc, inst->knockback);
                     PlayImpactSound(EFFECT_PRESET_EARTH_CRACK);
                 }
                 VFX_ComposeImpactDust(disc->pos, VC_MAT_EARTH, 1.05f * inst->sizeScale, 0.65f);

@@ -5,6 +5,7 @@
 #include "maps/map_manager.h"
 #include <math.h>
 #include <stddef.h>
+#include <stdlib.h>
 
 // Brisk walk, real-world-scaled (1 unit = 1 meter) — same value the interim
 // game_screen controller used.
@@ -47,6 +48,8 @@ PlayerIntent Control_ReadIntent(void) {
 
     float s = sinf(s_camYaw);
     float c = cosf(s_camYaw);
+    const char *tw = getenv("WUXING_TESTWALK");
+    if (tw != NULL && tw[0] != '\0') { intent.moveDir.x = 0.0f; intent.moveDir.y = 1.0f; }
     if (IsKeyDown(KEY_W)) { intent.moveDir.x -= s; intent.moveDir.y -= c; }
     if (IsKeyDown(KEY_S)) { intent.moveDir.x += s; intent.moveDir.y += c; }
     if (IsKeyDown(KEY_A)) { intent.moveDir.x -= c; intent.moveDir.y += s; }

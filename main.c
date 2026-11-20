@@ -1642,6 +1642,23 @@ int main(int argc, char **argv) {
                             ? MUS_COMBAT_INTENSE
                             : MUS_ARENA_NIGHT);
         GameScreen_Update(&player, &camera, dt);
+        if (getenv("WUXING_NET_DEBUG_POS")) {
+            static float s_hb = 0.0f;
+            static int s_hbSeq = 0;
+            s_hb += dt;
+            if (s_hb >= 2.0f) {
+                s_hb = 0.0f;
+                const Agent *me = Entity_GetAgent(player.agentId);
+                int activeAgents = 0;
+                for (int ai = 0; ai < MAX_AGENTS; ai++)
+                    if (Entity_GetAgent(ai) != NULL) activeAgents++;
+                TraceLog(LOG_INFO, "[DBG frame] t=%d state=%d mode=%d conn=%d hid=%d aid=%d agents=%d cc=%d vState=%d pos=%.2f,%.2f,%.2f", ++s_hbSeq,
+                         (int)GameScreen_GetState(), (int)Net_GetMode(), (int)Net_IsPeerConnected(),
+                         Net_GetLocalHeroAgentId(), player.agentId, activeAgents,
+                         Entity_IsCrowdControlled(player.agentId), me ? (int)me->vState : -1,
+                         me ? me->position.x : -999.0f, me ? me->position.y : 0.0f, me ? me->position.z : 0.0f);
+            }
+        }
         // Dev: WUXING_TEAM_TEST=1 — scripted team-battle round on the host
         // for headless net verification (no inputs available): 10s into
         // FIGHTING wipe side 1 (elimination fires → VICTORY/DEFEAT sync),

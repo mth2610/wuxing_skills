@@ -149,7 +149,7 @@ static void UpdateHeroBots(float dt) {
             CombatProjectileInfo proj[32];
             int np = Combat_QueryProjectiles(proj, 32);
             for (int p = 0; p < np; p++) {
-                if (proj[p].team == me->team) continue;
+                if (!Entity_CanDamageTarget(bot->agentId, proj[p].ownerAgentId)) continue;
                 float dx = proj[p].pos.x - me->position.x;
                 float dz = proj[p].pos.z - me->position.z;
                 if (dx * dx + dz * dz > BOT_DODGE_RANGE * BOT_DODGE_RANGE) continue;
@@ -181,7 +181,9 @@ static void UpdateHeroBots(float dt) {
             pos.z += mz * speed * dt;
             pos.y = MapManager_GetGroundHeightAt(pos.x, pos.z);
             float ex = pos.x - arenaC.x, ez = pos.z - arenaC.z;
-            if (sqrtf(ex * ex + ez * ez) <= arenaR - BOT_EDGE_MARGIN)
+            bool inBounds = (arenaR > 50.0f) ? (pos.y > -40.0f)
+                                             : (sqrtf(ex * ex + ez * ez) <= arenaR - BOT_EDGE_MARGIN);
+            if (inBounds)
                 Entity_SetPosition(bot->agentId, pos);
         }
 

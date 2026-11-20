@@ -254,7 +254,7 @@ void UpdateEarthPillarPrisonSkill(float dt, Vector3 enemyPos, float enemyRadius)
             }
             if (!p->dealtDamage && p->timer >= 0.15f && anyEnemy) {
                 p->dealtDamage = true;
-                Entity_ApplyAoEDamage(p->pos, p->radius, p->damage, p->knockback, p->casterTeam);
+                Entity_ApplyAoEDamageFrom(p->ownerAgentId, p->pos, p->radius, p->damage, p->knockback);
             }
             if (p->timer >= PILLAR_PRISON_HOLD_SECS) {
                 p->state = PRISON_EXIT;

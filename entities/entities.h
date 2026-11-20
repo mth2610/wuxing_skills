@@ -189,6 +189,7 @@ AgentPkMode Entity_GetPkMode(int agentId);
 void Entity_AddInfamy(int agentId, int delta);
 int  Entity_GetInfamyLevel(int agentId);
 bool Entity_ConsumeSparDefeated(int agentId, int *outAttackerId);
+void Entity_RestorePreSparHealth(int agentId);
 void Entity_SetSafeZone(int agentId, bool inSafe);
 bool Entity_IsInSafeZone(int agentId);
 void Entity_SetLastCast(int agentId, int skillIndex, float pveDamageScale);
@@ -396,6 +397,11 @@ void Entity_AddModifier(int agentId, float speedMult, float duration);
 // limitation). Pass TEAM_NEUTRAL as attackerTeam to hit both real teams.
 void Entity_ApplyAoEDamage(Vector3 center, float radius, float damage,
                            float knockbackStrength, AgentTeam attackerTeam);
+// Attacker-aware AoE damage: uses Entity_CanDamageTarget(attackerId, id) and
+// Entity_ApplyDamageFrom so same-team Open-World PvP (Tỉ Thí / Đồ Sát) works
+// without self-damage and respects non-lethal Spar 1 HP floor.
+void Entity_ApplyAoEDamageFrom(int attackerId, Vector3 center, float radius,
+                               float damage, float knockbackStrength);
 // Applies a buff modifier only to agents whose team == allyTeam.
 void Entity_ApplyAoEBuff(Vector3 center, float radius, float speedMult,
                          float duration, AgentTeam allyTeam);

@@ -101,6 +101,8 @@ static float s_sendAccum = 0.0f;
 
 static PlayerIntent s_clientIntent = { 0 }; // client: queued local intent
 static bool s_clientIntentValid = false;
+static int   s_dbgIntents = 0;
+static float s_dbgAccum = 0.0f;
 
 static int s_hostMatchState = -1;   // host: last state game/ reported
 static int s_hostStateSent  = -1;   // host: last state actually sent
@@ -639,6 +641,13 @@ static unsigned char HostAutoBalanceTeam(void) {
     return (unsigned char)((t1 <= t0) ? 1 : 0);
 }
 
+static void HostSendHello(int idx) {
+    HostPeer *p = &s_peers[idx];
+    if (p == NULL || !p->used || p->agentId < 0) return;
+    NetCtrl hello = { NET_CTRL_HELLO, NET_PROTOCOL_VERSION, (unsigned char)p->agentId };
+    SendToPeer(p, NET_CH_CONTROL, &hello, (int)sizeof(hello), true);
+}
+
 static void HostSpawnPeerHero(int idx) {
     HostPeer *p = &s_peers[idx];
     if (s_exploreMode) p->team = 0; // Explore Co-op: all players share TEAM_ALLY
@@ -663,8 +672,7 @@ static void HostSpawnPeerHero(int idx) {
         if (skillIdx >= 0) Entity_SetEquippedSkill(p->agentId, slot, skillIdx, kLoadout[slot].element);
     }
     // Tell the client which agent is theirs (reliable channel).
-    NetCtrl hello = { NET_CTRL_HELLO, NET_PROTOCOL_VERSION, (unsigned char)p->agentId };
-    SendToPeer(p, NET_CH_CONTROL, &hello, (int)sizeof(hello), true);
+    HostSendHello(idx);
     // Send all known player wardrobes so the newly joined peer sees everyone's outfit.
     for (int a = 0; a < MAX_AGENTS; a++) {
         if (s_storedWardrobeValid[a]) {
@@ -907,6 +915,7 @@ static void HandlePacket(ENetPeer *ep, void *ref, int channel,
             }
             PlayerIntent in;
             if (Net_UnpackIntent(&in, data, len)) {
+                s_dbgIntents++;
                 HostApplyRemoteEdges(idx, &in);
                 s_peers[idx].held = in; // held state for per-frame movement
             }
@@ -925,13 +934,21 @@ static void HandlePacket(ENetPeer *ep, void *ref, int channel,
                    data[1] == NET_PROTOCOL_VERSION) {
             int agentId = s_peers[idx].agentId;
             if (agentId >= 0) {
+                int emoteId = (int)data[3];
                 bool duel = (data[4] != 0);
                 AgentPkMode pkMode = (data[5] <= 2) ? (AgentPkMode)data[5] : (duel ? PK_MODE_SLAUGHTER : PK_MODE_PEACE);
-                Entity_SetPkMode(agentId, pkMode);
-                PushSocialEvent(agentId, (int)data[3], duel);
+                if (emoteId == 0) {
+                    if (pkMode == PK_MODE_SLAUGHTER && Entity_IsInSafeZone(agentId)) {
+                        pkMode = PK_MODE_PEACE;
+                    }
+                    Entity_SetPkMode(agentId, pkMode);
+                }
+                PushSocialEvent(agentId, emoteId, duel);
                 unsigned char fwd[NET_SOCIAL_PACKET_BYTES] = {
                     NET_CTRL_SOCIAL_EMOTE, NET_PROTOCOL_VERSION,
-                    (unsigned char)agentId, data[3], data[4], data[5]
+                    (unsigned char)agentId, data[3],
+                    (unsigned char)(Entity_GetPkMode(agentId) != PK_MODE_PEACE ? 1 : 0),
+                    (unsigned char)Entity_GetPkMode(agentId)
                 };
                 HostBroadcast(NET_CH_CONTROL, fwd, (int)sizeof(fwd), true);
             }
@@ -1002,10 +1019,13 @@ static void HandlePacket(ENetPeer *ep, void *ref, int channel,
             } else if (len == NET_SOCIAL_PACKET_BYTES && data[0] == NET_CTRL_SOCIAL_EMOTE &&
                        data[1] == NET_PROTOCOL_VERSION) {
                 int aid = (int)data[2];
+                int emoteId = (int)data[3];
                 bool duel = (data[4] != 0);
                 AgentPkMode pkMode = (data[5] <= 2) ? (AgentPkMode)data[5] : (duel ? PK_MODE_SLAUGHTER : PK_MODE_PEACE);
-                Entity_SetPkMode(aid, pkMode);
-                PushSocialEvent(aid, (int)data[3], duel);
+                if (emoteId == 0) {
+                    Entity_SetPkMode(aid, pkMode);
+                }
+                PushSocialEvent(aid, emoteId, duel);
             } else if (len == NET_TRADE_PACKET_BYTES && data[0] == NET_CTRL_TRADE_GIFT &&
                        data[1] == NET_PROTOCOL_VERSION) {
                 int sender = (int)data[2];
@@ -1133,11 +1153,52 @@ void Net_PumpSubFrame(void) {
 
 void Net_Tick(float dt) {
     if (s_mode == NET_MODE_OFF) return;
+    if (getenv("WUXING_NET_DEBUG_POS")) {
+        static float hbAccum = 0.0f;
+        static int hbSeq = 0;
+        hbAccum += dt;
+        if (hbAccum >= 1.0f) {
+            hbAccum = 0.0f;
+            TraceLog(LOG_INFO, "[DBG tick] t=%d mode=%d conn=%d peers=%d hid=%d",
+                     ++hbSeq, (int)s_mode, (int)s_connected, Net_GetPeerCount(), s_localHeroId);
+        }
+    }
     Net_PumpSubFrame();
     if (s_backendTick == NULL && s_host == NULL) return;
 
     if (!s_connected) return;
     s_sendAccum += dt;
+
+    if (getenv("WUXING_NET_DEBUG_POS")) {
+        s_dbgAccum += dt;
+        if (s_dbgAccum >= 1.0f) {
+            s_dbgAccum = 0.0f;
+            if (s_mode == NET_MODE_CLIENT) {
+                const Agent *me = (s_localHeroId >= 0) ? Entity_GetAgent(s_localHeroId) : NULL;
+                TraceLog(LOG_INFO, "[DBG cli] hero=%d pos=%.2f,%.2f,%.2f vState=%d cc=%d move=%.2f,%.2f inAir=%d dashT=%.2f",
+                         s_localHeroId, me ? me->position.x : -999.0f, me ? me->position.y : 0.0f,
+                         me ? me->position.z : 0.0f, me ? (int)me->vState : -1,
+                         Entity_IsCrowdControlled(s_localHeroId),
+                         s_clientIntent.moveDir.x, s_clientIntent.moveDir.y,
+                         (int)0, 0.0f);
+            } else {
+                for (int i = 0; i < NET_MAX_PLAYERS - 1; i++) {
+                    if (!s_peers[i].used) continue;
+                    const Agent *pa = (s_peers[i].agentId >= 0) ? Entity_GetAgent(s_peers[i].agentId) : NULL;
+                    TraceLog(LOG_INFO, "[DBG host] peer=%d hero=%d pos=%.2f,%.2f,%.2f vState=%d cc=%d intents=%d held=%.2f,%.2f pose=%d cPose=%.2f,%.2f,%.2f",
+                             i, s_peers[i].agentId,
+                             pa ? pa->position.x : -999.0f, pa ? pa->position.y : 0.0f,
+                             pa ? pa->position.z : 0.0f, pa ? (int)pa->vState : -1,
+                             Entity_IsCrowdControlled(s_peers[i].agentId), s_dbgIntents,
+                             s_peers[i].held.moveDir.x, s_peers[i].held.moveDir.y,
+                             (int)s_peers[i].held.hasClientPose,
+                             s_peers[i].held.clientPos.x, s_peers[i].held.clientPos.z,
+                             s_peers[i].held.clientPos.y);
+                }
+                s_dbgIntents = 0;
+            }
+        }
+    }
 
     if (s_mode == NET_MODE_HOST) {
         // Liveness: the ENet path raises real DISCONNECT events, but a

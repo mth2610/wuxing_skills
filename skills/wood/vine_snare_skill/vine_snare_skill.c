@@ -244,7 +244,7 @@ void UpdateVineSnareSkill(float dt, Vector3 enemyPos, float enemyRadius) {
             }
             if (!v->dealtDamage && anyEnemy) {
                 v->dealtDamage = true;
-                Entity_ApplyAoEDamage(v->targetPos, v->radius, v->damage, v->knockback, v->casterTeam);
+                Entity_ApplyAoEDamageFrom(v->ownerAgentId, v->targetPos, v->radius, v->damage, v->knockback);
                 PlayImpactSound(EFFECT_PRESET_WOOD_BLOOM);
             }
             if (v->timer >= VINE_HOLD_SECS) {

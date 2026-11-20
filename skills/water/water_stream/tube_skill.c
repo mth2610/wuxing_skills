@@ -259,8 +259,8 @@ void UpdateTubeSkill(float dt) {
                 }
                 if (anyEnemy) {
                     st->hitDealt = true;
-                    Entity_ApplyAoEDamage(st->headPos, 2.4f * st->sizeScale,
-                                          st->damage, st->knockback, st->casterTeam);
+                    Entity_ApplyAoEDamageFrom(st->ownerAgentId, st->headPos, 2.4f * st->sizeScale,
+                                              st->damage, st->knockback);
                     VFX_ComposeGroundWave((Vector3){ st->headPos.x, st->headPos.y - 0.35f, st->headPos.z },
                                           VC_MAT_WATER, 2.8f * st->sizeScale, 0.85f,
                                           VFX_GroundHeightFromMap, NULL);
