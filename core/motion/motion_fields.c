@@ -1809,6 +1809,115 @@ MotionFieldHandle MotionFields_SpawnMovingTornado(const MotionPath *path,
   return MotionFields_CreateField(&d);
 }
 
+MotionFieldHandle MotionFields_SpawnTornadoColumn(Vector3 origin, const MotionPath *path,
+                                                  float travelSpeedMps, float radiusM,
+                                                  float heightM, float inwardPullN,
+                                                  float swirlSpeedMps, float updraftMps,
+                                                  float turbulenceSpeedMps, float durationSec)
+{
+  if (!Motion_FiniteVector(origin) || radiusM <= 0.0f || heightM <= 0.05f ||
+      travelSpeedMps < 0.0f || durationSec <= 0.0f)
+    return MOTION_FIELD_INVALID;
+  FieldDesc d = MotionField_Default();
+  d.volume.shape = FIELD_CAPSULE;
+  d.volume.capsuleStart = (Vector3){0.0f, 0.0f, 0.0f};
+  d.volume.capsuleEnd = (Vector3){0.0f, heightM, 0.0f};
+  d.volume.radiusM = radiusM;
+  d.volume.coreFraction = 0.22f;
+  d.transform.position = origin;
+  if (path && path->count >= 2 && travelSpeedMps > 0.0f)
+  {
+    d.trajectory.mode = FIELD_TRAJECTORY_PATH;
+    d.trajectory.path = *path;
+    d.trajectory.speedMps = travelSpeedMps;
+    d.transform.position = (Vector3){0.0f, 0.0f, 0.0f};
+  }
+  d.lifetime.durationSec = durationSec;
+  d.lifetime.attackSec = fminf(0.14f, durationSec * 0.25f);
+  d.lifetime.fadeSec = fminf(0.35f, durationSec * 0.30f);
+  d.receiverMask = MOTION_RECEIVER_ALL_COMPONENTS;
+
+  if (inwardPullN != 0.0f)
+  {
+    d.forceLaws[d.forceLawCount++] =
+        (ForceLaw){.type = FORCE_LAW_RADIAL_ATTRACTION,
+                   .center = (Vector3){0.0f, heightM * 0.35f, 0.0f},
+                   .magnitudeNewtons = inwardPullN};
+  }
+  if (turbulenceSpeedMps > 0.0f)
+  {
+    d.forceLaws[d.forceLawCount++] =
+        (ForceLaw){.type = FORCE_LAW_CURL_FORCE,
+                   .magnitudeNewtons = fmaxf(fabsf(inwardPullN) * 0.45f, 1.5f),
+                   .procedural = {.turbulenceSpeedMps = turbulenceSpeedMps,
+                                  .swirlSpeedMps = 0.0f,
+                                  .eddyLengthM = radiusM * 0.35f}};
+  }
+
+  d.flow.enabled = true;
+  d.flow.addBackgroundVelocity = true;
+  d.flow.axis = (Vector3){0.0f, 1.0f, 0.0f};
+  d.flow.velocityMps = (Vector3){0.0f, updraftMps, 0.0f};
+  d.flow.procedural.swirlSpeedMps = swirlSpeedMps;
+  d.flow.procedural.turbulenceSpeedMps = fmaxf(turbulenceSpeedMps, 0.0f);
+  d.flow.procedural.eddyLengthM = radiusM * 0.35f;
+  d.flow.blendWeight = 1.0f;
+  return MotionFields_CreateField(&d);
+}
+
+MotionFieldHandle MotionFields_SpawnRadialBurst(Vector3 center, float radiusM,
+                                                float outwardForceN, float upwardAccelMps2,
+                                                float turbulenceSpeedMps, float durationSec,
+                                                float attackSec, float fadeSec)
+{
+  if (!Motion_FiniteVector(center) || radiusM <= 0.0f || durationSec <= 0.0f)
+    return MOTION_FIELD_INVALID;
+  FieldDesc d = MotionField_Default();
+  d.volume.shape = FIELD_SPHERE;
+  d.volume.radiusM = radiusM;
+  d.volume.coreFraction = 0.18f;
+  d.transform.position = center;
+  d.lifetime.durationSec = durationSec;
+  d.lifetime.attackSec = fmaxf(attackSec, 0.0f);
+  d.lifetime.fadeSec = fmaxf(fadeSec, 0.0f);
+  d.receiverMask = MOTION_RECEIVER_ALL_COMPONENTS;
+
+  if (outwardForceN != 0.0f)
+  {
+    /* Negative magnitude in FORCE_LAW_RADIAL_ATTRACTION pushes radially outward from center. */
+    d.forceLaws[d.forceLawCount++] =
+        (ForceLaw){.type = FORCE_LAW_RADIAL_ATTRACTION,
+                   .center = (Vector3){0.0f, 0.0f, 0.0f},
+                   .magnitudeNewtons = -fabsf(outwardForceN)};
+  }
+  if (upwardAccelMps2 != 0.0f)
+  {
+    d.forceLaws[d.forceLawCount++] =
+        (ForceLaw){.type = FORCE_LAW_ACCELERATION,
+                   .accelerationMps2 = (Vector3){0.0f, upwardAccelMps2, 0.0f}};
+  }
+  if (turbulenceSpeedMps > 0.0f)
+  {
+    d.forceLaws[d.forceLawCount++] =
+        (ForceLaw){.type = FORCE_LAW_CURL_FORCE,
+                   .magnitudeNewtons = fmaxf(fabsf(outwardForceN) * 0.35f, 1.2f),
+                   .procedural = {.turbulenceSpeedMps = turbulenceSpeedMps,
+                                  .swirlSpeedMps = 0.0f,
+                                  .eddyLengthM = radiusM * 0.32f}};
+  }
+  if (turbulenceSpeedMps > 0.0f || upwardAccelMps2 > 0.0f)
+  {
+    d.flow.enabled = true;
+    d.flow.addBackgroundVelocity = true;
+    d.flow.axis = (Vector3){0.0f, 1.0f, 0.0f};
+    d.flow.velocityMps = (Vector3){0.0f, fmaxf(upwardAccelMps2 * 0.35f, 0.0f), 0.0f};
+    d.flow.procedural.turbulenceSpeedMps = fmaxf(turbulenceSpeedMps, 0.0f);
+    d.flow.procedural.eddyLengthM = radiusM * 0.32f;
+    d.flow.blendWeight = 1.0f;
+  }
+  return MotionFields_CreateField(&d);
+}
+
 /* Tái sử dụng trực tiếp localPos và nearestPath từ FieldPreparedQuery (khi đã
  * biết volumeWeight > 0), tránh hoàn toàn việc biến đổi và chiếu lại đường dẫn. */
 static bool Motion_PhysicalPathLanePrepared(const FieldDesc *d,

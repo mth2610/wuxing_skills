@@ -283,7 +283,7 @@ int VFX_GranularSand_GetParams(VFX_GranularSandConfig *cfg, VFX_ParamDef *out, i
     static const char *const matNames[] = {
         "Desert Sand", "Coarse Gravel", "Loess Soil", "Gold Iron Sand", "Volcanic Ash",
         "Dry Leaf", "Fresh Leaf", "Dry Twig", "Flower Petal", "Ice Shard", "Snow Powder",
-        "Crystal Shard", "Metal Shard"
+        "Crystal Shard", "Metal Shard", "Shale Shard"
     };
 
     if (n < max) out[n++] = (VFX_ParamDef){

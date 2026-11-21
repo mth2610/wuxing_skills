@@ -24,6 +24,7 @@ typedef enum {
     GRANULAR_MAT_SNOW_POWDER,       // Cohesive powder snow (sintering cohesion, ice sparkle)
     GRANULAR_MAT_CRYSTAL_SHARD,     // Translucent spirit jade/quartz crystal shard (Beer-Lambert + Fresnel)
     GRANULAR_MAT_METAL_SHARD,       // Forged steel/bronze razor fragment (high density, metallic F0 glint)
+    GRANULAR_MAT_SHALE_SHARD,       // Thin flat fractured desert shale/slate slab (sunlight tumble glint)
     GRANULAR_MAT_COUNT
 } GranularMaterialId;
 
@@ -33,7 +34,8 @@ typedef enum {
     GRANULAR_MORPH_PLANAR_LAMINA  = 2, // Thin aerofoil leaves & petals with 3D tumble & flutter
     GRANULAR_MORPH_ELONGATED_TWIG = 3, // Anisotropic woody segments & splinters
     GRANULAR_MORPH_CRYSTAL_SHARD  = 4, // Faceted translucent ice/mineral shards
-    GRANULAR_MORPH_METAL_SHARD    = 5  // Chiseled 4-plane diamond metallic blade/shrapnel
+    GRANULAR_MORPH_METAL_SHARD    = 5, // Chiseled 4-plane diamond metallic blade/shrapnel
+    GRANULAR_MORPH_SHALE_SLAB     = 6  // Thin flat fractured desert shale/slate slab
 } GranularMorphology;
 
 typedef struct {
@@ -88,6 +90,8 @@ typedef struct {
     bool    loopTop;          // Recycle grains exiting top of funnel
     Vector3 stormVelocity;    // Translational velocity of moving funnel/wave (m/s)
     float   spinDown;         // [0..1] spin-down collapse progress (0=active, 1=settled)
+    float   implosionPull;    // [0..1] Haboob core pinch compression (tightens waist & boosts spin)
+    float   swayAmp;          // Sinuous tornado spine sway amplitude (m; <=0 uses default 0.24m)
 } GranularWaveDesc;
 
 typedef struct {
@@ -126,6 +130,12 @@ void GranularSim_ApplyForceImpulse(Vector3 center, float radius,
 void GranularSim_SetTornadoFunnel(Vector3 basePos, float baseRadius, float topRadius,
                                   float height, float swirlSpeed, float updraftSpeed,
                                   bool active);
+void GranularSim_SetTornadoFunnelEx(Vector3 basePos, float baseRadius, float topRadius,
+                                    float height, float swirlSpeed, float updraftSpeed,
+                                    float swayAmp, float implosionPull, bool active);
+void GranularSim_ReleaseHaboobBurst(Vector3 epicenter, float radius,
+                                    float radialSpeed, float tangentialSpeed,
+                                    float updraftSpeed);
 void GranularSim_Update(float dt);
 #if !defined(CORE_GRANULAR_HEADLESS_TEST)
 void GranularSim_DrawBody(Camera3D camera);

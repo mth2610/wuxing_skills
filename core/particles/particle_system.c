@@ -468,7 +468,7 @@ void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int r
   p->normalTexId = config.render.normalTex.id;
   p->motionTexId = config.render.motionTex.id;
   p->motionWarpScale = config.render.motionWarpScale;
-  if (p->volumeSheet && p->rampTexId == 0)
+  if (p->volumeSheet && p->volumeSheet != 7 && p->rampTexId == 0)
   {
     static bool warned = false;
     if (!warned)
@@ -1692,7 +1692,7 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
             ? VFX_CONTRAST_EMISSION
             : VFX_CONTRAST_BODY);
 
-    if (p->volumeSheet)
+    if (p->volumeSheet && p->volumeSheet != 7)
     {
       float heat = 1.0f;
       if (p->emissiveCurve)
@@ -1760,12 +1760,12 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
     int drawBlend = (layerFilter == 0) ? VFX_BLEND_ALPHA : p->blendMode;
     int wantGridC = s_litActive ? (p->spriteAnim ? p->spriteAnim->cols : 1) : 1;
     int wantGridR = s_litActive ? (p->spriteAnim ? p->spriteAnim->rows : 1) : 1;
-    float wantBoost = s_litActive ? ((p->unlit || p->volumeSheet) ? (p->emissiveBoost * s_emissiveBoost) : 1.0f) : 1.0f;
-    float wantStrength = s_litActive ? (p->unlit ? 0.0f : (((p->sixWayLighting || p->smokeSheet) && s_lightingStrength <= 0.0f) ? 1.0f : s_lightingStrength)) : 0.0f;
+    float wantBoost = s_litActive ? ((p->unlit || (p->volumeSheet && p->volumeSheet != 7)) ? (p->emissiveBoost * s_emissiveBoost) : 1.0f) : 1.0f;
+    float wantStrength = s_litActive ? (p->unlit ? 0.0f : (((p->sixWayLighting || p->smokeSheet || p->volumeSheet == 7) && s_lightingStrength <= 0.0f) ? 1.0f : s_lightingStrength)) : 0.0f;
 
     int wantVolume = s_litActive ? p->volumeSheet : 0;
     int wantSmokeSheet = s_litActive ? p->smokeSheet : 0;
-    unsigned int wantRamp = (wantVolume != 0) ? p->rampTexId : 0u;
+    unsigned int wantRamp = (wantVolume != 0 && wantVolume != 7) ? p->rampTexId : 0u;
     float wantHeat = (wantVolume != 0 || wantSmokeSheet != 0) ? p->heatGain : 1.0f;
     float wantSmokeGain = (wantVolume != 0 || wantSmokeSheet != 0) ? p->smokeGain : 1.0f;
     unsigned int packedSmokeTint = (wantVolume != 0 || wantSmokeSheet != 0) ? VFXPackColor(p->smokeTint) : 0u;

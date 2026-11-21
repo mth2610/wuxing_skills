@@ -425,7 +425,7 @@ void main()
     }
 
     // ── MODE 6: PROCEDURAL SHADER PUFF (Zero-flipbook, rolling radial billow) ─────
-    if (u_volumeSheet > 5.5)
+    if (u_volumeSheet > 5.5 && u_volumeSheet < 6.5)
     {
         if (fragColor.a < 0.004) discard;
         float age = fragColor.g;
@@ -462,6 +462,68 @@ void main()
 
         vec3 puffOut = min(col * (alpha * u_emissiveBoost), vec3(32.0));
         finalColor = vec4(max(puffOut, vec3(0.0)), 0.0);
+        return;
+    }
+
+    // ── MODE 7: PROCEDURAL SHADER FEATHERED DUST CLOUD (Zero-texture ALPHA BODY) ─
+    // Smooth domain-warped FBM x Gaussian radial falloff (zero Worley/cauliflower
+    // blobs, zero hard edges) with macro directional lighting + backlit Mie rim.
+    if (u_volumeSheet > 6.5)
+    {
+        if (fragColor.a < 0.004) discard;
+        vec2 p = (fragTexCoord - 0.5) * 2.0;
+        float dist = length(p);
+        if (dist >= 1.0) discard;
+
+        // Deep Gaussian-like radial feathering guarantees 0.0 well before quad edge
+        float radial = pow(max(0.0, 1.0 - dist), 2.15);
+        if (radial < 0.003) discard;
+
+        // Continuous world-coupled domain-warped FBM (1x fbm2 + 2x vnoise for fast fillrate)
+        vec2 drift = vec2(u_time * 0.16, -u_time * 0.24) + fragPosition.xz * 0.26;
+        vec2 baseUV = fragTexCoord * 2.45 + drift;
+        float wx = (vnoise(baseUV * 1.15 + vec2(0.4, 1.2)) - 0.44) * 0.42;
+        float wy = (vnoise(baseUV * 1.15 + vec2(3.1, 2.7)) - 0.44) * 0.42;
+        float fbmMain = fbm2(baseUV + vec2(wx, wy));
+        float fbmSoft = vnoise(baseUV * 1.45 - vec2(wx, -wy) * 0.65 + vec2(4.3, 2.1));
+
+        float cloudMask = clamp(0.48 + (fbmMain * 0.65 + fbmSoft * 0.35 - 0.38) * 1.42, 0.0, 1.0);
+        float soft = (u_softFade > 0.0) ? SoftParticle_Factor(u_softFade) : 1.0;
+        float alpha = clamp(radial * smoothstep(0.06, 0.92, cloudMask) * 1.22, 0.0, 1.0) * fragColor.a * soft;
+        if (alpha < 0.005) discard;
+
+        // Analytic view-aligned macro dome normal (zero derivative seam artifacts)
+        vec3 V = SafeNormalize(viewPos - fragPosition, vec3(0.0, 0.0, 1.0));
+        vec3 upRef = abs(V.y) > 0.99 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0);
+        vec3 camR = SafeNormalize(cross(upRef, V), vec3(1.0, 0.0, 0.0));
+        vec3 camU = cross(V, camR);
+        float domeZ = sqrt(max(1.0 - min(dist * dist, 1.0), 0.04));
+        vec3 N = SafeNormalize(camR * (p.x * 0.78) + camU * (p.y * 0.78) + V * domeZ, V);
+
+        vec3 L = ParticleLightDir();
+        float ndotl = dot(N, L);
+        float shade = clamp(ndotl * 0.5 + 0.5 + (fbmMain - 0.44) * 0.22, 0.0, 1.0);
+
+        // 3-tone macro earth dust ramp (warm shadow core -> golden sand midtone -> sunlit rim)
+        vec3 shadowCol = fragColor.rgb * vec3(0.46, 0.36, 0.24);
+        vec3 midCol    = fragColor.rgb * 0.94;
+        vec3 litCol    = min(fragColor.rgb * vec3(1.18, 1.08, 0.92), vec3(1.25));
+        vec3 dustCol   = mix(shadowCol, midCol, smoothstep(0.08, 0.54, shade));
+        dustCol        = mix(dustCol, litCol, smoothstep(0.45, 0.94, shade));
+
+        // Gentle scene luminance coupling without washing sand into cool night blue-grey
+        float wrap;
+        vec3 envLit = ParticleLightTerm(N, V, L, wrap);
+        float envY = clamp(dot(envLit, vec3(0.2126, 0.7152, 0.0722)), 0.58, 1.25);
+        dustCol *= mix(1.0, envY, 0.18);
+
+        // Subtle warm backlit Mie rim on wispy edges
+        float fwdScatter = pow(max(dot(-V, L), 0.0), 3.4);
+        float thinWisp = 1.0 - smoothstep(0.22, 0.84, cloudMask * radial);
+        vec3 rimTint = mix(litCol, vec3(0.95, 0.78, 0.50), 0.65);
+        dustCol += rimTint * fwdScatter * (0.08 + 0.14 * thinWisp);
+
+        finalColor = VFX_ResolveBody(dustCol, 1.0, clamp(alpha, 0.0, 0.78));
         return;
     }
 

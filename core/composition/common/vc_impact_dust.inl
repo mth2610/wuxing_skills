@@ -18,6 +18,7 @@ static const VFX_SurfaceId s_impactDustSurfaces[VFX_IMPACT_DUST_VARIANT_COUNT] =
     VFX_SURFACE_SMOKE_PUFF_DARK_NIAGARA,
     VFX_SURFACE_SMOKE_WISPY_NIAGARA,
     VFX_SURFACE_PLASMA_WISPS_NIAGARA,
+    VFX_SURFACE_SMOKE_PUFF_LIGHT_NIAGARA, /* Unused by SHADER_DUST (procedural mode 7) */
 };
 
 static int ImpactDust_StyleIndex(VFX_ImpactDustVariant variant)
@@ -55,7 +56,7 @@ static void ImpactDust_Init(VFX_ImpactDustVariant variant)
 const char *VFX_ImpactDustVariant_Name(VFX_ImpactDustVariant variant)
 {
     static const char *const names[VFX_IMPACT_DUST_VARIANT_COUNT] = {
-        "DUST PUFF", "DARK SMOKE PUFF", "SMOKE WISP", "ENERGY WISP"
+        "DUST PUFF", "DARK SMOKE PUFF", "SMOKE WISP", "ENERGY WISP", "SHADER DUST"
     };
     return names[ImpactDust_StyleIndex(variant)];
 }
@@ -66,10 +67,76 @@ void VFX_ComposeImpactDustVariant(Vector3 pos, VC_MaterialId matId, float scale,
 {
     const int style = ImpactDust_StyleIndex(variant);
     const bool energy = variant == VFX_IMPACT_DUST_VARIANT_ENERGY_WISP;
+    const bool shaderDust = variant == VFX_IMPACT_DUST_VARIANT_SHADER_DUST;
     ImpactDust_Init(variant);
-    if (s_impactDustTex[style].id == 0 || scale <= 0.0f) return;
+    if (scale <= 0.0f) return;
+    if (!shaderDust && s_impactDustTex[style].id == 0) return;
     severity01 = Clamp(severity01, 0.0f, 1.0f);
     const VFX_ElementMaterial *mat = VFX_Material(matId);
+
+    // Procedural Shader Dust branch: zero flipbook texture, smooth Gaussian-feathered
+    // domain-warped FBM clouds lit macro-directionally with backlit Mie rim (particle_lit mode 7).
+    if (shaderDust) {
+        static SkillCurve s_shaderDustGrow = {0};
+        static SkillCurve s_shaderDustFade = {0};
+        static bool s_shaderDustCurvesReady = false;
+        if (!s_shaderDustCurvesReady) {
+            FloatCurve_AddStop(&s_shaderDustGrow, 0.00f, 0.55f);
+            FloatCurve_AddStop(&s_shaderDustGrow, 0.28f, 1.18f);
+            FloatCurve_AddStop(&s_shaderDustGrow, 1.00f, 1.95f);
+            FloatCurve_AddStop(&s_shaderDustFade, 0.00f, 0.00f);
+            FloatCurve_AddStop(&s_shaderDustFade, 0.12f, 0.86f);
+            FloatCurve_AddStop(&s_shaderDustFade, 0.45f, 0.62f);
+            FloatCurve_AddStop(&s_shaderDustFade, 1.00f, 0.00f);
+            s_shaderDustCurvesReady = true;
+        }
+        Color earthWarm = {230, 192, 138, 128};
+        Color baseTint = mat
+            ? (Color){(unsigned char)((earthWarm.r * 75 + mat->body.r * 25) / 100),
+                      (unsigned char)((earthWarm.g * 75 + mat->body.g * 25) / 100),
+                      (unsigned char)((earthWarm.b * 75 + mat->body.b * 25) / 100), 128}
+            : earthWarm;
+        const int count = 9 + (int)(severity01 * 9.0f);
+        for (int i = 0; i < count; ++i) {
+            const float angle = ((float)i / (float)count) * 2.0f * PI + (Random01() - 0.5f) * 0.45f;
+            const float ringR = (i == 0) ? 0.0f : Math_Mix(0.14f, 0.42f, Random01()) * scale;
+            const float speed = Math_Mix(0.45f, 1.65f, Random01()) * scale * (0.65f + 0.45f * severity01);
+            const float shadeVar = Math_Mix(0.84f, 1.12f, Random01());
+            Color tint = {
+                (unsigned char)Clamp((float)baseTint.r * shadeVar, 0.0f, 255.0f),
+                (unsigned char)Clamp((float)baseTint.g * shadeVar, 0.0f, 255.0f),
+                (unsigned char)Clamp((float)baseTint.b * shadeVar, 0.0f, 255.0f),
+                (unsigned char)(96.0f + 42.0f * severity01)
+            };
+            ParticleConfig p = {
+                .position = {pos.x + cosf(angle) * ringR,
+                             pos.y + Math_Mix(0.08f, 0.24f, Random01()) * scale,
+                             pos.z + sinf(angle) * ringR},
+                .velocity = {cosf(angle) * speed,
+                             Math_Mix(0.22f, 0.78f, Random01()) * scale,
+                             sinf(angle) * speed},
+                .radius = (i == 0 ? Math_Mix(0.56f, 0.80f, Random01())
+                                  : Math_Mix(0.32f, 0.68f, Random01())) * scale,
+                .lifetime = Math_Mix(0.85f, 1.45f, Random01()),
+                .colorStart = tint,
+                .colorEnd = VC_WithAlpha(tint, 0),
+                .radiusCurve = &s_shaderDustGrow,
+                .alphaCurve = &s_shaderDustFade,
+                .drag = 1.45f,
+                .windInfluence = 0.85f,
+                .physics = {
+                    .receiveMotionFields = true,
+                    .spatialMotionOnly = true,
+                },
+                .rotation = Random01() * 2.0f * PI,
+                .angularVelocity = (Random01() - 0.5f) * 0.85f,
+                .render.blendMode = VFX_BLEND_ALPHA,
+                .render.volumeSheet = 7,
+            };
+            SpawnParticle(p);
+        }
+        return;
+    }
     const int count = 8 + (int)(severity01 * (IMPACT_DUST_MAX_PARTICLES - 8));
     for (int i = 0; i < count; ++i) {
         const float angle = Random01() * 2.0f * PI;

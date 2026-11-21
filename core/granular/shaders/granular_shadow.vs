@@ -41,9 +41,10 @@ void main()
     bool isTwig    = (matId == 7);
     bool isCrystal = (matId == 9 || matId == 11);
     bool isMetal   = (matId == 12);
+    bool isShale   = (matId == 13);
 
     // Skip sub-texel FINE sand/snow in shadow map to prevent 30Hz shimmer
-    if (!(isClod || isLamina || isTwig || isCrystal || isMetal)) {
+    if (!(isClod || isLamina || isTwig || isCrystal || isMetal || isShale)) {
         gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
         return;
     }
@@ -58,7 +59,7 @@ void main()
     float flags    = g.meta_ao.w;
     float rotPhase = g.aux_pad.y;
     bool resting   = (flags > 0.5 && flags < 1.5);
-    float scaleR   = radius * (isLamina ? 2.10 : (isClod ? 1.38 : (isTwig ? 1.85 : 1.70)))
+    float scaleR   = radius * (isLamina ? 2.10 : (isClod ? 1.38 : (isTwig ? 1.85 : (isShale ? 1.62 : 1.70))))
                    * mix(0.80, 1.28, fract(seed * 17.31));
 
     vec3 spinAxis = normalize(vec3(
@@ -90,6 +91,10 @@ void main()
     } else if (isCrystal) {
         float ang = resting ? seed * 6.2831853 : (rotPhase * 1.15 + seed * 6.2831853);
         localPt = rotateAxisAngle(crystalVertex(vid, seed, dummyUv), spinAxis, ang);
+    } else if (isShale) {
+        float ang = resting ? seed * 6.2831853 : (rotPhase * 1.25 + seed * 6.2831853);
+        vec3 shaleAxis = resting ? vec3(0.0, 1.0, 0.0) : spinAxis;
+        localPt = rotateAxisAngle(shaleVertex(vid, seed, dummyUv), shaleAxis, ang);
     } else {
         float ang = resting ? seed * 6.2831853 : (rotPhase * 1.45 + seed * 6.2831853);
         localPt = rotateAxisAngle(metalShardVertex(vid, seed, dummyUv), spinAxis, ang);

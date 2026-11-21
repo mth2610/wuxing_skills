@@ -19,6 +19,9 @@ void GranularGpu_SetImpulse(Vector3 center, float radius,
 void GranularGpu_SetTornadoFunnel(Vector3 basePos, float baseRadius, float topRadius,
                                   float height, float swirlSpeed, float updraftSpeed,
                                   bool active);
+void GranularGpu_SetTornadoFunnelEx(Vector3 basePos, float baseRadius, float topRadius,
+                                    float height, float swirlSpeed, float updraftSpeed,
+                                    float swayAmp, float implosionPull, bool active);
 void GranularGpu_SetWaves(const GranularWaveDesc *waves, int waveCount);
 void GranularGpu_Update(float dt);
 void GranularGpu_DrawBody(Camera3D camera, const GranularMaterialProfile *mat);

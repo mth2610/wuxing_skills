@@ -296,6 +296,28 @@ static const GranularMaterialProfile k_granularMaterials[GRANULAR_MAT_COUNT] = {
         .flutterFreqHz          = 0.0f,
         .criticalEntrainmentMps = 6.2f,
     },
+    [GRANULAR_MAT_SHALE_SHARD] = {
+        .densityKgM3            = 2550.0f,
+        .springStiffness        = 3350.0f,
+        .dashpotDamping         = 102.0f,
+        .shearFrictionMu        = 0.72f,   // Flat fractured slate/shale
+        .rollingResistance      = 0.42f,
+        .cohesion               = 0.0f,
+        .airDrag                = 0.42f,
+        .saltationSplash        = 0.24f,
+        .dustEntrainmentRate    = 0.55f,
+        .baseColor              = {156, 128, 96,  255},
+        .shadowColor            = {54,  44,  34,  255},
+        .highlightColor         = {255, 232, 190, 255},
+        .glintIntensity         = 1.05f,
+        .glintSharpness         = 72.0f,
+        .grainAspect            = 0.26f,
+        .morphology             = GRANULAR_MORPH_SHALE_SLAB,
+        .referenceMassKg        = 0.022f,
+        .liftCoefficient        = 0.16f,
+        .flutterFreqHz          = 2.4f,
+        .criticalEntrainmentMps = 5.2f,
+    },
 };
 
 const GranularMaterialProfile *GranularSim_GetMaterialProfile(GranularMaterialId id)
@@ -405,11 +427,32 @@ static inline void GranularCpu_EvaluateWaves(GranularGrainState *g,
             }
             float hn = h / funnelH;
             if (hn < 0.0f) hn = 0.0f; else if (hn > 1.0f) hn = 1.0f;
-            float coneR = w->radius + (w->topRadius - w->radius) * powf(hn, 1.35f);
-            float rBias = 0.18f + 0.87f * fmodf(g->seed * 11.37f, 1.0f);
+            float impl = w->implosionPull;
+            if (impl < 0.0f) impl = 0.0f; else if (impl > 1.0f) impl = 1.0f;
+            float hc = hn > 0.0001f ? hn : 0.0001f;
+            /* 3-zone meteorological funnel: sweeping base skirt + tapered waist + anvil crown */
+            float baseSkirt = expf(-hn * 10.5f) * w->radius * 0.95f;
+            float waistR = w->radius * 0.78f + (w->topRadius * 0.88f - w->radius * 0.78f) * powf(hc, 1.22f);
+            float crownT = (hn - 0.66f) / 0.34f;
+            if (crownT < 0.0f) crownT = 0.0f; else if (crownT > 1.0f) crownT = 1.0f;
+            float crownS = crownT * crownT * (3.0f - 2.0f * crownT);
+            float anvilCrown = powf(crownS, 1.85f) * w->topRadius * 0.22f;
+            float coneR = (waistR + baseSkirt + anvilCrown) * (1.0f - 0.52f * impl);
+            float rBias = 0.18f + 0.84f * fmodf(g->seed * 11.37f, 1.0f);
             float targetR = coneR * rBias * (1.0f - 0.35f * spinDown);
-            float sx = sinf(hn * 4.5f - elapsedTime * 6.0f) * 0.24f * hn * (1.0f - spinDown);
-            float sz = cosf(hn * 3.8f - elapsedTime * 5.2f) * 0.24f * hn * (1.0f - spinDown);
+
+            /* Dual-harmonic sinuous spine + velocity-driven aerodynamic lean */
+            float swayAmp = (w->swayAmp > 0.001f ? w->swayAmp : 0.24f) * (1.0f - 0.45f * impl);
+            float h13 = powf(hc, 1.3f);
+            float h17 = powf(hc, 1.7f);
+            float tiltX = w->stormVelocity.x * 0.085f;
+            float tiltZ = w->stormVelocity.z * 0.085f;
+            if (tiltX > 0.65f) tiltX = 0.65f; else if (tiltX < -0.65f) tiltX = -0.65f;
+            if (tiltZ > 0.65f) tiltZ = 0.65f; else if (tiltZ < -0.65f) tiltZ = -0.65f;
+            float sx = ((sinf(elapsedTime * 2.2f + hn * 3.4f) * 0.72f +
+                         sinf(elapsedTime * 3.8f - hn * 5.2f) * 0.28f) * swayAmp * h13 + tiltX * h17) * (1.0f - spinDown);
+            float sz = ((cosf(elapsedTime * 1.8f + hn * 2.9f + 0.7f) * 0.72f +
+                         cosf(elapsedTime * 3.2f + hn * 4.5f) * 0.28f) * swayAmp * h13 + tiltZ * h17) * (1.0f - spinDown);
             float rx = g->position.x - (w->origin.x + sx);
             float rz = g->position.z - (w->origin.z + sz);
             float r = sqrtf(rx * rx + rz * rz);
@@ -426,10 +469,11 @@ static inline void GranularCpu_EvaluateWaves(GranularGrainState *g,
             float rRatio = r / (coneR > 0.15f ? coneR : 0.15f);
             if (rRatio < 0.25f) rRatio = 0.25f; else if (rRatio > 1.0f) rRatio = 1.0f;
 
-            float targetSwirl = w->swirlSpeed * rRatio * (1.0f - spinDown);
+            float spinBoost = 1.0f + 0.65f * impl;
+            float targetSwirl = w->swirlSpeed * spinBoost * rRatio * (1.0f - spinDown);
             float tangAcc = (targetSwirl - vTang) * 10.5f * confineEnv;
             float centripetalAcc = -(vTang * vTang) / (r > 0.08f ? r : 0.08f);
-            float radAcc = (centripetalAcc + (targetR - r) * 55.0f - vRad * 11.0f) * confineEnv;
+            float radAcc = (centripetalAcc + (targetR - r) * (55.0f + 22.0f * impl) - vRad * 11.0f) * confineEnv;
 
             // Mass & aerodynamic stratification: heavy clods/gravel/metal orbit lower,
             // while lightweight leaves/petals/snow rise high into the flaring crown.
@@ -439,13 +483,18 @@ static inline void GranularCpu_EvaluateWaves(GranularGrainState *g,
             else if (buoyancyStrat > 1.55f) buoyancyStrat = 1.55f;
             buoyancyStrat += mat->liftCoefficient * 0.18f;
             float targetVy = w->axialSpeed * buoyancyStrat * (0.75f + 0.50f * fmodf(g->seed * 5.3f, 1.0f)) * (1.0f - spinDown) - 2.2f * spinDown;
+            if (impl > 0.05f) {
+                float coreY = w->origin.y + funnelH * 0.34f + sinf(g->seed * 31.4f) * (funnelH * 0.16f);
+                float compressVy = (coreY - g->position.y) * 4.2f;
+                targetVy = targetVy * (1.0f - impl) + compressVy * impl;
+            }
             float yAcc = (9.81f * (1.0f - 0.65f * spinDown) + (targetVy - vRelY) * 7.0f) * confineEnv;
             float trackK = 7.5f * confineEnv;
 
             ioAcc->x += radX * radAcc + tangX * tangAcc + (w->stormVelocity.x - g->velocity.x) * trackK * 0.35f;
             ioAcc->y += yAcc;
             ioAcc->z += radZ * radAcc + tangZ * tangAcc + (w->stormVelocity.z - g->velocity.z) * trackK * 0.35f;
-            float localWind = fabsf(w->swirlSpeed) * (1.0f - spinDown) * confineEnv;
+            float localWind = fabsf(w->swirlSpeed) * spinBoost * (1.0f - spinDown) * confineEnv;
             if (localWind > maxEffWind) maxEffWind = localWind;
         } else if (w->kind == GRANULAR_WAVE_SPIRAL_CONVERGE) {
             Vector3 rel = {

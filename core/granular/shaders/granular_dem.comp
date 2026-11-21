@@ -69,6 +69,8 @@ uniform float u_funnelTopRadius;
 uniform float u_funnelHeight;
 uniform float u_funnelSwirlSpeed;
 uniform float u_funnelUpdraftSpeed;
+uniform float u_funnelSwayAmp;
+uniform float u_funnelImplosion;
 
 #define GRANULAR_HEAD_STRIDE 4096
 
@@ -148,6 +150,10 @@ GrainPhys getGrainPhysics(int matId) {
         p.morphology = 5; p.springK = 3800.0; p.dashpotDamp = 88.0; p.frictionMu = 0.44;
         p.rollRes = 0.24; p.cohesion = 0.0; p.splash = 0.42; p.refMass = 0.045;
         p.liftCoeff = 0.02; p.flutterHz = 0.0; p.critEntrain = 6.20;
+    } else if (matId == 13) {
+        p.morphology = 6; p.springK = 3350.0; p.dashpotDamp = 102.0; p.frictionMu = 0.72;
+        p.rollRes = 0.42; p.cohesion = 0.0; p.splash = 0.24; p.refMass = 0.022;
+        p.liftCoeff = 0.16; p.flutterHz = 2.4; p.critEntrain = 5.20;
     }
     return p;
 }
@@ -233,9 +239,21 @@ void evaluateWaves(inout GranularGrain g, GrainPhys gp, out vec3 waveAcc, out fl
                 h = g.position_radius.y - origin.y;
             }
             float hn = clamp(h / funnelH, 0.0, 1.0);
-            float coneR = mix(radius, topR, pow(hn, 1.35));
-            float targetR = coneR * mix(0.18, 1.05, fract(g.meta_ao.x * 11.37)) * (1.0 - 0.35 * sd);
-            vec2 spine = vec2(sin(hn * 4.5 - u_time * 6.0) * 0.24 * hn, cos(hn * 3.8 - u_time * 5.2) * 0.24 * hn) * (1.0 - sd);
+            float impl = clamp(w.spinDown_pad.y, 0.0, 1.0);
+            float hc = max(hn, 0.0001);
+            float baseSkirt = exp(-hn * 10.5) * radius * 0.95;
+            float waistR = mix(radius * 0.78, topR * 0.88, pow(hc, 1.22));
+            float anvilCrown = pow(smoothstep(0.66, 1.0, hn), 1.85) * topR * 0.22;
+            float coneR = (waistR + baseSkirt + anvilCrown) * (1.0 - 0.52 * impl);
+            float targetR = coneR * mix(0.18, 1.02, fract(g.meta_ao.x * 11.37)) * (1.0 - 0.35 * sd);
+            float swayAmp = (w.spinDown_pad.z > 0.001 ? w.spinDown_pad.z : 0.24) * (1.0 - 0.45 * impl);
+            float h13 = pow(hc, 1.3);
+            float h17 = pow(hc, 1.7);
+            vec2 tilt = clamp(stormVel.xz * 0.085, vec2(-0.65), vec2(0.65));
+            vec2 spine = (vec2(
+                sin(u_time * 2.2 + hn * 3.4) * 0.72 + sin(u_time * 3.8 - hn * 5.2) * 0.28,
+                cos(u_time * 1.8 + hn * 2.9 + 0.7) * 0.72 + cos(u_time * 3.2 + hn * 4.5) * 0.28
+            ) * swayAmp * h13 + tilt * h17) * (1.0 - sd);
             vec3 radVec = vec3(g.position_radius.x - (origin.x + spine.x), 0.0, g.position_radius.z - (origin.z + spine.y));
             float r = length(radVec);
             vec3 radDir = r > 1e-4 ? radVec / r : vec3(cos(g.meta_ao.x * 6.28318), 0.0, sin(g.meta_ao.x * 6.28318));
@@ -244,16 +262,21 @@ void evaluateWaves(inout GranularGrain g, GrainPhys gp, out vec3 waveAcc, out fl
             vec3 vRel = g.velocity_life.xyz - stormVel;
             float vTang = dot(vRel, tangDir);
             float vRad = dot(vRel, radDir);
-            float targetSwirl = swirlSpd * clamp(r / max(coneR, 0.15), 0.25, 1.0) * (1.0 - sd);
+            float spinBoost = 1.0 + 0.65 * impl;
+            float targetSwirl = swirlSpd * spinBoost * clamp(r / max(coneR, 0.15), 0.25, 1.0) * (1.0 - sd);
             float tangAcc = (targetSwirl - vTang) * 10.5 * confEnv;
             float centrip = -(vTang * vTang) / max(r, 0.08);
-            float radAcc = (centrip + (targetR - r) * 55.0 - vRad * 11.0) * confEnv;
+            float radAcc = (centrip + (targetR - r) * (55.0 + 22.0 * impl) - vRad * 11.0) * confEnv;
             float buoyancyStrat = clamp(0.012 / max(gp.refMass, 0.0002), 0.42, 1.55) + gp.liftCoeff * 0.18;
             float targetVy = axialSpd * buoyancyStrat * (0.75 + 0.50 * fract(g.meta_ao.x * 5.3)) * (1.0 - sd) - 2.2 * sd;
+            if (impl > 0.05) {
+                float coreY = origin.y + funnelH * 0.34 + sin(g.meta_ao.x * 31.4) * (funnelH * 0.16);
+                targetVy = mix(targetVy, (coreY - g.position_radius.y) * 4.2, impl);
+            }
             float trackK = 7.5 * confEnv * 0.35;
             waveAcc += radDir * radAcc + tangDir * tangAcc + vec3(stormVel.x - g.velocity_life.x, 0.0, stormVel.z - g.velocity_life.z) * trackK;
             waveAcc.y += (9.81 * (1.0 - 0.65 * sd) + (targetVy - vRel.y) * 7.0) * confEnv;
-            effWind = max(effWind, abs(swirlSpd) * (1.0 - sd) * confEnv);
+            effWind = max(effWind, abs(swirlSpd) * spinBoost * (1.0 - sd) * confEnv);
         } else if (kind == 3) {
             vec3 rel = g.position_radius.xyz - origin;
             float rXZ = length(rel.xz);
@@ -403,38 +426,66 @@ void main() {
             }
 
             float hn = clamp(h / max(u_funnelHeight, 0.25), 0.0, 1.0);
-            float coneR = mix(u_funnelBaseRadius, u_funnelTopRadius, pow(hn, 1.35));
-            float rBias = mix(0.18, 1.05, fract(g.meta_ao.x * 11.37));
+            float impl = clamp(u_funnelImplosion, 0.0, 1.0);
+            float hc = max(hn, 0.0001);
+            float baseSkirt = exp(-hn * 10.5) * u_funnelBaseRadius * 0.95;
+            float waistR = mix(u_funnelBaseRadius * 0.78, u_funnelTopRadius * 0.88, pow(hc, 1.22));
+            float anvilCrown = pow(smoothstep(0.66, 1.0, hn), 1.85) * u_funnelTopRadius * 0.22;
+            float coneR = (waistR + baseSkirt + anvilCrown) * (1.0 - 0.52 * impl);
+            float rBias = mix(0.64, 1.02, fract(g.meta_ao.x * 11.37));
             float targetR = coneR * rBias * (1.0 - 0.35 * sd);
 
-            vec2 spineOffset = vec2(
-                sin(hn * 4.5 - u_time * 6.0) * 0.24 * hn,
-                cos(hn * 3.8 - u_time * 5.2) * 0.24 * hn
-            ) * (1.0 - sd);
+            float swayAmp = (u_funnelSwayAmp > 0.001 ? u_funnelSwayAmp : 0.24) * (1.0 - 0.45 * impl);
+            float h13 = pow(hc, 1.3);
+            float h17 = pow(hc, 1.7);
+            vec2 tilt = clamp(u_funnelVelocity.xz * 0.085, vec2(-0.65), vec2(0.65));
+            vec2 spineOffset = (vec2(
+                sin(u_time * 2.2 + hn * 3.4) * 0.72 + sin(u_time * 3.8 - hn * 5.2) * 0.28,
+                cos(u_time * 1.8 + hn * 2.9 + 0.7) * 0.72 + cos(u_time * 3.2 + hn * 4.5) * 0.28
+            ) * swayAmp * h13 + tilt * h17) * (1.0 - sd);
             vec3 radVec = vec3(pos.x - (u_funnelBase.x + spineOffset.x), 0.0,
                                pos.z - (u_funnelBase.z + spineOffset.y));
             float r = length(radVec);
             vec3 radDir = r > 1e-4 ? radVec / r : vec3(cos(g.meta_ao.x * 6.28318), 0.0, sin(g.meta_ao.x * 6.28318));
             vec3 tangDir = vec3(-radDir.z, 0.0, radDir.x);
 
-            vec3 vRel = vel - u_funnelVelocity;
-            float targetTangSpeed = u_funnelSwirlSpeed * clamp(r / max(coneR, 0.15), 0.25, 1.0) * (1.0 - sd);
-            float vTang = dot(vRel, tangDir);
-            extAcc += tangDir * ((targetTangSpeed - vTang) * 10.5 * conf);
+            if (g.meta_ao.w > 0.5 && g.meta_ao.w < 1.5) {
+                float suctionR = max(u_funnelTopRadius * 2.2, 2.8) + impl * 1.8;
+                if (r < suctionR && sd < 0.25) {
+                    float inf = 1.0 - r / suctionR;
+                    float pull = (4.8 + impl * 7.5) * inf;
+                    extAcc += (-radDir * pull + tangDir * pull * 0.65);
+                    extAcc.y += (1.2 + inf * 3.2 + impl * 3.5);
+                    if (r < max(u_funnelBaseRadius * 3.2, 1.25) + impl * 1.2) {
+                        g.meta_ao.w = 0.0;
+                        vel.y = max(vel.y, 2.4 + 2.2 * fract(g.meta_ao.x * 9.7));
+                    }
+                }
+            } else {
+                vec3 vRel = vel - u_funnelVelocity;
+                float spinBoost = 1.0 + 0.65 * impl;
+                float targetTangSpeed = u_funnelSwirlSpeed * spinBoost * clamp(r / max(coneR, 0.15), 0.25, 1.0) * (1.0 - sd);
+                float vTang = dot(vRel, tangDir);
+                extAcc += tangDir * ((targetTangSpeed - vTang) * 10.5 * conf);
 
-            float radialErr = targetR - r;
-            float vRad = dot(vRel, radDir);
-            float centripetalAcc = -(vTang * vTang) / max(r, 0.08);
-            extAcc += radDir * ((centripetalAcc + radialErr * 55.0 - vRad * 11.0) * conf);
+                float radialErr = targetR - r;
+                float vRad = dot(vRel, radDir);
+                float centripetalAcc = -(vTang * vTang) / max(r, 0.08);
+                extAcc += radDir * ((centripetalAcc + radialErr * (55.0 + 22.0 * impl) - vRad * 11.0) * conf);
 
-            float capture = max(coneR * 2.2, 2.5);
-            float trackW = r < capture ? (1.0 - r / capture) : 0.0;
-            float trackK = 6.5 * conf * trackW;
-            extAcc.xz += (u_funnelVelocity.xz - vel.xz) * trackK;
+                float capture = max(coneR * 2.2, 2.5);
+                float trackW = r < capture ? (1.0 - r / capture) : 0.0;
+                float trackK = 6.5 * conf * trackW;
+                extAcc.xz += (u_funnelVelocity.xz - vel.xz) * trackK;
 
-            float buoyancyStrat = clamp(0.012 / max(gp.refMass, 0.0002), 0.42, 1.55) + gp.liftCoeff * 0.18;
-            float targetVy = u_funnelUpdraftSpeed * buoyancyStrat * (0.75 + 0.50 * fract(g.meta_ao.x * 5.3)) * (1.0 - sd) - 2.2 * sd;
-            extAcc.y += (9.81 * (1.0 - 0.65 * sd) + (targetVy - vel.y) * 7.0) * conf;
+                float buoyancyStrat = clamp(0.012 / max(gp.refMass, 0.0002), 0.42, 1.55) + gp.liftCoeff * 0.18;
+                float targetVy = u_funnelUpdraftSpeed * buoyancyStrat * (0.75 + 0.50 * fract(g.meta_ao.x * 5.3)) * (1.0 - sd) - 2.2 * sd;
+                if (impl > 0.05) {
+                    float coreY = u_funnelBase.y + u_funnelHeight * 0.34 + sin(g.meta_ao.x * 31.4) * (u_funnelHeight * 0.16);
+                    targetVy = mix(targetVy, (coreY - pos.y) * 4.2, impl);
+                }
+                extAcc.y += (9.81 * (1.0 - 0.65 * sd) + (targetVy - vel.y) * 7.0) * conf;
+            }
         }
 
         // Planar aerofoil flutter & lift while airborne

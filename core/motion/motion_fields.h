@@ -175,6 +175,51 @@ MotionFieldHandle MotionFields_SpawnMovingTornado(const MotionPath *path, float 
                                                   float radiusM, float pullStrengthN,
                                                   float swirlSpeedMps, float updraftMps,
                                                   float durationSec);
+
+/* 5. Spawn a vertical capsule-shaped tornado column (static if path == NULL, or moving along path)
+ * affecting all receivers (particles, foliage, trails, granular DEM) with swirl, updraft,
+ * inward radial attraction, and curl turbulence wake. */
+MotionFieldHandle MotionFields_SpawnTornadoColumn(Vector3 origin, const MotionPath *path,
+                                                  float travelSpeedMps, float radiusM,
+                                                  float heightM, float inwardPullN,
+                                                  float swirlSpeedMps, float updraftMps,
+                                                  float turbulenceSpeedMps, float durationSec);
+
+/* 6. Spawn a spherical outward Haboob / blast radial burst with upward loft and curl wake. */
+MotionFieldHandle MotionFields_SpawnRadialBurst(Vector3 center, float radiusM,
+                                                float outwardForceN, float upwardAccelMps2,
+                                                float turbulenceSpeedMps, float durationSec,
+                                                float attackSec, float fadeSec);
+
+/* Shared sinuous tornado spine & 3-zone meteorological funnel radius profile
+ * (sweeping ground base skirt + tapered waist + expanding anvil crown).
+ * Mirrors sand_funnel.vs and granular_dem.comp so meshes, trails, and grains stay aligned. */
+static inline Vector3 Motion_SampleTornadoSpine(float h01, Vector3 basePos, float heightM,
+                                                float swayAmpM, Vector2 tiltXZ, float spineTime)
+{
+  float h = h01 < 0.0f ? 0.0f : (h01 > 1.0f ? 1.0f : h01);
+  float hc = h > 0.0001f ? h : 0.0001f;
+  float h13 = powf(hc, 1.3f);
+  float h17 = powf(hc, 1.7f);
+  float sx = (sinf(spineTime * 1.05f + h * 2.8f) * 0.72f +
+              sinf(spineTime * 1.85f - h * 4.4f) * 0.28f) * swayAmpM * h13 + tiltXZ.x * h17;
+  float sz = (cosf(spineTime * 0.86f + h * 2.4f + 0.7f) * 0.72f +
+              cosf(spineTime * 1.55f + h * 3.8f) * 0.28f) * swayAmpM * h13 + tiltXZ.y * h17;
+  return (Vector3){basePos.x + sx, basePos.y + h * heightM, basePos.z + sz};
+}
+
+static inline float Motion_TornadoFunnelRadius(float h01, float baseRadiusM, float topRadiusM)
+{
+  float h = h01 < 0.0f ? 0.0f : (h01 > 1.0f ? 1.0f : h01);
+  float hc = h > 0.0001f ? h : 0.0001f;
+  float baseSkirt = expf(-h * 10.5f) * baseRadiusM * 1.45f;
+  float waist = baseRadiusM * 0.72f + (topRadiusM * 0.88f - baseRadiusM * 0.72f) * powf(hc, 1.18f);
+  float crownT = (h - 0.64f) / 0.36f;
+  crownT = crownT < 0.0f ? 0.0f : (crownT > 1.0f ? 1.0f : crownT);
+  float crownS = crownT * crownT * (3.0f - 2.0f * crownT);
+  float anvilCrown = powf(crownS, 1.85f) * topRadiusM * 0.45f;
+  return waist + baseSkirt + anvilCrown;
+}
 /* Typed receiver boundary. Static/kinematic receivers have no dynamic response;
  * rooted receivers never capture/arrive. Tracers receive medium velocity only.
  * Field-owned flow uses explicit priority/blend; sample ordinary Wind excluding

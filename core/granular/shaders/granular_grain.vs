@@ -70,7 +70,8 @@ void main()
     bool isTwig       = (matId == 7);
     bool isCrystal    = (matId == 9 || matId == 11);
     bool isMetal      = (matId == 12);
-    bool isFineSand   = !(isClod || isLamina || isTwig || isCrystal || isMetal);
+    bool isShale      = (matId == 13);
+    bool isFineSand   = !(isClod || isLamina || isTwig || isCrystal || isMetal || isShale);
 
     // Cull unused vertices for morphologies with fewer triangles
     int maxVerts = isFineSand ? 6 : (isCrystal ? 36 : 24);
@@ -107,7 +108,7 @@ void main()
     // ── True 3D Procedural Meshes (Clods, Leaves, Twigs, Crystals, Metal) ──
     float rotPhase = g.aux_pad.y;
     bool resting = (v_flags > 0.5 && v_flags < 1.5);
-    float scaleR = g.position_radius.w * (isLamina ? 2.10 : (isClod ? 1.38 : (isTwig ? 1.85 : 1.70)))
+    float scaleR = g.position_radius.w * (isLamina ? 2.10 : (isClod ? 1.38 : (isTwig ? 1.85 : (isShale ? 1.62 : 1.70))))
                  * mix(0.80, 1.28, fract(v_seed * 17.31));
 
     // Deterministic 3D rotation frame
@@ -155,6 +156,12 @@ void main()
         pA = rotateAxisAngle(crystalVertex(triBase + 0, v_seed, uvA), spinAxis, ang);
         pB = rotateAxisAngle(crystalVertex(triBase + 1, v_seed, uvB), spinAxis, ang);
         pC = rotateAxisAngle(crystalVertex(triBase + 2, v_seed, uvC), spinAxis, ang);
+    } else if (isShale) {
+        float ang = resting ? v_seed * 6.2831853 : (rotPhase * 1.25 + v_seed * 6.2831853);
+        vec3 shaleAxis = resting ? vec3(0.0, 1.0, 0.0) : spinAxis;
+        pA = rotateAxisAngle(shaleVertex(triBase + 0, v_seed, uvA), shaleAxis, ang);
+        pB = rotateAxisAngle(shaleVertex(triBase + 1, v_seed, uvB), shaleAxis, ang);
+        pC = rotateAxisAngle(shaleVertex(triBase + 2, v_seed, uvC), shaleAxis, ang);
     } else {
         // Metal shard
         float ang = resting ? v_seed * 6.2831853 : (rotPhase * 1.45 + v_seed * 6.2831853);

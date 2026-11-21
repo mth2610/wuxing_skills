@@ -68,6 +68,8 @@ static float s_funnelTopRadius = 1.65f;
 static float s_funnelHeight = 3.6f;
 static float s_funnelSwirlSpeed = 13.5f;
 static float s_funnelUpdraftSpeed = 3.4f;
+static float s_funnelSwayAmp = 0.24f;
+static float s_funnelImplosion = 0.0f;
 
 static struct {
     int phase, grainCount, gridCellCount, gridStamp;
@@ -78,6 +80,7 @@ static struct {
     int funnelActive, funnelBase, funnelVelocity, funnelSpinDown;
     int funnelBaseRadius, funnelTopRadius;
     int funnelHeight, funnelSwirlSpeed, funnelUpdraftSpeed;
+    int funnelSwayAmp, funnelImplosion;
     int waveCount;
 } s_compUni;
 
@@ -203,6 +206,8 @@ bool GranularGpu_Init(void)
     s_compUni.funnelHeight       = rlGetLocationUniform(s_program, "u_funnelHeight");
     s_compUni.funnelSwirlSpeed   = rlGetLocationUniform(s_program, "u_funnelSwirlSpeed");
     s_compUni.funnelUpdraftSpeed = rlGetLocationUniform(s_program, "u_funnelUpdraftSpeed");
+    s_compUni.funnelSwayAmp      = rlGetLocationUniform(s_program, "u_funnelSwayAmp");
+    s_compUni.funnelImplosion    = rlGetLocationUniform(s_program, "u_funnelImplosion");
     s_compUni.waveCount          = rlGetLocationUniform(s_program, "u_waveCount");
 
     s_drawUni.view           = GetShaderLocation(s_renderShader, "u_view");
@@ -400,7 +405,7 @@ void GranularGpu_SetWaves(const GranularWaveDesc *waves, int waveCount)
             .attackTime = w->attackTime, .fadeTime = w->fadeTime, .elapsed = w->elapsed, .kind = (float)w->kind,
             .loopTop = w->loopTop ? 1.0f : 0.0f,
             .stormVelX = w->stormVelocity.x, .stormVelY = w->stormVelocity.y, .stormVelZ = w->stormVelocity.z,
-            .spinDown = w->spinDown, .pad0 = 0.0f, .pad1 = 0.0f, .pad2 = 0.0f
+            .spinDown = w->spinDown, .pad0 = w->implosionPull, .pad1 = w->swayAmp, .pad2 = 0.0f
         };
     }
 }
@@ -414,9 +419,9 @@ void GranularGpu_SetImpulse(Vector3 center, float radius,
     s_impulseSwirl = swirlRadPerSec;
 }
 
-void GranularGpu_SetTornadoFunnel(Vector3 basePos, float baseRadius, float topRadius,
-                                  float height, float swirlSpeed, float updraftSpeed,
-                                  bool active)
+void GranularGpu_SetTornadoFunnelEx(Vector3 basePos, float baseRadius, float topRadius,
+                                    float height, float swirlSpeed, float updraftSpeed,
+                                    float swayAmp, float implosionPull, bool active)
 {
     if (active) {
         s_funnelActive = 1;
@@ -440,16 +445,27 @@ void GranularGpu_SetTornadoFunnel(Vector3 basePos, float baseRadius, float topRa
         s_funnelHeight = height;
         s_funnelSwirlSpeed = swirlSpeed;
         s_funnelUpdraftSpeed = updraftSpeed;
+        s_funnelSwayAmp = swayAmp > 0.001f ? swayAmp : 0.24f;
+        s_funnelImplosion = Clamp(implosionPull, 0.0f, 1.0f);
         s_receiverPoint = basePos;
     } else {
         if (s_funnelActive && s_funnelSpinDownTimer <= 0.0f) {
             // Enter 0.55s spin-down collapse instead of cutting centripetal force abruptly
             s_funnelSpinDownTimer = 0.55f;
             s_funnelSpinDown = 0.0f;
+            s_funnelImplosion = 0.0f;
             s_funnelVelocity = Vector3Scale(s_funnelVelocity, 0.35f);
         }
         s_funnelHasPrevBase = false;
     }
+}
+
+void GranularGpu_SetTornadoFunnel(Vector3 basePos, float baseRadius, float topRadius,
+                                  float height, float swirlSpeed, float updraftSpeed,
+                                  bool active)
+{
+    GranularGpu_SetTornadoFunnelEx(basePos, baseRadius, topRadius, height,
+                                   swirlSpeed, updraftSpeed, 0.24f, 0.0f, active);
 }
 
 void GranularGpu_Update(float dt)
@@ -522,6 +538,8 @@ void GranularGpu_Update(float dt)
     rlSetUniform(s_compUni.funnelHeight, &s_funnelHeight, RL_SHADER_UNIFORM_FLOAT, 1);
     rlSetUniform(s_compUni.funnelSwirlSpeed, &s_funnelSwirlSpeed, RL_SHADER_UNIFORM_FLOAT, 1);
     rlSetUniform(s_compUni.funnelUpdraftSpeed, &s_funnelUpdraftSpeed, RL_SHADER_UNIFORM_FLOAT, 1);
+    if (s_compUni.funnelSwayAmp >= 0) rlSetUniform(s_compUni.funnelSwayAmp, &s_funnelSwayAmp, RL_SHADER_UNIFORM_FLOAT, 1);
+    if (s_compUni.funnelImplosion >= 0) rlSetUniform(s_compUni.funnelImplosion, &s_funnelImplosion, RL_SHADER_UNIFORM_FLOAT, 1);
     rlSetUniform(s_compUni.waveCount, &s_waveCount, RL_SHADER_UNIFORM_INT, 1);
 
     for (int sub = 0; sub < 2; sub++) {

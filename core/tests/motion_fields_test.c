@@ -946,6 +946,41 @@ int main(void) {
   CHECK(MotionVec_Length(MotionVec_Sub(p30, p60)) < 0.05f &&
             MotionVec_Length(MotionVec_Sub(p60, p120)) < 0.05f,
         "coherent travel and target flows converge at 30/60/120 Hz");
+
+  /* TornadoColumn, RadialBurst & shared sinuous tornado spine helpers */
+  MotionFields_Reset();
+  MotionFieldHandle col = MotionFields_SpawnTornadoColumn(
+      (Vector3){0, 0, 0}, NULL, 0.0f, 2.2f, 4.0f, 3.0f, 8.0f, 3.5f, 1.5f, 2.0f);
+  CHECK(MotionFields_IsAlive(col), "tornado column field spawns alive");
+  MotionFields_Update(0.25f);
+  MotionFieldSample colS = {0};
+  MotionFields_Sample((Vector3){0.9f, 2.5f, 0.0f}, (Vector3){0}, 0.02f, 0.016f,
+                      MOTION_RECEIVER_PARTICLE, NULL, &colS);
+  CHECK(colS.airflowVelocity.y > 0.5f && fabsf(colS.airflowVelocity.z) > 0.5f,
+        "tornado column provides updraft and tangential swirl aloft");
+  MotionFields_Stop(col);
+
+  MotionFieldHandle burst = MotionFields_SpawnRadialBurst(
+      (Vector3){0, 0, 0}, 3.5f, 12.0f, 5.0f, 2.0f, 0.6f, 0.04f, 0.2f);
+  CHECK(MotionFields_IsAlive(burst), "radial burst field spawns alive");
+  MotionFields_Update(0.10f);
+  MotionFieldSample burstS = {0};
+  MotionFields_Sample((Vector3){1.2f, 0.5f, 0.0f}, (Vector3){0}, 0.02f, 0.016f,
+                      MOTION_RECEIVER_PARTICLE, NULL, &burstS);
+  CHECK(burstS.forceNewtons.x > 0.1f && burstS.accelerationMps2.y > 0.5f,
+        "radial burst pushes radially outward with upward loft");
+  MotionFields_Reset();
+
+  Vector3 spBase = Motion_SampleTornadoSpine(0.0f, (Vector3){2, 0, 3}, 5.0f, 0.5f, (Vector2){0.8f, 0.0f}, 1.0f);
+  Vector3 spTop  = Motion_SampleTornadoSpine(1.0f, (Vector3){2, 0, 3}, 5.0f, 0.5f, (Vector2){0.8f, 0.0f}, 1.0f);
+  float rFoot  = Motion_TornadoFunnelRadius(0.0f, 0.35f, 1.6f);
+  float rWaist = Motion_TornadoFunnelRadius(0.22f, 0.35f, 1.6f);
+  float rCrown = Motion_TornadoFunnelRadius(1.0f, 0.35f, 1.6f);
+  CHECK(fabsf(spBase.x - 2.0f) < 0.02f && fabsf(spBase.y) < 0.01f && fabsf(spTop.y - 5.0f) < 0.01f,
+        "tornado spine pins base and reaches full height");
+  CHECK(rFoot > rWaist * 0.9f && rCrown > rWaist * 1.8f,
+        "tornado funnel radius forms bell skirt, waist, and flaring anvil crown");
+
   printf("motion fields: %s\n", failures ? "FAIL" : "PASS");
   return failures != 0;
 }

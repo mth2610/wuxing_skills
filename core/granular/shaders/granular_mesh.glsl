@@ -146,3 +146,29 @@ vec3 metalShardVertex(int localV, float seed, out vec2 uvOut)
     uvOut = vec2(p.x, p.z * 2.0);
     return p;
 }
+
+// 3D Thin Flat Fractured Desert Shale / Slate Slab (8 triangles = 24 verts)
+vec3 shaleVertex(int localV, float seed, out vec2 uvOut)
+{
+    const vec3 base[6] = vec3[6](
+        vec3( 1.52,  0.00,  0.08),
+        vec3(-1.42,  0.00, -0.10),
+        vec3( 0.06,  0.24,  0.02),
+        vec3(-0.04, -0.24, -0.02),
+        vec3( 0.14,  0.02,  1.08),
+        vec3(-0.18, -0.02, -1.04)
+    );
+    const int tris[24] = int[24](
+        2, 4, 0,   2, 0, 5,   2, 5, 1,   2, 1, 4,
+        3, 0, 4,   3, 5, 0,   3, 1, 5,   3, 4, 1
+    );
+    int idx = tris[localV];
+    vec3 p = base[idx];
+    float j0 = fract(seed * (17.3 + float(idx) * 9.1)) - 0.5;
+    float j1 = fract(seed * (31.7 + float(idx) * 13.3)) - 0.5;
+    p.x += j0 * 0.42;
+    p.z += j1 * 0.36;
+    p.y *= mix(0.75, 1.25, fract(seed * 47.1));
+    uvOut = vec2(p.x * 0.65, p.z * 0.85);
+    return p;
+}

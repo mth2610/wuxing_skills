@@ -43,6 +43,8 @@ static float s_cpuFunnelTopR = 1.65f;
 static float s_cpuFunnelH = 3.6f;
 static float s_cpuFunnelSwirl = 13.5f;
 static float s_cpuFunnelUpdraft = 3.4f;
+static float s_cpuFunnelSwayAmp = 0.24f;
+static float s_cpuFunnelImplosion = 0.0f;
 
 #define GRANULAR_BED_GRID_DIM 32
 static GranularGrainState s_mapBed[GRANULAR_MAP_BED_MAX];
@@ -246,15 +248,17 @@ void GranularSim_ApplyForceImpulse(Vector3 center, float radius,
     }
 }
 
-void GranularSim_SetTornadoFunnel(Vector3 basePos, float baseRadius, float topRadius,
-                                  float height, float swirlSpeed, float updraftSpeed,
-                                  bool active)
+void GranularSim_SetTornadoFunnelEx(Vector3 basePos, float baseRadius, float topRadius,
+                                    float height, float swirlSpeed, float updraftSpeed,
+                                    float swayAmp, float implosionPull, bool active)
 {
     if (active) {
         s_cpuFunnelActive = true;
         s_cpuFunnelBase = basePos;
         s_cpuFunnelTopR = topRadius;
         s_cpuFunnelUpdraft = updraftSpeed;
+        s_cpuFunnelSwayAmp = swayAmp > 0.001f ? swayAmp : 0.24f;
+        s_cpuFunnelImplosion = Clamp(implosionPull, 0.0f, 1.0f);
     } else if (!s_usingGpu || !GranularGpu_IsAvailable()) {
         /* CPU spin-down handled below */
     } else {
@@ -262,8 +266,9 @@ void GranularSim_SetTornadoFunnel(Vector3 basePos, float baseRadius, float topRa
     }
 
     if (s_usingGpu && GranularGpu_IsAvailable()) {
-        GranularGpu_SetTornadoFunnel(basePos, baseRadius, topRadius, height,
-                                     swirlSpeed, updraftSpeed, active);
+        GranularGpu_SetTornadoFunnelEx(basePos, baseRadius, topRadius, height,
+                                       swirlSpeed, updraftSpeed,
+                                       s_cpuFunnelSwayAmp, s_cpuFunnelImplosion, active);
     } else if (active) {
         s_cpuFunnelActive = true;
         s_cpuFunnelSpinDown = 0.0f;
@@ -291,10 +296,52 @@ void GranularSim_SetTornadoFunnel(Vector3 basePos, float baseRadius, float topRa
         if (s_cpuFunnelActive && s_cpuFunnelSpinDownT <= 0.0f) {
             s_cpuFunnelSpinDownT = GRANULAR_FUNNEL_SPINDOWN_SEC;
             s_cpuFunnelSpinDown = 0.0f;
+            s_cpuFunnelImplosion = 0.0f;
             s_cpuFunnelVel = Vector3Scale(s_cpuFunnelVel, 0.35f);
         }
         s_cpuFunnelHasPrev = false;
     }
+}
+
+void GranularSim_SetTornadoFunnel(Vector3 basePos, float baseRadius, float topRadius,
+                                  float height, float swirlSpeed, float updraftSpeed,
+                                  bool active)
+{
+    GranularSim_SetTornadoFunnelEx(basePos, baseRadius, topRadius, height,
+                                   swirlSpeed, updraftSpeed, 0.24f, 0.0f, active);
+}
+
+void GranularSim_ReleaseHaboobBurst(Vector3 epicenter, float radius,
+                                    float radialSpeed, float tangentialSpeed,
+                                    float updraftSpeed)
+{
+    /* Release funnel confinement cleanly so outward Haboob blast flings rocks & sand ballistically */
+    s_cpuFunnelActive = false;
+    s_cpuFunnelSpinDownT = 0.0f;
+    s_cpuFunnelSpinDown = 0.0f;
+    s_cpuFunnelImplosion = 0.0f;
+    s_cpuFunnelHasPrev = false;
+    if (s_usingGpu && GranularGpu_IsAvailable()) {
+        GranularGpu_SetTornadoFunnelEx(epicenter, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, false);
+    }
+
+    float r = radius > 0.5f ? radius : 4.5f;
+    /* Negative inwardPull in GRANULAR_WAVE_RADIAL_IMPULSE drives strong outward radial sling */
+    GranularWaveDesc blast = {
+        .kind       = GRANULAR_WAVE_RADIAL_IMPULSE,
+        .origin     = Vector3Add(epicenter, (Vector3){0.0f, 0.35f, 0.0f}),
+        .direction  = {0.0f, 1.0f, 0.0f},
+        .radius     = r,
+        .axialSpeed = updraftSpeed > 0.0f ? updraftSpeed : 6.5f,
+        .swirlSpeed = tangentialSpeed,
+        .inwardPull = -fabsf(radialSpeed > 0.0f ? radialSpeed : 18.0f) * 3.8f,
+        .liftAccel  = updraftSpeed > 0.0f ? updraftSpeed * 2.2f : 12.0f,
+        .duration   = 0.24f,
+        .attackTime = 0.02f,
+        .fadeTime   = 0.14f
+    };
+    GranularSim_SpawnWave(&blast);
+    GranularSim_ApplyForceImpulse(epicenter, r, (Vector3){0.0f, updraftSpeed * 1.4f, 0.0f}, tangentialSpeed * 0.5f);
 }
 
 void GranularSim_Update(float dt)
@@ -396,12 +443,26 @@ void GranularSim_Update(float dt)
             }
 
             float hn = Clamp(h / fmaxf(s_cpuFunnelH, 0.25f), 0.0f, 1.0f);
-            float coneR = s_cpuFunnelBaseR + (s_cpuFunnelTopR - s_cpuFunnelBaseR) * powf(hn, 1.35f);
-            float rBias = 0.18f + 0.87f * fmodf(seed * 11.37f, 1.0f);
+            float impl = Clamp(s_cpuFunnelImplosion, 0.0f, 1.0f);
+            float hc = hn > 0.0001f ? hn : 0.0001f;
+            float baseSkirt = expf(-hn * 10.5f) * s_cpuFunnelBaseR * 0.95f;
+            float waistR = s_cpuFunnelBaseR * 0.78f + (s_cpuFunnelTopR * 0.88f - s_cpuFunnelBaseR * 0.78f) * powf(hc, 1.22f);
+            float crownT = Clamp((hn - 0.66f) / 0.34f, 0.0f, 1.0f);
+            float crownS = crownT * crownT * (3.0f - 2.0f * crownT);
+            float anvilCrown = powf(crownS, 1.85f) * s_cpuFunnelTopR * 0.22f;
+            float coneR = (waistR + baseSkirt + anvilCrown) * (1.0f - 0.52f * impl);
+            float rBias = 0.64f + 0.38f * fmodf(seed * 11.37f, 1.0f);
             float targetR = coneR * rBias * (1.0f - 0.35f * sd);
 
-            float sx = sinf(hn * 4.5f - s_cpuFunnelTime * 6.0f) * 0.24f * hn * (1.0f - sd);
-            float sz = cosf(hn * 3.8f - s_cpuFunnelTime * 5.2f) * 0.24f * hn * (1.0f - sd);
+            float swayAmp = s_cpuFunnelSwayAmp * (1.0f - 0.45f * impl);
+            float h13 = powf(hc, 1.3f);
+            float h17 = powf(hc, 1.7f);
+            float tiltX = Clamp(s_cpuFunnelVel.x * 0.085f, -0.65f, 0.65f);
+            float tiltZ = Clamp(s_cpuFunnelVel.z * 0.085f, -0.65f, 0.65f);
+            float sx = ((sinf(s_cpuFunnelTime * 2.2f + hn * 3.4f) * 0.72f +
+                         sinf(s_cpuFunnelTime * 3.8f - hn * 5.2f) * 0.28f) * swayAmp * h13 + tiltX * h17) * (1.0f - sd);
+            float sz = ((cosf(s_cpuFunnelTime * 1.8f + hn * 2.9f + 0.7f) * 0.72f +
+                         cosf(s_cpuFunnelTime * 3.2f + hn * 4.5f) * 0.28f) * swayAmp * h13 + tiltZ * h17) * (1.0f - sd);
             float rx = pos.x - (s_cpuFunnelBase.x + sx);
             float rz = pos.z - (s_cpuFunnelBase.z + sz);
             float r = sqrtf(rx * rx + rz * rz);
@@ -411,22 +472,45 @@ void GranularSim_Update(float dt)
             float tangX = -radZ;
             float tangZ =  radX;
 
+            /* Ground-floor tremor & inward spiral scouring for resting debris before entrainment */
+            if (s_cpuGrains[i].flags == 1u) {
+                float suctionR = fmaxf(s_cpuFunnelTopR * 2.2f, 2.8f) + impl * 1.8f;
+                if (r < suctionR && sd < 0.25f) {
+                    float inf = 1.0f - r / suctionR;
+                    float pull = (4.8f + impl * 7.5f) * inf;
+                    s_cpuGrains[i].velocity.x += (-radX * pull + tangX * pull * 0.65f) * dt;
+                    s_cpuGrains[i].velocity.z += (-radZ * pull + tangZ * pull * 0.65f) * dt;
+                    s_cpuGrains[i].velocity.y += (1.2f + inf * 3.2f + impl * 3.5f) * dt;
+                    if (r < fmaxf(s_cpuFunnelBaseR * 3.2f, 1.25f) + impl * 1.2f) {
+                        s_cpuGrains[i].flags = 0u;
+                        s_cpuGrains[i].velocity.y = fmaxf(s_cpuGrains[i].velocity.y, 2.4f + 2.2f * fmodf(seed * 9.7f, 1.0f));
+                    }
+                }
+                continue;
+            }
+
             /* Storm-relative velocity: the funnel frame translates with its base. */
             float vrx = vel.x - s_cpuFunnelVel.x;
             float vrz = vel.z - s_cpuFunnelVel.z;
             float vTang = vrx * tangX + vrz * tangZ;
             float rRatio = Clamp(r / fmaxf(coneR, 0.15f), 0.25f, 1.0f);
-            float targetTang = s_cpuFunnelSwirl * rRatio * (1.0f - sd);
+            float spinBoost = 1.0f + 0.65f * impl;
+            float targetTang = s_cpuFunnelSwirl * spinBoost * rRatio * (1.0f - sd);
             float tangAcc = (targetTang - vTang) * 10.5f * conf;
 
             float vRad = vrx * radX + vrz * radZ;
             float centripetalAcc = -(vTang * vTang) / fmaxf(r, 0.08f);
-            float radAcc = (centripetalAcc + (targetR - r) * 55.0f - vRad * 11.0f) * conf;
+            float radAcc = (centripetalAcc + (targetR - r) * (55.0f + 22.0f * impl) - vRad * 11.0f) * conf;
 
             const GranularMaterialProfile *gm = GranularSim_GetMaterialProfile((GranularMaterialId)s_cpuGrains[i].materialId);
             float massKg = gm->referenceMassKg > 0.0002f ? gm->referenceMassKg : 0.012f;
             float buoyancyStrat = Clamp(0.012f / massKg, 0.42f, 1.55f) + gm->liftCoefficient * 0.18f;
             float targetVy = s_cpuFunnelUpdraft * buoyancyStrat * (0.75f + 0.50f * fmodf(seed * 5.3f, 1.0f)) * (1.0f - sd) - 2.2f * sd;
+            if (impl > 0.05f) {
+                float coreY = s_cpuFunnelBase.y + s_cpuFunnelH * 0.34f + sinf(seed * 31.4f) * (s_cpuFunnelH * 0.16f);
+                float compressVy = (coreY - pos.y) * 4.2f;
+                targetVy = targetVy * (1.0f - impl) + compressVy * impl;
+            }
             float yAcc = (9.81f * (1.0f - 0.65f * sd) + (targetVy - vel.y) * 7.0f) * conf;
 
             /* Frame tracking: only grains inside the capture radius follow the storm,
@@ -586,9 +670,13 @@ static void GranularSim_DrawCpuFallback(Camera3D camera, const GranularMaterialP
             rlColor4ub(cDark.r, cDark.g, cDark.b, alpha); rlVertex3f(p0.x, p0.y, p0.z);
             rlColor4ub(cLit.r,  cLit.g,  cLit.b,  alpha); rlVertex3f(p2.x, p2.y, p2.z);
             rlColor4ub(cDark.r, cDark.g, cDark.b, alpha); rlVertex3f(p3.x, p3.y, p3.z);
-        } else if (gm->morphology == GRANULAR_MORPH_CRYSTAL_SHARD || gm->morphology == GRANULAR_MORPH_METAL_SHARD) {
-            // Faceted 3D-shaded diamond/crystal or metallic blade shard
-            float r = g->radius * (gm->morphology == GRANULAR_MORPH_METAL_SHARD ? 1.85f : 1.65f) * (0.85f + 0.35f * s1);
+        } else if (gm->morphology == GRANULAR_MORPH_CRYSTAL_SHARD ||
+                   gm->morphology == GRANULAR_MORPH_METAL_SHARD ||
+                   gm->morphology == GRANULAR_MORPH_SHALE_SLAB) {
+            // Faceted 3D-shaded diamond/crystal, metallic blade, or flat fractured shale slab
+            float r = g->radius * (gm->morphology == GRANULAR_MORPH_METAL_SHARD ? 1.85f
+                                 : (gm->morphology == GRANULAR_MORPH_SHALE_SLAB ? 1.55f : 1.65f))
+                    * (0.85f + 0.35f * s1);
             float ang = s0 * 6.2831853f + ((g->flags == 1u) ? 0.0f : s_simElapsedTime * (3.5f + 4.5f * s2));
             Vector3 ax = Vector3Add(Vector3Scale(right, cosf(ang)), Vector3Scale(up, sinf(ang)));
             Vector3 ay = Vector3Subtract(Vector3Scale(up, cosf(ang)), Vector3Scale(right, sinf(ang)));

@@ -85,6 +85,7 @@
 - Every spawned instance: random scale 85-115%, yaw 0-360°, pitch/roll ±10°.
 - One shader for the skill's whole lifecycle (rising→active→dissolve) — no shader swap mid-skill. `u_dissolve` stays 0.0 until dissolve phase.
 - Emissive area ≤ ~20-30% via `smoothstep`; rest uses diffuse+Fresnel to keep volume — never fully emissive.
+- **No camera shake (`CameraFX_Shake`)** in any skill or VFX unless explicitly requested by the user.
 
 ## 9. Definition of done (skill)
 - `make` builds clean — don't just eyeball code.

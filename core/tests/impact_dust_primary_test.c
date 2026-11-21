@@ -20,7 +20,11 @@ int main(void)
     const char *api = "core/composition/visual_composer.h";
     bad += !Has(api, "VFX_IMPACT_DUST_VARIANT_DUST_PUFF");
     bad += !Has(api, "VFX_IMPACT_DUST_VARIANT_ENERGY_WISP");
+    bad += !Has(api, "VFX_IMPACT_DUST_VARIANT_SHADER_DUST");
     bad += !Has(api, "VFX_ComposeImpactDustVariant");
+    bad += !Has(dust, "VFX_IMPACT_DUST_VARIANT_SHADER_DUST");
+    bad += !Has(dust, ".render.volumeSheet = 7");
+    bad += !Has("core/particles/shaders/particle_lit.fs", "if (u_volumeSheet > 6.5)");
     bad += !Has(dust, "VFX_SURFACE_SMOKE_PUFF_LIGHT_NIAGARA");
     bad += !Has(dust, "VFX_SURFACE_SMOKE_PUFF_DARK_NIAGARA");
     bad += !Has(dust, "VFX_SURFACE_SMOKE_WISPY_NIAGARA");

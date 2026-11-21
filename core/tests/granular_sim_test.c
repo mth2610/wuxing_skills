@@ -433,14 +433,62 @@ static void test_all_13_material_profiles_valid(void)
         assert(isfinite(m->shearFrictionMu) && m->shearFrictionMu >= 0.0f);
         assert(isfinite(m->referenceMassKg) && m->referenceMassKg > 0.0f);
         assert(isfinite(m->criticalEntrainmentMps) && m->criticalEntrainmentMps > 0.0f);
-        assert(m->morphology <= GRANULAR_MORPH_METAL_SHARD);
+        assert(m->morphology <= GRANULAR_MORPH_SHALE_SLAB);
     }
     const GranularMaterialProfile *crystal = GranularSim_GetMaterialProfile(GRANULAR_MAT_CRYSTAL_SHARD);
     const GranularMaterialProfile *metal   = GranularSim_GetMaterialProfile(GRANULAR_MAT_METAL_SHARD);
+    const GranularMaterialProfile *shale   = GranularSim_GetMaterialProfile(GRANULAR_MAT_SHALE_SHARD);
     assert(crystal->morphology == GRANULAR_MORPH_CRYSTAL_SHARD);
     assert(metal->morphology == GRANULAR_MORPH_METAL_SHARD);
+    assert(shale->morphology == GRANULAR_MORPH_SHALE_SLAB);
     assert(metal->densityKgM3 > crystal->densityKgM3);
-    printf("[PASS] test_all_13_material_profiles_valid (count=%d)\n", GRANULAR_MAT_COUNT);
+    assert(shale->glintIntensity > 0.8f);
+    printf("[PASS] test_all_14_material_profiles_valid (count=%d)\n", GRANULAR_MAT_COUNT);
+}
+
+static void test_tornado_implosion_tightens_core(void)
+{
+    enum { N = 48 };
+    GranularGrainState normalGrains[N], implGrains[N];
+    const float baseR = 0.30f, topR = 1.45f, height = 3.6f;
+    for (int i = 0; i < N; i++) {
+        float u = (float)i / (float)N;
+        float a = u * 6.2831853f * 3.0f;
+        float r = 0.85f;
+        normalGrains[i] = (GranularGrainState){
+            .position = {cosf(a) * r, 0.3f + u * 2.8f, sinf(a) * r},
+            .velocity = {-sinf(a) * 6.0f, 1.5f, cosf(a) * 6.0f},
+            .radius = 0.025f, .lifetime = 6.0f, .seed = u, .materialId = GRANULAR_MAT_SHALE_SHARD
+        };
+        implGrains[i] = normalGrains[i];
+    }
+    GranularWaveDesc normalW = {
+        .kind = GRANULAR_WAVE_CONICAL_FUNNEL, .radius = baseR, .topRadius = topR,
+        .length = height, .axialSpeed = 3.2f, .swirlSpeed = 8.0f,
+        .duration = 4.0f, .attackTime = 0.01f, .fadeTime = 0.3f, .loopTop = true,
+        .implosionPull = 0.0f
+    };
+    GranularWaveDesc implW = normalW;
+    implW.implosionPull = 0.90f;
+
+    const float dt = 1.0f / 60.0f;
+    for (int step = 0; step < 45; step++) {
+        float t = (float)step * dt;
+        GranularSim_StepCpuDeterministicWithWaves(normalGrains, N, NULL, &normalW, 1, dt, t,
+                                                  (Vector3){0}, (Vector3){0, 1, 0});
+        GranularSim_StepCpuDeterministicWithWaves(implGrains, N, NULL, &implW, 1, dt, t,
+                                                  (Vector3){0}, (Vector3){0, 1, 0});
+    }
+    float meanRNormal = 0.0f, meanRImpl = 0.0f;
+    for (int i = 0; i < N; i++) {
+        meanRNormal += hypotf(normalGrains[i].position.x, normalGrains[i].position.z);
+        meanRImpl   += hypotf(implGrains[i].position.x, implGrains[i].position.z);
+    }
+    meanRNormal /= (float)N;
+    meanRImpl   /= (float)N;
+    assert(meanRImpl < meanRNormal * 0.72f);
+    printf("[PASS] test_tornado_implosion_tightens_core (normalR=%.3f m, implR=%.3f m)\n",
+           meanRNormal, meanRImpl);
 }
 
 static void test_tornado_mass_stratification(void)
@@ -507,6 +555,7 @@ int main(void)
     test_moving_tornado_cohesive_translation();
     test_tornado_spindown_no_explosion();
     test_all_13_material_profiles_valid();
+    test_tornado_implosion_tightens_core();
     test_tornado_mass_stratification();
     printf("granular_sim_test: ALL PASSED\n");
     return 0;

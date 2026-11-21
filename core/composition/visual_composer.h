@@ -729,6 +729,26 @@ int                     VFX_GranularSand_GetParams(VFX_GranularSandConfig *cfg, 
 const char             *VFX_GranularSandPreset_Name(VFX_GranularPreset preset);
 int                     VFX_ComposeGranularSand(Vector3 pos, VFX_GranularPreset preset);
 int                     VFX_ComposeGranularSandEx(Vector3 source, Vector3 target, const VFX_GranularSandConfig *cfg);
+
+// ── Cohesive Volumetric Sand / Dust Funnel (Core Funnel + Shear Veil + Ground Skirt) ──
+typedef struct VFX_SandFunnelConfig {
+    float baseRadiusM;   // Narrow waist / foot radius (m)
+    float topRadiusM;    // Upper anvil crown radius (m)
+    float heightM;       // Total funnel column height (m)
+    float skirtRadiusM;  // Ground-sweeping scouring dust skirt radius (m)
+    float swayAmpM;      // Dual-harmonic sinuous spine sway amplitude (m)
+    float spinSpeed;     // Helical wind curtain rotation speed
+    float opacity;       // Master alpha opacity [0..1]
+    float durationSec;   // 0 = caller-controlled until Stop/Kill
+} VFX_SandFunnelConfig;
+
+VFX_SandFunnelConfig VFX_SandFunnel_DefaultConfig(void);
+void VFX_SandFunnel_Warmup(void);
+int  VFX_ComposeSandFunnel(Vector3 basePos, VC_MaterialId matId, const VFX_SandFunnelConfig *cfg);
+void VFX_SandFunnel_UpdateState(int handle, Vector3 basePos, Vector3 velocity,
+                                float power01, float implosion01);
+void VFX_SandFunnel_Stop(int handle);
+void VFX_KillSandFunnel(int handle);
 void                    VFX_KillGranularSand(int handle);
 
 // ── GENERALIZED GUIDED LIQUID SYSTEM (HỆ THỦY: DẪN LỰC THỦY QUÁI) ───────────
@@ -1819,6 +1839,7 @@ typedef enum {
     VFX_IMPACT_DUST_VARIANT_DARK_SMOKE_PUFF,
     VFX_IMPACT_DUST_VARIANT_SMOKE_WISP,
     VFX_IMPACT_DUST_VARIANT_ENERGY_WISP,
+    VFX_IMPACT_DUST_VARIANT_SHADER_DUST,
     VFX_IMPACT_DUST_VARIANT_COUNT
 } VFX_ImpactDustVariant;
 

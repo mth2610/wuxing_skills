@@ -78,8 +78,17 @@ GrainOptics getGrainOptics(int matId)
         o.baseCol = vec3(0.910, 0.776, 0.533); o.shadCol = vec3(0.580, 0.447, 0.282); o.highCol = vec3(1.000, 0.973, 0.878);
         o.glintInt = 1.45; o.glintSharp = 128.0;
     } else if (matId == 1) {
-        o.morphology = 1; // Coarse gravel / river scree
-        o.baseCol = vec3(0.541, 0.502, 0.455); o.shadCol = vec3(0.188, 0.173, 0.157); o.highCol = vec3(0.863, 0.839, 0.800);
+        o.morphology = 1; // Coarse gravel / desert mineral stones (6-tone per-seed palette)
+        float p = fract(v_seed * 17.37);
+        vec3 c0 = vec3(0.761, 0.612, 0.431); // warm sandstone tan
+        vec3 c1 = vec3(0.353, 0.333, 0.314); // weathered basalt grey
+        vec3 c2 = vec3(0.659, 0.475, 0.298); // ochre clay
+        vec3 c3 = vec3(0.278, 0.208, 0.149); // dark umber stone
+        vec3 c4 = vec3(0.549, 0.478, 0.400); // dry desert slate
+        vec3 c5 = vec3(0.459, 0.345, 0.239); // red-brown desert rock
+        o.baseCol = (p < 0.17) ? c0 : ((p < 0.34) ? c1 : ((p < 0.51) ? c2 : ((p < 0.68) ? c3 : ((p < 0.85) ? c4 : c5))));
+        o.shadCol = o.baseCol * vec3(0.36, 0.34, 0.32);
+        o.highCol = vec3(0.922, 0.863, 0.765);
         o.glintInt = 0.55; o.glintSharp = 56.0;
     } else if (matId == 2) {
         o.morphology = 1; // Loess soil clod
@@ -135,6 +144,17 @@ GrainOptics getGrainOptics(int matId)
         o.morphology = 5; // Forged metal blade shard
         o.baseCol = vec3(0.580, 0.635, 0.714); o.shadCol = vec3(0.165, 0.188, 0.235); o.highCol = vec3(1.000, 0.957, 0.824);
         o.glintInt = 2.85; o.glintSharp = 224.0;
+    } else if (matId == 13) {
+        o.morphology = 1; // Thin fractured desert shale/slate slab (sunlight tumble glint)
+        float p = fract(v_seed * 23.19);
+        vec3 s0 = vec3(0.678, 0.561, 0.427); // sunlit desert sandstone slate
+        vec3 s1 = vec3(0.467, 0.412, 0.357); // weathered dry shale
+        vec3 s2 = vec3(0.576, 0.443, 0.310); // warm ochre slate
+        vec3 s3 = vec3(0.365, 0.306, 0.251); // dark canyon shale
+        o.baseCol = (p < 0.25) ? s0 : ((p < 0.50) ? s1 : ((p < 0.75) ? s2 : s3));
+        o.shadCol = o.baseCol * vec3(0.34, 0.32, 0.30);
+        o.highCol = vec3(1.000, 0.910, 0.745);
+        o.glintInt = 1.05; o.glintSharp = 72.0;
     }
     return o;
 }
