@@ -33,6 +33,8 @@ static int locVolcanicBiomeFactor = -1, locMagmaGlowStrength = -1;
 static int locVolcanicAshColor = -1, locVolcanicScoriaColor = -1, locVolcanicSulfurColor = -1;
 static int locAlpineBiomeFactor = -1, locSnowSparkleStrength = -1;
 static int locAlpineSnowColor = -1, locAlpinePermafrostColor = -1, locAlpineGlacialIceColor = -1;
+static int locMetallicBiomeFactor = -1, locOreVeinStrength = -1;
+static int locGoldVeinColor = -1, locSilverVeinColor = -1, locIronSlateColor = -1;
 
 static MapGroundBiomeProfile s_groundBiomeProfile = {
     .aridFactor = 0.0f,
@@ -49,7 +51,12 @@ static MapGroundBiomeProfile s_groundBiomeProfile = {
     .snowSparkleStrength = 0.0f,
     .snowColor = {0.88f, 0.92f, 0.97f},
     .permafrostColor = {0.22f, 0.26f, 0.32f},
-    .glacialIceColor = {0.36f, 0.72f, 0.86f}};
+    .glacialIceColor = {0.36f, 0.72f, 0.86f},
+    .metallicFactor = 0.0f,
+    .oreVeinStrength = 0.0f,
+    .goldVeinColor = {1.00f, 0.78f, 0.24f},
+    .silverVeinColor = {0.92f, 0.95f, 0.99f},
+    .ironSlateColor = {0.22f, 0.24f, 0.28f}};
 static bool s_groundBiomeDirty = true;
 
 #define MAX_GROUND_PATH_SEGS 16
@@ -578,6 +585,11 @@ static MapGroundSurface SetupGroundMaterial(Mesh mesh, float width, float depth,
         locAlpineSnowColor = GetShaderLocation(groundShader, "u_alpineSnowColor");
         locAlpinePermafrostColor = GetShaderLocation(groundShader, "u_alpinePermafrostColor");
         locAlpineGlacialIceColor = GetShaderLocation(groundShader, "u_alpineGlacialIceColor");
+        locMetallicBiomeFactor = GetShaderLocation(groundShader, "u_metallicBiomeFactor");
+        locOreVeinStrength = GetShaderLocation(groundShader, "u_oreVeinStrength");
+        locGoldVeinColor = GetShaderLocation(groundShader, "u_goldVeinColor");
+        locSilverVeinColor = GetShaderLocation(groundShader, "u_silverVeinColor");
+        locIronSlateColor = GetShaderLocation(groundShader, "u_ironSlateColor");
         VFXLight_RegisterShader(groundShader);
 
         s_groundShaderId = groundShader.id;
@@ -1350,6 +1362,16 @@ void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter)
             SetShaderValue(groundShader, locAlpinePermafrostColor, &s_groundBiomeProfile.permafrostColor, SHADER_UNIFORM_VEC3);
         if (locAlpineGlacialIceColor >= 0)
             SetShaderValue(groundShader, locAlpineGlacialIceColor, &s_groundBiomeProfile.glacialIceColor, SHADER_UNIFORM_VEC3);
+        if (locMetallicBiomeFactor >= 0)
+            SetShaderValue(groundShader, locMetallicBiomeFactor, &s_groundBiomeProfile.metallicFactor, SHADER_UNIFORM_FLOAT);
+        if (locOreVeinStrength >= 0)
+            SetShaderValue(groundShader, locOreVeinStrength, &s_groundBiomeProfile.oreVeinStrength, SHADER_UNIFORM_FLOAT);
+        if (locGoldVeinColor >= 0)
+            SetShaderValue(groundShader, locGoldVeinColor, &s_groundBiomeProfile.goldVeinColor, SHADER_UNIFORM_VEC3);
+        if (locSilverVeinColor >= 0)
+            SetShaderValue(groundShader, locSilverVeinColor, &s_groundBiomeProfile.silverVeinColor, SHADER_UNIFORM_VEC3);
+        if (locIronSlateColor >= 0)
+            SetShaderValue(groundShader, locIronSlateColor, &s_groundBiomeProfile.ironSlateColor, SHADER_UNIFORM_VEC3);
         s_groundBiomeDirty = false;
     }
 
@@ -1575,7 +1597,12 @@ void MapProp_SetGroundBiomeProfile(const MapGroundBiomeProfile *profile)
             .snowSparkleStrength = 0.0f,
             .snowColor = {0.88f, 0.92f, 0.97f},
             .permafrostColor = {0.22f, 0.26f, 0.32f},
-            .glacialIceColor = {0.36f, 0.72f, 0.86f}};
+            .glacialIceColor = {0.36f, 0.72f, 0.86f},
+            .metallicFactor = 0.0f,
+            .oreVeinStrength = 0.0f,
+            .goldVeinColor = {1.00f, 0.78f, 0.24f},
+            .silverVeinColor = {0.92f, 0.95f, 0.99f},
+            .ironSlateColor = {0.22f, 0.24f, 0.28f}};
     }
     s_groundBiomeDirty = true;
 }

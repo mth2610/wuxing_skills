@@ -436,7 +436,9 @@ void MapDem_AddWaterRipple(MapWaterSurface *water, Vector3 position, float radiu
 - `MapFlora_GenerateReedPlacements`: Procedurally clusters reeds along wetland/river margins based on water elevation, clearance, and splatmap wetness.
 - `MapFlora_GeneratePampasPlacements`: Procedurally groups wind-swept tall grass/silvergrass colonies along hillside swales while avoiding water, rocks, and wildflower beds.
 - `MapProp_PopulateRockItems` & `MapProp_AddCragPlacements`: Snaps authored/generated rock items to terrain with archetype-aware sinking offsets (e.g. flattening river stones) and places boundary crags.
-- `MapFluffSystem`: Atmospheric pollen/dandelion spore particle system that drifts with wind and billards with camera tracking.
+- **MapFluffSystem**: Atmospheric pollen/dandelion spore particle system that drifts with wind and billards with camera tracking.
+- **MapOreSystem** (`maps/toolkit/map_props_ore.inl`, `shaders/ore_crystal.vs/.fs`): 3D procedural Mineral Ore & Crystal Cluster system (`MAP_ORE_GOLD_VEIN`, `MAP_ORE_SILVER_LODE`, `MAP_ORE_COPPER_PYRITE`, `MAP_ORE_CELESTIAL_METEORITE`) with Cook-Torrance GGX metallic conductor reflectance, frustum culling, and shadow casting (`MapProp_CreateOreSystem`, `MapProp_DrawOreSystem`, `MapProp_DrawOreShadowCasters`, `MapProp_UnloadOreSystem`).
+- **Metallic Biome Modes**: `MapGroundBiomeProfile.metallicFactor` / `oreVeinStrength`, `MapProp_SetRockMetallicMode`, and `MapProp_SetCliffMetallicMode` render hydrothermal gold/silver veins and placer crystal glint across terrain, boulders, and cliffs.
 - `MapProp_SnapShadowFocus`: Snaps camera target onto a regular grid (e.g. 0.5m) for stable directional shadow cascades.
 - `MapProp_GetSkipMask`: Reads `WUXING_MAP_SKIP` (and `WUXING_SONGQUAO_SKIP`) for subtractive GPU profiling.
 

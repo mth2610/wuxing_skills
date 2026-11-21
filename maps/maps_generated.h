@@ -6,6 +6,7 @@
 
 #include "maps/worlds/mau_son/mau_son.h"
 #include "maps/worlds/ninh_thuan/ninh_thuan.h"
+#include "maps/worlds/phu_quoc/phu_quoc.h"
 #include "maps/worlds/ly_son/ly_son.h"
 #include "maps/worlds/song_quao/song_quao.h"
 #include "maps/worlds/default_arena/default_arena.h"
@@ -15,6 +16,8 @@ static inline void RegisterGeneratedMaps(void) {
     MapManager_RegisterWaterHooks("MAU_SON", GetWaterInfoMauSonMap, SetWaterInteractorMauSonMap, AddWaterRippleMauSonMap);
     MapManager_RegisterEx("NINH_THUAN", InitNinhThuanMap, UpdateNinhThuanMap, DrawNinhThuanMap, UnloadNinhThuanMap, GetGroundHeightNinhThuanMap, SampleGroundSurfaceNinhThuanMap, DrawTransparentNinhThuanMap);
     MapManager_RegisterWaterHooks("NINH_THUAN", GetWaterInfoNinhThuanMap, SetWaterInteractorNinhThuanMap, AddWaterRippleNinhThuanMap);
+    MapManager_RegisterEx("PHU_QUOC", InitPhuQuocMap, UpdatePhuQuocMap, DrawPhuQuocMap, UnloadPhuQuocMap, GetGroundHeightPhuQuocMap, SampleGroundSurfacePhuQuocMap, DrawTransparentPhuQuocMap);
+    MapManager_RegisterWaterHooks("PHU_QUOC", GetWaterInfoPhuQuocMap, SetWaterInteractorPhuQuocMap, AddWaterRipplePhuQuocMap);
     MapManager_RegisterEx("LY_SON", InitLySonMap, UpdateLySonMap, DrawLySonMap, UnloadLySonMap, GetGroundHeightLySonMap, SampleGroundSurfaceLySonMap, DrawTransparentLySonMap);
     MapManager_RegisterWaterHooks("LY_SON", GetWaterInfoLySonMap, SetWaterInteractorLySonMap, AddWaterRippleLySonMap);
     MapManager_RegisterEx("SONG_QUAO", InitSongQuaoMap, UpdateSongQuaoMap, DrawSongQuaoMap, UnloadSongQuaoMap, GetGroundHeightSongQuaoMap, SampleGroundSurfaceSongQuaoMap, DrawTransparentSongQuaoMap);

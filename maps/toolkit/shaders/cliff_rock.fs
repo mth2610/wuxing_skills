@@ -39,6 +39,7 @@ uniform vec3 u_hazeColor;     // atmosphere / cloud haze color
 uniform float u_cliffAridMode;// 0.0 = lush moss rim, 1.0 = arid earth/ochre crust rim
 uniform float u_cliffVolcanicMode;// 0.0 = normal, 1.0 = volcanic columnar basalt cliff
 uniform float u_cliffAlpineMode;// 0.0 = normal, 1.0 = alpine snow-draped slate cliff above cloud sea
+uniform float u_cliffMetallicMode;// 0.0 = normal, 1.0 = metalliferous gold/silver veined coastal cliff
 uniform float u_seaLevel;     // coastal water Y (world meters)
 uniform sampler2D u_cloudNoise;
 uniform mat4 u_cloudWorldFromShader;
@@ -157,6 +158,14 @@ void main() {
         float colFlute = abs(sin((worldPosition.x + worldPosition.z * 0.72) * 1.85));
         rockBase *= mix(0.74, 1.08, smoothstep(0.05, 0.55, colFlute));
     }
+    if (u_cliffMetallicMode > 0.5) {
+        // Hydrothermal gold & silver seams embedded in coastal slate/quartz strata
+        float seamWave = abs(sin(strataCoord * 3.1 + strataWarp * 1.4));
+        float seamMask = (1.0 - smoothstep(0.02, 0.14, seamWave)) * u_cliffMetallicMode;
+        vec3 seamCol = mix(vec3(1.00, 0.78, 0.24), vec3(0.92, 0.95, 0.99), step(0.5, fract(strataMacro * 3.7)));
+        rockBase = mix(rockBase * vec3(0.84, 0.87, 0.92), seamCol, seamMask * 0.78);
+        roughness = mix(roughness, 0.20, seamMask * 0.80);
+    }
 
     // ── 3. Ledge Moss, Rim Turf Overhang & Lichen Colonization (or arid ochre crust & caliche rim) ──
     // Organic sod/crust drape over the top cliff lip (fragColor.g = rim moss mask, invariant to rim world Y)
@@ -182,8 +191,8 @@ void main() {
     float microCrevice = clamp(normX.z * triWeights.x + normY.z * triWeights.y + normZ.z * triWeights.z, 0.25, 1.0);
     float cavityAO = clamp(fragColor.r * (0.35 + 0.65 * microCrevice), mix(0.18, 0.68, u_cliffAridMode), 1.0);
 
-    // Coastal tidal wet-rock splash zone + clinging white surf foam + turquoise sea bounce in arid/volcanic coastal mode
-    float coastalMode = max(u_cliffAridMode, u_cliffVolcanicMode);
+    // Coastal tidal wet-rock splash zone + clinging white surf foam + turquoise sea bounce in arid/volcanic/metallic coastal mode
+    float coastalMode = max(max(u_cliffAridMode, u_cliffVolcanicMode), u_cliffMetallicMode);
     float coastalWet = (coastalMode > 0.5)
         ? (1.0 - smoothstep(u_seaLevel - 0.15, u_seaLevel + 0.65, worldPosition.y))
         : 0.0;

@@ -36,6 +36,7 @@ uniform vec3 u_viewPos;       // camera position in the same shader/view space
 uniform float u_rockAridMode; // 0.0 = lush moss/woodland, 1.0 = arid earth/Ninh Thuan granite
 uniform float u_rockVolcanicMode; // 0.0 = normal, 1.0 = volcanic basalt/obsidian/sulfur
 uniform float u_rockAlpineMode; // 0.0 = normal, 1.0 = snow-capped slate/granite & glacial ice spires
+uniform float u_rockMetallicMode; // 0.0 = normal, 1.0 = gold/silver mineral-veined slate & quartz
 uniform sampler2D u_cloudNoise;
 uniform mat4 u_cloudWorldFromShader;
 
@@ -197,6 +198,14 @@ void main() {
         float snowCapMask = smoothstep(0.46, 0.78, worldNormal.y + crevicePocket * 0.12) * smoothstep(0.02, 0.30, fragLocalY);
         rockAlbedo = mix(rockAlbedo * vec3(0.84, 0.89, 0.96), snowCapAlbedo, snowCapMask * 0.86 * u_rockAlpineMode);
     }
+    if (u_rockMetallicMode > 0.5) {
+        // Hydrothermal gold & silver mineral veins running through fracture cavities
+        float oreVeinWave = abs(sin(worldPosition.x * 2.1 + worldPosition.y * 3.4 + sin(worldPosition.z * 1.9) * 1.2));
+        float veinMask = (1.0 - smoothstep(0.02, 0.16, oreVeinWave)) * u_rockMetallicMode;
+        vec3 veinTone = mix(vec3(1.00, 0.78, 0.24), vec3(0.92, 0.95, 0.99), smoothstep(0.4, 0.7, mossPatch));
+        rockAlbedo = mix(rockAlbedo * vec3(0.88, 0.90, 0.94), veinTone, veinMask * 0.85);
+        roughness = mix(roughness, 0.18, veinMask * 0.85);
+    }
     rockAlbedo = mix(rockAlbedo, crownMossAlbedo, topMossMask * mix(0.64, 0.36, max(u_rockAridMode, u_rockVolcanicMode)));
     if (u_rockAridMode > 0.5) {
         // Subtle vertical desert-varnish streaks on flanks + pale windblown sand dusting on ledges
@@ -299,6 +308,12 @@ void main() {
         float rimNdotV = max(dot(normal, viewDir), 0.0);
         float iceRim = pow(1.0 - rimNdotV, 3.0) * (0.40 + 0.60 * max(worldNormal.y, 0.0));
         lit += actualAmbient * vec3(0.68, 0.88, 1.12) * (iceRim * 0.36 * u_rockAlpineMode);
+    }
+    if (u_rockMetallicMode > 0.5) {
+        // Crisp champagne-gold & silver metallic Fresnel edge rim
+        float rimNdotV = max(dot(normal, viewDir), 0.0);
+        float metalRim = pow(1.0 - rimNdotV, 3.0) * (0.35 + 0.65 * max(worldNormal.y, 0.0));
+        lit += (actualAmbient * vec3(0.82, 0.86, 0.96) + actualLight * vec3(0.32, 0.26, 0.12)) * (metalRim * 0.34 * u_rockMetallicMode);
     }
 
     lit += VFXLights_Accumulate(fragPosition, normal, albedo.rgb);

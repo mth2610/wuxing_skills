@@ -154,15 +154,22 @@ typedef struct
     Vector3 snowColor;       // Fresh high-albedo wind-packed snowpack color
     Vector3 permafrostColor; // Dark blue-grey frost-shattered slate & permafrost soil albedo
     Vector3 glacialIceColor; // Translucent turquoise-cyan shore rime & glazed ice crust tint
+    float metallicFactor;    // 0.0 = non-metallic, 1.0 = metalliferous island quarry / gold-silver vein biome
+    float oreVeinStrength;   // 0.0..2.0 hydrothermal gold/silver vein & placer glint intensity
+    Vector3 goldVeinColor;   // Native gold / electrum metallic F0 reflectance
+    Vector3 silverVeinColor; // Native silver / argentite metallic F0 reflectance
+    Vector3 ironSlateColor;  // Dark metalliferous iron-slate & magnetitic host rock albedo
 } MapGroundBiomeProfile;
 
 void MapProp_SetGroundBiomeProfile(const MapGroundBiomeProfile *profile);
 void MapProp_SetRockAridMode(float aridMode);
 void MapProp_SetRockVolcanicMode(float volcanicMode);
 void MapProp_SetRockAlpineMode(float alpineMode);
+void MapProp_SetRockMetallicMode(float metallicMode);
 void MapProp_SetCliffAridMode(float aridMode);
 void MapProp_SetCliffVolcanicMode(float volcanicMode);
 void MapProp_SetCliffAlpineMode(float alpineMode);
+void MapProp_SetCliffMetallicMode(float metallicMode);
 void MapProp_SetCliffSeaLevel(float seaLevelY);
 void MapProp_UnloadGround(MapGroundSurface *ground);
 float MapProp_SampleGroundHeight(const MapGroundSurface *ground, Vector3 worldCenter, float x, float z);
@@ -1155,5 +1162,45 @@ bool MapDem_GetWaterInfo(const MapDemIsland *dem, const MapGroundSurface *ground
 void MapDem_SetWaterInteractor(const MapDemIsland *dem, const MapGroundSurface *ground,
                                MapWaterSurface *water, Vector3 position, Vector3 velocity, float radius);
 void MapDem_AddWaterRipple(MapWaterSurface *water, Vector3 position, float radius, float intensity);
+
+// --- 3D Mineral Ore & Crystal Cluster System (map_props_ore.inl) --------
+typedef enum
+{
+    MAP_ORE_GOLD_VEIN = 0,       // Native gold nugget seam & auriferous quartz crystal cluster
+    MAP_ORE_SILVER_LODE,         // Native silver & argentite/galena metallic crystal blades
+    MAP_ORE_COPPER_PYRITE,       // Chalcopyrite brass cubes with emerald malachite patina
+    MAP_ORE_CELESTIAL_METEORITE, // Huyền Thiết meteoric iron spire with golden Sword-Qi veins
+    MAP_ORE_TYPE_COUNT
+} MapOreType;
+
+typedef struct
+{
+    Vector3 position;
+    float radiusScale;
+    float heightScale;
+    float rotationDeg;
+    MapOreType type;
+} MapOrePlacement;
+
+typedef struct
+{
+    Model models[MAP_ORE_TYPE_COUNT];
+    Vector3 boundsCenter[MAP_ORE_TYPE_COUNT];
+    float boundsRadius[MAP_ORE_TYPE_COUNT];
+    Shader shader;
+    Texture2D rockTex;
+    Texture2D rockNormalTex;
+    Texture2D veinTex;
+    MapOrePlacement *items;
+    int count;
+    int capacity;
+    bool ready;
+} MapOreSystem;
+
+MapOreSystem MapProp_CreateOreSystem(const MapOrePlacement *items, int count,
+                                     const MapGroundSurface *ground, Vector3 groundCenter);
+void MapProp_DrawOreSystem(const MapOreSystem *sys, float time);
+void MapProp_DrawOreShadowCasters(MapOreSystem *sys, Shader depthShader);
+void MapProp_UnloadOreSystem(MapOreSystem *sys);
 
 #endif // MAP_PROPS_H

@@ -303,13 +303,73 @@ def grade_alpine_pixel(r01, g01, b01):
     )
 
 
+def grade_metallic_pixel(r01, g01, b01):
+    """Metallic Metal-Element LUT: crisp gunmetal-steel shadows, luminous gold/silver highlights."""
+    r_lin = srgb_to_linear(r01)
+    g_lin = srgb_to_linear(g01)
+    b_lin = srgb_to_linear(b01)
+
+    luma = 0.2126 * r_lin + 0.7152 * g_lin + 0.0722 * b_lin
+
+    # High-clarity metallic S-curve keeping midtone quartz/slate texture crisp
+    luma_curved = luma * luma * (3.0 - 2.0 * luma)
+    contrast_factor = luma_curved / max(1e-5, luma)
+    shoulder = clamp01((luma - 0.70) / 0.30)
+    curve_blend = 0.52 * (1.0 - 0.55 * shoulder)
+    r_lin = clamp01(r_lin * ((1.0 - curve_blend) + curve_blend * contrast_factor))
+    g_lin = clamp01(g_lin * ((1.0 - curve_blend) + curve_blend * contrast_factor))
+    b_lin = clamp01(b_lin * ((1.0 - curve_blend) + curve_blend * contrast_factor))
+
+    # Cool steel-indigo shadow lift preventing dark iron-slate from crushing to black
+    black_lift = 0.015 * math.pow(clamp01(1.0 - luma * 2.6), 2.0)
+    r_lin += black_lift * 0.88
+    g_lin += black_lift * 0.96
+    b_lin += black_lift * 1.18
+
+    # Split-toning: cool steel shadows vs warm champagne-gold highlights
+    shadow_weight = math.pow(clamp01(1.0 - luma * 1.75), 1.5)
+    r_lin += shadow_weight * -0.008
+    g_lin += shadow_weight * 0.002
+    b_lin += shadow_weight * 0.020
+
+    highlight_weight = math.pow(clamp01((luma - 0.44) / 0.56), 1.45)
+    r_lin += highlight_weight * 0.010
+    g_lin += highlight_weight * 0.008
+    b_lin += highlight_weight * -0.002
+
+    r_srgb = clamp01(linear_to_srgb(clamp01(r_lin)))
+    g_srgb = clamp01(linear_to_srgb(clamp01(g_lin)))
+    b_srgb = clamp01(linear_to_srgb(clamp01(b_lin)))
+
+    h, s, l = rgb_to_hsl(r_srgb, g_srgb, b_srgb)
+    # Enhance native gold/electrum amber (+15%)
+    dist_gold = min(abs(h - 0.11), abs(h - 1.11))
+    is_gold = math.exp(-math.pow(dist_gold / 0.08, 2.0))
+    s = clamp01(s * (1.0 + 0.15 * is_gold))
+
+    # Enhance cool steel/coastal azure (+10%)
+    is_steel = math.exp(-math.pow((h - 0.58) / 0.11, 2.0))
+    s = clamp01(s * (1.0 + 0.10 * is_steel))
+
+    r_out, g_out, b_out = hsl_to_rgb(h, s, l)
+    return (
+        int(clamp01(r_out) * 255.0 + 0.5),
+        int(clamp01(g_out) * 255.0 + 0.5),
+        int(clamp01(b_out) * 255.0 + 0.5),
+        255
+    )
+
+
 def main():
     import sys
     desert_mode = "--desert" in sys.argv
     volcanic_mode = "--volcanic" in sys.argv
     alpine_mode = "--alpine" in sys.argv
+    metallic_mode = "--metallic" in sys.argv
     out_arg = next((a for a in sys.argv[1:] if not a.startswith("--")), None)
-    if alpine_mode:
+    if metallic_mode:
+        fn = grade_metallic_pixel
+    elif alpine_mode:
         fn = grade_alpine_pixel
     elif volcanic_mode:
         fn = grade_volcanic_pixel
@@ -340,7 +400,7 @@ def main():
         out_path = os.path.join(project_root, "assets", "luts", "grade.png")
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     save_png_rgba(out_path, LUT_WIDTH, LUT_HEIGHT, pixels)
-    mode_label = "alpine" if alpine_mode else ("volcanic" if volcanic_mode else ("desert" if desert_mode else "wuxia"))
+    mode_label = "metallic" if metallic_mode else ("alpine" if alpine_mode else ("volcanic" if volcanic_mode else ("desert" if desert_mode else "wuxia")))
     print(f"Generated {mode_label} LUT: {out_path} ({LUT_WIDTH}x{LUT_HEIGHT})")
 
     if not out_arg:

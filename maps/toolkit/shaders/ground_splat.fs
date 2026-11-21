@@ -78,6 +78,11 @@ uniform float u_snowSparkleStrength;
 uniform vec3 u_alpineSnowColor;
 uniform vec3 u_alpinePermafrostColor;
 uniform vec3 u_alpineGlacialIceColor;
+uniform float u_metallicBiomeFactor;
+uniform float u_oreVeinStrength;
+uniform vec3 u_goldVeinColor;
+uniform vec3 u_silverVeinColor;
+uniform vec3 u_ironSlateColor;
 
 out vec4 finalColor;
 
@@ -234,7 +239,8 @@ void main()
                      || outerCliffElev > 0.05
                      || fragWorldPos.y < -0.15
                      || u_aridBiomeFactor > 0.05
-                     || u_volcanicBiomeFactor > 0.05;
+                     || u_volcanicBiomeFactor > 0.05
+                     || u_metallicBiomeFactor > 0.05;
     vec4 colorDirt = vec4(0.5, 0.5, 0.5, 1.0);
     vec3 dirtDetail = vec3(0.5);
     if (soilPossible) {
@@ -317,7 +323,7 @@ void main()
 
         wDrySoil = clamp(max(wPathMargin * 0.78, wCliff), 0.0, 1.0)
                        * (1.0 - wWetSoil * 0.85) * (1.0 - wPath * 0.85);
-        float nonLushBiome = max(u_aridBiomeFactor, u_volcanicBiomeFactor);
+        float nonLushBiome = max(max(u_aridBiomeFactor, u_volcanicBiomeFactor), u_metallicBiomeFactor);
         if (nonLushBiome > 0.05) {
             float aridCover = (u_ecologyEnabled != 0) ? smoothstep(0.32, 0.78, ecology.r) : 0.12;
             float desertDry = mix(0.95, 0.42, aridCover) * nonLushBiome;
@@ -523,6 +529,14 @@ void main()
             vec3 frostSlate = u_alpinePermafrostColor * (0.78 + 0.72 * soilDetailTex);
             vec3 rimeDust   = mix(frostSlate, u_alpineSnowColor * 0.88, (1.0 - frostSlope) * 0.42);
             warmLoamColor = mix(warmLoamColor, rimeDust, u_alpineBiomeFactor * 0.94);
+        }
+        if (u_metallicBiomeFactor > 0.05) {
+            // Auriferous quartz & iron-slate quarry substrate
+            float slateSlope = smoothstep(0.16, 0.45, slope);
+            vec3 quartzBench = mix(vec3(0.46, 0.44, 0.40), vec3(0.62, 0.59, 0.53), pebbleRelief) * (0.82 + 0.36 * soilDetailTex);
+            vec3 ironSlate = u_ironSlateColor * (0.85 + 0.65 * soilDetailTex);
+            vec3 metalGround = mix(quartzBench, ironSlate, slateSlope * 0.72);
+            warmLoamColor = mix(warmLoamColor, metalGround, u_metallicBiomeFactor * 0.92);
         }
 
         vec3 cliffAlbedo = warmLoamColor;
@@ -768,8 +782,10 @@ void main()
     }
 
     float rockContactAO = 1.0;
-    float debrisMaxDistSq = mix(1024.0, 25600.0, max(max(u_aridBiomeFactor, u_volcanicBiomeFactor), u_alpineBiomeFactor));
+    float debrisMaxDistSq = mix(1024.0, 25600.0, max(max(u_aridBiomeFactor, u_volcanicBiomeFactor), max(u_alpineBiomeFactor, u_metallicBiomeFactor)));
     float volcanicEmberGlow = 0.0;
+    float metallicVeinMask = 0.0;
+    vec3 metallicVeinF0 = vec3(0.04);
     if (highDetailGround && u_groundDebrisEnabled != 0 && camDistSqXZ < debrisMaxDistSq) {
         float debrisDistFade = 1.0 - smoothstep(debrisMaxDistSq * 0.56, debrisMaxDistSq, camDistSqXZ);
         vec4 debris = textureLod(u_groundDebris, fragTexCoord, 0.0);
@@ -782,7 +798,20 @@ void main()
         }
 
         float dryWoodlandMask = (1.0 - clamp(shoreFactor + streamWet, 0.0, 1.0)) * debrisDistFade * grassDebrisAtten;
-        if (u_volcanicBiomeFactor > 0.05 && debris.r > 0.06 && slope < 0.32) {
+        if (u_metallicBiomeFactor > 0.05) {
+            float goldSeam = smoothstep(0.42, 0.88, debris.r) * u_metallicBiomeFactor * debrisDistFade * (1.0 - wGrass * 0.78);
+            float silverSeam = smoothstep(0.42, 0.88, debris.a) * u_metallicBiomeFactor * debrisDistFade * (1.0 - wGrass * 0.78);
+            if (goldSeam > 0.01) {
+                blendedAlbedo = mix(blendedAlbedo, u_goldVeinColor * 0.92, goldSeam * 0.82);
+                metallicVeinMask = max(metallicVeinMask, goldSeam);
+                metallicVeinF0 = mix(metallicVeinF0, u_goldVeinColor, goldSeam);
+            }
+            if (silverSeam > 0.01) {
+                blendedAlbedo = mix(blendedAlbedo, u_silverVeinColor * 0.90, silverSeam * 0.78);
+                metallicVeinMask = max(metallicVeinMask, silverSeam);
+                metallicVeinF0 = mix(metallicVeinF0, u_silverVeinColor, silverSeam * 0.85);
+            }
+        } else if (u_volcanicBiomeFactor > 0.05 && debris.r > 0.06 && slope < 0.32) {
             // Crisp hairline incandescent magma fissures strictly on flat cooled lava shelves
             float pulse = 0.80 + 0.20 * sin(u_time * 1.9 + fragWorldPos.x * 0.45 + fragWorldPos.z * 0.38);
             float flatShelfGate = 1.0 - smoothstep(0.14, 0.32, slope);
@@ -796,20 +825,21 @@ void main()
             blendedAlbedo = mix(blendedAlbedo, debrisRCol, leafMask * mix(0.36, 0.34, u_aridBiomeFactor));
         }
 
-        // Gate scree gravel by steep slope in lush maps; in arid/volcanic/alpine mode also show rock-apron scree
+        // Gate scree gravel by steep slope in lush maps; in arid/volcanic/alpine/metallic mode also show rock-apron scree
         float gravelSlopeMin = mix(0.42, 0.24, 1.0 - smoothstep(-1.10, 0.15, fragWorldPos.y));
-        float slopeGate = mix(smoothstep(gravelSlopeMin, gravelSlopeMin + 0.16, slope), 1.0, max(max(u_aridBiomeFactor, u_volcanicBiomeFactor), u_alpineBiomeFactor));
+        float slopeGate = mix(smoothstep(gravelSlopeMin, gravelSlopeMin + 0.16, slope), 1.0, max(max(u_aridBiomeFactor, u_volcanicBiomeFactor), max(u_alpineBiomeFactor, u_metallicBiomeFactor)));
         if (debris.g > 0.04 && slopeGate > 0.01) {
             vec3 lushGravel = mix(vec3(0.30, 0.28, 0.24), vec3(0.40, 0.38, 0.32), fineGrain);
             vec3 aridGrus   = u_aridGrusColor * (0.88 + 0.22 * fineGrain);
             vec3 gravelColor = mix(lushGravel, aridGrus, u_aridBiomeFactor);
             gravelColor = mix(gravelColor, u_volcanicAshColor * (1.25 + 0.25 * fineGrain), u_volcanicBiomeFactor);
             gravelColor = mix(gravelColor, u_alpinePermafrostColor * (1.08 + 0.24 * fineGrain), u_alpineBiomeFactor);
+            gravelColor = mix(gravelColor, mix(u_ironSlateColor * 1.45, vec3(0.68, 0.64, 0.56), fineGrain), u_metallicBiomeFactor);
             float gravelMask = smoothstep(0.16, 0.68, debris.g) * slopeGate * grassDebrisAtten * debrisDistFade;
-            blendedAlbedo = mix(blendedAlbedo, gravelColor, gravelMask * mix(0.40, 0.38, max(max(u_aridBiomeFactor, u_volcanicBiomeFactor), u_alpineBiomeFactor)));
+            blendedAlbedo = mix(blendedAlbedo, gravelColor, gravelMask * mix(0.40, 0.38, max(max(u_aridBiomeFactor, u_volcanicBiomeFactor), max(u_alpineBiomeFactor, u_metallicBiomeFactor))));
         }
 
-        if (debris.a > 0.04) {
+        if (u_metallicBiomeFactor <= 0.05 && debris.a > 0.04) {
             vec3 lushMoss = mix(vec3(0.18, 0.30, 0.10), vec3(0.28, 0.42, 0.14), fineGrain);
             vec3 aridHardpan = u_aridHardpanColor * (1.16 + 0.20 * fineGrain);
             vec3 mossColor = mix(lushMoss, aridHardpan, u_aridBiomeFactor);
@@ -926,6 +956,9 @@ void main()
     float wetMeniscus = (1.0 - smoothstep(-0.04, 0.25, smoothSignedShore)) * waterElevationMask * (1.0 - wCliff);
     blendedAlbedo *= mix(1.0, 0.66, wetMeniscus * 0.75);
     roughness = mix(roughness, 0.16, wetMeniscus * 0.85);
+    if (metallicVeinMask > 0.01) {
+        roughness = mix(roughness, 0.18, metallicVeinMask * 0.85);
+    }
     roughness = clamp(roughness, 0.16, 0.98);
 
     float nearCanopyMask = 1.0 - smoothstep(324.0, 1800.0, camDistSqXZ);
@@ -996,15 +1029,16 @@ void main()
     float VdotH = clamp(dot(viewDir, halfDir), 0.0, 1.0);
     float omvh = 1.0 - VdotH;
     float omvh2 = omvh * omvh;
-    float F_Schlick = 0.04 + 0.96 * (omvh2 * omvh2 * omvh);
-    float specGGX = (D_GGX * G_Smith * F_Schlick) / (4.0 * NdotV * NdotL_clamped + 0.001);
+    vec3 F0_ground = mix(vec3(0.04), metallicVeinF0, metallicVeinMask);
+    vec3 F_Schlick = F0_ground + (vec3(1.0) - F0_ground) * (omvh2 * omvh2 * omvh);
+    vec3 specGGX = (D_GGX * G_Smith * F_Schlick) / (4.0 * NdotV * NdotL_clamped + 0.001);
     vec3 drySpec = actualLight * specGGX * (NdotL_clamped * sunVisibility);
     groundLit += drySpec * (0.85 - wGrass * 0.65);
 
-    // Quartz / mica grain sparkle on sunlit desert grus & granite OR diamond-dust snow crystal glint
-    float sparkleActive = max(u_aridBiomeFactor, u_alpineBiomeFactor * u_snowSparkleStrength);
+    // Quartz / mica grain sparkle on sunlit desert grus, diamond-dust snow glint, or alluvial gold/silver flecks
+    float sparkleActive = max(max(u_aridBiomeFactor, u_alpineBiomeFactor * u_snowSparkleStrength), u_metallicBiomeFactor * u_oreVeinStrength);
     if (sparkleActive > 0.05 && sunVisibility > 0.01 && camDistSqXZ < 484.0 && NdotH > 0.68) {
-        vec2 glintUV = fragWorldPos.xz * mix(26.0, 34.0, u_alpineBiomeFactor);
+        vec2 glintUV = fragWorldPos.xz * mix(26.0, 34.0, max(u_alpineBiomeFactor, u_metallicBiomeFactor));
         vec2 cell = floor(glintUV);
         vec2 cellFrac = fract(glintUV);
         vec3 q3 = fract(cell.xyx * vec3(0.1031, 0.1030, 0.0973));
@@ -1019,9 +1053,10 @@ void main()
         float pixelFootprint = max(fw.x, fw.y);
         float aaFade = 1.0 - smoothstep(0.35, 0.85, pixelFootprint);
         float distFade = 1.0 - smoothstep(100.0, 484.0, camDistSqXZ);
-        float glintPow = mix(48.0, 64.0, u_alpineBiomeFactor);
+        float glintPow = mix(48.0, 64.0, max(u_alpineBiomeFactor, u_metallicBiomeFactor));
         float crystalGlint = pow(NdotH, glintPow) * smoothstep(0.91, 0.995, quartzHash) * grainMask * aaFade * distFade;
         vec3 glintTint = mix(vec3(1.0), vec3(0.88, 0.96, 1.08), u_alpineBiomeFactor);
+        glintTint = mix(glintTint, mix(u_goldVeinColor, u_silverVeinColor, step(0.5, fract(quartzHash * 13.7))), u_metallicBiomeFactor);
         groundLit += actualLight * glintTint * (crystalGlint * sunVisibility * sparkleActive * 0.55);
     }
 

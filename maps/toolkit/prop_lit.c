@@ -17,9 +17,11 @@ static int s_locViewPos = -1;
 static int s_locRockAridMode = -1;
 static int s_locRockVolcanicMode = -1;
 static int s_locRockAlpineMode = -1;
+static int s_locRockMetallicMode = -1;
 static float s_rockAridMode = 0.0f;
 static float s_rockVolcanicMode = 0.0f;
 static float s_rockAlpineMode = 0.0f;
+static float s_rockMetallicMode = 0.0f;
 
 Shader PropLit_GetShader(void)
 {
@@ -65,6 +67,7 @@ Shader PropLit_GetShader(void)
     s_locRockAridMode = GetShaderLocation(shader, "u_rockAridMode");
     s_locRockVolcanicMode = GetShaderLocation(shader, "u_rockVolcanicMode");
     s_locRockAlpineMode = GetShaderLocation(shader, "u_rockAlpineMode");
+    s_locRockMetallicMode = GetShaderLocation(shader, "u_rockMetallicMode");
 
     MapShadow_ConfigureShader(shader);
 
@@ -163,6 +166,10 @@ void PropLit_UpdateLighting(void)
   {
     SetShaderValue(shader, s_locRockAlpineMode, &s_rockAlpineMode, SHADER_UNIFORM_FLOAT);
   }
+  if (s_locRockMetallicMode >= 0)
+  {
+    SetShaderValue(shader, s_locRockMetallicMode, &s_rockMetallicMode, SHADER_UNIFORM_FLOAT);
+  }
 
   MapShadow_UpdateShader(shader);
   EndShaderMode();
@@ -181,6 +188,11 @@ void MapProp_SetRockVolcanicMode(float volcanicMode)
 void MapProp_SetRockAlpineMode(float alpineMode)
 {
   s_rockAlpineMode = alpineMode;
+}
+
+void MapProp_SetRockMetallicMode(float metallicMode)
+{
+  s_rockMetallicMode = metallicMode;
 }
 
 bool PropLit_IsVolcanicMode(void)

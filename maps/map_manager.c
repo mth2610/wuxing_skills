@@ -249,9 +249,11 @@ void MapManager_SetActiveIndex(int index) {
         MapProp_SetRockAridMode(0.0f);
         MapProp_SetRockVolcanicMode(0.0f);
         MapProp_SetRockAlpineMode(0.0f);
+        MapProp_SetRockMetallicMode(0.0f);
         MapProp_SetCliffAridMode(0.0f);
         MapProp_SetCliffVolcanicMode(0.0f);
         MapProp_SetCliffAlpineMode(0.0f);
+        MapProp_SetCliffMetallicMode(0.0f);
         MapProp_SetSnow(0.0f);
         MapProp_SetGrassState(MAP_GRASS_STATE_LUSH, 0.0f);
         MapProp_ClearGrassBurnZones();
@@ -305,6 +307,8 @@ Vector3 MapManager_GetActiveSpawnPoint(void) {
         pt = (Vector3){ 144.0f * sXZ, 0.0f, 105.0f * sXZ };
     } else if (strcmp(name, "MAU_SON") == 0) {
         pt = (Vector3){ 135.0f * sXZ, 0.0f, 112.5f * sXZ };
+    } else if (strcmp(name, "PHU_QUOC") == 0) {
+        pt = (Vector3){ 101.0f * sXZ, 0.0f, 144.0f * sXZ };
     } else {
         pt = (Vector3){ 6.0f, 0.0f, 4.4f };
     }
@@ -328,6 +332,9 @@ void MapManager_GetActiveBounds(Vector3 *outCenter, float *outRadius) {
         if (outRadius) *outRadius = 140.0f * sXZ;
     } else if (strcmp(name, "MAU_SON") == 0) {
         if (outCenter) *outCenter = (Vector3){ 135.0f * sXZ, 0.0f, 112.5f * sXZ };
+        if (outRadius) *outRadius = 140.0f * sXZ;
+    } else if (strcmp(name, "PHU_QUOC") == 0) {
+        if (outCenter) *outCenter = (Vector3){ 101.0f * sXZ, 0.0f, 144.0f * sXZ };
         if (outRadius) *outRadius = 140.0f * sXZ;
     } else {
         if (outCenter) *outCenter = (Vector3){ 6.0f, 0.0f, 4.4f };
@@ -356,6 +363,12 @@ bool MapManager_GetActivePlayableRect(float *minX, float *maxX, float *minZ, flo
         if (maxX) *maxX = 292.0f * sXZ;
         if (minZ) *minZ = 8.0f * sXZ;
         if (maxZ) *maxZ = 217.0f * sXZ;
+        return true;
+    } else if (strcmp(name, "PHU_QUOC") == 0) {
+        if (minX) *minX = 8.0f * sXZ;
+        if (maxX) *maxX = 221.0f * sXZ;
+        if (minZ) *minZ = 8.0f * sXZ;
+        if (maxZ) *maxZ = 292.0f * sXZ;
         return true;
     }
     return false;
