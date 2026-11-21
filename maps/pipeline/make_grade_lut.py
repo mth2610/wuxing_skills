@@ -251,12 +251,72 @@ def grade_volcanic_pixel(r01, g01, b01):
     )
 
 
+def grade_alpine_pixel(r01, g01, b01):
+    """Alpine Water-Element LUT: crisp cobalt-blue shadows, silk-soft snow highlights, vivid glacier cyan."""
+    r_lin = srgb_to_linear(r01)
+    g_lin = srgb_to_linear(g01)
+    b_lin = srgb_to_linear(b01)
+
+    luma = 0.2126 * r_lin + 0.7152 * g_lin + 0.0722 * b_lin
+
+    # Gentle S-curve with highlight shoulder protection so snowpack keeps sastrugi detail
+    luma_curved = luma * luma * (3.0 - 2.0 * luma)
+    contrast_factor = luma_curved / max(1e-5, luma)
+    shoulder = clamp01((luma - 0.68) / 0.32)
+    curve_blend = 0.48 * (1.0 - 0.65 * shoulder)
+    r_lin = clamp01(r_lin * ((1.0 - curve_blend) + curve_blend * contrast_factor))
+    g_lin = clamp01(g_lin * ((1.0 - curve_blend) + curve_blend * contrast_factor))
+    b_lin = clamp01(b_lin * ((1.0 - curve_blend) + curve_blend * contrast_factor))
+
+    # Prussian-blue shadow lift preventing dark slate crags from crushing to black
+    black_lift = 0.016 * math.pow(clamp01(1.0 - luma * 2.6), 2.0)
+    r_lin += black_lift * 0.82
+    g_lin += black_lift * 0.96
+    b_lin += black_lift * 1.26
+
+    # Alpine split-toning: icy cobalt-blue shadows, crisp crystal-white / pale-gold highlights
+    shadow_weight = math.pow(clamp01(1.0 - luma * 1.7), 1.5)
+    r_lin += shadow_weight * -0.012
+    g_lin += shadow_weight * 0.004
+    b_lin += shadow_weight * 0.026
+
+    highlight_weight = math.pow(clamp01((luma - 0.48) / 0.52), 1.5)
+    r_lin += highlight_weight * 0.006
+    g_lin += highlight_weight * 0.006
+    b_lin += highlight_weight * 0.004
+
+    r_srgb = clamp01(linear_to_srgb(clamp01(r_lin)))
+    g_srgb = clamp01(linear_to_srgb(clamp01(g_lin)))
+    b_srgb = clamp01(linear_to_srgb(clamp01(b_lin)))
+
+    h, s, l = rgb_to_hsl(r_srgb, g_srgb, b_srgb)
+    # Boost glacial cyan/azure clarity (+14%)
+    is_cyan_blue = math.exp(-math.pow((h - 0.56) / 0.11, 2.0))
+    s = clamp01(s * (1.0 + 0.14 * is_cyan_blue))
+
+    r_out, g_out, b_out = hsl_to_rgb(h, s, l)
+    return (
+        int(clamp01(r_out) * 255.0 + 0.5),
+        int(clamp01(g_out) * 255.0 + 0.5),
+        int(clamp01(b_out) * 255.0 + 0.5),
+        255
+    )
+
+
 def main():
     import sys
     desert_mode = "--desert" in sys.argv
     volcanic_mode = "--volcanic" in sys.argv
+    alpine_mode = "--alpine" in sys.argv
     out_arg = next((a for a in sys.argv[1:] if not a.startswith("--")), None)
-    fn = grade_volcanic_pixel if volcanic_mode else (grade_desert_pixel if desert_mode else grade_pixel)
+    if alpine_mode:
+        fn = grade_alpine_pixel
+    elif volcanic_mode:
+        fn = grade_volcanic_pixel
+    elif desert_mode:
+        fn = grade_desert_pixel
+    else:
+        fn = grade_pixel
 
     denom = float(LUT_SIZE - 1)
     pixels = [(0, 0, 0, 255)] * (LUT_WIDTH * LUT_HEIGHT)
@@ -280,7 +340,7 @@ def main():
         out_path = os.path.join(project_root, "assets", "luts", "grade.png")
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     save_png_rgba(out_path, LUT_WIDTH, LUT_HEIGHT, pixels)
-    mode_label = "volcanic" if volcanic_mode else ("desert" if desert_mode else "wuxia")
+    mode_label = "alpine" if alpine_mode else ("volcanic" if volcanic_mode else ("desert" if desert_mode else "wuxia"))
     print(f"Generated {mode_label} LUT: {out_path} ({LUT_WIDTH}x{LUT_HEIGHT})")
 
     if not out_arg:

@@ -149,13 +149,20 @@ typedef struct
     Vector3 ashColor;        // Charcoal vesicular basalt ash / tephra albedo
     Vector3 scoriaColor;     // Oxidized iron-red volcanic scoria albedo
     Vector3 sulfurColor;     // Fumarolic yellow-ochre sulfur mineral crust albedo
+    float alpineFactor;      // 0.0 = non-alpine, 1.0 = snow peak / permafrost / glacial rime biome
+    float snowSparkleStrength;// 0.0..2.0 micro-crystalline snow sun-glint intensity
+    Vector3 snowColor;       // Fresh high-albedo wind-packed snowpack color
+    Vector3 permafrostColor; // Dark blue-grey frost-shattered slate & permafrost soil albedo
+    Vector3 glacialIceColor; // Translucent turquoise-cyan shore rime & glazed ice crust tint
 } MapGroundBiomeProfile;
 
 void MapProp_SetGroundBiomeProfile(const MapGroundBiomeProfile *profile);
 void MapProp_SetRockAridMode(float aridMode);
 void MapProp_SetRockVolcanicMode(float volcanicMode);
+void MapProp_SetRockAlpineMode(float alpineMode);
 void MapProp_SetCliffAridMode(float aridMode);
 void MapProp_SetCliffVolcanicMode(float volcanicMode);
+void MapProp_SetCliffAlpineMode(float alpineMode);
 void MapProp_SetCliffSeaLevel(float seaLevelY);
 void MapProp_UnloadGround(MapGroundSurface *ground);
 float MapProp_SampleGroundHeight(const MapGroundSurface *ground, Vector3 worldCenter, float x, float z);
@@ -982,6 +989,48 @@ void MapProp_DrawWaterBed(const MapWaterSurface *water, float time);
 void MapProp_DrawWaterOverlay(const MapWaterSurface *water, float time);
 void MapProp_DrawWaterSurface(const MapWaterSurface *water, float time);
 void MapProp_UnloadWaterSurface(MapWaterSurface *water);
+
+// --- Snow mode (global alpine weather state) ----------------------------
+void MapProp_SetSnow(float intensity);   // 0 = clear, 1 = gentle snowfall, 2 = blizzard
+float MapProp_GetSnow(void);
+void MapProp_UpdateSnow(float dt);
+void MapProp_DrawSnow(Vector3 focus, Camera3D cam, float time);
+
+// --- Glacial Ice Sheet & Floating Ice Floes (map_props_ice.inl) --------
+typedef struct
+{
+    Vector3 center;
+    float radiusX;
+    float radiusZ;
+    float driftSpeed;
+    Vector2 driftDirection;
+    float floeCoverage;      // 0.0..1.0 ice shelf & Voronoi ice floe coverage (default 0.48)
+    float crackIntensity;    // Parallax internal fracture brightness (default 1.35)
+    float snowCrustAmount;   // Surface snow/hoarfrost rime on thick ice plates (default 0.65)
+    Color deepIceColor;      // Deep sub-surface glacial cobalt-blue
+    Color shallowIceColor;   // Translucent cyan-turquoise ice crystal tint
+    Color snowRimeColor;     // Crisp white hoarfrost surface crust
+    const char *flowMapPath; // Baked mau_son_ice_flow.png (RG=dir, B=freeze weight, A=lake mask)
+    float mapWidth;
+    float mapDepth;
+} MapIceConfig;
+
+typedef struct
+{
+    Model model;
+    Shader shader;
+    Texture2D noiseTex;
+    Texture2D plateTex;
+    Texture2D flowTex;
+    MapIceConfig config;
+    Vector3 boundsCenter;
+    float boundsRadius;
+    bool ready;
+} MapIceSurface;
+
+MapIceSurface MapProp_CreateTerrainIce(const char *meshPath, MapIceConfig config);
+void MapProp_DrawIceSurface(const MapIceSurface *ice, float time);
+void MapProp_UnloadIceSurface(MapIceSurface *ice);
 
 // --- Molten Lava & Magma Surface System (map_props_lava.inl) ------------
 typedef struct

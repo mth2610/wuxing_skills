@@ -38,6 +38,7 @@ uniform vec3 u_viewPos;       // camera pos in view space
 uniform vec3 u_hazeColor;     // atmosphere / cloud haze color
 uniform float u_cliffAridMode;// 0.0 = lush moss rim, 1.0 = arid earth/ochre crust rim
 uniform float u_cliffVolcanicMode;// 0.0 = normal, 1.0 = volcanic columnar basalt cliff
+uniform float u_cliffAlpineMode;// 0.0 = normal, 1.0 = alpine snow-draped slate cliff above cloud sea
 uniform float u_seaLevel;     // coastal water Y (world meters)
 uniform sampler2D u_cloudNoise;
 uniform mat4 u_cloudWorldFromShader;
@@ -172,6 +173,8 @@ void main() {
     vec3 mossColor = mix(lushMossColor, aridRimColor, u_cliffAridMode);
     vec3 volcanicRimColor = mix(vec3(0.20, 0.17, 0.16), vec3(0.42, 0.24, 0.14), clamp(triAlbedo.r * 0.75 + rimSodDrape * 0.35, 0.0, 1.0));
     mossColor = mix(mossColor, volcanicRimColor, u_cliffVolcanicMode);
+    vec3 alpineRimColor = mix(vec3(0.78, 0.85, 0.94), vec3(0.92, 0.96, 1.00), clamp(triAlbedo.g * 0.75 + rimSodDrape * 0.35, 0.0, 1.0));
+    mossColor = mix(mossColor, alpineRimColor, u_cliffAlpineMode);
     vec3 rockAlbedo = mix(rockBase, mossColor, mossMask * mix(0.88, 0.82, max(u_cliffAridMode, u_cliffVolcanicMode)));
 
     // ── 4. Deep Crevice Cavity Occlusion (80.lv RTGI Principle) ──

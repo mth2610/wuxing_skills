@@ -53,9 +53,11 @@ static int s_cliffLocViewPos = -1;
 static int s_cliffLocHazeColor = -1;
 static int s_cliffLocAridMode = -1;
 static int s_cliffLocVolcanicMode = -1;
+static int s_cliffLocAlpineMode = -1;
 static int s_cliffLocSeaLevel = -1;
 static float s_cliffAridMode = 0.0f;
 static float s_cliffVolcanicMode = 0.0f;
+static float s_cliffAlpineMode = 0.0f;
 static float s_cliffSeaLevel = -1.25f;
 
 static void Cliff_EnsureShaderLocs(Shader shader)
@@ -71,6 +73,7 @@ static void Cliff_EnsureShaderLocs(Shader shader)
     s_cliffLocHazeColor = GetShaderLocation(shader, "u_hazeColor");
     s_cliffLocAridMode = GetShaderLocation(shader, "u_cliffAridMode");
     s_cliffLocVolcanicMode = GetShaderLocation(shader, "u_cliffVolcanicMode");
+    s_cliffLocAlpineMode = GetShaderLocation(shader, "u_cliffAlpineMode");
     s_cliffLocSeaLevel = GetShaderLocation(shader, "u_seaLevel");
     s_cliffCachedShaderId = shader.id;
 }
@@ -234,6 +237,10 @@ static void Cliff_UpdateLighting(Shader shader, Camera3D cam)
     {
         SetShaderValue(shader, s_cliffLocVolcanicMode, &s_cliffVolcanicMode, SHADER_UNIFORM_FLOAT);
     }
+    if (s_cliffLocAlpineMode >= 0)
+    {
+        SetShaderValue(shader, s_cliffLocAlpineMode, &s_cliffAlpineMode, SHADER_UNIFORM_FLOAT);
+    }
     if (s_cliffLocSeaLevel >= 0)
     {
         SetShaderValue(shader, s_cliffLocSeaLevel, &s_cliffSeaLevel, SHADER_UNIFORM_FLOAT);
@@ -251,6 +258,11 @@ void MapProp_SetCliffAridMode(float aridMode)
 void MapProp_SetCliffVolcanicMode(float volcanicMode)
 {
     s_cliffVolcanicMode = volcanicMode;
+}
+
+void MapProp_SetCliffAlpineMode(float alpineMode)
+{
+    s_cliffAlpineMode = alpineMode;
 }
 
 void MapProp_SetCliffSeaLevel(float seaLevelY)

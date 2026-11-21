@@ -35,6 +35,7 @@ uniform vec3 u_ambientColor;  // ambient floor color, normalized 0..1
 uniform vec3 u_viewPos;       // camera position in the same shader/view space
 uniform float u_rockAridMode; // 0.0 = lush moss/woodland, 1.0 = arid earth/Ninh Thuan granite
 uniform float u_rockVolcanicMode; // 0.0 = normal, 1.0 = volcanic basalt/obsidian/sulfur
+uniform float u_rockAlpineMode; // 0.0 = normal, 1.0 = snow-capped slate/granite & glacial ice spires
 uniform sampler2D u_cloudNoise;
 uniform mat4 u_cloudWorldFromShader;
 
@@ -189,6 +190,13 @@ void main() {
         // Preserve crisp charcoal basalt relief instead of crushing into pitch-black silhouettes
         rockAlbedo *= mix(vec3(1.0), vec3(0.84, 0.82, 0.85), u_rockVolcanicMode);
     }
+    if (u_rockAlpineMode > 0.5) {
+        // Thick wind-packed snow cap on upward-facing rock surfaces + cool slate bedrock contrast
+        vec3 snowCapAlbedo = mix(vec3(0.80, 0.87, 0.95), vec3(0.92, 0.95, 0.99), smoothstep(0.35, 0.85, mossPatch * 0.5 + detailLuma * 0.5));
+        crownMossAlbedo = mix(crownMossAlbedo, snowCapAlbedo, u_rockAlpineMode);
+        float snowCapMask = smoothstep(0.46, 0.78, worldNormal.y + crevicePocket * 0.12) * smoothstep(0.02, 0.30, fragLocalY);
+        rockAlbedo = mix(rockAlbedo * vec3(0.84, 0.89, 0.96), snowCapAlbedo, snowCapMask * 0.86 * u_rockAlpineMode);
+    }
     rockAlbedo = mix(rockAlbedo, crownMossAlbedo, topMossMask * mix(0.64, 0.36, max(u_rockAridMode, u_rockVolcanicMode)));
     if (u_rockAridMode > 0.5) {
         // Subtle vertical desert-varnish streaks on flanks + pale windblown sand dusting on ledges
@@ -207,6 +215,7 @@ void main() {
     vec3 aridSkirtSand = mix(skirtLoam, vec3(0.56, 0.44, 0.30), clamp(worldNormal.y * 0.85 + detailLuma * 0.35, 0.0, 1.0));
     vec3 skirtMossAlbedo = mix(lushSkirtMoss, aridSkirtSand, u_rockAridMode);
     skirtMossAlbedo = mix(skirtMossAlbedo, vec3(0.18, 0.17, 0.18), u_rockVolcanicMode);
+    skirtMossAlbedo = mix(skirtMossAlbedo, vec3(0.78, 0.85, 0.94), u_rockAlpineMode);
     rockAlbedo = mix(rockAlbedo, skirtMossAlbedo, skirtMask * 0.68);
     rockAlbedo *= mix(0.68, 1.0, smoothstep(-0.36, 0.02, fragLocalY));
 
@@ -284,6 +293,12 @@ void main() {
         float rimNdotV = max(dot(normal, viewDir), 0.0);
         float slateRim = pow(1.0 - rimNdotV, 3.2) * (0.35 + 0.65 * max(worldNormal.y, 0.0));
         lit += actualAmbient * vec3(0.75, 0.88, 1.15) * (slateRim * 0.42 * u_rockVolcanicMode);
+    }
+    if (u_rockAlpineMode > 0.5) {
+        // Crisp glacial cyan-white ice Fresnel rim on frost-covered crags
+        float rimNdotV = max(dot(normal, viewDir), 0.0);
+        float iceRim = pow(1.0 - rimNdotV, 3.0) * (0.40 + 0.60 * max(worldNormal.y, 0.0));
+        lit += actualAmbient * vec3(0.68, 0.88, 1.12) * (iceRim * 0.36 * u_rockAlpineMode);
     }
 
     lit += VFXLights_Accumulate(fragPosition, normal, albedo.rgb);

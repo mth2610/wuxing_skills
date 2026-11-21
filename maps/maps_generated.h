@@ -4,12 +4,15 @@
 
 #include "maps/map_manager.h"
 
+#include "maps/worlds/mau_son/mau_son.h"
 #include "maps/worlds/ninh_thuan/ninh_thuan.h"
 #include "maps/worlds/ly_son/ly_son.h"
 #include "maps/worlds/song_quao/song_quao.h"
 #include "maps/worlds/default_arena/default_arena.h"
 
 static inline void RegisterGeneratedMaps(void) {
+    MapManager_RegisterEx("MAU_SON", InitMauSonMap, UpdateMauSonMap, DrawMauSonMap, UnloadMauSonMap, GetGroundHeightMauSonMap, SampleGroundSurfaceMauSonMap, DrawTransparentMauSonMap);
+    MapManager_RegisterWaterHooks("MAU_SON", GetWaterInfoMauSonMap, SetWaterInteractorMauSonMap, AddWaterRippleMauSonMap);
     MapManager_RegisterEx("NINH_THUAN", InitNinhThuanMap, UpdateNinhThuanMap, DrawNinhThuanMap, UnloadNinhThuanMap, GetGroundHeightNinhThuanMap, SampleGroundSurfaceNinhThuanMap, DrawTransparentNinhThuanMap);
     MapManager_RegisterWaterHooks("NINH_THUAN", GetWaterInfoNinhThuanMap, SetWaterInteractorNinhThuanMap, AddWaterRippleNinhThuanMap);
     MapManager_RegisterEx("LY_SON", InitLySonMap, UpdateLySonMap, DrawLySonMap, UnloadLySonMap, GetGroundHeightLySonMap, SampleGroundSurfaceLySonMap, DrawTransparentLySonMap);

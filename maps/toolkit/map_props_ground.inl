@@ -31,6 +31,8 @@ static int locAridBiomeFactor = -1, locStrataStrength = -1;
 static int locAridGrusColor = -1, locAridHardpanColor = -1, locAridLichenColor = -1;
 static int locVolcanicBiomeFactor = -1, locMagmaGlowStrength = -1;
 static int locVolcanicAshColor = -1, locVolcanicScoriaColor = -1, locVolcanicSulfurColor = -1;
+static int locAlpineBiomeFactor = -1, locSnowSparkleStrength = -1;
+static int locAlpineSnowColor = -1, locAlpinePermafrostColor = -1, locAlpineGlacialIceColor = -1;
 
 static MapGroundBiomeProfile s_groundBiomeProfile = {
     .aridFactor = 0.0f,
@@ -42,7 +44,12 @@ static MapGroundBiomeProfile s_groundBiomeProfile = {
     .magmaGlowStrength = 0.0f,
     .ashColor = {0.16f, 0.15f, 0.16f},
     .scoriaColor = {0.34f, 0.14f, 0.10f},
-    .sulfurColor = {0.62f, 0.50f, 0.16f}};
+    .sulfurColor = {0.62f, 0.50f, 0.16f},
+    .alpineFactor = 0.0f,
+    .snowSparkleStrength = 0.0f,
+    .snowColor = {0.88f, 0.92f, 0.97f},
+    .permafrostColor = {0.22f, 0.26f, 0.32f},
+    .glacialIceColor = {0.36f, 0.72f, 0.86f}};
 static bool s_groundBiomeDirty = true;
 
 #define MAX_GROUND_PATH_SEGS 16
@@ -566,6 +573,11 @@ static MapGroundSurface SetupGroundMaterial(Mesh mesh, float width, float depth,
         locVolcanicAshColor = GetShaderLocation(groundShader, "u_volcanicAshColor");
         locVolcanicScoriaColor = GetShaderLocation(groundShader, "u_volcanicScoriaColor");
         locVolcanicSulfurColor = GetShaderLocation(groundShader, "u_volcanicSulfurColor");
+        locAlpineBiomeFactor = GetShaderLocation(groundShader, "u_alpineBiomeFactor");
+        locSnowSparkleStrength = GetShaderLocation(groundShader, "u_snowSparkleStrength");
+        locAlpineSnowColor = GetShaderLocation(groundShader, "u_alpineSnowColor");
+        locAlpinePermafrostColor = GetShaderLocation(groundShader, "u_alpinePermafrostColor");
+        locAlpineGlacialIceColor = GetShaderLocation(groundShader, "u_alpineGlacialIceColor");
         VFXLight_RegisterShader(groundShader);
 
         s_groundShaderId = groundShader.id;
@@ -1328,6 +1340,16 @@ void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter)
             SetShaderValue(groundShader, locVolcanicScoriaColor, &s_groundBiomeProfile.scoriaColor, SHADER_UNIFORM_VEC3);
         if (locVolcanicSulfurColor >= 0)
             SetShaderValue(groundShader, locVolcanicSulfurColor, &s_groundBiomeProfile.sulfurColor, SHADER_UNIFORM_VEC3);
+        if (locAlpineBiomeFactor >= 0)
+            SetShaderValue(groundShader, locAlpineBiomeFactor, &s_groundBiomeProfile.alpineFactor, SHADER_UNIFORM_FLOAT);
+        if (locSnowSparkleStrength >= 0)
+            SetShaderValue(groundShader, locSnowSparkleStrength, &s_groundBiomeProfile.snowSparkleStrength, SHADER_UNIFORM_FLOAT);
+        if (locAlpineSnowColor >= 0)
+            SetShaderValue(groundShader, locAlpineSnowColor, &s_groundBiomeProfile.snowColor, SHADER_UNIFORM_VEC3);
+        if (locAlpinePermafrostColor >= 0)
+            SetShaderValue(groundShader, locAlpinePermafrostColor, &s_groundBiomeProfile.permafrostColor, SHADER_UNIFORM_VEC3);
+        if (locAlpineGlacialIceColor >= 0)
+            SetShaderValue(groundShader, locAlpineGlacialIceColor, &s_groundBiomeProfile.glacialIceColor, SHADER_UNIFORM_VEC3);
         s_groundBiomeDirty = false;
     }
 
@@ -1548,7 +1570,12 @@ void MapProp_SetGroundBiomeProfile(const MapGroundBiomeProfile *profile)
             .magmaGlowStrength = 0.0f,
             .ashColor = {0.16f, 0.15f, 0.16f},
             .scoriaColor = {0.34f, 0.14f, 0.10f},
-            .sulfurColor = {0.62f, 0.50f, 0.16f}};
+            .sulfurColor = {0.62f, 0.50f, 0.16f},
+            .alpineFactor = 0.0f,
+            .snowSparkleStrength = 0.0f,
+            .snowColor = {0.88f, 0.92f, 0.97f},
+            .permafrostColor = {0.22f, 0.26f, 0.32f},
+            .glacialIceColor = {0.36f, 0.72f, 0.86f}};
     }
     s_groundBiomeDirty = true;
 }
