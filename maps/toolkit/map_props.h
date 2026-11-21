@@ -998,6 +998,9 @@ typedef struct
     Color coreColor;        // Incandescent white-gold core
     Color magmaColor;       // Molten orange-crimson magma
     Color crustColor;       // Cooled dark basaltic slag crust
+    const char *flowMapPath;// Optional D8 baked lava flowmap RGBA8 (RG=dir, B=speed, A=caldera)
+    float mapWidth;         // World X span for flowmap UVs
+    float mapDepth;         // World Z span for flowmap UVs
 } MapLavaConfig;
 
 typedef struct
@@ -1006,6 +1009,7 @@ typedef struct
     Shader shader;
     Texture2D noiseTex;
     Texture2D crackTex;
+    Texture2D flowTex;
     MapLavaConfig config;
     Vector3 boundsCenter;
     float boundsRadius;
@@ -1037,6 +1041,7 @@ typedef struct
 
 MapVolcanoVentSystem MapProp_CreateVolcanoVentSystem(const MapVolcanoVent *vents, int count);
 void MapProp_UpdateVolcanoVentSystem(MapVolcanoVentSystem *sys, Vector3 cameraPos, float dt);
+void MapProp_DrawVolcanoPlumes(const MapVolcanoVentSystem *sys, Camera3D cam);
 void MapProp_UnloadVolcanoVentSystem(MapVolcanoVentSystem *sys);
 
 // --- Atmospheric Fluff / Floating Spores System -------------------------

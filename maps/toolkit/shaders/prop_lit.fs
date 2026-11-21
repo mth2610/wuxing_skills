@@ -184,11 +184,12 @@ void main() {
     vec3 aridCrownVarnish = mix(vec3(0.54, 0.44, 0.33), vec3(0.65, 0.53, 0.38), smoothstep(0.40, 0.80, mossPatch * 0.65 + detailLuma * 0.35));
     vec3 crownMossAlbedo = mix(lushCrownMoss, aridCrownVarnish, u_rockAridMode);
     if (u_rockVolcanicMode > 0.5) {
-        vec3 volcanicAshSulfur = mix(vec3(0.16, 0.14, 0.14), vec3(0.42, 0.34, 0.14), smoothstep(0.55, 0.90, mossPatch * 0.60 + detailLuma * 0.40));
+        vec3 volcanicAshSulfur = mix(vec3(0.20, 0.19, 0.21), vec3(0.46, 0.38, 0.16), smoothstep(0.55, 0.90, mossPatch * 0.60 + detailLuma * 0.40));
         crownMossAlbedo = mix(crownMossAlbedo, volcanicAshSulfur, u_rockVolcanicMode);
-        rockAlbedo *= mix(vec3(1.0), vec3(0.42, 0.38, 0.38), u_rockVolcanicMode * 0.72);
+        // Preserve crisp charcoal basalt relief instead of crushing into pitch-black silhouettes
+        rockAlbedo *= mix(vec3(1.0), vec3(0.84, 0.82, 0.85), u_rockVolcanicMode);
     }
-    rockAlbedo = mix(rockAlbedo, crownMossAlbedo, topMossMask * mix(0.64, 0.38, max(u_rockAridMode, u_rockVolcanicMode)));
+    rockAlbedo = mix(rockAlbedo, crownMossAlbedo, topMossMask * mix(0.64, 0.36, max(u_rockAridMode, u_rockVolcanicMode)));
     if (u_rockAridMode > 0.5) {
         // Subtle vertical desert-varnish streaks on flanks + pale windblown sand dusting on ledges
         float streak = sin(worldPosition.x * 2.2 + worldPosition.z * 1.9 + sin(worldPosition.y * 0.7) * 0.8) * 0.5 + 0.5;
@@ -198,12 +199,14 @@ void main() {
         rockAlbedo = mix(rockAlbedo, vec3(0.72, 0.62, 0.48), sandDustMask * 0.45 * u_rockAridMode);
     }
 
-    // Tight basal soil & root-humus collar grounding (or windblown ochre grus sand skirt in arid mode)
-    float skirtMask = (1.0 - smoothstep(-0.42, mix(-0.04, 0.08, u_rockAridMode), fragLocalY)) * (1.0 - isRiverStone * 0.85);
+    // Tight basal soil & root-humus collar grounding (or windblown ochre grus / volcanic ash skirt)
+    float skirtMask = (1.0 - smoothstep(-0.42, mix(-0.04, 0.08, max(u_rockAridMode, u_rockVolcanicMode)), fragLocalY)) * (1.0 - isRiverStone * 0.85);
     vec3 skirtLoam = mix(vec3(0.13, 0.11, 0.08), vec3(0.44, 0.33, 0.22), u_rockAridMode);
+    skirtLoam = mix(skirtLoam, vec3(0.16, 0.15, 0.16), u_rockVolcanicMode);
     vec3 lushSkirtMoss = mix(skirtLoam, vec3(0.15, 0.24, 0.09), clamp(worldNormal.y * 0.85 + (1.0 - fractureCavity) * 0.35, 0.0, 1.0));
     vec3 aridSkirtSand = mix(skirtLoam, vec3(0.56, 0.44, 0.30), clamp(worldNormal.y * 0.85 + detailLuma * 0.35, 0.0, 1.0));
     vec3 skirtMossAlbedo = mix(lushSkirtMoss, aridSkirtSand, u_rockAridMode);
+    skirtMossAlbedo = mix(skirtMossAlbedo, vec3(0.18, 0.17, 0.18), u_rockVolcanicMode);
     rockAlbedo = mix(rockAlbedo, skirtMossAlbedo, skirtMask * 0.68);
     rockAlbedo *= mix(0.68, 1.0, smoothstep(-0.36, 0.02, fragLocalY));
 
@@ -277,8 +280,10 @@ void main() {
              + crownMossAlbedo * actualLight * mossSSS
              + spec * actualLight * shadow;
     if (u_rockVolcanicMode > 0.5) {
-        float baseEmber = (1.0 - smoothstep(-0.35, 0.18, fragLocalY)) * (1.0 - fractureCavity) * u_rockVolcanicMode;
-        lit += vec3(1.15, 0.28, 0.04) * baseEmber * 0.55;
+        // Cool slate-sky Fresnel edge rim so hexagonal basalt & obsidian edges stay crisp even in shadow
+        float rimNdotV = max(dot(normal, viewDir), 0.0);
+        float slateRim = pow(1.0 - rimNdotV, 3.2) * (0.35 + 0.65 * max(worldNormal.y, 0.0));
+        lit += actualAmbient * vec3(0.75, 0.88, 1.15) * (slateRim * 0.42 * u_rockVolcanicMode);
     }
 
     lit += VFXLights_Accumulate(fragPosition, normal, albedo.rgb);

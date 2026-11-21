@@ -52,7 +52,7 @@ def bake_ly_son():
     px, py = geo["pixel_size_m"]
 
     max_dim = 300.0
-    height_range = 18.0
+    height_range = 28.0
     cliff_depth = 8.0
     cliff_margin = 1.0
     total_range = height_range + cliff_depth
@@ -87,22 +87,18 @@ def bake_ly_son():
     X, Z = np.meshgrid(np.arange(w) * sx, np.arange(h) * sz)
 
     # Central volcanic saddle combat arena (walkable ash/basalt plain between Thới Lới & Giếng Tiền)
-    # Find flattest moderate-elevation saddle near map center
     cx_mid, cz_mid = width * 0.48, depth * 0.50
     arena_dist = np.hypot(X - cx_mid, Z - cz_mid)
     arena_x, arena_z = float(cx_mid), float(cz_mid)
 
-    # Gentle stepped pahoehoe basalt terraces outside central arena
-    warp_v = np.sin(X * 0.055 - Z * 0.036) * 1.10 + np.cos(Z * 0.092 + X * 0.048) * 0.55
-    step_h = 1.45
-    tau = (terrain + warp_v * 0.45) / step_h
-    frac = tau - np.floor(tau)
-    s_frac = np.clip((frac - 0.22) / (0.78 - 0.22), 0.0, 1.0)
-    s_frac = s_frac * s_frac * (3.0 - 2.0 * s_frac)
-    terraced = (np.floor(tau) + s_frac) * step_h - warp_v * 0.45
+    # Organic radial pahoehoe lava flow lobes (replaces periodic step_h=1.45m zebra terracing)
+    ang_e = np.arctan2(Z - depth * 0.46, X - width * 0.72)
+    ang_w = np.arctan2(Z - depth * 0.52, X - width * 0.30)
+    lobe_e = np.sin(ang_e * 7.0 + np.sin(X * 0.045 + Z * 0.038) * 1.6) * 0.5 + 0.5
+    lobe_w = np.sin(ang_w * 5.0 - np.cos(Z * 0.052 - X * 0.041) * 1.4) * 0.5 + 0.5
+    radial_lobe = (lobe_e * 0.65 + lobe_w * 0.35) * 0.72
     arena_guard = np.clip((arena_dist - 15.0) / 10.0, 0.0, 1.0)
-    shelf_w = np.clip((terrain - 2.4) / 7.5, 0.0, 0.34) * arena_guard
-    terrain = np.where(valid, terrain * (1.0 - shelf_w) + terraced * shelf_w, -cliff_depth)
+    terrain = np.where(valid, terrain + radial_lobe * arena_guard * np.clip((terrain - 2.0) / 10.0, 0.0, 1.0), -cliff_depth)
 
     # ── 1. Endoreic Caldera Crater Detection (Preserved instead of Priority-Flooded away) ──
     perimeter = distance_inside(valid, sx, sz)
@@ -161,6 +157,9 @@ def bake_ly_son():
     corridor = np.zeros_like(terrain)
     stream_surf_num = np.zeros_like(terrain)
     stream_surf_den = np.zeros_like(terrain)
+    flow_vx = np.zeros_like(terrain)
+    flow_vz = np.zeros_like(terrain)
+    flow_speed_acc = np.zeros_like(terrain)
 
     for r, c in zip(*np.where(lava_streams)):
         d = int(directions[r, c])
@@ -172,29 +171,38 @@ def bake_ly_son():
             continue
         ax, az = c * sx, r * sz
         bx, bz = nc * sx, nr * sz
+        seg_dx, seg_dz = bx - ax, bz - az
+        seg_len = max(np.hypot(seg_dx, seg_dz), 1e-6)
+        dir_x, dir_z = seg_dx / seg_len, seg_dz / seg_len
+
         half = float(np.clip(0.85 + 0.022 * np.sqrt(accum[r, c]), 0.90, 2.30))
         radius = half + max(sx, sz) * 2.35
-        x0 = max(0, int((min(ax, bx) - radius * 1.6) / sx))
-        x1 = min(w, int((max(ax, bx) + radius * 1.6) / sx) + 2)
-        z0 = max(0, int((min(az, bz) - radius * 1.6) / sz))
-        z1 = min(h, int((max(az, bz) + radius * 1.6) / sz) + 2)
+        x0 = max(0, int((min(ax, bx) - radius * 1.4) / sx))
+        x1 = min(w, int((max(ax, bx) + radius * 1.4) / sx) + 2)
+        z0 = max(0, int((min(az, bz) - radius * 1.4) / sz))
+        z1 = min(h, int((max(az, bz) + radius * 1.4) / sz) + 2)
         sl = np.s_[z0:z1, x0:x1]
-        t = np.clip(((X[sl] - ax) * (bx - ax) + (Z[sl] - az) * (bz - az)) / max((bx - ax) ** 2 + (bz - az) ** 2, 1e-9), 0.0, 1.0)
-        dist = np.hypot(X[sl] - (ax + t * (bx - ax)), Z[sl] - (az + t * (bz - az)))
+        t = np.clip(((X[sl] - ax) * seg_dx + (Z[sl] - az) * seg_dz) / max(seg_dx ** 2 + seg_dz ** 2, 1e-9), 0.0, 1.0)
+        dist = np.hypot(X[sl] - (ax + t * seg_dx), Z[sl] - (az + t * seg_dz))
         w_raw = 0.5 + 0.5 * np.cos(np.pi * np.clip(dist / radius, 0.0, 1.0))
         weight = w_raw * w_raw * (3.0 - 2.0 * w_raw)
         corridor[sl] = np.maximum(corridor[sl], weight)
 
         level = conditioned[r, c] * (1.0 - t) + conditioned[nr, nc] * t
-        # Raised basaltic levee rim on lava channel shoulders + U-shaped magma bed
-        levee = np.exp(-((dist - radius * 0.78) / (radius * 0.25)) ** 2) * 0.24
-        bed = np.minimum(terrain[sl], level - 1.05 * weight) + levee
+        # Raised basaltic levee rim on lava channel shoulders + deeper incised U-shaped magma gorge
+        levee = np.exp(-((dist - radius * 0.78) / (radius * 0.24)) ** 2) * 0.42
+        bed = np.minimum(terrain[sl], level - 1.35 * weight) + levee
         terrain[sl] = terrain[sl] * (1.0 - weight) + bed * weight
 
-        w_surf = np.clip((radius * 1.75 - dist) / max(radius * 1.75, 1e-6), 0.0, 1.0)
+        # Clamp stream surface strictly inside the raised levee core (eliminates detached outer blobs)
+        surf_r = half + max(sx, sz) * 0.65
+        w_surf = np.clip((surf_r - dist) / max(surf_r, 1e-6), 0.0, 1.0)
         w_surf = w_surf * w_surf * (3.0 - 2.0 * w_surf)
-        stream_surf_num[sl] += w_surf * (level - 0.14)
+        stream_surf_num[sl] += w_surf * (level - 0.16)
         stream_surf_den[sl] += w_surf
+        flow_vx[sl] += w_surf * dir_x
+        flow_vz[sl] += w_surf * dir_z
+        flow_speed_acc[sl] = np.maximum(flow_speed_acc[sl], w_surf * np.clip(0.35 + 0.65 * (1.0 - dist / max(surf_r, 1e-6)), 0.0, 1.0))
 
     has_stream_surf = stream_surf_den > 1e-4
     avg_stream_surf = np.where(has_stream_surf, stream_surf_num / np.maximum(stream_surf_den, 1e-4), terrain - 0.25)
@@ -209,11 +217,60 @@ def bake_ly_son():
     rim_taper = np.clip((perimeter - 2.5) / 4.5, 0.0, 1.0)
     lava_plane = np.where(valid, lava_plane * rim_taper + (terrain - 0.35) * (1.0 - rim_taper), terrain - 0.35)
 
+    # Connected-component pruning: keep ONLY lava components connected to calderas (>= 25 cells)
+    raw_lava_cand = valid & ((lava_plane - terrain) > 0.006)
+    visited = np.zeros_like(raw_lava_cand, dtype=bool)
+    kept_lava = np.zeros_like(raw_lava_cand, dtype=bool)
+    from collections import deque
+    for sr, sc in zip(*np.where(raw_lava_cand)):
+        if visited[sr, sc]:
+            continue
+        comp = []
+        q = deque([(sr, sc)])
+        visited[sr, sc] = True
+        touches_caldera = False
+        while q:
+            cr, cc = q.popleft()
+            comp.append((cr, cc))
+            if caldera_all[cr, cc]:
+                touches_caldera = True
+            for dr in (-1, 0, 1):
+                for dc in (-1, 0, 1):
+                    if dr == 0 and dc == 0:
+                        continue
+                    nr, nc = cr + dr, cc + dc
+                    if 0 <= nr < h and 0 <= nc < w and raw_lava_cand[nr, nc] and not visited[nr, nc]:
+                        visited[nr, nc] = True
+                        q.append((nr, nc))
+        if touches_caldera or len(comp) >= 28:
+            for cr, cc in comp:
+                kept_lava[cr, cc] = True
+
+    # Suppress disconnected orphan puddles below terrain
+    lava_plane = np.where(kept_lava | (caldera_smooth > 0.05), lava_plane, terrain - 0.35)
+
     # Diffuse lava_plane smoothly onto adjacent banks for clean shoreline clipping
     raw_lava = valid & ((lava_plane - terrain) > 0.006)
-    near_lava = gaussian_filter_2d(raw_lava.astype(float), 2.2) > 0.01
-    smooth_ext = normalized_smooth(lava_plane, raw_lava | has_stream_surf | (caldera_smooth > 0.05), 1.8)
-    lava_plane = np.where(raw_lava, lava_plane, np.where(near_lava, np.minimum(smooth_ext, terrain - 0.002), terrain - 0.25))
+    near_lava = gaussian_filter_2d(raw_lava.astype(float), 2.0) > 0.01
+    smooth_ext = normalized_smooth(lava_plane, raw_lava | (caldera_smooth > 0.05), 1.6)
+    lava_plane = np.where(raw_lava, lava_plane, np.where(near_lava, np.minimum(smooth_ext, terrain - 0.004), terrain - 0.30))
+
+    # Smooth D8 lava flowmap (RG = unit flow dir, B = speed/shear, A = caldera mask)
+    f_len = np.hypot(flow_vx, flow_vz)
+    fx_u = np.where(f_len > 1e-4, flow_vx / np.maximum(f_len, 1e-4), 0.0)
+    fz_u = np.where(f_len > 1e-4, flow_vz / np.maximum(f_len, 1e-4), 0.0)
+    fx_s = gaussian_filter_2d(fx_u, 1.4)
+    fz_s = gaussian_filter_2d(fz_u, 1.4)
+    fl_s = np.hypot(fx_s, fz_s)
+    fx_n = np.where(fl_s > 1e-4, fx_s / np.maximum(fl_s, 1e-4), -0.65)
+    fz_n = np.where(fl_s > 1e-4, fz_s / np.maximum(fl_s, 1e-4), 0.75)
+    caldera_mask_f = np.clip(caldera_smooth * 1.4, 0.0, 1.0)
+    flow_rgba = np.stack((
+        np.clip(fx_n * 0.5 + 0.5, 0.0, 1.0),
+        np.clip(fz_n * 0.5 + 0.5, 0.0, 1.0),
+        np.clip(gaussian_filter_2d(flow_speed_acc, 1.0), 0.0, 1.0),
+        caldera_mask_f,
+    ), axis=-1)
 
     height_code = np.rint(np.clip((terrain + cliff_depth) / total_range, 0.0, 1.0) * 65535.0).astype(np.uint16)
     ground = height_code.astype(np.float64) / 65535.0 * total_range - cliff_depth
@@ -273,15 +330,21 @@ def bake_ly_son():
     habitat_val2 = np.clip(0.55 + 0.30 * np.clip((tpi2 + 4.0) / 12.0, 0.0, 1.0), 0.0, 1.0)
 
     # Volcanic debris map channels:
-    # R: Sub-surface incandescent magma fissures (along lava shorelines + caldera cracks)
+    # R: Sub-surface incandescent magma fissures (strictly on flat cooled shelves < 20 deg near lava)
     # G: Basalt scree & volcanic talus gravel (enhanced around placed basalt columns)
     # B: Rock contact AO (filled after rock placement)
     # A: Yellow-ochre fumarolic sulfur crust (around crater rims & hydrothermal vents)
     X2, Z2 = np.meshgrid(np.arange(w2) * sx2, np.arange(h2) * sz2)
-    crack_pat = np.abs(np.sin(X2 * 0.42 + np.cos(Z2 * 0.35) * 1.6) * np.cos(Z2 * 0.38 - np.sin(X2 * 0.29) * 1.4))
-    ember_fissure2 = np.clip(shore2 * 0.95 * np.clip(1.0 - crack_pat * 1.4, 0.0, 1.0), 0.0, 1.0)
+    flat_shelf2 = np.clip(1.0 - (slope2 - 14.0) / 8.0, 0.0, 1.0)
+    near_lava_shelf2 = np.clip(1.0 - (signed_shore2 + 0.15) / 1.55, 0.0, 1.0)
+    near_lava_shelf2 = near_lava_shelf2 * near_lava_shelf2 * (3.0 - 2.0 * near_lava_shelf2)
+    # Isotropic domain-warped hairline cracks (zero Cartesian wall triangles)
+    wx2 = X2 * 0.62 + np.sin(Z2 * 0.45 + X2 * 0.21) * 1.4
+    wz2 = Z2 * 0.58 + np.cos(X2 * 0.41 - Z2 * 0.27) * 1.4
+    crack_pat = np.abs(np.sin(wx2 * 1.15) * np.cos(wz2 * 1.15))
+    ember_fissure2 = np.clip(near_lava_shelf2 * flat_shelf2 * np.clip(1.0 - crack_pat * 2.1, 0.0, 1.0), 0.0, 1.0)
     scree_gravel2 = np.clip((slope2 - 7.5) / 12.0, 0.0, 1.0) * (0.40 + 0.60 * rock2)
-    sulfur_crust2 = np.clip(up2(caldera_smooth) * 0.85 + shore2 * 0.45, 0.0, 1.0) * (1.0 - wet_smooth2)
+    sulfur_crust2 = np.clip(up2(caldera_smooth) * 0.85 + shore2 * 0.35, 0.0, 1.0) * (1.0 - wet_smooth2)
 
     splat2 = np.stack((coverage2, rock2, np.clip(coverage2 * 0.20, 0.0, 1.0), shore2), axis=-1)
     splat2[~valid2] = (0, 1, 0, 0)
@@ -311,6 +374,7 @@ def bake_ly_son():
     write_png(p("ecology_splat.png"), np.rint(splat2 * 255), 6)
     write_png(p("ground_material.png"), np.rint(ground_material2 * 255), 6)
     write_png(p("habitat.png"), np.rint(habitat2 * 255), 6)
+    write_png(p("lava_flow.png"), np.rint(flow_rgba * 255), 6)
 
     riparian_b = np.rint(np.clip(gaussian_filter_2d(wet_lava.astype(float), 2.8) * 3.5, 0.0, 1.0) * 255).astype(np.uint8)
     water_rgba = np.stack((lava_code >> 8, lava_code & 255, riparian_b, wet_lava * 255), axis=-1).astype(np.uint8)
@@ -369,41 +433,59 @@ def bake_ly_son():
         placements.append((tovo_x + 1.4, gy_tv + 3.2, tovo_z + 0.5, 2.35, 1.15, 198.0, "MAP_ROCK_BASALT"))
         occupied.append((tovo_x, tovo_z, 5.5))
 
-    # 4B. Hang Câu Columnar Basalt Palisades & Crater Rim Pillars
-    rim_mask = valid & (~wet_lava) & (ground > 3.5) & (slope_s > 11.0) & (slope_s < 32.0)
+    # 4B. Hang Câu Columnar Basalt Organ-Pipe Palisades & Crater Rim Pillars (5-7 tightly packed hexagonal columns)
+    rim_mask = valid & (~wet_lava) & (ground > 3.5) & (slope_s > 10.0) & (slope_s < 34.0)
     r_rows, r_cols = np.where(rim_mask)
     if len(r_rows) > 0:
         order = rng.permutation(len(r_rows))
         basalt_clusters = 0
         for idx in order:
-            if basalt_clusters >= 18:
+            if basalt_clusters >= 22:
                 break
             bx, bz = float(r_cols[idx] * sx), float(r_rows[idx] * sz)
-            rb = float(rng.uniform(2.2, 3.6))
-            if not can_place(bx, bz, rb, min_sep=1.45):
+            rb = float(rng.uniform(1.85, 3.10))
+            if not can_place(bx, bz, rb, min_sep=1.35):
                 continue
-            hb = rb * float(rng.uniform(1.15, 1.75))
+            hb = rb * float(rng.uniform(1.30, 1.95))
             if add_rock(bx, bz, rb, hb, float(rng.uniform(0, 360)), "MAP_ROCK_BASALT"):
                 basalt_clusters += 1
-                for k in range(3):
-                    ang = rng.uniform(0.0, 2.0 * np.pi)
-                    dist = rb * float(rng.uniform(0.65, 1.15))
-                    cr = rb * float(rng.uniform(0.45, 0.72))
-                    add_rock(bx + np.cos(ang) * dist, bz + np.sin(ang) * dist, cr, cr * float(rng.uniform(1.1, 1.6)),
+                col_count = int(rng.integers(4, 7))
+                for k in range(col_count):
+                    ang = k * (2.0 * np.pi / col_count) + float(rng.uniform(-0.22, 0.22))
+                    dist = rb * float(rng.uniform(0.55, 0.92))
+                    cr = rb * float(rng.uniform(0.42, 0.68))
+                    add_rock(bx + np.cos(ang) * dist, bz + np.sin(ang) * dist, cr, cr * float(rng.uniform(1.25, 1.85)),
                              float(rng.uniform(0, 360)), "MAP_ROCK_BASALT", allow_stack=True)
 
-    # 4C. Obsidian Shard Monoliths around Central Combat Arena Perimeter & Caldera Edges
-    for i in range(10):
-        ang = i * (2.0 * np.pi / 10.0) + rng.uniform(-0.15, 0.15)
-        dist = float(rng.uniform(18.5, 25.0))
+    # 4C. Jagged Basalt Lava-Gorge Embankments framing lava river banks (never blocking channel center)
+    gorge_mask = valid & (~wet_lava) & (corridor > 0.12) & (corridor < 0.45) & (slope_s < 32.0)
+    g_rows, g_cols = np.where(gorge_mask)
+    if len(g_rows) > 0:
+        g_order = rng.permutation(len(g_rows))
+        gorge_count = 0
+        for idx in g_order:
+            if gorge_count >= 38:
+                break
+            gx_p, gz_p = float(g_cols[idx] * sx), float(g_rows[idx] * sz)
+            rg = float(rng.uniform(0.95, 1.80))
+            if add_rock(gx_p, gz_p, rg, rg * float(rng.uniform(0.85, 1.35)), float(rng.uniform(0, 360)), "MAP_ROCK_BASALT"):
+                gorge_count += 1
+
+    # 4D. Obsidian Shard Monoliths around Central Combat Arena Perimeter & Caldera Edges
+    for i in range(12):
+        ang = i * (2.0 * np.pi / 12.0) + rng.uniform(-0.14, 0.14)
+        dist = float(rng.uniform(18.0, 26.0))
         ox = arena_x + np.cos(ang) * dist
         oz = arena_z + np.sin(ang) * dist
-        ro = float(rng.uniform(1.3, 2.2))
-        add_rock(ox, oz, ro, ro * float(rng.uniform(1.35, 1.90)), float(np.degrees(ang)), "MAP_ROCK_OBSIDIAN")
+        ro = float(rng.uniform(1.2, 2.1))
+        if add_rock(ox, oz, ro, ro * float(rng.uniform(1.45, 2.05)), float(np.degrees(ang)), "MAP_ROCK_OBSIDIAN"):
+            # Twin smaller flanking obsidian shard
+            add_rock(ox + np.cos(ang + 0.5) * ro * 0.85, oz + np.sin(ang + 0.5) * ro * 0.85,
+                     ro * 0.55, ro * 0.95, float(np.degrees(ang) + 25.0), "MAP_ROCK_OBSIDIAN", allow_stack=True)
 
-    # 4D. Scattered Volcanic Crags, Basalt Boulders & Scoria Talus
-    for _ in range(1200):
-        if len(placements) >= 340:
+    # 4E. Cohesive Volcanic Basalt Outcrops & Scoria Talus Aprons (NO pale granite/limestone boulders)
+    for _ in range(1400):
+        if len(placements) >= 380:
             break
         x = float(rng.uniform(18.0, width - 18.0))
         z = float(rng.uniform(18.0, depth - 18.0))
@@ -411,14 +493,14 @@ def bake_ly_son():
         if not val or is_lava or gy < 0.20 or sl > 32.0:
             continue
         r_s = float(rng.uniform(0.75, 1.85))
-        arch = "MAP_ROCK_BASALT" if rng.random() < 0.55 else ("MAP_ROCK_CRAG" if tpi_v > 1.5 else "MAP_ROCK_BOULDER")
-        h_s = r_s * (1.25 if arch == "MAP_ROCK_CRAG" else float(rng.uniform(0.65, 1.05)))
+        arch = "MAP_ROCK_OBSIDIAN" if (tpi_v > 1.8 and rng.random() < 0.35) else "MAP_ROCK_BASALT"
+        h_s = r_s * (1.28 if arch == "MAP_ROCK_OBSIDIAN" else float(rng.uniform(0.75, 1.25)))
         if add_rock(x, z, r_s, h_s, float(rng.uniform(0, 360)), arch):
-            for _ in range(int(rng.integers(1, 3))):
+            for _ in range(int(rng.integers(1, 4))):
                 a = rng.uniform(0.0, 2.0 * np.pi)
-                d = r_s + float(rng.uniform(0.4, 1.4))
-                sr = float(rng.uniform(0.24, 0.54))
-                add_rock(x + np.cos(a) * d, z + np.sin(a) * d, sr, sr * 0.48, float(rng.uniform(0, 360)), "MAP_ROCK_SCREE")
+                d = r_s + float(rng.uniform(0.35, 1.35))
+                sr = float(rng.uniform(0.24, 0.52))
+                add_rock(x + np.cos(a) * d, z + np.sin(a) * d, sr, sr * 0.50, float(rng.uniform(0, 360)), "MAP_ROCK_SCREE")
 
     # Bake rock contact AO & basalt scree aprons into debris_map.png
     rock_apron2 = np.zeros_like(rock2)
@@ -502,10 +584,53 @@ def bake_ly_son():
         f.write(f"#define LY_SON_TOVO_Z {tovo_z:.6f}f\n")
         f.write("#endif // LY_SON_GENERATED_META_H\n")
 
+    # ── 6. 3D Volcanic Scoria Pebbles & Obsidian Chips (MapDebrisSystem) ──
+    debris_items = []
+    # Cluster dense basalt scree & obsidian chips around placed hero rocks + arena margins
+    for rx, ry, rz, rr, rh, rrot, rarch in placements:
+        if rarch == "MAP_ROCK_SCREE":
+            continue
+        n_chips = 5 if rr > 1.5 else 3
+        for _ in range(n_chips):
+            if len(debris_items) >= 1600:
+                break
+            a = float(rng.uniform(0.0, 2.0 * np.pi))
+            d = rr * float(rng.uniform(0.85, 2.15))
+            dx_p = rx + np.cos(a) * d
+            dz_p = rz + np.sin(a) * d
+            gy_p, sl_p, _, val_p, is_lava_p = sample_cell(dx_p, dz_p)
+            if not val_p or is_lava_p or gy_p < 0.10 or sl_p > 34.0:
+                continue
+            sc = float(rng.uniform(1.6, 3.8))
+            rot_d = float(rng.uniform(0.0, 360.0))
+            tone = rng.random()
+            if tone < 0.55:
+                col = (52, 48, 52)   # dark basalt pebble
+            elif tone < 0.85:
+                col = (94, 46, 34)   # oxidized red scoria chip
+            else:
+                col = (34, 34, 40)   # dark obsidian shard
+            debris_items.append((dx_p, gy_p, dz_p, rot_d, sc, col, "MAP_DEBRIS_PEBBLE"))
+
+    # Also scatter subtle foreground volcanic grit pebbles across the central combat saddle
+    for _ in range(1800):
+        if len(debris_items) >= 1600:
+            break
+        dx_p = float(rng.uniform(18.0, width - 18.0))
+        dz_p = float(rng.uniform(18.0, depth - 18.0))
+        gy_p, sl_p, _, val_p, is_lava_p = sample_cell(dx_p, dz_p)
+        if not val_p or is_lava_p or gy_p < 0.15 or sl_p > 26.0:
+            continue
+        sc = float(rng.uniform(1.2, 2.8))
+        rot_d = float(rng.uniform(0.0, 360.0))
+        tone = rng.random()
+        col = (54, 50, 54) if tone < 0.65 else (92, 48, 36)
+        debris_items.append((dx_p, gy_p, dz_p, rot_d, sc, col, "MAP_DEBRIS_PEBBLE"))
+
     rock_header = os.path.join(out_world_dir, "ly_son_rocks_generated.h")
     with open(rock_header, "w") as f:
         f.write("// Generated by maps/pipeline/bake_ly_son.py\n")
-        f.write("// Lý Sơn Volcanic Island: Columnar Basalt, Cổng Tò Vò Arch, Obsidian Monoliths & Fumarole Vents\n")
+        f.write("// Lý Sơn Volcanic Island: Columnar Basalt, Cổng Tò Vò Arch, Obsidian Monoliths, Scoria Debris & Vents\n")
         f.write("#ifndef LY_SON_ROCKS_GENERATED_H\n#define LY_SON_ROCKS_GENERATED_H\n\n")
         f.write('#include "maps/toolkit/map_props.h"\n\n')
         f.write("static const MapRockItem LY_SON_ROCK_ITEMS[] = {\n")
@@ -513,6 +638,11 @@ def bake_ly_son():
             f.write(f"    {{{{{x:.2f}f, {y:.2f}f, {z:.2f}f}}, {r_s:.2f}f, {h_s:.2f}f, {rot:.1f}f, {arch}}},\n")
         f.write("};\n\n")
         f.write(f"#define LY_SON_ROCK_COUNT {len(placements)}\n\n")
+        f.write("static const MapDebrisPlacement LY_SON_DEBRIS_ITEMS[] = {\n")
+        for dx_p, dy_p, dz_p, drot, dsc, (cr, cg, cb), dtype in debris_items:
+            f.write(f"    {{{{{dx_p:.2f}f, {dy_p:.2f}f, {dz_p:.2f}f}}, {drot:.1f}f, {dsc:.2f}f, {{{cr}, {cg}, {cb}, 255}}, {dtype}}},\n")
+        f.write("};\n\n")
+        f.write(f"#define LY_SON_DEBRIS_COUNT {len(debris_items)}\n\n")
         f.write("static const MapVolcanoVent LY_SON_VOLCANO_VENTS[] = {\n")
         for vx, vy, vz, vrad, vheat, vsteam, vphase in vents:
             f.write(f"    {{{{{vx:.2f}f, {vy:.2f}f, {vz:.2f}f}}, {vrad:.2f}f, {vheat:.2f}f, {vsteam:.2f}f, {vphase:.2f}f}},\n")
@@ -522,7 +652,7 @@ def bake_ly_son():
 
     print(
         f"[LySon] Baked {w}x{h} volcanic terrain, {triangles} magma tris, "
-        f"{len(placements)} volcanic rocks, {len(vents)} fumarole vents -> {rock_header}",
+        f"{len(placements)} volcanic rocks, {len(debris_items)} scoria debris, {len(vents)} vents -> {rock_header}",
         flush=True,
     )
 

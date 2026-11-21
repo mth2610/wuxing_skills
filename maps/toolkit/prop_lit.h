@@ -55,5 +55,6 @@ Material PropLit_MakeMaterial(Texture2D diffuse, Texture2D normal, Texture2D rou
 // Environment_SetSunColor()/SetAmbientColor() changes (e.g. a day/night
 // cycle).
 void PropLit_UpdateLighting(void);
+bool PropLit_IsVolcanicMode(void);
 
 #endif // MAP_TOOLKIT_PROP_LIT_H

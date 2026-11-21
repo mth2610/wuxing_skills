@@ -48,6 +48,7 @@ static MapCliffSkirt s_cliff = {0};
 static MapLavaSurface s_lava = {0};
 static MapVolcanoVentSystem s_vents = {0};
 static MapRockSystem s_rocks = {0};
+static MapDebrisSystem s_debris = {0};
 static MapFloraSystem s_flora = {0};
 
 static WindMacroConfig s_prevWindMacro = {0};
@@ -191,8 +192,50 @@ static void BuildLySonRocks(void)
 }
 
 #define LY_SON_MAX_GRASS 9000
+#define LY_SON_MAX_FLOWERS 360
 static MapMeadowPlacement s_grassPlacements[LY_SON_MAX_GRASS];
 static int s_grassCount = 0;
+static MapFlowerPlacement s_flowerPlacements[LY_SON_MAX_FLOWERS];
+static int s_flowerCount = 0;
+static MapDebrisPlacement s_scaledDebris[LY_SON_DEBRIS_COUNT > 0 ? LY_SON_DEBRIS_COUNT : 1];
+
+static void BuildLySonDebris(void)
+{
+    int count = LY_SON_DEBRIS_COUNT;
+    if (count <= 0)
+        return;
+    for (int i = 0; i < count; i++)
+    {
+        s_scaledDebris[i] = LY_SON_DEBRIS_ITEMS[i];
+        s_scaledDebris[i].position.x *= s_scaleXZ;
+        s_scaledDebris[i].position.z *= s_scaleXZ;
+        Vector3 gp = {0}, gn = {0};
+        if (MapProp_SampleGroundSurface(&s_ground, kMapCenter, s_scaledDebris[i].position.x, s_scaledDebris[i].position.z, &gp, &gn))
+            s_scaledDebris[i].position.y = gp.y;
+        else
+            s_scaledDebris[i].position.y *= s_scaleY;
+        s_scaledDebris[i].scale *= (1.0f + 0.18f * (s_scaleXZ - 1.0f));
+    }
+    s_debris = MapProp_CreateDebrisSystem(s_scaledDebris, count, &s_ground, kMapCenter, 36.0f * s_scaleXZ);
+}
+
+static float LySonFlowerHeight(float x, float z, void *ctx)
+{
+    (void)ctx;
+    return MapDem_GetGroundHeight(&s_dem, &s_ground, x, z);
+}
+
+static bool LySonFlowerExcluded(float x, float z, void *ctx)
+{
+    (void)ctx;
+    Vector3 gp = {0}, gn = {0};
+    float wy = 0.0f, wd = 0.0f;
+    if (!MapProp_SampleGroundSurface(&s_ground, kMapCenter, x, z, &gp, &gn))
+        return true;
+    if (gn.y < 0.78f || gp.y < 0.25f)
+        return true;
+    return MapDem_GetWaterInfo(&s_dem, &s_ground, x, z, &wy, &wd);
+}
 
 static void BuildLySonFlora(void)
 {
@@ -231,13 +274,41 @@ static void BuildLySonFlora(void)
         &s_ground, kMapCenter,
         dist, LySonScorchedGrassDensity, NULL);
 
+    // Sparse crimson Bỉ Ngạn Hoa (Spider Lily) colonies around sheltered obsidian arena margins
+    static MapFloraFlowerCluster s_flowerClusters[6];
+    const int clusterCount = 6;
+    const int flowersPerCluster = 45;
+    const float arenaCx = LY_SON_ARENA_X * s_scaleXZ;
+    const float arenaCz = LY_SON_ARENA_Z * s_scaleXZ;
+    for (int i = 0; i < clusterCount; i++)
+    {
+        float ang = (float)i * (6.2831853f / (float)clusterCount) + 0.35f;
+        float distR = (17.5f + (float)(i % 2) * 3.5f) * s_scaleXZ;
+        float fx = arenaCx + cosf(ang) * distR;
+        float fz = arenaCz + sinf(ang) * distR;
+        float fy = MapDem_GetGroundHeight(&s_dem, &s_ground, fx, fz);
+        s_flowerClusters[i] = (MapFloraFlowerCluster){
+            .center = {fx, fy, fz},
+            .radius = {3.2f * s_scaleXZ, 2.8f * s_scaleXZ},
+            .flowerCount = flowersPerCluster,
+            .primarySpecies = MAP_FLOWER_SPECIES_BI_NGAN,
+            .species = {MAP_FLOWER_SPECIES_BI_NGAN, MAP_FLOWER_SPECIES_BI_NGAN, MAP_FLOWER_SPECIES_BI_NGAN, MAP_FLOWER_SPECIES_BI_NGAN},
+            .primaryColor = {212, 28, 34, 255},
+            .accentColor = {245, 72, 42, 255},
+            .discalCenterColor = {255, 190, 68, 255},
+        };
+    }
+    s_flowerCount = clusterCount * flowersPerCluster;
+    MapFlora_GenerateFlowerPlacements(s_flowerPlacements, s_flowerCount, s_flowerClusters, clusterCount,
+                                      LySonFlowerHeight, LySonFlowerExcluded, NULL, 0xB146A4u);
+
     s_flora = MapProp_CreateFloraSystem(
         s_grassPlacements, s_grassCount,
         NULL, 0,
-        NULL, NULL, 0,
+        s_flowerPlacements, s_flowerClusters, clusterCount,
         (MapFloraStyle){
-            .grassRootColor = {36, 26, 22, 255},
-            .grassTipColor = {178, 108, 48, 255},
+            .grassRootColor = {42, 34, 24, 255},
+            .grassTipColor = {168, 134, 74, 255},
             .bladesPerClump = 5,
             .bladeSegments = 3,
             .bladeWidthScale = 0.125f,
@@ -245,9 +316,9 @@ static void BuildLySonFlora(void)
             .midLodDistance = 16.0f,
             .drawDistance = 44.0f,
             .shadowDistance = (s_scaleXZ > 1.5f) ? -1.0f : 22.0f,
-            .grassState = MAP_GRASS_STATE_SCORCHED,
-            .dryness = 0.92f,
-            .scorch = 0.72f,
+            .grassState = MAP_GRASS_STATE_DRY,
+            .dryness = 0.94f,
+            .scorch = 0.0f,
             .botanicalVariation = 0.85f,
         });
 }
@@ -284,64 +355,64 @@ void InitLySonMap(void)
     else if (!ColorGradeLut_Load("assets/maps/ly_son/ly_son_grade.png"))
         ColorGradeLut_UseNeutral();
 
-    // 5 Volcanic Time-of-Day Presets (Default: 16:30 Fiery Volcanic Dusk)
+    // 5 Volcanic Time-of-Day Presets (Default: 16:30 Cold-vs-Hot Volcanic Ash Dusk)
     static const EnvLightingPreset kLySonToD[5] = {
         {
-            .ambientColor = {76, 68, 78, 255},
-            .sunColor = {255, 162, 112, 255},
+            .ambientColor = {68, 80, 102, 255},
+            .sunColor = {255, 160, 106, 255},
             .sunDirection = {0.82f, -0.26f, -0.51f},
-            .shadowColor = {36, 28, 38, 160},
-            .fog = {.enabled = true, .color = {185, 132, 108, 255}, .start = 28.0f, .end = 190.0f, .density = 0.0065f},
+            .shadowColor = {24, 28, 42, 175},
+            .fog = {.enabled = true, .color = {88, 94, 112, 255}, .start = 26.0f, .end = 185.0f, .density = 0.0068f},
             .atmosphere = {
-                .color = {185, 132, 108, 255}, .start = 28.0f, .end = 190.0f, .enabled = true,
+                .color = {88, 94, 112, 255}, .start = 26.0f, .end = 185.0f, .enabled = true,
                 .optics = {.rayleighLMS = {0.0110f, 0.0135f, 0.0220f}, .mieScattering = 0.0062f, .mieAnisotropy = 0.80f, .multipleScatteringAmp = 2.2f},
                 .density = {.baseDensity = 0.0065f, .heightFalloff = 0.28f, .baseAltitude = -3.0f, .enableSigmoidLayer = false}
             }
         },
         {
-            .ambientColor = {96, 92, 104, 255},
-            .sunColor = {255, 224, 186, 255},
+            .ambientColor = {84, 96, 118, 255},
+            .sunColor = {255, 220, 182, 255},
             .sunDirection = {0.32f, -0.88f, -0.35f},
-            .shadowColor = {44, 38, 48, 160},
-            .fog = {.enabled = true, .color = {198, 168, 148, 255}, .start = 36.0f, .end = 220.0f, .density = 0.0045f},
+            .shadowColor = {32, 36, 52, 165},
+            .fog = {.enabled = true, .color = {112, 120, 138, 255}, .start = 36.0f, .end = 220.0f, .density = 0.0048f},
             .atmosphere = {
-                .color = {198, 168, 148, 255}, .start = 36.0f, .end = 220.0f, .enabled = true,
+                .color = {112, 120, 138, 255}, .start = 36.0f, .end = 220.0f, .enabled = true,
                 .optics = {.rayleighLMS = {0.0090f, 0.0125f, 0.0210f}, .mieScattering = 0.0045f, .mieAnisotropy = 0.78f, .multipleScatteringAmp = 2.0f},
-                .density = {.baseDensity = 0.0045f, .heightFalloff = 0.24f, .baseAltitude = -3.0f, .enableSigmoidLayer = false}
+                .density = {.baseDensity = 0.0048f, .heightFalloff = 0.24f, .baseAltitude = -3.0f, .enableSigmoidLayer = false}
             }
         },
         {
-            .ambientColor = {88, 76, 86, 255},
-            .sunColor = {255, 178, 118, 255},
-            .sunDirection = {0.68f, -0.36f, -0.64f},
-            .shadowColor = {38, 28, 36, 170},
-            .fog = {.enabled = true, .color = {194, 138, 112, 255}, .start = 32.0f, .end = 205.0f, .density = 0.0052f},
+            .ambientColor = {64, 78, 104, 255},
+            .sunColor = {255, 166, 94, 255},
+            .sunDirection = {0.68f, -0.34f, -0.65f},
+            .shadowColor = {22, 26, 40, 180},
+            .fog = {.enabled = true, .color = {86, 94, 114, 255}, .start = 28.0f, .end = 195.0f, .density = 0.0058f},
             .atmosphere = {
-                .color = {194, 138, 112, 255}, .start = 32.0f, .end = 205.0f, .enabled = true,
-                .optics = {.rayleighLMS = {0.0108f, 0.0138f, 0.0225f}, .mieScattering = 0.0058f, .mieAnisotropy = 0.80f, .multipleScatteringAmp = 2.15f},
-                .density = {.baseDensity = 0.0052f, .heightFalloff = 0.30f, .baseAltitude = -2.0f, .enableSigmoidLayer = false}
+                .color = {86, 94, 114, 255}, .start = 28.0f, .end = 195.0f, .enabled = true,
+                .optics = {.rayleighLMS = {0.0108f, 0.0138f, 0.0225f}, .mieScattering = 0.0064f, .mieAnisotropy = 0.80f, .multipleScatteringAmp = 2.25f},
+                .density = {.baseDensity = 0.0058f, .heightFalloff = 0.28f, .baseAltitude = -2.0f, .enableSigmoidLayer = false}
             }
         },
         {
-            .ambientColor = {68, 56, 72, 255},
-            .sunColor = {255, 126, 74, 255},
+            .ambientColor = {56, 62, 86, 255},
+            .sunColor = {255, 118, 66, 255},
             .sunDirection = {-0.84f, -0.22f, -0.49f},
-            .shadowColor = {32, 22, 32, 165},
-            .fog = {.enabled = true, .color = {178, 112, 92, 255}, .start = 26.0f, .end = 185.0f, .density = 0.0068f},
+            .shadowColor = {20, 22, 36, 175},
+            .fog = {.enabled = true, .color = {82, 82, 102, 255}, .start = 24.0f, .end = 180.0f, .density = 0.0070f},
             .atmosphere = {
-                .color = {178, 112, 92, 255}, .start = 26.0f, .end = 185.0f, .enabled = true,
+                .color = {82, 82, 102, 255}, .start = 24.0f, .end = 180.0f, .enabled = true,
                 .optics = {.rayleighLMS = {0.0125f, 0.0145f, 0.0240f}, .mieScattering = 0.0068f, .mieAnisotropy = 0.82f, .multipleScatteringAmp = 2.3f},
                 .density = {.baseDensity = 0.0068f, .heightFalloff = 0.28f, .baseAltitude = -3.0f, .enableSigmoidLayer = false}
             }
         },
         {
-            .ambientColor = {26, 24, 42, 255},
+            .ambientColor = {26, 30, 48, 255},
             .sunColor = {168, 184, 232, 255},
             .sunDirection = {0.50f, -0.46f, -0.73f},
-            .shadowColor = {8, 8, 18, 215},
-            .fog = {.enabled = true, .color = {24, 20, 36, 255}, .start = 24.0f, .end = 180.0f, .density = 0.0072f},
+            .shadowColor = {8, 10, 20, 215},
+            .fog = {.enabled = true, .color = {22, 24, 38, 255}, .start = 24.0f, .end = 180.0f, .density = 0.0072f},
             .atmosphere = {
-                .color = {24, 20, 36, 255}, .start = 24.0f, .end = 180.0f, .enabled = true,
+                .color = {22, 24, 38, 255}, .start = 24.0f, .end = 180.0f, .enabled = true,
                 .optics = {.rayleighLMS = {0.0055f, 0.0072f, 0.0165f}, .mieScattering = 0.0050f, .mieAnisotropy = 0.80f, .multipleScatteringAmp = 1.85f},
                 .density = {.baseDensity = 0.0058f, .heightFalloff = 0.26f, .baseAltitude = -3.0f, .enableSigmoidLayer = false}
             }
@@ -351,21 +422,21 @@ void InitLySonMap(void)
     Environment_SetTimeOfDayPresets(kLySonToD, kLySonTimes, 5);
     Environment_SetTimeOfDay(0.68f);
     Environment_SetTimeOfDaySpeed(0.0f);
-    Environment_SetAmbientColor((Color){88, 76, 86, 255});
-    Environment_SetSunColor((Color){255, 178, 118, 255});
-    Environment_SetSunIntensity(1.85f);
-    Environment_SetSunDirection(Vector3Normalize((Vector3){0.68f, -0.36f, -0.64f}));
-    Environment_SetShadowColor((Color){38, 28, 36, 170});
+    Environment_SetAmbientColor((Color){64, 78, 104, 255});
+    Environment_SetSunColor((Color){255, 166, 94, 255});
+    Environment_SetSunIntensity(1.95f);
+    Environment_SetSunDirection(Vector3Normalize((Vector3){0.68f, -0.34f, -0.65f}));
+    Environment_SetShadowColor((Color){22, 26, 40, 180});
     if (Environment_IsNightMode())
         Environment_ApplyMoonlightNight();
 
     PostFXMapProfile postProfile = {
         .enabled = true,
-        .exposure = 1.02f,
-        .contrast = 1.12f,
+        .exposure = 1.04f,
+        .contrast = 1.14f,
         .saturation = 1.08f,
         .bloomIntensity = 0.26f,
-        .shadowTint = {0.90f, 0.88f, 1.02f},
+        .shadowTint = {0.88f, 0.90f, 1.06f},
         .highlightTint = {1.10f, 0.96f, 0.84f},
         .bloomThreshold = 1.05f,
         .bloomKnee = 0.44f,
@@ -379,8 +450,8 @@ void InitLySonMap(void)
     AtmosphereProfile atmos = kLySonToD[2].atmosphere;
     atmos.enabled = false;
     Environment_SetAtmosphereProfile(&atmos);
-    VolumetricFog_SetGodRayIntensity(0.85f);
-    VolumetricFog_SetDistantCoverage(0.45f);
+    VolumetricFog_SetGodRayIntensity(1.15f);
+    VolumetricFog_SetDistantCoverage(0.55f);
     s_prevAtmoMode = Atmosphere_GetMode();
     Atmosphere_SetMode(ATMO_MODE_WAR_EMBERS);
     Atmosphere_Configure(s_floraWindowCenter, (Vector3){32.0f, 4.5f, 32.0f}, 380, (Color){255, 132, 48, 255});
@@ -416,13 +487,13 @@ void InitLySonMap(void)
     MapProp_SetCliffAridMode(0.0f);
     MapProp_SetCliffVolcanicMode(1.0f);
     MapProp_SetCliffSeaLevel(LY_SON_SEA_Y * s_scaleY);
-    MapProp_SetGrassState(MAP_GRASS_STATE_SCORCHED, 0.85f);
+    MapProp_SetGrassState(MAP_GRASS_STATE_DRY, 0.65f);
     {
-        MapGrassCondition scorchedGrass = MapProp_GetGrassCondition();
-        scorchedGrass.dryness = 0.92f;
-        scorchedGrass.scorch = 0.72f;
-        scorchedGrass.emberIntensity = 0.85f;
-        MapProp_SetGrassCondition(scorchedGrass);
+        MapGrassCondition dryGrass = MapProp_GetGrassCondition();
+        dryGrass.dryness = 0.94f;
+        dryGrass.scorch = 0.0f;
+        dryGrass.emberIntensity = 0.65f;
+        MapProp_SetGrassCondition(dryGrass);
     }
 
     if (s_ready)
@@ -451,10 +522,10 @@ void InitLySonMap(void)
                              : "assets/maps/ly_son/ly_son_heightfield.png";
     s_ground = MapProp_CreateGroundHeightfield16(
         hfPath, MAP_WIDTH, MAP_DEPTH,
-        CLIFF_DEPTH + s_heightRange, CLIFF_DEPTH, 3.6f,
+        CLIFF_DEPTH + s_heightRange, CLIFF_DEPTH, 44.0f,
         "assets/maps/ly_son/ly_son_ecology_splat.png",
-        "assets/textures/dirt_diffuse.png",
-        "assets/textures/dirt_diffuse.png");
+        "assets/maps/ly_son/textures/pahoehoe_crust_diffuse.png",
+        "assets/maps/ly_son/textures/volcanic_ash_diffuse.png");
 
     s_habitat.habitatTexture = ResourceManager_LoadTextureVariant(
         "assets/maps/ly_son/ly_son_habitat.png", true,
@@ -499,8 +570,8 @@ void InitLySonMap(void)
 
     MapProp_SetGroundTint(&s_ground, (Color){142, 134, 132, 255});
     MapProp_SetGroundSurfaceMaps(&s_ground,
-                                 "assets/textures/dirt_material.png",
-                                 "assets/textures/dirt_material.png");
+                                 "assets/maps/ly_son/textures/pahoehoe_crust_material.png",
+                                 "assets/maps/ly_son/textures/volcanic_ash_material.png");
     MapProp_SetGroundReliefMap(&s_ground, "assets/maps/ly_son/ly_son_relief.png");
     MapProp_SetGroundDebrisMap(&s_ground, "assets/maps/ly_son/ly_son_debris_map.png");
     MapProp_SetGroundRockMaps(&s_ground,
@@ -652,15 +723,18 @@ void InitLySonMap(void)
                                              .center = {LY_SON_CALDERA_X * s_scaleXZ, 0.0f, LY_SON_CALDERA_Z * s_scaleXZ},
                                              .radiusX = LY_SON_CALDERA_RX * s_scaleXZ,
                                              .radiusZ = LY_SON_CALDERA_RZ * s_scaleXZ,
-                                             .flowSpeed = 0.28f,
+                                             .flowSpeed = 0.30f,
                                              .flowDirection = {-0.65f, 0.75f},
-                                             .crustCoverage = 0.56f,
-                                             .glowIntensity = 2.45f,
+                                             .crustCoverage = 0.62f,
+                                             .glowIntensity = 2.60f,
                                              .pulseSpeed = 0.90f,
                                              .waveHeight = 0.025f,
-                                             .coreColor = {255, 225, 115, 255},
+                                             .coreColor = {255, 228, 122, 255},
                                              .magmaColor = {255, 82, 16, 255},
-                                             .crustColor = {24, 20, 22, 255},
+                                             .crustColor = {32, 29, 34, 255},
+                                             .flowMapPath = "assets/maps/ly_son/ly_son_lava_flow.png",
+                                             .mapWidth = MAP_WIDTH,
+                                             .mapDepth = MAP_DEPTH,
                                          });
     if (s_lava.ready && (s_scaleXZ != 1.0f || s_scaleY != 1.0f))
     {
@@ -673,6 +747,7 @@ void InitLySonMap(void)
     }
 
     BuildLySonRocks();
+    BuildLySonDebris();
     BuildLySonFlora();
 
     FogVolume_ClearAll();
@@ -713,7 +788,10 @@ void DrawLySonMap(void)
     PropLit_UpdateLighting();
 
     if (!(s_skipMask & MAP_SKIP_ROCKS))
+    {
         MapProp_DrawRockSystem(&s_rocks, false);
+        MapProp_DrawDebrisSystem(&s_debris, camera.position);
+    }
     if (!(s_skipMask & MAP_SKIP_GROUND))
         MapProp_DrawGround(&s_ground, kMapCenter);
     if (!(s_skipMask & MAP_SKIP_CLIFF))
@@ -805,6 +883,7 @@ void UnloadLySonMap(void)
     MapProp_UnloadLavaSurface(&s_lava);
     MapProp_UnloadWaterSurface(&s_coastalSea);
     MapProp_UnloadFloraSystem(&s_flora);
+    MapProp_UnloadDebrisSystem(&s_debris);
     MapProp_UnloadRockSystem(&s_rocks);
     if (s_cliff.ready)
         MapProp_UnloadCliffSkirt(&s_cliff);

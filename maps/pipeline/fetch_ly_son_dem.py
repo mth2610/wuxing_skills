@@ -131,30 +131,34 @@ def synthesize_ly_son_dem(width_px=340, height_px=240, pixel_size_m=15.0):
     # Base island shield platform (gentle coastal bench rising to 16-24m interior saddle)
     elev = 4.0 + 22.0 * np.tanh(coast_dist * 3.2)
 
-    # 1. Núi Thới Lới (Eastern Major Caldera: 169.3 m rim, 112 m inner crater floor)
+    # 1. Núi Thới Lới (Eastern Major Caldera: 169.3 m rim, radial pyroclastic gullies, 108 m inner crater floor)
     tl_x, tl_z = cx + 1080.0, cz - 140.0
     dx_tl, dz_tl = X - tl_x, Z - tl_z
     r_tl = np.hypot(dx_tl, dz_tl)
     ang_tl = np.arctan2(dz_tl, dx_tl)
-    tl_rim_r = 460.0 + 42.0 * np.cos(3.0 * ang_tl + 0.4) + 25.0 * np.sin(5.0 * ang_tl)
-    # Outer cone skirt
-    tl_cone = 148.0 * np.exp(-((np.maximum(0.0, r_tl - tl_rim_r * 0.72)) / 520.0) ** 1.75)
+    tl_rim_r = 450.0 + 48.0 * np.cos(3.0 * ang_tl + 0.4) + 28.0 * np.sin(5.0 * ang_tl)
+    # Radial pyroclastic erosion gullies on the outer flank
+    tl_gully = np.sin(ang_tl * 11.0 + np.sin(r_tl * 0.008) * 1.4) * 0.5 + np.cos(ang_tl * 17.0 - r_tl * 0.005) * 0.3
+    tl_flank_gully = 11.5 * tl_gully * np.exp(-((np.maximum(0.0, r_tl - tl_rim_r * 0.92)) / 360.0) ** 2)
+    # Outer cone skirt (steeper, craggier volcanic silhouette)
+    tl_cone = 156.0 * np.exp(-((np.maximum(0.0, r_tl - tl_rim_r * 0.72)) / 460.0) ** 1.62)
     # Caldera bowl depression inside rim
-    tl_crater = 68.0 * np.exp(-((r_tl / (tl_rim_r * 0.62)) ** 2.6))
-    # Breached SSW magma spillway (angle ~ 2.15 rad, facing central saddle & sea)
-    breach_tl = np.exp(-((ang_tl - 2.25) / 0.36) ** 2) * np.exp(-((r_tl - tl_rim_r) / 210.0) ** 2)
-    elev += tl_cone - tl_crater - 46.0 * breach_tl
+    tl_crater = 76.0 * np.exp(-((r_tl / (tl_rim_r * 0.62)) ** 2.6))
+    # Breached SSW magma spillway (angle ~ 2.25 rad, facing central saddle & sea)
+    breach_tl = np.exp(-((ang_tl - 2.25) / 0.34) ** 2) * np.exp(-((r_tl - tl_rim_r) / 205.0) ** 2)
+    elev += tl_cone + tl_flank_gully - tl_crater - 52.0 * breach_tl
 
-    # 2. Núi Giếng Tiền (Western Volcanic Crater: ~86 m rim, ~52 m floor)
+    # 2. Núi Giếng Tiền (Western Volcanic Cinder Cone: ~94 m rim, ~52 m floor)
     gt_x, gt_z = cx - 940.0, cz + 40.0
     dx_gt, dz_gt = X - gt_x, Z - gt_z
     r_gt = np.hypot(dx_gt, dz_gt)
     ang_gt = np.arctan2(dz_gt, dx_gt)
-    gt_rim_r = 340.0 + 30.0 * np.sin(3.0 * ang_gt - 0.6)
-    gt_cone = 68.0 * np.exp(-((np.maximum(0.0, r_gt - gt_rim_r * 0.70)) / 410.0) ** 1.70)
-    gt_crater = 34.0 * np.exp(-((r_gt / (gt_rim_r * 0.62)) ** 2.4))
-    breach_gt = np.exp(-((ang_gt - 1.35) / 0.42) ** 2) * np.exp(-((r_gt - gt_rim_r) / 180.0) ** 2)
-    elev += gt_cone - gt_crater - 24.0 * breach_gt
+    gt_rim_r = 335.0 + 34.0 * np.sin(3.0 * ang_gt - 0.6)
+    gt_gully = 6.5 * np.sin(ang_gt * 9.0 + r_gt * 0.006) * np.exp(-((np.maximum(0.0, r_gt - gt_rim_r * 0.90)) / 280.0) ** 2)
+    gt_cone = 76.0 * np.exp(-((np.maximum(0.0, r_gt - gt_rim_r * 0.70)) / 375.0) ** 1.60)
+    gt_crater = 38.0 * np.exp(-((r_gt / (gt_rim_r * 0.62)) ** 2.4))
+    breach_gt = np.exp(-((ang_gt - 1.35) / 0.40) ** 2) * np.exp(-((r_gt - gt_rim_r) / 175.0) ** 2)
+    elev += gt_cone + gt_gully - gt_crater - 28.0 * breach_gt
 
     # 3. Hòn Tai / Southern Volcanic Spur (~66 m)
     ht_x, ht_z = cx + 220.0, cz + 680.0

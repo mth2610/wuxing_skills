@@ -1185,9 +1185,10 @@ static void Rock_EnsureArchetypeLoaded(MapRockSystem *sys, MapRockArchetype arch
     const char *fbN = (sys->hasNormalRoughness && sys->fallbackNormal[0]) ? sys->fallbackNormal : NULL;
     const char *fbR = (sys->hasNormalRoughness && sys->fallbackRoughness[0]) ? sys->fallbackRoughness : NULL;
 
-    const char *dPath = FileExists(kArchDiffuse[a]) ? kArchDiffuse[a] : fbD;
-    const char *nPath = (sys->hasNormalRoughness && FileExists(kArchNormal[a])) ? kArchNormal[a] : fbN;
-    const char *rPath = (sys->hasNormalRoughness && FileExists(kArchRoughness[a])) ? kArchRoughness[a] : fbR;
+    bool volcanicRocks = PropLit_IsVolcanicMode() && (a != MAP_ROCK_OBSIDIAN);
+    const char *dPath = (!volcanicRocks && FileExists(kArchDiffuse[a])) ? kArchDiffuse[a] : fbD;
+    const char *nPath = (!volcanicRocks && sys->hasNormalRoughness && FileExists(kArchNormal[a])) ? kArchNormal[a] : fbN;
+    const char *rPath = (!volcanicRocks && sys->hasNormalRoughness && FileExists(kArchRoughness[a])) ? kArchRoughness[a] : fbR;
 
     sys->models[a] = Rock_CreateTypedSetVariant(a, 0, dPath, nPath, rPath);
     for (int v = 0; v < MAP_ROCK_VARIANTS_PER_ARCHETYPE - 1; v++)

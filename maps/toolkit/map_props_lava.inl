@@ -16,6 +16,11 @@ static int s_lavaLocCrustCol = -1;
 static int s_lavaLocViewPos = -1;
 static int s_lavaLocAmbientCol = -1;
 static int s_lavaLocCrackTex = -1;
+static int s_lavaLocFlowTex = -1;
+static int s_lavaLocFlowEnabled = -1;
+static int s_lavaLocBounds = -1;
+static int s_lavaLocLightDir = -1;
+static int s_lavaLocLightCol = -1;
 static unsigned int s_lavaShaderId = 0;
 
 static void Lava_EnsureShaderLocs(Shader shader)
@@ -40,6 +45,11 @@ static void Lava_EnsureShaderLocs(Shader shader)
     s_lavaLocViewPos = GetShaderLocation(shader, "u_viewPos");
     s_lavaLocAmbientCol = GetShaderLocation(shader, "u_ambientColor");
     s_lavaLocCrackTex = GetShaderLocation(shader, "u_crackTex");
+    s_lavaLocFlowTex = GetShaderLocation(shader, "u_lavaFlowTex");
+    s_lavaLocFlowEnabled = GetShaderLocation(shader, "u_lavaFlowEnabled");
+    s_lavaLocBounds = GetShaderLocation(shader, "u_lavaBounds");
+    s_lavaLocLightDir = GetShaderLocation(shader, "u_lightDir");
+    s_lavaLocLightCol = GetShaderLocation(shader, "u_lightColor");
     s_lavaShaderId = shader.id;
 }
 
@@ -67,7 +77,14 @@ MapLavaSurface MapProp_CreateTerrainLava(const char *meshPath, MapLavaConfig con
     Lava_EnsureShaderLocs(lava.shader);
 
     lava.noiseTex = MapLoadMippedTexture("assets/textures/cloud_noise.png", TEXTURE_WRAP_REPEAT);
-    lava.crackTex = MapLoadMippedTexture("assets/textures/tex_crack_mask.png", TEXTURE_WRAP_REPEAT);
+    if (FileExists("assets/maps/ly_son/textures/lava_voronoi_plates.png"))
+        lava.crackTex = MapLoadMippedTexture("assets/maps/ly_son/textures/lava_voronoi_plates.png", TEXTURE_WRAP_REPEAT);
+    else
+        lava.crackTex = MapLoadMippedTexture("assets/textures/tex_crack_mask.png", TEXTURE_WRAP_REPEAT);
+    if (config.flowMapPath && FileExists(config.flowMapPath))
+        lava.flowTex = ResourceManager_LoadTextureVariant(config.flowMapPath, false, TEXTURE_FILTER_BILINEAR, TEXTURE_WRAP_CLAMP);
+    if (config.mapWidth <= 0.0f) config.mapWidth = 300.0f;
+    if (config.mapDepth <= 0.0f) config.mapDepth = 211.0f;
 
     lava.model.materials[0].shader = lava.shader;
     if (lava.noiseTex.id != 0)
@@ -126,6 +143,23 @@ void MapProp_DrawLavaSurface(const MapLavaSurface *lava, float time)
     if (s_lavaLocAmbientCol >= 0)
         SetShaderValue(lava->shader, s_lavaLocAmbientCol, &ambRgb, SHADER_UNIFORM_VEC3);
 
+    Vector3 lDir = Vector3Negate(Environment_GetSunDirection());
+    if (s_lavaLocLightDir >= 0)
+        SetShaderValue(lava->shader, s_lavaLocLightDir, &lDir, SHADER_UNIFORM_VEC3);
+    Color sunC = Environment_GetSunColor();
+    float sunI = Environment_GetSunIntensity();
+    Vector3 sunRgb = {sunC.r / 255.0f * sunI, sunC.g / 255.0f * sunI, sunC.b / 255.0f * sunI};
+    if (s_lavaLocLightCol >= 0)
+        SetShaderValue(lava->shader, s_lavaLocLightCol, &sunRgb, SHADER_UNIFORM_VEC3);
+
+    Vector2 bounds = {lava->config.mapWidth > 0.0f ? lava->config.mapWidth : 300.0f,
+                      lava->config.mapDepth > 0.0f ? lava->config.mapDepth : 211.0f};
+    if (s_lavaLocBounds >= 0)
+        SetShaderValue(lava->shader, s_lavaLocBounds, &bounds, SHADER_UNIFORM_VEC2);
+    int flowEnabled = (lava->flowTex.id != 0) ? 1 : 0;
+    if (s_lavaLocFlowEnabled >= 0)
+        SetShaderValue(lava->shader, s_lavaLocFlowEnabled, &flowEnabled, SHADER_UNIFORM_INT);
+
     if (s_lavaLocCrackTex >= 0 && lava->crackTex.id != 0)
     {
         int slot = 1;
@@ -134,16 +168,29 @@ void MapProp_DrawLavaSurface(const MapLavaSurface *lava, float time)
         SetShaderValue(lava->shader, s_lavaLocCrackTex, &slot, SHADER_UNIFORM_INT);
         rlActiveTextureSlot(0);
     }
+    if (s_lavaLocFlowTex >= 0 && lava->flowTex.id != 0)
+    {
+        int slot = 2;
+        rlActiveTextureSlot(slot);
+        rlEnableTexture(lava->flowTex.id);
+        SetShaderValue(lava->shader, s_lavaLocFlowTex, &slot, SHADER_UNIFORM_INT);
+        rlActiveTextureSlot(0);
+    }
 
     DrawModel(lava->model, Vector3Zero(), 1.0f, WHITE);
     rlDrawRenderBatchActive();
 
+    if (s_lavaLocFlowTex >= 0 && lava->flowTex.id != 0)
+    {
+        rlActiveTextureSlot(2);
+        rlDisableTexture();
+    }
     if (s_lavaLocCrackTex >= 0 && lava->crackTex.id != 0)
     {
         rlActiveTextureSlot(1);
         rlDisableTexture();
-        rlActiveTextureSlot(0);
     }
+    rlActiveTextureSlot(0);
     EndShaderMode();
 }
 
@@ -156,6 +203,7 @@ void MapProp_UnloadLavaSurface(MapLavaSurface *lava)
     UnloadModel(lava->model);
     lava->noiseTex = (Texture2D){0};
     lava->crackTex = (Texture2D){0};
+    lava->flowTex = (Texture2D){0};
     lava->ready = false;
 }
 

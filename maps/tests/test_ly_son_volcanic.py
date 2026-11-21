@@ -45,6 +45,31 @@ class LySonVolcanicTests(unittest.TestCase):
         self.assertIn("MAP_ROCK_BASALT", text)
         self.assertIn("MAP_ROCK_OBSIDIAN", text)
         self.assertIn("LY_SON_VOLCANO_VENTS", text)
+        self.assertIn("LY_SON_DEBRIS_ITEMS", text)
+
+        import re
+        m = re.search(r"#define\s+LY_SON_DEBRIS_COUNT\s+(\d+)", text)
+        self.assertIsNotNone(m)
+        self.assertGreater(int(m.group(1)), 500)
+
+    def test_seamless_volcanic_textures_and_lava_flowmap(self):
+        import struct
+        assets_dir = ROOT / "assets" / "maps" / "ly_son"
+        self.assertTrue((assets_dir / "ly_son_lava_flow.png").exists())
+        tex_dir = assets_dir / "textures"
+        for name in (
+            "volcanic_ash_diffuse.png",
+            "volcanic_ash_material.png",
+            "pahoehoe_crust_diffuse.png",
+            "pahoehoe_crust_material.png",
+            "lava_voronoi_plates.png",
+        ):
+            p = tex_dir / name
+            self.assertTrue(p.exists(), f"Missing {p}")
+            data = p.read_bytes()
+            self.assertEqual(data[:8], b"\x89PNG\r\n\x1a\n")
+            w, h = struct.unpack(">II", data[16:24])
+            self.assertEqual((w, h), (512, 512))
 
 
 if __name__ == "__main__":

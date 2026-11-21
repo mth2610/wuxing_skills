@@ -170,3 +170,8 @@ void MapProp_SetRockVolcanicMode(float volcanicMode)
 {
   s_rockVolcanicMode = volcanicMode;
 }
+
+bool PropLit_IsVolcanicMode(void)
+{
+  return s_rockVolcanicMode > 0.5f;
+}
