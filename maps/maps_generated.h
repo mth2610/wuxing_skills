@@ -5,12 +5,15 @@
 #include "maps/map_manager.h"
 
 #include "maps/worlds/ninh_thuan/ninh_thuan.h"
+#include "maps/worlds/ly_son/ly_son.h"
 #include "maps/worlds/song_quao/song_quao.h"
 #include "maps/worlds/default_arena/default_arena.h"
 
 static inline void RegisterGeneratedMaps(void) {
     MapManager_RegisterEx("NINH_THUAN", InitNinhThuanMap, UpdateNinhThuanMap, DrawNinhThuanMap, UnloadNinhThuanMap, GetGroundHeightNinhThuanMap, SampleGroundSurfaceNinhThuanMap, DrawTransparentNinhThuanMap);
     MapManager_RegisterWaterHooks("NINH_THUAN", GetWaterInfoNinhThuanMap, SetWaterInteractorNinhThuanMap, AddWaterRippleNinhThuanMap);
+    MapManager_RegisterEx("LY_SON", InitLySonMap, UpdateLySonMap, DrawLySonMap, UnloadLySonMap, GetGroundHeightLySonMap, SampleGroundSurfaceLySonMap, DrawTransparentLySonMap);
+    MapManager_RegisterWaterHooks("LY_SON", GetWaterInfoLySonMap, SetWaterInteractorLySonMap, AddWaterRippleLySonMap);
     MapManager_RegisterEx("SONG_QUAO", InitSongQuaoMap, UpdateSongQuaoMap, DrawSongQuaoMap, UnloadSongQuaoMap, GetGroundHeightSongQuaoMap, SampleGroundSurfaceSongQuaoMap, DrawTransparentSongQuaoMap);
     MapManager_RegisterWaterHooks("SONG_QUAO", GetWaterInfoSongQuaoMap, SetWaterInteractorSongQuaoMap, AddWaterRippleSongQuaoMap);
     MapManager_RegisterEx("DEFAULT_ARENA", InitDefaultArenaMap, NULL, DrawDefaultArenaMap, NULL, NULL, NULL, NULL);

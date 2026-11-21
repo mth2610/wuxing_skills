@@ -139,16 +139,23 @@ void MapProp_SetGroundHabitat(MapGroundSurface *ground,
 
 typedef struct
 {
-    float aridFactor;       // 0.0 = lush wood meadow (default), 1.0 = arid earth/stone park
-    float strataStrength;   // 0.0..1.0 GPU Gems 3 Ch. 1 3D warped strata & bedrock shelf relief
-    Vector3 grusColor;      // Arkosic granite sand / grus albedo
-    Vector3 hardpanColor;   // Sun-baked ochre hardpan / cracked clay albedo
-    Vector3 lichenColor;    // Dry crustose desert lichen / mineral crust albedo
+    float aridFactor;        // 0.0 = lush wood meadow (default), 1.0 = arid earth/stone park
+    float strataStrength;    // 0.0..1.0 GPU Gems 3 Ch. 1 3D warped strata & bedrock shelf relief
+    Vector3 grusColor;       // Arkosic granite sand / grus albedo
+    Vector3 hardpanColor;    // Sun-baked ochre hardpan / cracked clay albedo
+    Vector3 lichenColor;     // Dry crustose desert lichen / mineral crust albedo
+    float volcanicFactor;    // 0.0 = non-volcanic, 1.0 = volcanic basalt / ash / magma fissure biome
+    float magmaGlowStrength; // 0.0..2.0 sub-surface ember fissure & lava bank incandescence
+    Vector3 ashColor;        // Charcoal vesicular basalt ash / tephra albedo
+    Vector3 scoriaColor;     // Oxidized iron-red volcanic scoria albedo
+    Vector3 sulfurColor;     // Fumarolic yellow-ochre sulfur mineral crust albedo
 } MapGroundBiomeProfile;
 
 void MapProp_SetGroundBiomeProfile(const MapGroundBiomeProfile *profile);
 void MapProp_SetRockAridMode(float aridMode);
+void MapProp_SetRockVolcanicMode(float volcanicMode);
 void MapProp_SetCliffAridMode(float aridMode);
+void MapProp_SetCliffVolcanicMode(float volcanicMode);
 void MapProp_SetCliffSeaLevel(float seaLevelY);
 void MapProp_UnloadGround(MapGroundSurface *ground);
 float MapProp_SampleGroundHeight(const MapGroundSurface *ground, Vector3 worldCenter, float x, float z);
@@ -975,6 +982,62 @@ void MapProp_DrawWaterBed(const MapWaterSurface *water, float time);
 void MapProp_DrawWaterOverlay(const MapWaterSurface *water, float time);
 void MapProp_DrawWaterSurface(const MapWaterSurface *water, float time);
 void MapProp_UnloadWaterSurface(MapWaterSurface *water);
+
+// --- Molten Lava & Magma Surface System (map_props_lava.inl) ------------
+typedef struct
+{
+    Vector3 center;
+    float radiusX;
+    float radiusZ;
+    float flowSpeed;
+    Vector2 flowDirection;
+    float crustCoverage;    // 0.0..1.0 cooled basalt crust plate coverage (default 0.58)
+    float glowIntensity;    // HDR blackbody emission multiplier (default 2.4)
+    float pulseSpeed;       // Convective thermal pulse speed (default 0.85)
+    float waveHeight;       // Slow viscous magma heave amplitude (default 0.025)
+    Color coreColor;        // Incandescent white-gold core
+    Color magmaColor;       // Molten orange-crimson magma
+    Color crustColor;       // Cooled dark basaltic slag crust
+} MapLavaConfig;
+
+typedef struct
+{
+    Model model;
+    Shader shader;
+    Texture2D noiseTex;
+    Texture2D crackTex;
+    MapLavaConfig config;
+    Vector3 boundsCenter;
+    float boundsRadius;
+    bool ready;
+} MapLavaSurface;
+
+MapLavaSurface MapProp_CreateTerrainLava(const char *meshPath, MapLavaConfig config);
+void MapProp_DrawLavaSurface(const MapLavaSurface *lava, float time);
+void MapProp_UnloadLavaSurface(MapLavaSurface *lava);
+
+// --- Geothermal Fumarole & Volcanic Vent System (map_props_volcano.inl) -
+typedef struct
+{
+    Vector3 position;
+    float radius;
+    float heatIntensity;
+    float steamDensity;
+    float phase;
+} MapVolcanoVent;
+
+typedef struct
+{
+    MapVolcanoVent vents[16];
+    int fogVolumeIds[16];
+    int count;
+    float time;
+    bool ready;
+} MapVolcanoVentSystem;
+
+MapVolcanoVentSystem MapProp_CreateVolcanoVentSystem(const MapVolcanoVent *vents, int count);
+void MapProp_UpdateVolcanoVentSystem(MapVolcanoVentSystem *sys, Vector3 cameraPos, float dt);
+void MapProp_UnloadVolcanoVentSystem(MapVolcanoVentSystem *sys);
 
 // --- Atmospheric Fluff / Floating Spores System -------------------------
 

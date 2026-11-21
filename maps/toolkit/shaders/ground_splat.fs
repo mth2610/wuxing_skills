@@ -68,6 +68,11 @@ uniform float u_strataStrength;
 uniform vec3 u_aridGrusColor;
 uniform vec3 u_aridHardpanColor;
 uniform vec3 u_aridLichenColor;
+uniform float u_volcanicBiomeFactor;
+uniform float u_magmaGlowStrength;
+uniform vec3 u_volcanicAshColor;
+uniform vec3 u_volcanicScoriaColor;
+uniform vec3 u_volcanicSulfurColor;
 
 out vec4 finalColor;
 
@@ -223,7 +228,8 @@ void main()
                      || slope > 0.35
                      || outerCliffElev > 0.05
                      || fragWorldPos.y < -0.15
-                     || u_aridBiomeFactor > 0.05;
+                     || u_aridBiomeFactor > 0.05
+                     || u_volcanicBiomeFactor > 0.05;
     vec4 colorDirt = vec4(0.5, 0.5, 0.5, 1.0);
     vec3 dirtDetail = vec3(0.5);
     if (soilPossible) {
@@ -306,13 +312,14 @@ void main()
 
         wDrySoil = clamp(max(wPathMargin * 0.78, wCliff), 0.0, 1.0)
                        * (1.0 - wWetSoil * 0.85) * (1.0 - wPath * 0.85);
-        if (u_aridBiomeFactor > 0.05) {
+        float nonLushBiome = max(u_aridBiomeFactor, u_volcanicBiomeFactor);
+        if (nonLushBiome > 0.05) {
             float aridCover = (u_ecologyEnabled != 0) ? smoothstep(0.32, 0.78, ecology.r) : 0.12;
-            float desertDry = mix(0.95, 0.42, aridCover) * u_aridBiomeFactor;
+            float desertDry = mix(0.95, 0.42, aridCover) * nonLushBiome;
             wDrySoil = max(wDrySoil, desertDry * (1.0 - wWetSoil * 0.90) * (1.0 - wPath * 0.90));
         }
         wDrySoil = max(wDrySoil, wCliff);
-        wGrass = clamp(wGrass - wPath - wDrySoil, 0.0, 1.0) * (1.0 - step(0.5, u_aridBiomeFactor));
+        wGrass = clamp(wGrass - wPath - wDrySoil, 0.0, 1.0) * (1.0 - step(0.5, nonLushBiome));
         wWetSoil = clamp(1.0 - wGrass - wPath - wDrySoil, 0.0, 1.0);
     }
 
@@ -493,6 +500,14 @@ void main()
             vec3 desertSand = mix(warmBuff, paleQuartz, dMacro);
             warmLoamColor = mix(warmLoamColor, desertSand * (0.93 + 0.14 * soilDetailTex), u_aridBiomeFactor * 0.88);
         }
+        if (u_volcanicBiomeFactor > 0.05) {
+            // Volcanic basalt ash & oxidized red scoria slopes
+            float scoriaSlope = smoothstep(0.14, 0.44, slope);
+            vec3 basaltAsh = u_volcanicAshColor * (0.85 + 0.35 * soilDetailTex);
+            vec3 redScoria = u_volcanicScoriaColor * (0.88 + 0.28 * soilDetailTex);
+            vec3 volcanicBase = mix(basaltAsh, redScoria, scoriaSlope * 0.72);
+            warmLoamColor = mix(warmLoamColor, volcanicBase, u_volcanicBiomeFactor * 0.92);
+        }
 
         vec3 cliffAlbedo = warmLoamColor;
         if (wCliff > 0.01) {
@@ -615,7 +630,12 @@ void main()
 
         // ---- AAA Alluvial Riverbed Sand & Natural Fine River Gravel ----
         vec3 wetSoilColor = vec3(0.0);
-        if (isRiparian > 0.01) {
+        if (isRiparian > 0.01 && u_volcanicBiomeFactor > 0.5) {
+            // Volcanic magma shoreline: dark cooled basalt slag & glowing thermal rim
+            vec3 slagDark = u_volcanicAshColor * 0.65;
+            vec3 slagWarm = u_volcanicScoriaColor * 0.90;
+            wetSoilColor = mix(slagDark, slagWarm, clamp(shoreFactor * 0.8 + pebbleRelief * 0.3, 0.0, 1.0));
+        } else if (isRiparian > 0.01) {
             // [VISUAL FIX]: Xóa sọc sóng cát tuần hoàn bằng nhiễu uốn miền (domain warp) nhẹ
             float warpSand = sin(fragWorldPos.x * 0.75 + fragWorldPos.z * 0.55) * 2.2
                            + cos(fragWorldPos.z * 1.15 - fragWorldPos.x * 0.85) * 1.4;
@@ -720,7 +740,8 @@ void main()
     }
 
     float rockContactAO = 1.0;
-    float debrisMaxDistSq = mix(1024.0, 25600.0, u_aridBiomeFactor);
+    float debrisMaxDistSq = mix(1024.0, 25600.0, max(u_aridBiomeFactor, u_volcanicBiomeFactor));
+    float volcanicEmberGlow = 0.0;
     if (highDetailGround && u_groundDebrisEnabled != 0 && camDistSqXZ < debrisMaxDistSq) {
         float debrisDistFade = 1.0 - smoothstep(debrisMaxDistSq * 0.56, debrisMaxDistSq, camDistSqXZ);
         vec4 debris = textureLod(u_groundDebris, fragTexCoord, 0.0);
@@ -733,7 +754,11 @@ void main()
         }
 
         float dryWoodlandMask = (1.0 - clamp(shoreFactor + streamWet, 0.0, 1.0)) * debrisDistFade * grassDebrisAtten;
-        if (debris.r > 0.04 && dryWoodlandMask > 0.05) {
+        if (u_volcanicBiomeFactor > 0.05 && debris.r > 0.06) {
+            // Sub-surface incandescent magma fissures along lava shorelines & caldera cracks
+            float pulse = 0.80 + 0.20 * sin(u_time * 1.9 + fragWorldPos.x * 0.45 + fragWorldPos.z * 0.38);
+            volcanicEmberGlow = smoothstep(0.15, 0.72, debris.r) * u_volcanicBiomeFactor * u_magmaGlowStrength * pulse * debrisDistFade;
+        } else if (debris.r > 0.04 && dryWoodlandMask > 0.05) {
             vec3 lushLeafCol = mix(vec3(0.25, 0.18, 0.09), vec3(0.42, 0.29, 0.14), fineGrain);
             vec3 redLateriteCol = mix(vec3(0.56, 0.34, 0.20), vec3(0.68, 0.42, 0.26), fineGrain);
             vec3 debrisRCol = mix(lushLeafCol, redLateriteCol, u_aridBiomeFactor);
@@ -741,23 +766,25 @@ void main()
             blendedAlbedo = mix(blendedAlbedo, debrisRCol, leafMask * mix(0.36, 0.34, u_aridBiomeFactor));
         }
 
-        // Gate scree gravel by steep slope in lush maps; in arid mode also show rock-apron grus on flats
+        // Gate scree gravel by steep slope in lush maps; in arid/volcanic mode also show rock-apron grus on flats
         float gravelSlopeMin = mix(0.42, 0.24, 1.0 - smoothstep(-1.10, 0.15, fragWorldPos.y));
-        float slopeGate = mix(smoothstep(gravelSlopeMin, gravelSlopeMin + 0.16, slope), 1.0, u_aridBiomeFactor);
+        float slopeGate = mix(smoothstep(gravelSlopeMin, gravelSlopeMin + 0.16, slope), 1.0, max(u_aridBiomeFactor, u_volcanicBiomeFactor));
         if (debris.g > 0.04 && slopeGate > 0.01) {
             vec3 lushGravel = mix(vec3(0.30, 0.28, 0.24), vec3(0.40, 0.38, 0.32), fineGrain);
             vec3 aridGrus   = u_aridGrusColor * (0.88 + 0.22 * fineGrain);
             vec3 gravelColor = mix(lushGravel, aridGrus, u_aridBiomeFactor);
+            gravelColor = mix(gravelColor, u_volcanicAshColor * (1.25 + 0.25 * fineGrain), u_volcanicBiomeFactor);
             float gravelMask = smoothstep(0.16, 0.68, debris.g) * slopeGate * grassDebrisAtten * debrisDistFade;
-            blendedAlbedo = mix(blendedAlbedo, gravelColor, gravelMask * mix(0.40, 0.38, u_aridBiomeFactor));
+            blendedAlbedo = mix(blendedAlbedo, gravelColor, gravelMask * mix(0.40, 0.38, max(u_aridBiomeFactor, u_volcanicBiomeFactor)));
         }
 
         if (debris.a > 0.04) {
             vec3 lushMoss = mix(vec3(0.18, 0.30, 0.10), vec3(0.28, 0.42, 0.14), fineGrain);
             vec3 aridHardpan = u_aridHardpanColor * (1.16 + 0.20 * fineGrain);
             vec3 mossColor = mix(lushMoss, aridHardpan, u_aridBiomeFactor);
+            mossColor = mix(mossColor, u_volcanicSulfurColor * (0.90 + 0.25 * fineGrain), u_volcanicBiomeFactor);
             float mossMask = smoothstep(0.12, 0.60, debris.a) * debrisDistFade * grassDebrisAtten;
-            blendedAlbedo = mix(blendedAlbedo, mossColor, mossMask * mix(0.28, 0.28, u_aridBiomeFactor));
+            blendedAlbedo = mix(blendedAlbedo, mossColor, mossMask * mix(0.28, 0.42, u_volcanicBiomeFactor));
         }
     }
 
@@ -982,6 +1009,9 @@ void main()
     }
 
     groundLit += VFXLights_AccumulateFlat(fragPosition, blendedAlbedo);
+    if (volcanicEmberGlow > 0.001) {
+        groundLit += vec3(1.65, 0.42, 0.08) * volcanicEmberGlow;
+    }
 
     if (u_aridBiomeFactor < 0.5 && wCliff > 0.02 && fragWorldPos.y < 0.6) {
         float lowerSkirt = 1.0 - smoothstep(-5.50, 0.40, fragWorldPos.y);

@@ -29,13 +29,20 @@ static int locTexGrassMaterial = -1, locTexSoilMaterial = -1;
 static int locSeismicOriginDir = -1, locSeismicParams = -1, locSeismicProfile = -1;
 static int locAridBiomeFactor = -1, locStrataStrength = -1;
 static int locAridGrusColor = -1, locAridHardpanColor = -1, locAridLichenColor = -1;
+static int locVolcanicBiomeFactor = -1, locMagmaGlowStrength = -1;
+static int locVolcanicAshColor = -1, locVolcanicScoriaColor = -1, locVolcanicSulfurColor = -1;
 
 static MapGroundBiomeProfile s_groundBiomeProfile = {
     .aridFactor = 0.0f,
     .strataStrength = 0.25f,
     .grusColor = {0.58f, 0.46f, 0.34f},
     .hardpanColor = {0.42f, 0.31f, 0.21f},
-    .lichenColor = {0.50f, 0.40f, 0.19f}};
+    .lichenColor = {0.50f, 0.40f, 0.19f},
+    .volcanicFactor = 0.0f,
+    .magmaGlowStrength = 0.0f,
+    .ashColor = {0.16f, 0.15f, 0.16f},
+    .scoriaColor = {0.34f, 0.14f, 0.10f},
+    .sulfurColor = {0.62f, 0.50f, 0.16f}};
 static bool s_groundBiomeDirty = true;
 
 #define MAX_GROUND_PATH_SEGS 16
@@ -554,6 +561,11 @@ static MapGroundSurface SetupGroundMaterial(Mesh mesh, float width, float depth,
         locAridGrusColor = GetShaderLocation(groundShader, "u_aridGrusColor");
         locAridHardpanColor = GetShaderLocation(groundShader, "u_aridHardpanColor");
         locAridLichenColor = GetShaderLocation(groundShader, "u_aridLichenColor");
+        locVolcanicBiomeFactor = GetShaderLocation(groundShader, "u_volcanicBiomeFactor");
+        locMagmaGlowStrength = GetShaderLocation(groundShader, "u_magmaGlowStrength");
+        locVolcanicAshColor = GetShaderLocation(groundShader, "u_volcanicAshColor");
+        locVolcanicScoriaColor = GetShaderLocation(groundShader, "u_volcanicScoriaColor");
+        locVolcanicSulfurColor = GetShaderLocation(groundShader, "u_volcanicSulfurColor");
         VFXLight_RegisterShader(groundShader);
 
         s_groundShaderId = groundShader.id;
@@ -1306,6 +1318,16 @@ void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter)
             SetShaderValue(groundShader, locAridHardpanColor, &s_groundBiomeProfile.hardpanColor, SHADER_UNIFORM_VEC3);
         if (locAridLichenColor >= 0)
             SetShaderValue(groundShader, locAridLichenColor, &s_groundBiomeProfile.lichenColor, SHADER_UNIFORM_VEC3);
+        if (locVolcanicBiomeFactor >= 0)
+            SetShaderValue(groundShader, locVolcanicBiomeFactor, &s_groundBiomeProfile.volcanicFactor, SHADER_UNIFORM_FLOAT);
+        if (locMagmaGlowStrength >= 0)
+            SetShaderValue(groundShader, locMagmaGlowStrength, &s_groundBiomeProfile.magmaGlowStrength, SHADER_UNIFORM_FLOAT);
+        if (locVolcanicAshColor >= 0)
+            SetShaderValue(groundShader, locVolcanicAshColor, &s_groundBiomeProfile.ashColor, SHADER_UNIFORM_VEC3);
+        if (locVolcanicScoriaColor >= 0)
+            SetShaderValue(groundShader, locVolcanicScoriaColor, &s_groundBiomeProfile.scoriaColor, SHADER_UNIFORM_VEC3);
+        if (locVolcanicSulfurColor >= 0)
+            SetShaderValue(groundShader, locVolcanicSulfurColor, &s_groundBiomeProfile.sulfurColor, SHADER_UNIFORM_VEC3);
         s_groundBiomeDirty = false;
     }
 
@@ -1521,7 +1543,12 @@ void MapProp_SetGroundBiomeProfile(const MapGroundBiomeProfile *profile)
             .strataStrength = 0.25f,
             .grusColor = {0.58f, 0.46f, 0.34f},
             .hardpanColor = {0.42f, 0.31f, 0.21f},
-            .lichenColor = {0.50f, 0.40f, 0.19f}};
+            .lichenColor = {0.50f, 0.40f, 0.19f},
+            .volcanicFactor = 0.0f,
+            .magmaGlowStrength = 0.0f,
+            .ashColor = {0.16f, 0.15f, 0.16f},
+            .scoriaColor = {0.34f, 0.14f, 0.10f},
+            .sulfurColor = {0.62f, 0.50f, 0.16f}};
     }
     s_groundBiomeDirty = true;
 }

@@ -427,6 +427,19 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
         terraced = (np.floor(tau) + smooth_frac) * step_h - warp_x * 0.55
         outcrop_w = np.clip((terrain - 2.2) / 6.5, 0.0, 0.52)
         terrain = terrain * (1.0 - outcrop_w) + terraced * outcrop_w
+    elif biome == 'fire_volcanic':
+        # Volcanic basalt flow terracing & endoreic caldera sink preservation:
+        # Preserves crater bowls rather than flattening them, and adds stepped pahoehoe shelves.
+        Xg, Zg = np.meshgrid(np.arange(w) * sx, np.arange(h) * sz)
+        warp_v = np.sin(Xg * 0.055 - Zg * 0.036) * 1.15 + np.cos(Zg * 0.092 + Xg * 0.048) * 0.60
+        step_h = 1.45
+        tau = (terrain + warp_v * 0.45) / step_h
+        frac = tau - np.floor(tau)
+        smooth_frac = np.clip((frac - 0.22) / (0.78 - 0.22), 0.0, 1.0)
+        smooth_frac = smooth_frac * smooth_frac * (3.0 - 2.0 * smooth_frac)
+        terraced = (np.floor(tau) + smooth_frac) * step_h - warp_v * 0.45
+        shelf_w = np.clip((terrain - 2.6) / 7.5, 0.0, 0.36)
+        terrain = terrain * (1.0 - shelf_w) + terraced * shelf_w
     perimeter=distance_inside(valid,sx,sz)
     cliff=np.clip(perimeter/cliff_margin,0,1); cliff=cliff*cliff*(3-2*cliff)
     cliff=gaussian_filter_2d(cliff, 1.4)

@@ -52,8 +52,10 @@ static int s_cliffLocAmbientColor = -1;
 static int s_cliffLocViewPos = -1;
 static int s_cliffLocHazeColor = -1;
 static int s_cliffLocAridMode = -1;
+static int s_cliffLocVolcanicMode = -1;
 static int s_cliffLocSeaLevel = -1;
 static float s_cliffAridMode = 0.0f;
+static float s_cliffVolcanicMode = 0.0f;
 static float s_cliffSeaLevel = -1.25f;
 
 static void Cliff_EnsureShaderLocs(Shader shader)
@@ -68,6 +70,7 @@ static void Cliff_EnsureShaderLocs(Shader shader)
     s_cliffLocViewPos = GetShaderLocation(shader, "u_viewPos");
     s_cliffLocHazeColor = GetShaderLocation(shader, "u_hazeColor");
     s_cliffLocAridMode = GetShaderLocation(shader, "u_cliffAridMode");
+    s_cliffLocVolcanicMode = GetShaderLocation(shader, "u_cliffVolcanicMode");
     s_cliffLocSeaLevel = GetShaderLocation(shader, "u_seaLevel");
     s_cliffCachedShaderId = shader.id;
 }
@@ -227,6 +230,10 @@ static void Cliff_UpdateLighting(Shader shader, Camera3D cam)
     {
         SetShaderValue(shader, s_cliffLocAridMode, &s_cliffAridMode, SHADER_UNIFORM_FLOAT);
     }
+    if (s_cliffLocVolcanicMode >= 0)
+    {
+        SetShaderValue(shader, s_cliffLocVolcanicMode, &s_cliffVolcanicMode, SHADER_UNIFORM_FLOAT);
+    }
     if (s_cliffLocSeaLevel >= 0)
     {
         SetShaderValue(shader, s_cliffLocSeaLevel, &s_cliffSeaLevel, SHADER_UNIFORM_FLOAT);
@@ -239,6 +246,11 @@ static void Cliff_UpdateLighting(Shader shader, Camera3D cam)
 void MapProp_SetCliffAridMode(float aridMode)
 {
     s_cliffAridMode = aridMode;
+}
+
+void MapProp_SetCliffVolcanicMode(float volcanicMode)
+{
+    s_cliffVolcanicMode = volcanicMode;
 }
 
 void MapProp_SetCliffSeaLevel(float seaLevelY)
@@ -1396,15 +1408,21 @@ MapCliffSkirt MapProp_CreateCliffSkirt(const MapGroundSurface *ground, Vector3 m
         VFXLight_RegisterShader(cliff.shader);
     }
 
-    const char *cliffDiffPath = (s_cliffAridMode > 0.5f && FileExists("assets/textures/rocks/granite_diffuse.png"))
-                                    ? "assets/textures/rocks/granite_diffuse.png"
-                                    : "assets/textures/rock_diffuse.png";
-    const char *cliffNormPath = (s_cliffAridMode > 0.5f && FileExists("assets/textures/rocks/granite_normal.png"))
-                                    ? "assets/textures/rocks/granite_normal.png"
-                                    : "assets/textures/rock_normal.png";
-    const char *cliffRoughPath = (s_cliffAridMode > 0.5f && FileExists("assets/textures/rocks/granite_roughness.png"))
-                                     ? "assets/textures/rocks/granite_roughness.png"
-                                     : "assets/textures/rock_roughness.png";
+    const char *cliffDiffPath = (s_cliffVolcanicMode > 0.5f && FileExists("assets/textures/rocks/basalt_diffuse.png"))
+                                    ? "assets/textures/rocks/basalt_diffuse.png"
+                                    : ((s_cliffAridMode > 0.5f && FileExists("assets/textures/rocks/granite_diffuse.png"))
+                                           ? "assets/textures/rocks/granite_diffuse.png"
+                                           : "assets/textures/rock_diffuse.png");
+    const char *cliffNormPath = (s_cliffVolcanicMode > 0.5f && FileExists("assets/textures/rocks/basalt_normal.png"))
+                                    ? "assets/textures/rocks/basalt_normal.png"
+                                    : ((s_cliffAridMode > 0.5f && FileExists("assets/textures/rocks/granite_normal.png"))
+                                           ? "assets/textures/rocks/granite_normal.png"
+                                           : "assets/textures/rock_normal.png");
+    const char *cliffRoughPath = (s_cliffVolcanicMode > 0.5f && FileExists("assets/textures/rocks/basalt_roughness.png"))
+                                     ? "assets/textures/rocks/basalt_roughness.png"
+                                     : ((s_cliffAridMode > 0.5f && FileExists("assets/textures/rocks/granite_roughness.png"))
+                                            ? "assets/textures/rocks/granite_roughness.png"
+                                            : "assets/textures/rock_roughness.png");
     Texture2D diffTex = MapLoadMippedTexture(cliffDiffPath, TEXTURE_WRAP_REPEAT);
     Texture2D normTex = MapLoadMippedTexture(cliffNormPath, TEXTURE_WRAP_REPEAT);
     Texture2D roughTex = MapLoadMippedTexture(cliffRoughPath, TEXTURE_WRAP_REPEAT);

@@ -116,3 +116,5 @@ static inline void Nature_FastSinCos(float angleRad, float *restrict outSin, flo
 #include "maps/toolkit/map_props_debris.inl"
 #include "maps/toolkit/map_props_fluff.inl"
 #include "maps/toolkit/map_props_dem.inl"
+#include "maps/toolkit/map_props_lava.inl"
+#include "maps/toolkit/map_props_volcano.inl"

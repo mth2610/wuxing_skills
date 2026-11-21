@@ -197,11 +197,66 @@ def grade_desert_pixel(r01, g01, b01):
     )
 
 
+def grade_volcanic_pixel(r01, g01, b01):
+    """Volcanic Fire-Element LUT: deep obsidian-indigo shadows, warm crimson-amber magma midtones."""
+    r_lin = srgb_to_linear(r01)
+    g_lin = srgb_to_linear(g01)
+    b_lin = srgb_to_linear(b01)
+
+    luma = 0.2126 * r_lin + 0.7152 * g_lin + 0.0722 * b_lin
+
+    # Crisp cinematic S-curve with lifted charcoal blacks to preserve basalt relief
+    luma_curved = luma * luma * (3.0 - 2.0 * luma)
+    contrast_factor = luma_curved / max(1e-5, luma)
+    r_lin = clamp01(r_lin * (0.48 + 0.52 * contrast_factor))
+    g_lin = clamp01(g_lin * (0.48 + 0.52 * contrast_factor))
+    b_lin = clamp01(b_lin * (0.48 + 0.52 * contrast_factor))
+
+    black_lift = 0.016 * math.pow(clamp01(1.0 - luma * 2.6), 2.0)
+    r_lin += black_lift * 0.96
+    g_lin += black_lift * 0.94
+    b_lin += black_lift * 1.12
+
+    # Split toning: cool volcanic smoke-slate shadows, warm ember-gold highlights
+    shadow_weight = math.pow(clamp01(1.0 - luma * 1.85), 1.5)
+    r_lin += shadow_weight * -0.004
+    g_lin += shadow_weight * 0.000
+    b_lin += shadow_weight * 0.014
+
+    highlight_weight = math.pow(clamp01((luma - 0.36) / 0.64), 1.4)
+    r_lin += highlight_weight * 0.014
+    g_lin += highlight_weight * 0.005
+    b_lin += highlight_weight * -0.006
+
+    r_srgb = clamp01(linear_to_srgb(clamp01(r_lin)))
+    g_srgb = clamp01(linear_to_srgb(clamp01(g_lin)))
+    b_srgb = clamp01(linear_to_srgb(clamp01(b_lin)))
+
+    h, s, l = rgb_to_hsl(r_srgb, g_srgb, b_srgb)
+    # Enhance crimson/orange magma & scoria warmth (+14%)
+    dist_fire = min(abs(h - 0.04), abs(h - 1.04))
+    is_fire = math.exp(-math.pow(dist_fire / 0.10, 2.0))
+    s = clamp01(s * (1.0 + 0.14 * is_fire))
+
+    # Keep volcanic sea teal-blues clean
+    is_sea = math.exp(-math.pow((h - 0.56) / 0.10, 2.0))
+    s = clamp01(s * (1.0 + 0.06 * is_sea))
+
+    r_out, g_out, b_out = hsl_to_rgb(h, s, l)
+    return (
+        int(clamp01(r_out) * 255.0 + 0.5),
+        int(clamp01(g_out) * 255.0 + 0.5),
+        int(clamp01(b_out) * 255.0 + 0.5),
+        255
+    )
+
+
 def main():
     import sys
     desert_mode = "--desert" in sys.argv
+    volcanic_mode = "--volcanic" in sys.argv
     out_arg = next((a for a in sys.argv[1:] if not a.startswith("--")), None)
-    fn = grade_desert_pixel if desert_mode else grade_pixel
+    fn = grade_volcanic_pixel if volcanic_mode else (grade_desert_pixel if desert_mode else grade_pixel)
 
     denom = float(LUT_SIZE - 1)
     pixels = [(0, 0, 0, 255)] * (LUT_WIDTH * LUT_HEIGHT)
@@ -225,12 +280,14 @@ def main():
         out_path = os.path.join(project_root, "assets", "luts", "grade.png")
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     save_png_rgba(out_path, LUT_WIDTH, LUT_HEIGHT, pixels)
-    print(f"Generated {'desert' if desert_mode else 'wuxia'} LUT: {out_path} ({LUT_WIDTH}x{LUT_HEIGHT})")
+    mode_label = "volcanic" if volcanic_mode else ("desert" if desert_mode else "wuxia")
+    print(f"Generated {mode_label} LUT: {out_path} ({LUT_WIDTH}x{LUT_HEIGHT})")
 
-    out_path = "assets/maps/song_quao/song_quao_grade.png"
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    save_png_rgba(out_path, LUT_WIDTH, LUT_HEIGHT, pixels)
-    print(f"Generated {out_path} ({LUT_WIDTH}x{LUT_HEIGHT}) successfully with pure Python.")
+    if not out_arg:
+        out_path = "assets/maps/song_quao/song_quao_grade.png"
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+        save_png_rgba(out_path, LUT_WIDTH, LUT_HEIGHT, pixels)
+        print(f"Generated {out_path} ({LUT_WIDTH}x{LUT_HEIGHT}) successfully with pure Python.")
 
 if __name__ == "__main__":
     main()
