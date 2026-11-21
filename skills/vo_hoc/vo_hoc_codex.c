@@ -99,7 +99,7 @@ static const VoHocSkillDef kVoHocSkills[] = {
     /* ===== BỘ 1: THỦY TRIỀU QUYỀN PHÁP (Hệ Thủy — 5 Đả + 2 Trợ, nhánh SWE) ===== */
     {
         .skillName = "TTQP_PHA_LANG_QUYEN",
-        .displayName = "Pha Lang Quyen",
+        .displayName = "Phá Lãng Quyền",
         .setId = VH_SET_THUY_TRIEU_QUYEN_PHAP,
         .element = 0,
         .role = VH_ROLE_STRIKE,
@@ -116,7 +116,7 @@ static const VoHocSkillDef kVoHocSkills[] = {
     },
     {
         .skillName = "TTQP_NGHICH_LUU_CAM_NA",
-        .displayName = "Nghich Luu Cam Na",
+        .displayName = "Nghịch Lưu Cầm Nã",
         .setId = VH_SET_THUY_TRIEU_QUYEN_PHAP,
         .element = 0,
         .role = VH_ROLE_STRIKE,
@@ -134,7 +134,7 @@ static const VoHocSkillDef kVoHocSkills[] = {
     },
     {
         .skillName = "TTQP_BANG_TRIEU_DAO_HAI",
-        .displayName = "Bang Trieu Dao Hai",
+        .displayName = "Băng Triều Đảo Hải",
         .setId = VH_SET_THUY_TRIEU_QUYEN_PHAP,
         .element = 0,
         .role = VH_ROLE_STRIKE,
@@ -153,7 +153,7 @@ static const VoHocSkillDef kVoHocSkills[] = {
     },
     {
         .skillName = "TTQP_HAN_UYEN_QUYEN_TOAN",
-        .displayName = "Han Uyen Quyen Toan",
+        .displayName = "Hàn Uyên Quyền Toản",
         .setId = VH_SET_THUY_TRIEU_QUYEN_PHAP,
         .element = 0,
         .role = VH_ROLE_STRIKE,
@@ -171,7 +171,7 @@ static const VoHocSkillDef kVoHocSkills[] = {
     },
     {
         .skillName = "TTQP_NO_HAI_LONG_QUYEN",
-        .displayName = "No Hai Long Quyen",
+        .displayName = "Nộ Hải Long Quyền",
         .setId = VH_SET_THUY_TRIEU_QUYEN_PHAP,
         .element = 0,
         .role = VH_ROLE_STRIKE,
@@ -189,7 +189,7 @@ static const VoHocSkillDef kVoHocSkills[] = {
     },
     {
         .skillName = "TTQP_THUY_KINH_QUYEN_THUAN",
-        .displayName = "Thuy Kinh Quyen Thuan",
+        .displayName = "Thủy Kính Quyền Thuẫn",
         .setId = VH_SET_THUY_TRIEU_QUYEN_PHAP,
         .element = 0,
         .role = VH_ROLE_SUPPORT,
@@ -208,7 +208,7 @@ static const VoHocSkillDef kVoHocSkills[] = {
     },
     {
         .skillName = "TTQP_TRIEU_TICH_LINH_TUYEN",
-        .displayName = "Trieu Tich Linh Tuyen",
+        .displayName = "Triều Tịch Linh Tuyền",
         .setId = VH_SET_THUY_TRIEU_QUYEN_PHAP,
         .element = 0,
         .role = VH_ROLE_SUPPORT,
@@ -246,8 +246,8 @@ const VoHocSkillDef *VoHoc_FindByName(const char *skillName) {
 
 const char *VoHoc_GetSetName(VoHocSetId setId) {
     switch (setId) {
-        case VH_SET_THUY_TRIEU_QUYEN_PHAP: return "Thuy Trieu Quyen Phap";
-        default: return "Co Ban / Legacy";
+        case VH_SET_THUY_TRIEU_QUYEN_PHAP: return "Thủy Triều Quyền Pháp";
+        default: return "Cơ Bản";
     }
 }
 

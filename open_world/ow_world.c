@@ -599,7 +599,10 @@ void OW_Draw3D(const PlayerEntity *player, Camera3D cam) {
 
 void OW_DrawHUD(const PlayerEntity *player, Camera3D cam) {
     if (!s_hasRealm) return;
+    const WuxiaUIContext *ctx = WuxiaUI_GetContext();
+    float s = ctx->scale;
     int sw = GetScreenWidth();
+    int sh = GetScreenHeight();
     const Agent *pa = player ? Entity_GetAgent(player->agentId) : NULL;
     PlayerProfile *prof = PlayerProfile_GetGlobal();
 
@@ -607,11 +610,12 @@ void OW_DrawHUD(const PlayerEntity *player, Camera3D cam) {
     OWWeather_DrawHUD();
     OWSandbox_DrawHUD(player, cam);
 
+    static bool s_toolboxOpen = false;
     bool touchMode = UI_IsTouchControlsEnabled();
     if (pa) {
         int z = OW_GetZoneAt(pa->position);
         float zw = touchMode ? 360.0f : 480.0f;
-        float zy = touchMode ? 76.0f : 44.0f;
+        float zy = ctx->safeRect.y + 42.0f;
         Rectangle zr = { (float)sw * 0.5f - zw * 0.5f, zy, zw, 28.0f };
         Color pkRibCol = (pa->pkMode == PK_MODE_SLAUGHTER) ? WUXIA_CRIMSON
                        : (pa->pkMode == PK_MODE_SPAR)      ? WUXIA_GOLD
@@ -619,8 +623,8 @@ void OW_DrawHUD(const PlayerEntity *player, Camera3D cam) {
         const char *pkStr = OWSandbox_GetPkModeLabel(pa->pkMode);
         WuxiaUI_DrawRibbon(zr, pkRibCol);
         const char *hudLine = touchMode
-            ? TextFormat("%s   ·   %s", OW_GetZoneName(z), pkStr)
-            : TextFormat("%s   ·   [B] Ky Ngo   ·   [V] %s", OW_GetZoneName(z), pkStr);
+            ? TextFormat("%s  ·  %s", OW_GetZoneName(z), pkStr)
+            : TextFormat("%s  ·  [B] Kỳ Ngộ  ·  [V] %s", OW_GetZoneName(z), pkStr);
         WuxiaUI_DrawTextCentered(hudLine, zr, 13.0f,
                                  (pa->pkMode == PK_MODE_SLAUGHTER) ? (Color){ 255, 145, 135, 255 } : WUXIA_GOLD_BRIGHT);
 
@@ -629,8 +633,8 @@ void OW_DrawHUD(const PlayerEntity *player, Camera3D cam) {
             Rectangle hr = { (float)sw * 0.5f - 150.0f, zy + 32.0f, 300.0f, 22.0f };
             WuxiaUI_DrawPanel(hr, (s_killStreak >= 40) ? WUXIA_CRIMSON : WUXIA_GOLD, true);
             const char *hTxt = (s_killStreak >= 3)
-                ? TextFormat("BAI QUAI: %d YEU  |  LIEN TRAM x%d", liveSwarm, s_killStreak)
-                : TextFormat("BAI QUAI QUANH DAY: %d YEU", liveSwarm);
+                ? TextFormat("BẦY QUÁI: %d YÊU  ·  LIÊN TRẢM x%d", liveSwarm, s_killStreak)
+                : TextFormat("BẦY QUÁI QUANH ĐÂY: %d YÊU", liveSwarm);
             WuxiaUI_DrawTextCentered(hTxt, hr, 11.5f, (s_killStreak >= 40) ? (Color){ 255, 195, 110, 255 } : WUXIA_GOLD_BRIGHT);
         }
 
@@ -640,92 +644,111 @@ void OW_DrawHUD(const PlayerEntity *player, Camera3D cam) {
         if (prompt) {
             if (touchMode) {
                 const char *clean = (strncmp(prompt, "[F] ", 4) == 0) ? prompt + 4 : prompt;
-                float lw = WuxiaUI_MeasureText(clean, 15.5f);
-                float bw = lw + 48.0f;
-                if (bw < 250.0f) bw = 250.0f;
-                Rectangle ib = { (float)sw * 0.5f - bw * 0.5f, (float)GetScreenHeight() - 102.0f, bw, 46.0f };
-                if (WuxiaUI_DrawButton(ib, clean, WUXIA_GOLD, true, 15.5f)) {
+                float lw = WuxiaUI_MeasureText(clean, 15.0f);
+                float bw = fmaxf(250.0f, lw + 48.0f);
+                Rectangle ib = { (float)sw * 0.5f - bw * 0.5f, (float)sh - 118.0f * s, bw, 44.0f };
+                if (WuxiaUI_DrawButton(ib, clean, WUXIA_GOLD, true, 15.0f)) {
                     s_touchInteractReq = true;
                 }
             } else {
-                float lw = WuxiaUI_MeasureText(prompt, 15.0f);
-                Rectangle ib = { (float)sw * 0.5f - lw * 0.5f - 18.0f, (float)GetScreenHeight() - 148.0f, lw + 36.0f, 32.0f };
+                float lw = WuxiaUI_MeasureText(prompt, 14.5f);
+                Rectangle ib = { (float)sw * 0.5f - lw * 0.5f - 18.0f, (float)sh - 134.0f * s, lw + 36.0f, 32.0f };
                 WuxiaUI_DrawPanel(ib, WUXIA_GOLD, true);
-                WuxiaUI_DrawTextCentered(prompt, ib, 15.0f, WUXIA_GOLD_BRIGHT);
+                WuxiaUI_DrawTextCentered(prompt, ib, 14.5f, WUXIA_GOLD_BRIGHT);
             }
         }
     }
 
-    if (touchMode) {
-        // Clean mobile quick-action pills tucked right below the top-left HP/MP card
-        struct { const char *lbl; Color border; bool *flag; } pills[4] = {
-            { TextFormat("MAU (%d)", prof->potions[POTION_HEAL_HP]), WUXIA_CRIMSON, &s_touchHealReq },
-            { TextFormat("MANA (%d)", prof->potions[POTION_RESTORE_MANA]), WUXIA_AZURE, &s_touchManaReq },
-            { "GIO", WUXIA_JADE, &s_touchWindReq },
-            { "GIAO LUU", WUXIA_GOLD, NULL }
-        };
-        float px = 16.0f;
-        float py = 112.0f;
-        for (int i = 0; i < 4; i++) {
-            float pw = WuxiaUI_MeasureText(pills[i].lbl, 12.5f) + 22.0f;
-            Rectangle pr = { px, py, pw, 30.0f };
-            if (WuxiaUI_DrawButton(pr, pills[i].lbl, pills[i].border, (i == 3 && s_emoteMenuOpen), 12.5f)) {
-                if (pills[i].flag) *pills[i].flag = true;
-                else s_emoteMenuOpen = !s_emoteMenuOpen;
-            }
-            px += pw + 6.0f;
-        }
-    } else {
-        int py = GetScreenHeight() - 118;
-        DrawRectangle(16, py, 370, 44, (Color){ 16, 18, 28, 200 });
-        DrawText(TextFormat("[R] Mau:%d  [F1] Mana:%d  [F2] HoThe:%d  [F3] x2XP:%d",
-                            prof->potions[POTION_HEAL_HP], prof->potions[POTION_RESTORE_MANA],
-                            prof->potions[POTION_EARTH_MIGHT], prof->potions[POTION_SKILL_XP_BOOST]),
-                 24, py + 7, 12, (Color){ 225, 235, 210, 255 });
-        DrawText(TextFormat("Khoang:%d  Thao:%d | [V] PK  [M] Mic  [T] BieuCam  [C] Gio",
-                            prof->elementalStones[s_realm.realmId % 5], prof->herbs),
-                 24, py + 24, 11, (Color){ 195, 205, 225, 255 });
-    }
-
-    // Voice chat status / quick toggle button (PC & Touch)
+    // --- Left Edge Collapsible 3x3 Quick Toolbox (Where Winds Meet Image 2 style) ---
     {
-        bool voiceOk = Net_VoiceIsAvailable();
-        bool micOn = Net_VoiceIsMicEnabled();
-        int spk = Net_VoiceGetSpeakingCount();
-        const char *vLbl = !voiceOk ? "MIC: OFFLINE"
-                         : micOn    ? TextFormat("MIC: BAT (%d NOI)", spk)
-                         : (spk > 0) ? TextFormat("MIC: TAT (%d NOI)", spk)
-                                     : "MIC: TAT [M]";
-        Color vCol = micOn ? WUXIA_JADE : (spk > 0 ? WUXIA_GOLD : WUXIA_AZURE);
-        Rectangle vr = { touchMode ? 16.0f : 396.0f, touchMode ? 148.0f : (float)(GetScreenHeight() - 114), 124.0f, 34.0f };
-        if (WuxiaUI_DrawButton(vr, vLbl, vCol, micOn, 11.5f)) {
-            if (!voiceOk) {
-                OW_SetBanner("MIC CHI HOAT DONG KHI KET NOI PHONG ONLINE (EOS)!", 2.8f);
-            } else {
-                bool nextMic = !micOn;
-                Net_VoiceSetMicEnabled(nextMic);
-                OW_SetBanner(nextMic ? "DA BAT MIC VOICE CHAT!" : "DA TAT MIC VOICE CHAT", 2.2f);
+        float toggleX = ctx->safeRect.x;
+        float toggleY = ctx->safeRect.y + 102.0f * s;
+        if (WuxiaUI_DrawIconPill((Rectangle){ toggleX, toggleY, 96.0f * s, 28.0f * s },
+                                 WUXIA_ICON_GEAR, s_toolboxOpen ? "Thu Gọn" : "Tiện Ích",
+                                 NULL, WUXIA_GOLD, s_toolboxOpen)) {
+            s_toolboxOpen = !s_toolboxOpen;
+        }
+
+        if (s_toolboxOpen && pa) {
+            float cellW = 86.0f * s;
+            float cellH = 62.0f * s;
+            float gap = 6.0f * s;
+            float boxW = cellW * 3.0f + gap * 2.0f + 20.0f * s;
+            float boxH = cellH * 3.0f + gap * 2.0f + 46.0f * s;
+            Rectangle tb = { toggleX, toggleY + 34.0f * s, boxW, boxH };
+            WuxiaUI_DrawPanel(tb, WUXIA_GOLD, true);
+            WuxiaUI_DrawText("TIỆN ÍCH GIANG HỒ", tb.x + 12.0f, tb.y + 10.0f, 13.0f, WUXIA_GOLD_BRIGHT);
+
+            bool voiceOk = Net_VoiceIsAvailable();
+            bool micOn   = Net_VoiceIsMicEnabled();
+            bool kyNgoOn = OWSandbox_IsPanelOpen();
+
+            struct { WuxiaIconId icon; const char *lbl; const char *hk; Color col; bool act; } items[9] = {
+                { WUXIA_ICON_COMPASS,     "Gió Dẫn",  "C",  WUXIA_JADE,    false },
+                { WUXIA_ICON_SHIELD_PK,   "Đổi PK",   "V",  (pa->pkMode == PK_MODE_SLAUGHTER) ? WUXIA_CRIMSON : WUXIA_GOLD, pa->pkMode != PK_MODE_PEACE },
+                { WUXIA_ICON_SPARK_EVENT, "Kỳ Ngộ",   "B",  WUXIA_GOLD,    kyNgoOn },
+                { WUXIA_ICON_CHAT,        "Giao Lưu", "T",  WUXIA_AZURE,   s_emoteMenuOpen },
+                { WUXIA_ICON_MIC,         micOn ? "Mic: Bật" : "Mic: Tắt", "M", micOn ? WUXIA_JADE : WUXIA_AZURE, micOn },
+                { WUXIA_ICON_POTION,      TextFormat("Hộ Thể:%d", prof->potions[POTION_EARTH_MIGHT]), "F2", WUXIA_GOLD, s_mightTimer > 0.0f },
+                { WUXIA_ICON_POTION,      TextFormat("x2 XP:%d", prof->potions[POTION_SKILL_XP_BOOST]), "F3", WUXIA_JADE, s_xpBoostTimer > 0.0f },
+                { WUXIA_ICON_CROSSED_SWORDS, "Tỷ Võ", NULL, WUXIA_CRIMSON, pa->duelFlag },
+                { WUXIA_ICON_CLOSE,       "Đóng",     NULL, WUXIA_TEXT_MUTED, false }
+            };
+
+            for (int idx = 0; idx < 9; idx++) {
+                int col = idx % 3, row = idx / 3;
+                Rectangle cr = {
+                    tb.x + 10.0f * s + col * (cellW + gap),
+                    tb.y + 34.0f * s + row * (cellH + gap),
+                    cellW, cellH
+                };
+                if (WuxiaUI_DrawFeatureTile(cr, items[idx].icon, items[idx].lbl, NULL,
+                                            touchMode ? NULL : items[idx].hk,
+                                            items[idx].col, items[idx].act, false)) {
+                    if (idx == 0) s_touchWindReq = true;
+                    else if (idx == 1) OWSandbox_CyclePkMode((PlayerEntity *)player);
+                    else if (idx == 2) OWSandbox_TogglePanel();
+                    else if (idx == 3) s_emoteMenuOpen = !s_emoteMenuOpen;
+                    else if (idx == 4) {
+                        if (!voiceOk) OW_SetBanner("MIC CHỈ HOẠT ĐỘNG KHI KẾT NỐI PHÒNG ONLINE!", 2.8f);
+                        else {
+                            bool nextMic = !micOn;
+                            Net_VoiceSetMicEnabled(nextMic);
+                            OW_SetBanner(nextMic ? "ĐÃ BẬT MIC ĐÀM THOẠI!" : "ĐÃ TẮT MIC ĐÀM THOẠI", 2.2f);
+                        }
+                    } else if (idx == 5 && PlayerProfile_ConsumePotion(POTION_EARTH_MIGHT)) {
+                        s_mightTimer = 30.0f;
+                        OW_SetBanner("HOÀNG THỔ HỘ THỂ ĐAN: +35% CÔNG & -30% SÁT THƯƠNG!", 2.5f);
+                    } else if (idx == 6 && PlayerProfile_ConsumePotion(POTION_SKILL_XP_BOOST)) {
+                        s_xpBoostTimer = 60.0f;
+                        OW_SetBanner("NGỘ ĐẠO LINH TRÀ: x2 EXP VÕ HỌC TRONG 60 GIÂY!", 2.5f);
+                    } else if (idx == 7) {
+                        s_touchDuelReq = true;
+                    } else if (idx == 8) {
+                        s_toolboxOpen = false;
+                    }
+                }
             }
         }
     }
 
     if (s_mightTimer > 0.0f)
-        DrawText(TextFormat("HOANG THO HO THE: %.0fs", s_mightTimer), 20, 176, 13, ORANGE);
+        WuxiaUI_DrawText(TextFormat("Hoàng Thổ Hộ Thể: %.0fs", s_mightTimer), ctx->safeRect.x, ctx->safeRect.y + 136.0f * s, 12.0f, WUXIA_GOLD);
     if (s_xpBoostTimer > 0.0f)
-        DrawText(TextFormat("NGO DAO x2 SKILL XP: %.0fs", s_xpBoostTimer), 20, 193, 13, (Color){ 130, 255, 210, 255 });
+        WuxiaUI_DrawText(TextFormat("Ngộ Đạo x2 EXP: %.0fs", s_xpBoostTimer), ctx->safeRect.x, ctx->safeRect.y + 152.0f * s, 12.0f, WUXIA_JADE);
     if (s_killStreak >= 2)
-        DrawText(TextFormat("LIEN TRAM x%d (+25%% EXP)", s_killStreak), sw - 220, 210, 16, GOLD);
+        WuxiaUI_DrawTextRight(TextFormat("LIÊN TRẢM x%d (+25%% EXP)", s_killStreak), (float)sw - 16.0f, ctx->safeRect.y + 100.0f * s, 14.0f, WUXIA_GOLD_BRIGHT);
 
     if (s_bannerTimer > 0.0f && s_bannerText[0] != '\0') {
-        int bw = MeasureText(s_bannerText, 18);
-        DrawRectangle(sw / 2 - bw / 2 - 18, 84, bw + 36, 32, (Color){ 24, 20, 14, 225 });
-        DrawRectangleLines(sw / 2 - bw / 2 - 18, 84, bw + 36, 32, GOLD);
-        DrawText(s_bannerText, sw / 2 - bw / 2, 91, 18, GOLD);
+        float bw = fmaxf(320.0f, WuxiaUI_MeasureText(s_bannerText, 16.5f) + 56.0f);
+        Rectangle br = { (float)sw * 0.5f - bw * 0.5f, ctx->safeRect.y + 78.0f, bw, 32.0f };
+        WuxiaUI_DrawRibbon(br, WUXIA_GOLD);
+        WuxiaUI_DrawTextCentered(s_bannerText, br, 16.5f, WUXIA_GOLD_BRIGHT);
     }
 
     static const char *kEmoteTexts[5] = {
-        "", "Chao cac vi dao huu!", "Mau toi hop suc san Boss!",
-        "Xin linh giao cao chieu! [V]", "Can trao doi vat pham! [H]"
+        "", "Chào các vị đạo hữu!", "Mau tới hợp sức săn Boss!",
+        "Xin lĩnh giáo cao chiêu! [V]", "Cần trao đổi vật phẩm! [H]"
     };
     for (int i = 0; i < MAX_EMOTE_BUBBLES; i++) {
         if (s_emotes[i].timer <= 0.0f || s_emotes[i].emoteId <= 0 || s_emotes[i].emoteId > 4) continue;
@@ -733,31 +756,31 @@ void OW_DrawHUD(const PlayerEntity *player, Camera3D cam) {
         if (!ea) continue;
         Vector2 sp = GetWorldToScreen((Vector3){ ea->position.x, ea->position.y + 2.3f, ea->position.z }, cam);
         const char *txt = kEmoteTexts[s_emotes[i].emoteId];
-        int tw = MeasureText(txt, 13);
-        DrawRectangle((int)sp.x - tw / 2 - 8, (int)sp.y - 12, tw + 16, 24, (Color){ 18, 24, 36, 230 });
-        DrawRectangleLines((int)sp.x - tw / 2 - 8, (int)sp.y - 12, tw + 16, 24, SKYBLUE);
-        DrawText(txt, (int)sp.x - tw / 2, (int)sp.y - 7, 13, WHITE);
+        float tw = WuxiaUI_MeasureText(txt, 13.0f);
+        Rectangle er = { sp.x - tw * 0.5f - 8.0f, sp.y - 12.0f, tw + 16.0f, 24.0f };
+        WuxiaUI_DrawPanel(er, WUXIA_AZURE, false);
+        WuxiaUI_DrawTextCentered(txt, er, 13.0f, WUXIA_TEXT_PRIMARY);
     }
 
     if (s_emoteMenuOpen && player) {
-        Rectangle eb = { (float)sw / 2 - 230.0f, 125.0f, 460.0f, 114.0f };
+        Rectangle eb = { (float)sw / 2 - 245.0f, 125.0f, 490.0f, 118.0f };
         WuxiaUI_DrawPanel(eb, WUXIA_AZURE, true);
-        WuxiaUI_DrawText("GIAO LUU & TY VO", eb.x + 16.0f, eb.y + 12.0f, 15.0f, WUXIA_GOLD);
+        WuxiaUI_DrawText("GIAO LƯU & TỶ VÕ", eb.x + 16.0f, eb.y + 12.0f, 15.0f, WUXIA_GOLD);
 
         Rectangle eClose = { eb.x + eb.width - 78.0f, eb.y + 8.0f, 64.0f, 26.0f };
-        if (WuxiaUI_DrawButton(eClose, "DONG", WUXIA_CRIMSON, false, 12.0f))
+        if (WuxiaUI_DrawButton(eClose, "ĐÓNG", WUXIA_CRIMSON, false, 12.0f))
             s_emoteMenuOpen = false;
 
-        const char *eLbls[5] = { "Chao Hoi", "Goi Boss", "Moi Ty Vo", "Giao Dich",
-                                 (pa && pa->duelFlag) ? "Tat PK" : "Bat PK" };
+        const char *eLbls[5] = { "Chào Hỏi", "Gọi Boss", "Mời Tỷ Võ", "Giao Dịch",
+                                 (pa && pa->duelFlag) ? "Tắt PK" : "Bật PK" };
         for (int i = 0; i < 5; i++) {
-            float bx = eb.x + 14.0f + i * 87.0f;
-            Rectangle br = { bx, eb.y + 46.0f, 81.0f, 50.0f };
+            float bx = eb.x + 14.0f + i * 93.0f;
+            Rectangle br = { bx, eb.y + 46.0f, 87.0f, 52.0f };
             Color bc = (i == 4 && pa && pa->duelFlag) ? WUXIA_CRIMSON : WUXIA_AZURE;
             if (WuxiaUI_DrawButton(br, eLbls[i], bc, (i == 4 && pa && pa->duelFlag), 12.5f)) {
                 if (i == 2) {
                     Net_SendSocialState(player->agentId, OW_EMOTE_SPAR_ASK, false);
-                    OW_SetBanner("DA GUI LOI MOI TY THI! CHO DONG DAO DONG Y...", 2.8f);
+                    OW_SetBanner("ĐÃ GỬI LỜI MỜI TỶ THÍ! CHỜ ĐỒNG ĐẠO ĐỒNG Ý...", 2.8f);
                 } else if (i < 4) {
                     RecordEmote(player->agentId, i + 1);
                     Net_SendSocialState(player->agentId, i + 1, Entity_GetDuelFlag(player->agentId));
@@ -773,19 +796,19 @@ void OW_DrawHUD(const PlayerEntity *player, Camera3D cam) {
     // Spar invite popup (Ask -> Agree -> 1, 2, 3)
     if (s_sparInvitePending && player) {
         (void)s_sparInviteFromId;
-        Rectangle sb = { (float)sw / 2 - 190.0f, 130.0f, 380.0f, 110.0f };
+        Rectangle sb = { (float)sw / 2 - 195.0f, 130.0f, 390.0f, 110.0f };
         WuxiaUI_DrawPanel(sb, WUXIA_GOLD, true);
-        WuxiaUI_DrawText("DONG DAO MOI BAN TY THI (1v1)!", sb.x + 22.0f, sb.y + 16.0f, 16.0f, WUXIA_GOLD);
-        Rectangle btnYes = { sb.x + 24.0f, sb.y + 52.0f, 154.0f, 40.0f };
-        Rectangle btnNo  = { sb.x + 202.0f, sb.y + 52.0f, 154.0f, 40.0f };
-        if (WuxiaUI_DrawButton(btnYes, "DONG Y", (Color){ 46, 156, 88, 255 }, false, 15.0f)) {
+        WuxiaUI_DrawText("ĐỒNG ĐẠO MỜI BẠN TỶ THÍ (1v1)!", sb.x + 22.0f, sb.y + 16.0f, 15.5f, WUXIA_GOLD);
+        Rectangle btnYes = { sb.x + 24.0f, sb.y + 52.0f, 158.0f, 40.0f };
+        Rectangle btnNo  = { sb.x + 208.0f, sb.y + 52.0f, 158.0f, 40.0f };
+        if (WuxiaUI_DrawButton(btnYes, "ĐỒNG Ý", WUXIA_JADE, false, 15.0f)) {
             s_sparInvitePending = false;
             s_sparPartnerId     = s_sparInviteFromId;
             s_sparCountdown     = 3.0f;
             s_sparStarting      = true;
             Net_SendSocialState(player->agentId, OW_EMOTE_SPAR_ACCEPT, false);
         }
-        if (WuxiaUI_DrawButton(btnNo, "TU CHOI", WUXIA_CRIMSON, false, 15.0f)) {
+        if (WuxiaUI_DrawButton(btnNo, "TỪ CHỐI", WUXIA_CRIMSON, false, 15.0f)) {
             s_sparInvitePending = false;
             Net_SendSocialState(player->agentId, OW_EMOTE_SPAR_DECLINE, false);
         }
@@ -793,32 +816,30 @@ void OW_DrawHUD(const PlayerEntity *player, Camera3D cam) {
 
     // 3..2..1 Spar Countdown overlay
     if (s_sparStarting && s_sparCountdown > 0.0f) {
-        int sh = GetScreenHeight();
         int sec = (int)ceilf(s_sparCountdown);
         if (sec < 1) sec = 1;
-        const char *cdTxt = TextFormat("TY THI BAT DAU SAU: %d", sec);
-        int cw = MeasureText(cdTxt, 30);
-        DrawRectangle(sw / 2 - cw / 2 - 26, sh / 2 - 48, cw + 52, 68, (Color){ 16, 12, 8, 220 });
-        DrawRectangleLines(sw / 2 - cw / 2 - 26, sh / 2 - 48, cw + 52, 68, GOLD);
-        DrawText(cdTxt, sw / 2 - cw / 2, sh / 2 - 28, 30, GOLD);
+        const char *cdTxt = TextFormat("TỶ THÍ BẮT ĐẦU SAU: %d", sec);
+        WuxiaUI_DrawRibbon((Rectangle){ (float)sw * 0.5f - 200.0f, (float)sh * 0.5f - 48.0f, 400.0f, 64.0f }, WUXIA_GOLD);
+        WuxiaUI_DrawTextCentered(cdTxt, (Rectangle){ (float)sw * 0.5f - 200.0f, (float)sh * 0.5f - 48.0f, 400.0f, 64.0f },
+                                 26.0f, WUXIA_GOLD_BRIGHT);
     }
 
     if (s_tradeMenuOpen && pa) {
-        Rectangle tb = { (float)sw / 2 - 200.0f, 195.0f, 400.0f, 226.0f };
+        Rectangle tb = { (float)sw / 2 - 205.0f, 195.0f, 410.0f, 226.0f };
         WuxiaUI_DrawPanel(tb, WUXIA_GOLD, true);
-        WuxiaUI_DrawText("GIAO DICH / TANG VAT PHAM", tb.x + 16.0f, tb.y + 12.0f, 15.0f, WUXIA_GOLD);
+        WuxiaUI_DrawText("GIAO DỊCH / TẶNG VẬT PHẨM", tb.x + 16.0f, tb.y + 12.0f, 15.0f, WUXIA_GOLD);
 
         Rectangle tClose = { tb.x + tb.width - 78.0f, tb.y + 8.0f, 64.0f, 26.0f };
-        if (WuxiaUI_DrawButton(tClose, "DONG", WUXIA_CRIMSON, false, 12.0f))
+        if (WuxiaUI_DrawButton(tClose, "ĐÓNG", WUXIA_CRIMSON, false, 12.0f))
             s_tradeMenuOpen = false;
 
-        WuxiaUI_DrawText("Cham de gui qua cho dong dao trong phong:", tb.x + 16.0f, tb.y + 38.0f, 12.5f, WUXIA_TEXT_MUTED);
+        WuxiaUI_DrawText("Chạm để gửi quà cho đồng đạo trong phòng:", tb.x + 16.0f, tb.y + 38.0f, 12.5f, WUXIA_TEXT_MUTED);
 
         struct { const char *lbl; int kind; int amt; } opts[4] = {
-            { "Gui 100 Vang", 0, 100 },
-            { "Gui 1 Hoang Tho Khoang", 1, 1 },
-            { "Gui 2 Linh Thao", 2, 2 },
-            { "Gui 1 Hoi Sinh Dan", 3, 1 }
+            { "Gửi 100 Vàng", 0, 100 },
+            { "Gửi 1 Hoàng Thổ Khoáng", 1, 1 },
+            { "Gửi 2 Linh Thảo", 2, 2 },
+            { "Gửi 1 Hồi Sinh Đan", 3, 1 }
         };
         for (int i = 0; i < 4; i++) {
             Rectangle br = { tb.x + 16.0f, tb.y + 62.0f + i * 38.0f, tb.width - 32.0f, 32.0f };
@@ -833,9 +854,9 @@ void OW_DrawHUD(const PlayerEntity *player, Camera3D cam) {
                 if (ok) {
                     Net_SendTradeGift(player->agentId, opts[i].kind, opts[i].amt);
                     PlayerProfile_SaveGlobal();
-                    OW_SetBanner("DA GUI VAT PHAM GIAO DICH!", 2.5f);
+                    OW_SetBanner("ĐÃ GỬI VẬT PHẨM GIAO DỊCH!", 2.5f);
                 } else {
-                    OW_SetBanner("KHONG DU VAT PHAM DE GUI!", 2.0f);
+                    OW_SetBanner("KHÔNG ĐỦ VẬT PHẨM ĐỂ GỬI!", 2.0f);
                 }
             }
         }

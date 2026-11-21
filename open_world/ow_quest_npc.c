@@ -388,13 +388,14 @@ void OWQuestNpc_DrawHUD(const Agent *pa, Camera3D cam) {
         float alphaScale = (dist <= 45.0f) ? 1.0f : (1.0f - (dist - 45.0f) / 20.0f);
         if (alphaScale > 0.05f) {
             Vector2 sp = GetWorldToScreen(dpLabel, cam);
-            const char *tag = (q && q->phase == DATAU_PHASE_READY_RETURN) ? "[?] DA TAU (TRA NV)" :
-                              (q && q->phase == DATAU_PHASE_WAIT_ACCEPT)  ? "[!] DA TAU (NHAN NV)" : "DA TAU";
-            Color tc = (q && q->phase != DATAU_PHASE_IN_PROGRESS) ? GOLD : LIGHTGRAY;
+            const char *tag = (q && q->phase == DATAU_PHASE_READY_RETURN) ? "[?] Dã Tẩu (Trả NV)" :
+                              (q && q->phase == DATAU_PHASE_WAIT_ACCEPT)  ? "[!] Dã Tẩu (Nhận NV)" : "Sứ Giả Dã Tẩu";
+            Color tc = (q && q->phase != DATAU_PHASE_IN_PROGRESS) ? WUXIA_GOLD_BRIGHT : WUXIA_TEXT_PRIMARY;
             tc.a = (unsigned char)(255.0f * alphaScale);
-            int tw = MeasureText(tag, 13);
-            DrawRectangle((int)sp.x - tw / 2 - 6, (int)sp.y - 10, tw + 12, 20, (Color){ 16, 20, 28, (unsigned char)(215.0f * alphaScale) });
-            DrawText(tag, (int)sp.x - tw / 2, (int)sp.y - 7, 13, tc);
+            float tw = WuxiaUI_MeasureText(tag, 13.0f);
+            Rectangle tr = { sp.x - tw * 0.5f - 8.0f, sp.y - 11.0f, tw + 16.0f, 22.0f };
+            DrawRectangleRec(tr, (Color){ 14, 18, 26, (unsigned char)(210.0f * alphaScale) });
+            WuxiaUI_DrawTextCentered(tag, tr, 13.0f, tc);
         }
     }
 
@@ -407,37 +408,37 @@ void OWQuestNpc_DrawHUD(const Agent *pa, Camera3D cam) {
         float alphaScale = (dist <= 45.0f) ? 1.0f : (1.0f - (dist - 45.0f) / 20.0f);
         if (alphaScale > 0.05f) {
             Vector2 asp = GetWorldToScreen(ap, cam);
-            const char *atag = UI_IsTouchControlsEnabled() ? "LUYEN DAN SU" : "LUYEN DAN SU [F]";
-            int atw = MeasureText(atag, 12);
-            DrawRectangle((int)asp.x - atw / 2 - 6, (int)asp.y - 10, atw + 12, 18, (Color){ 16, 26, 22, (unsigned char)(210.0f * alphaScale) });
-            DrawText(atag, (int)asp.x - atw / 2, (int)asp.y - 7, 12, (Color){ 140, 240, 175, (unsigned char)(255.0f * alphaScale) });
+            const char *atag = UI_IsTouchControlsEnabled() ? "Luyện Đan Sư" : "Luyện Đan Sư [F]";
+            float atw = WuxiaUI_MeasureText(atag, 12.5f);
+            Rectangle ar = { asp.x - atw * 0.5f - 8.0f, asp.y - 10.0f, atw + 16.0f, 20.0f };
+            DrawRectangleRec(ar, (Color){ 14, 24, 20, (unsigned char)(205.0f * alphaScale) });
+            WuxiaUI_DrawTextCentered(atag, ar, 12.5f, (Color){ 140, 240, 175, (unsigned char)(255.0f * alphaScale) });
         }
     }
 
     if (s_npcDialogOpen && q) {
-        Rectangle db = { (float)sw / 2 - 250.0f, 126.0f, 500.0f, 212.0f };
+        Rectangle db = { (float)sw / 2 - 260.0f, 126.0f, 520.0f, 218.0f };
         WuxiaUI_DrawPanel(db, WUXIA_GOLD, true);
         WuxiaUI_DrawDiamond((Vector2){ db.x + 22.0f, db.y + 24.0f }, 6.0f, WUXIA_GOLD, WUXIA_GOLD_BRIGHT);
-        WuxiaUI_DrawText("SU GIA DA TAU — GIANG HO KY NGO", db.x + 36.0f, db.y + 15.0f, 17.0f, WUXIA_GOLD);
-        DrawLineEx((Vector2){ db.x + 18.0f, db.y + 44.0f }, (Vector2){ db.x + db.width - 18.0f, db.y + 44.0f },
-                   1.0f, ColorAlpha(WUXIA_GOLD, 0.35f));
+        WuxiaUI_DrawTextTitle("SỨ GIẢ DÃ TẨU — GIANG HỒ KỲ NGỘ", db.x + 36.0f, db.y + 13.0f, 18.0f, WUXIA_GOLD_BRIGHT);
+        WuxiaUI_DrawSpecularRule(db.x + 18.0f, db.y + 44.0f, db.width - 36.0f, WUXIA_GOLD, true);
 
         Rectangle closeBtn = { db.x + db.width - 84.0f, db.y + 10.0f, 70.0f, 28.0f };
-        if (WuxiaUI_DrawButton(closeBtn, "DONG", WUXIA_CRIMSON, false, 13.0f)) {
+        if (WuxiaUI_DrawButton(closeBtn, "ĐÓNG", WUXIA_CRIMSON, false, 13.0f)) {
             s_npcDialogOpen = false;
         }
 
-        WuxiaUI_DrawText(q->title, db.x + 20.0f, db.y + 54.0f, 18.0f, WUXIA_TEXT_PRIMARY);
-        WuxiaUI_DrawText(q->desc, db.x + 20.0f, db.y + 80.0f, 14.0f, WUXIA_TEXT_MUTED);
-        WuxiaUI_DrawText(TextFormat("Phan thuong: +%d Vang   |   +%d Diem   |   +1 Khoang   |   +1 Thao",
+        WuxiaUI_DrawText(q->title, db.x + 20.0f, db.y + 56.0f, 18.0f, WUXIA_TEXT_PRIMARY);
+        WuxiaUI_DrawText(q->desc, db.x + 20.0f, db.y + 82.0f, 14.0f, WUXIA_TEXT_MUTED);
+        WuxiaUI_DrawText(TextFormat("Phần thưởng: +%d Vàng  ·  +%d Điểm  ·  +1 Khoáng  ·  +1 Thảo",
                                     q->rewardGold, q->rewardPoints),
-                         db.x + 20.0f, db.y + 110.0f, 13.5f, WUXIA_JADE);
+                         db.x + 20.0f, db.y + 112.0f, 13.5f, WUXIA_JADE);
 
-        const char *btnTxt = (q->phase == DATAU_PHASE_WAIT_ACCEPT)  ? "NHAN NHIEM VU NAY" :
-                             (q->phase == DATAU_PHASE_READY_RETURN) ? "TRA NHIEM VU & NHAN THUONG" :
-                                                                      "DANG THUC HIEN (THEO GIO DAN LOI)";
-        Rectangle btn = { db.x + 20.0f, db.y + 146.0f, db.width - 40.0f, 48.0f };
-        if (WuxiaUI_DrawButton(btn, btnTxt, WUXIA_GOLD, q->phase != DATAU_PHASE_IN_PROGRESS, 16.0f) && pa) {
+        const char *btnTxt = (q->phase == DATAU_PHASE_WAIT_ACCEPT)  ? "NHẬN NHIỆM VỤ NÀY" :
+                             (q->phase == DATAU_PHASE_READY_RETURN) ? "TRẢ NHIỆM VỤ & NHẬN THƯỞNG" :
+                                                                      "ĐANG THỰC HIỆN (THEO GIÓ DẪN LỐI)";
+        Rectangle btn = { db.x + 20.0f, db.y + 148.0f, db.width - 40.0f, 48.0f };
+        if (WuxiaUI_DrawButton(btn, btnTxt, WUXIA_GOLD, q->phase != DATAU_PHASE_IN_PROGRESS, 15.5f) && pa) {
             OWQuestNpc_TryInteract(pa->position);
         }
     }

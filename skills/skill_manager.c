@@ -1,4 +1,5 @@
 #include "skills/skill_manager.h"
+#include "ui/ui_theme.h"
 #include "core/time_fx.h"   // TimeFX_Elapsed — pinned clock; GetTime() is wall clock
 #include "skills/skills_config.h"
 #include "entities/entities.h"
@@ -597,11 +598,8 @@ void DrawSkillManagerOverlay(void)
       float alpha = floatingTexts[i].lifetime / floatingTexts[i].maxLifetime;
       Color col = ColorAlpha(floatingTexts[i].color, alpha);
       Vector2 screenPos = GetWorldToScreen(floatingTexts[i].position, camera);
-      DrawText(floatingTexts[i].text, (int)screenPos.x - 1,
-               (int)screenPos.y + 1, (int)floatingTexts[i].size,
-               ColorAlpha(BLACK, alpha * 0.7f));
-      DrawText(floatingTexts[i].text, (int)screenPos.x, (int)screenPos.y,
-               (int)floatingTexts[i].size, col);
+      WuxiaUI_DrawTextTitle(floatingTexts[i].text, screenPos.x, screenPos.y,
+                            floatingTexts[i].size, col);
     }
   }
 }
@@ -634,7 +632,7 @@ bool CastSkill(int skillIndex, int agentId, Vector3 startPos, Vector3 target,
   float manaCost = Skill_GetManaCost(skillIndex);
   if (!s_freeCast && manaCost > 0.0f && !Entity_TrySpendMana(agentId, manaCost))
   {
-    AddFloatingText(startPos, "Thieu Mana!", GRAY, 18.0f, 0.6f);
+    AddFloatingText(startPos, "Thiếu Chân Khí!", GRAY, 18.0f, 0.6f);
     return false;
   }
 

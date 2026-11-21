@@ -18,18 +18,28 @@ never knows ui/ exists.
 
 ## 2. API
 
+### 2a. HUD, Auto-Aim & Unified Skill Cluster (`ui.h`)
 ```c
 void UI_Init(void);
 void UI_SetCamera(const Camera3D *camera); // per frame (reticle projection)
-void UI_Update(float dt);                  // recompute the cached aim
+void UI_Update(float dt);                  // recompute the cached aim + HP trail
 Vector3 UI_GetAutoAimPoint(int agentId, bool *hasTarget);
-void UI_DrawOverlay(int agentId);          // 2D pass: slot chips + reticle
+void UI_DrawOverlay(int agentId);          // 2D pass: PC bottom-right skill cluster + reticle + TAB loadout
+void UI_DrawCompassMinimap(Vector3 playerPos, float camYaw,
+                           Vector3 questTarget, bool hasQuestTarget, bool inSafeZone);
+void UI_DrawPlayerVitals(int agentId, int healPotions, int manaPotions,
+                         bool *outUseHeal, bool *outUseMana);
 ```
 
-- Slot chips: keys 1-4, registered skill name in its element color,
-  dimmed + darkened while `SkillManager_CanCast` is false (cooldown).
+- Bottom-right skill cluster: 5 Strike nodes (`1-5`) on an arc around Basic Attack (`RMB`), 2 Buff nodes (`6-7`), Khinh Công (`Space`), Né (`Shift`), Thiền (`G`). Same spatial layout on PC (`0.84x` with keycap badges) and Mobile (`1.0x` touch nodes via `UI_PollTouchCombat` / `UI_DrawTouchCombat`).
+- Top-left circular compass minimap + bottom-center player vitals (`Sinh Lực`, `Chân Khí`, `Thể Lực`, element crest, quick potions `R`/`F1`).
 - Reticle: yellow diamond projected over the target via `GetWorldToScreen`.
 - All reads, no `Entity_*` mutations.
+
+### 2b. Unified "Where Winds Meet" Theme & Widget Toolkit (`ui_theme.h`)
+- 3 pre-rasterized Vietnamese Unicode font atlases (`ui_font.ttf` at `20px`/`30px`, `wuxia_ui.ttf` at `44px`) loaded via `ResourceManager_LoadFont`.
+- `WuxiaUI_BeginFrame(isTouchMode)` / `WuxiaUI_GetContext()` manages responsive `scale`, `safeRect` (respecting Android Mali top-84px gesture zone), and `pointerConsumed`.
+- Reusable widgets: `WuxiaUI_DrawPanel`, `WuxiaUI_DrawButton`, `WuxiaUI_DrawFeatureTile`, `WuxiaUI_DrawIconPill`, `WuxiaUI_DrawSkillNode`, `WuxiaUI_DrawSleekBar`, `WuxiaUI_DrawSectionHeader`, `WuxiaUI_DrawSpecularRule`, `WuxiaUI_DrawKeycap`, `WuxiaUI_DrawIcon`.
 
 ### 2b. Lobby screen (`ui/ui_lobby.c` — Phase A2)
 

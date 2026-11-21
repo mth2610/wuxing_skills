@@ -171,9 +171,9 @@ int OWSandbox_GetActiveCustomSpawnCount(void) {
 
 const char *OWSandbox_GetPkModeLabel(AgentPkMode mode) {
     switch (mode) {
-        case PK_MODE_SPAR:      return "TY THI (1v1)";
-        case PK_MODE_SLAUGHTER: return "DO SAT (PK)";
-        default:                return "HOA BINH";
+        case PK_MODE_SPAR:      return "Tỷ Thí (1v1)";
+        case PK_MODE_SLAUGHTER: return "Đồ Sát (PK)";
+        default:                return "Hòa Bình";
     }
 }
 
@@ -327,7 +327,7 @@ bool OWSandbox_TriggerPreset(PlayerEntity *player, int presetIndex) {
 const char *OWSandbox_GetNearbyPrompt(Vector3 playerPos) {
     if (!s_hasRealm) return NULL;
     if (s_realm.altarPos.x != 0.0f && DistXZ(playerPos, s_realm.altarPos) <= 3.6f) {
-        return "[F] MO TE DAN VAN YEU (NHA QUAI / GOI BOSS)";
+        return "[F] Mở Tế Đàn Vạn Yêu (Nhả Quái / Gọi Boss)";
     }
     if (s_realm.duelBannerPos.x != 0.0f && DistXZ(playerPos, s_realm.duelBannerPos) <= 3.4f) {
         return "[F] CAM CO TY THI / THACH DAU CAO THU";
@@ -613,43 +613,22 @@ void OWSandbox_DrawHUD(const PlayerEntity *player, Camera3D cam) {
         Vector3 ap = { s_realm.altarPos.x, MapManager_GetGroundHeightAt(s_realm.altarPos.x, s_realm.altarPos.z) + 2.7f, s_realm.altarPos.z };
         Vector2 sp = GetWorldToScreen(ap, cam);
         if (sp.x > 0 && sp.x < sw && sp.y > 0 && sp.y < GetScreenHeight()) {
-            const char *lbl = "TE DAN VAN YEU [B]";
-            int tw = MeasureText(lbl, 12);
-            DrawRectangle((int)sp.x - tw / 2 - 6, (int)sp.y - 10, tw + 12, 18, (Color){ 22, 16, 12, 210 });
-            DrawText(lbl, (int)sp.x - tw / 2, (int)sp.y - 7, 12, ORANGE);
+            const char *lbl = "Tế Đàn Vạn Yêu [B]";
+            float tw = WuxiaUI_MeasureText(lbl, 12.5f);
+            Rectangle r = { sp.x - tw * 0.5f - 8.0f, sp.y - 10.0f, tw + 16.0f, 20.0f };
+            DrawRectangleRec(r, (Color){ 20, 16, 12, 210 });
+            WuxiaUI_DrawTextCentered(lbl, r, 12.5f, ORANGE);
         }
     }
     if (s_realm.duelBannerPos.x != 0.0f) {
         Vector3 dp = { s_realm.duelBannerPos.x, MapManager_GetGroundHeightAt(s_realm.duelBannerPos.x, s_realm.duelBannerPos.z) + 3.2f, s_realm.duelBannerPos.z };
         Vector2 sp = GetWorldToScreen(dp, cam);
         if (sp.x > 0 && sp.x < sw && sp.y > 0 && sp.y < GetScreenHeight()) {
-            const char *lbl = "CO TY THI [F]";
-            int tw = MeasureText(lbl, 12);
-            DrawRectangle((int)sp.x - tw / 2 - 6, (int)sp.y - 10, tw + 12, 18, (Color){ 24, 14, 14, 210 });
-            DrawText(lbl, (int)sp.x - tw / 2, (int)sp.y - 7, 12, GOLD);
-        }
-    }
-
-    // Quick-access button on HUD (right side below Dã Tẩu quest card)
-    float btnW = 148.0f, btnH = 30.0f;
-    float bx = (float)sw - btnW - 16.0f;
-    float by = touch ? 162.0f : 130.0f;
-    Rectangle qb = { bx, by, btnW, btnH };
-    if (WuxiaUI_DrawButton(qb, s_panelOpen ? "DONG KY NGO [B]" : "KY NGO / BOSS [B]",
-                           WUXIA_GOLD, s_panelOpen, 12.0f)) {
-        s_panelOpen = !s_panelOpen;
-    }
-
-    if (pa) {
-        Rectangle pkb = { bx - 128.0f, by, 120.0f, btnH };
-        Color pkCol = (pa->pkMode == PK_MODE_SLAUGHTER) ? WUXIA_CRIMSON
-                    : (pa->pkMode == PK_MODE_SPAR)      ? WUXIA_GOLD
-                                                        : WUXIA_JADE;
-        const char *pkLbl = (pa->pkMode == PK_MODE_SLAUGHTER)
-            ? TextFormat("DO SAT (%d)", pa->infamyLevel)
-            : OWSandbox_GetPkModeLabel(pa->pkMode);
-        if (WuxiaUI_DrawButton(pkb, pkLbl, pkCol, pa->pkMode != PK_MODE_PEACE, 11.5f)) {
-            OWSandbox_CyclePkMode((PlayerEntity *)player);
+            const char *lbl = "Cờ Tỷ Thí [F]";
+            float tw = WuxiaUI_MeasureText(lbl, 12.5f);
+            Rectangle r = { sp.x - tw * 0.5f - 8.0f, sp.y - 10.0f, tw + 16.0f, 20.0f };
+            DrawRectangleRec(r, (Color){ 22, 14, 14, 210 });
+            WuxiaUI_DrawTextCentered(lbl, r, 12.5f, WUXIA_GOLD_BRIGHT);
         }
     }
 
@@ -664,21 +643,22 @@ void OWSandbox_DrawHUD(const PlayerEntity *player, Camera3D cam) {
             const char *tag = NULL;
             Color tagCol = WUXIA_GOLD;
             if (ha->pkMode == PK_MODE_SLAUGHTER) {
-                tag = "[DO SAT]";
-                tagCol = (Color){ 255, 85, 75, 255 };
+                tag = "[Đồ Sát]";
+                tagCol = WUXIA_CRIMSON;
             } else if (ha->pkMode == PK_MODE_SPAR) {
-                tag = "[TY THI]";
-                tagCol = GOLD;
+                tag = "[Tỷ Thí]";
+                tagCol = WUXIA_GOLD_BRIGHT;
             } else if (pa->pkMode == PK_MODE_SLAUGHTER && ha->inSafeZone) {
-                tag = "[VUNG AN TOAN]";
-                tagCol = (Color){ 110, 235, 175, 255 };
+                tag = "[Vùng An Toàn]";
+                tagCol = WUXIA_JADE;
             }
             if (tag) {
                 Vector2 sp = GetWorldToScreen((Vector3){ ha->position.x, ha->position.y + 2.38f, ha->position.z }, cam);
                 if (sp.x > 0 && sp.x < sw && sp.y > 0 && sp.y < GetScreenHeight()) {
-                    int tw = MeasureText(tag, 12);
-                    DrawRectangle((int)sp.x - tw / 2 - 5, (int)sp.y - 9, tw + 10, 17, (Color){ 18, 14, 14, 200 });
-                    DrawText(tag, (int)sp.x - tw / 2, (int)sp.y - 6, 12, tagCol);
+                    float tw = WuxiaUI_MeasureText(tag, 12.0f);
+                    Rectangle r = { sp.x - tw * 0.5f - 6.0f, sp.y - 9.0f, tw + 12.0f, 18.0f };
+                    DrawRectangleRec(r, (Color){ 16, 14, 14, 200 });
+                    WuxiaUI_DrawTextCentered(tag, r, 12.0f, tagCol);
                 }
             }
         }
@@ -702,7 +682,7 @@ void OWSandbox_DrawHUD(const PlayerEntity *player, Camera3D cam) {
             s_heroPopupRect = (Rectangle){ px, py, popW, popH };
 
             WuxiaUI_DrawPanel(s_heroPopupRect, WUXIA_GOLD, true);
-            WuxiaUI_DrawText(TextFormat("DONG DAO #%d  (HP %d/%d) [%s]",
+            WuxiaUI_DrawText(TextFormat("Đồng Đạo #%d  (HP %d/%d) [%s]",
                                         s_selectedHeroId, (int)tgt->health, (int)tgt->maxHealth,
                                         OWSandbox_GetPkModeLabel(tgt->pkMode)),
                              px + 12.0f, py + 10.0f, 12.0f, WUXIA_TEXT_PRIMARY);
@@ -710,26 +690,26 @@ void OWSandbox_DrawHUD(const PlayerEntity *player, Camera3D cam) {
             Rectangle sparBtn  = { px + 10.0f,  py + 40.0f, 102.0f, 44.0f };
             Rectangle pkBtn    = { px + 118.0f, py + 40.0f, 102.0f, 44.0f };
             Rectangle closeBtn = { px + 226.0f, py + 40.0f, 58.0f,  44.0f };
-            if (WuxiaUI_DrawButton(sparBtn, "TY THI", WUXIA_GOLD, false, 12.5f)) {
+            if (WuxiaUI_DrawButton(sparBtn, "TỶ THÍ", WUXIA_GOLD, false, 12.5f)) {
                 UI_SetManualTarget(s_selectedHeroId);
                 if (Net_GetMode() != NET_MODE_OFF && !AI_IsHeroBot(s_selectedHeroId)) {
                     Net_SendSocialState(player->agentId, 10 /* OW_EMOTE_SPAR_ASK */, false);
-                    OW_SetBanner("DA GUI LOI MOI TY THI! CHO DONG DAO DONG Y...", 2.8f);
+                    OW_SetBanner("ĐÃ GỬI LỜI MỜI TỶ THÍ! CHỜ ĐỒNG ĐẠO ĐỒNG Ý...", 2.8f);
                 } else {
                     OWSandbox_StartSparWith((PlayerEntity *)player, s_selectedHeroId);
                 }
                 s_heroPopupOpen = false;
             }
-            if (WuxiaUI_DrawButton(pkBtn, "DO SAT", WUXIA_CRIMSON, false, 12.5f)) {
+            if (WuxiaUI_DrawButton(pkBtn, "ĐỒ SÁT", WUXIA_CRIMSON, false, 12.5f)) {
                 UI_SetManualTarget(s_selectedHeroId);
                 if (OW_IsInSafeZone(pa->position) || OW_IsInSafeZone(tgt->position)) {
-                    OW_SetBanner("CA HAI PHAI RA NGOAI VONG XANH (VUNG AN TOAN) DE DO SAT!", 3.2f);
+                    OW_SetBanner("CẢ HAI PHẢI RA NGOÀI VÙNG AN TOÀN ĐỂ ĐỒ SÁT!", 3.2f);
                 } else {
                     OWSandbox_SetPkMode((PlayerEntity *)player, PK_MODE_SLAUGHTER);
                 }
                 s_heroPopupOpen = false;
             }
-            if (WuxiaUI_DrawButton(closeBtn, "DONG", WUXIA_AZURE, false, 11.5f)) {
+            if (WuxiaUI_DrawButton(closeBtn, "ĐÓNG", WUXIA_AZURE, false, 11.5f)) {
                 s_heroPopupOpen = false;
                 s_selectedHeroId = -1;
             }
@@ -739,22 +719,21 @@ void OWSandbox_DrawHUD(const PlayerEntity *player, Camera3D cam) {
     if (!s_panelOpen) return;
 
     // --- Sandbox Quick Panel ([B]) ---
-    float pw = 500.0f, ph = 336.0f;
+    float pw = 510.0f, ph = 342.0f;
     Rectangle pb = { (float)sw * 0.5f - pw * 0.5f, 114.0f, pw, ph };
     WuxiaUI_DrawPanel(pb, WUXIA_GOLD, true);
-    WuxiaUI_DrawText("KY NGO GIANG HO — TU DO CHIEN DAU & THOI TIET",
-                     pb.x + 18.0f, pb.y + 12.0f, 15.0f, WUXIA_GOLD);
+    WuxiaUI_DrawTextTitle("KỲ NGỘ GIANG HỒ — TỰ DO CHIẾN ĐẤU & THỜI TIẾT",
+                          pb.x + 18.0f, pb.y + 11.0f, 16.0f, WUXIA_GOLD_BRIGHT);
 
     Rectangle closeR = { pb.x + pb.width - 74.0f, pb.y + 8.0f, 60.0f, 26.0f };
-    if (WuxiaUI_DrawButton(closeR, "DONG", WUXIA_CRIMSON, false, 12.0f)) {
+    if (WuxiaUI_DrawButton(closeR, "ĐÓNG", WUXIA_CRIMSON, false, 12.0f)) {
         s_panelOpen = false;
     }
 
-    // Tabs: [0] Nhả Quái & Boss | [1] Thời Tiết & Tỉ Thí
-    Rectangle t0 = { pb.x + 18.0f, pb.y + 44.0f, 224.0f, 30.0f };
-    Rectangle t1 = { pb.x + 252.0f, pb.y + 44.0f, 230.0f, 30.0f };
-    if (WuxiaUI_DrawButton(t0, "NHA QUAI / BOSS / CAO THU", WUXIA_GOLD, s_panelTab == 0, 12.0f)) s_panelTab = 0;
-    if (WuxiaUI_DrawButton(t1, "THOI TIET & CHE DO PK", WUXIA_AZURE, s_panelTab == 1, 12.0f)) s_panelTab = 1;
+    Rectangle t0 = { pb.x + 18.0f, pb.y + 44.0f, 230.0f, 30.0f };
+    Rectangle t1 = { pb.x + 258.0f, pb.y + 44.0f, 234.0f, 30.0f };
+    if (WuxiaUI_DrawButton(t0, "NHẢ QUÁI / BOSS / CAO THỦ", WUXIA_GOLD, s_panelTab == 0, 12.0f)) s_panelTab = 0;
+    if (WuxiaUI_DrawButton(t1, "THỜI TIẾT & CHẾ ĐỘ PK", WUXIA_AZURE, s_panelTab == 1, 12.0f)) s_panelTab = 1;
 
     if (s_panelTab == 0) {
         int cnt = s_realm.spawnerPresetCount;
@@ -763,22 +742,22 @@ void OWSandbox_DrawHUD(const PlayerEntity *player, Camera3D cam) {
             int col = i % 2;
             int row = i / 2;
             Rectangle sr = {
-                pb.x + 18.0f + (float)col * 234.0f,
+                pb.x + 18.0f + (float)col * 240.0f,
                 pb.y + 86.0f + (float)row * 56.0f,
-                224.0f, 46.0f
+                230.0f, 46.0f
             };
             Color sc = (s_realm.spawnerPresets[i].actionKind == OW_SPAWN_WORLD_BOSS) ? WUXIA_CRIMSON
                      : (s_realm.spawnerPresets[i].actionKind == OW_SPAWN_AI_RIVAL_SPAR) ? WUXIA_GOLD
                      : (s_realm.spawnerPresets[i].actionKind == OW_SPAWN_AI_RIVAL_PK) ? ORANGE
                                                                                       : WUXIA_AZURE;
-            if (WuxiaUI_DrawButton(sr, s_realm.spawnerPresets[i].label, sc, false, 12.5f)) {
+            if (WuxiaUI_DrawButton(sr, s_realm.spawnerPresets[i].label, sc, false, 12.0f)) {
                 OWSandbox_TriggerPreset((PlayerEntity *)player, i);
                 s_panelOpen = false;
             }
         }
-        Rectangle clrBtn = { pb.x + 18.0f, pb.y + 272.0f, pb.width - 36.0f, 44.0f };
+        Rectangle clrBtn = { pb.x + 18.0f, pb.y + 276.0f, pb.width - 36.0f, 44.0f };
         int activeCustom = OWSandbox_GetActiveCustomSpawnCount();
-        if (WuxiaUI_DrawButton(clrBtn, TextFormat("TINH HOA SA MAC — THU HOI QUAI/BOSS (%d)", activeCustom),
+        if (WuxiaUI_DrawButton(clrBtn, TextFormat("THU HỒI QUÁI / BOSS TÙY CHỈNH (%d)", activeCustom),
                                WUXIA_JADE, false, 13.0f)) {
             OWSandbox_ClearCustomSpawns();
         }
@@ -790,9 +769,9 @@ void OWSandbox_DrawHUD(const PlayerEntity *player, Camera3D cam) {
             int col = i % 2;
             int row = i / 2;
             Rectangle wr = {
-                pb.x + 18.0f + (float)col * 234.0f,
+                pb.x + 18.0f + (float)col * 240.0f,
                 pb.y + 86.0f + (float)row * 56.0f,
-                224.0f, 46.0f
+                230.0f, 46.0f
             };
             bool activeW = (OWWeather_GetCurrentIndex() == i);
             if (WuxiaUI_DrawButton(wr, wp->name, wp->accentColor, activeW, 12.0f)) {
@@ -800,15 +779,15 @@ void OWSandbox_DrawHUD(const PlayerEntity *player, Camera3D cam) {
             }
         }
 
-        WuxiaUI_DrawText("CHUYEN TRANG THAI PK GIANG HO [V]:", pb.x + 18.0f, pb.y + 216.0f, 12.5f, WUXIA_TEXT_MUTED);
+        WuxiaUI_DrawText("CHUYỂN TRẠNG THÁI PK GIANG HỒ [V]:", pb.x + 18.0f, pb.y + 216.0f, 12.5f, WUXIA_TEXT_MUTED);
         AgentPkMode curPk = pa ? pa->pkMode : PK_MODE_PEACE;
         struct { AgentPkMode m; const char *lbl; Color col; } pkBtns[3] = {
-            { PK_MODE_PEACE,     "HOA BINH",     WUXIA_JADE },
-            { PK_MODE_SPAR,      "TY THI (1v1)", WUXIA_GOLD },
-            { PK_MODE_SLAUGHTER, "DO SAT (PK)",  WUXIA_CRIMSON }
+            { PK_MODE_PEACE,     "HÒA BÌNH",     WUXIA_JADE },
+            { PK_MODE_SPAR,      "TỶ THÍ (1v1)", WUXIA_GOLD },
+            { PK_MODE_SLAUGHTER, "ĐỒ SÁT (PK)",  WUXIA_CRIMSON }
         };
         for (int k = 0; k < 3; k++) {
-            Rectangle pr = { pb.x + 18.0f + (float)k * 156.0f, pb.y + 242.0f, 148.0f, 46.0f };
+            Rectangle pr = { pb.x + 18.0f + (float)k * 160.0f, pb.y + 244.0f, 152.0f, 46.0f };
             if (WuxiaUI_DrawButton(pr, pkBtns[k].lbl, pkBtns[k].col, curPk == pkBtns[k].m, 12.5f)) {
                 OWSandbox_SetPkMode((PlayerEntity *)player, pkBtns[k].m);
             }

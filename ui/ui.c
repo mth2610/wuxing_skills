@@ -1,31 +1,37 @@
-// ui/ui.c — Module 9: minimal HUD + auto-targeting.
+// ui/ui.c — Module 9: Unified PC & Mobile HUD + Auto-Targeting ("Where Winds Meet" Style).
 #include "ui/ui.h"
 #include "ui/ui_theme.h"
-#include "net/net_transport.h" // lobby roster + loadout sync
+#include "net/net_transport.h"
 #include "entities/entities.h"
 #include "combat/combat.h"
 #include "boss/boss_system.h"
-#include "skills/skill_manager.h" // slot names + CanCast shading + element colors
+#include "skills/skill_manager.h"
+#include "skills/vo_hoc/vo_hoc_codex.h"
 #include "rlgl.h"
 #include <math.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 
-// Meter-scaled search ranges.
-static const float AIM_PROJECTILE_RANGE = 12.0f; // đối-đòn detection radius
+#ifndef PI
+#define PI 3.14159265358979323846f
+#endif
+
+static const float AIM_PROJECTILE_RANGE = 12.0f;
 static const float AIM_BOSS_RANGE       = 30.0f;
 
 static const Camera3D *s_camera = NULL;
-// Cached per-frame result so DrawOverlay reuses UI_Update's computation.
 static bool    s_hasTarget = false;
 static Vector3 s_aimPoint = { 0 };
 static int     s_aimAgentId = -1;
 static int     s_manualTargetId = -1;
 
-// Loadout panel state.
+// Loadout panel state
 static bool s_loadoutOpen = false;
 static int  s_selSlot = 0;
+
+// Smooth damage trail for bottom-center HP bar
+static float s_hpTrailRatio = 1.0f;
 
 void UI_Init(void) {
     WuxiaUI_Init();
@@ -35,6 +41,7 @@ void UI_Init(void) {
     s_manualTargetId = -1;
     s_loadoutOpen = false;
     s_selSlot = 0;
+    s_hpTrailRatio = 1.0f;
 }
 
 void UI_SetManualTarget(int agentId) {
@@ -56,9 +63,6 @@ static Color ElemColor(int elem) {
     }
 }
 
-// Element of a registered skill: generated skills carry their element as
-// the registry color (scripts/generate_registry.py assigns ELEMENT_COLOR_*
-// by directory); the two legacy names get a lookup. -1 = no element.
 static int SkillElement(int skillIdx) {
     Color c = GetRegisteredSkillColor(skillIdx);
     for (int e = 0; e <= 4; e++) {
@@ -66,21 +70,27 @@ static int SkillElement(int skillIdx) {
         if (c.r == ec.r && c.g == ec.g && c.b == ec.b) return e;
     }
     const char *n = GetRegisteredSkillName(skillIdx);
-    if (strcmp(n, "INFERNO_SURGE") == 0 || strcmp(n, "FIRE") == 0) return 2; // legacy ORANGE
+    if (strcmp(n, "INFERNO_SURGE") == 0 || strcmp(n, "FIRE") == 0) return 2;
     if (strcmp(n, "TIDAL_STREAM") == 0 || strcmp(n, "TUBE") == 0 || strcmp(n, "WATER") == 0 ||
-        strcmp(n, "SHIELD") == 0) return 0;                              // legacy BLUE/SKYBLUE
+        strcmp(n, "SHIELD") == 0) return 0;
     if (strcmp(n, "WOOD") == 0) return 1;
     if (strcmp(n, "METAL") == 0) return 4;
     return -1;
 }
 
-// Player-equippable: has an element and isn't an internal/Thái Cực skill
-// (PHONG/LÔI are granted BY the state, never equipped into it).
 static bool SkillEquippable(int skillIdx) {
     const char *n = GetRegisteredSkillName(skillIdx);
     if (strncmp(n, "TAIJI_", 6) == 0) return false;
     if (strcmp(n, "CORE_TEST") == 0) return false;
     return SkillElement(skillIdx) >= 0;
+}
+
+static const char *SkillDisplayNameVN(int skillIdx) {
+    if (skillIdx < 0) return "-";
+    const char *raw = GetRegisteredSkillName(skillIdx);
+    const VoHocSkillDef *def = VoHoc_FindByName(raw);
+    if (def && def->displayName && def->displayName[0]) return def->displayName;
+    return raw;
 }
 
 void UI_ToggleLoadout(void) {
@@ -100,7 +110,7 @@ Vector3 UI_GetAutoAimPoint(int agentId, bool *hasTarget) {
     const Agent *self = Entity_GetAgent(agentId);
     if (self == NULL) return (Vector3){ 0 };
 
-    // Priority 0: Player's manual tap-locked target (if alive & within 32m).
+    // Priority 0: Manual tap-locked target
     if (s_manualTargetId >= 0 && s_manualTargetId != agentId) {
         const Agent *mt = Entity_GetAgent(s_manualTargetId);
         if (mt && Entity_CanDamageTarget(agentId, s_manualTargetId)) {
@@ -115,8 +125,7 @@ Vector3 UI_GetAutoAimPoint(int agentId, bool *hasTarget) {
         }
     }
 
-    // Priority 1: nearest ENEMY projectile in flight — aiming at it lines up
-    // the đối-đòn cast that triggers Đấu Pháp in combat/.
+    // Priority 1: Nearest enemy projectile in flight (đối-đòn)
     CombatProjectileInfo projs[MAX_COMBAT_PROJECTILES];
     int n = Combat_QueryProjectiles(projs, MAX_COMBAT_PROJECTILES);
     int bestProj = -1;
@@ -133,7 +142,7 @@ Vector3 UI_GetAutoAimPoint(int agentId, bool *hasTarget) {
         return projs[bestProj].pos;
     }
 
-    // Priority 2: the opposing boss's core.
+    // Priority 2: Opposing boss
     if (Boss_IsAlive()) {
         const Agent *boss = Entity_GetAgent(Boss_GetAgentId());
         if (boss && boss->team != self->team) {
@@ -146,7 +155,7 @@ Vector3 UI_GetAutoAimPoint(int agentId, bool *hasTarget) {
         }
     }
 
-    // Priority 3: nearest hostile enemy (monster, boss, or hostile/sparring hero) within 24m.
+    // Priority 3: Nearest hostile enemy within 24m
     int bestHostile = -1;
     float bestHostileSq = 24.0f * 24.0f;
     for (int i = 0; i < MAX_AGENTS; i++) {
@@ -172,30 +181,43 @@ Vector3 UI_GetAutoAimPoint(int agentId, bool *hasTarget) {
     return (Vector3){ 0 };
 }
 
-// --- Loadout panel layout (shared by Update's hit-testing and Draw) ---
+// --- Loadout panel layout ---
 static Rectangle LoadoutPanel(void) {
-    float w = 640, h = 460;
-    return (Rectangle){ GetScreenWidth() / 2.0f - w / 2, GetScreenHeight() / 2.0f - h / 2, w, h };
+    float sw = (float)GetScreenWidth();
+    float sh = (float)GetScreenHeight();
+    float w = fminf(700.0f, sw - 40.0f);
+    float h = fminf(540.0f, sh - 60.0f);
+    return (Rectangle){ sw * 0.5f - w * 0.5f, sh * 0.5f - h * 0.5f, w, h };
 }
 static Rectangle LoadoutSlotRect(Rectangle p, int slot) {
-    return (Rectangle){ p.x + 18, p.y + 64 + slot * 74, 220, 62 };
+    return (Rectangle){ p.x + 18, p.y + 68 + slot * 64, 240, 56 };
 }
 static Rectangle LoadoutSkillRect(Rectangle p, int visIdx) {
     int col = visIdx % 2, row = visIdx / 2;
-    return (Rectangle){ p.x + 262 + col * 186, p.y + 64 + row * 54, 176, 44 };
+    return (Rectangle){ p.x + 276 + col * 204, p.y + 68 + row * 54, 194, 46 };
 }
 static Rectangle LoadoutCloseRect(Rectangle p) {
-    return (Rectangle){ p.x + p.width - 96, p.y + 12, 82, 34 };
+    return (Rectangle){ p.x + p.width - 96, p.y + 14, 82, 32 };
 }
 
 void UI_Update(float dt) {
-    (void)dt;
     s_hasTarget = false;
     if (s_aimAgentId >= 0) {
         s_aimPoint = UI_GetAutoAimPoint(s_aimAgentId, &s_hasTarget);
+        const Agent *self = Entity_GetAgent(s_aimAgentId);
+        if (self && self->maxHealth > 0.0f) {
+            float r = self->health / self->maxHealth;
+            if (r < 0.0f) r = 0.0f;
+            if (r > 1.0f) r = 1.0f;
+            if (s_hpTrailRatio > r) {
+                s_hpTrailRatio -= dt * 0.32f;
+                if (s_hpTrailRatio < r) s_hpTrailRatio = r;
+            } else {
+                s_hpTrailRatio = r;
+            }
+        }
     }
 
-    // Loadout interaction: click a slot to select, click a skill to equip.
     if (s_loadoutOpen && s_aimAgentId >= 0 && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
         Vector2 m = GetMousePosition();
         Rectangle p = LoadoutPanel();
@@ -214,8 +236,6 @@ void UI_Update(float dt) {
             if (!SkillEquippable(i)) continue;
             if (CheckCollisionPointRec(m, LoadoutSkillRect(p, vis))) {
                 Entity_SetEquippedSkill(s_aimAgentId, s_selSlot, i, SkillElement(i));
-                // Connected client: the pool is a mirror — the swap must
-                // happen on the HOST's copy of our hero too (Đợt A5).
                 Net_ClientSendLoadout(s_selSlot, i, SkillElement(i));
                 return;
             }
@@ -224,129 +244,309 @@ void UI_Update(float dt) {
     }
 }
 
+void UI_DrawCompassMinimap(Vector3 playerPos, float camYaw,
+                           Vector3 questTarget, bool hasQuestTarget, bool inSafeZone) {
+    const WuxiaUIContext *ctx = WuxiaUI_GetContext();
+    float s = ctx->scale;
+    float r = 42.0f * s;
+    Vector2 c = { ctx->safeRect.x + r + 4.0f, ctx->safeRect.y + r + 2.0f };
+
+    // Translucent circular ink-wash radar
+    DrawCircleV(c, r, (Color){ 14, 18, 26, 175 });
+    DrawRing(c, r - 1.5f, r, 0.0f, 360.0f, 36,
+             inSafeZone ? ColorAlpha(WUXIA_JADE, 0.72f) : ColorAlpha(WUXIA_GOLD, 0.65f));
+    DrawRing(c, r * 0.52f - 0.5f, r * 0.52f + 0.5f, 0.0f, 360.0f, 24, ColorAlpha(WHITE, 0.10f));
+
+    // North cardinal tick rotated by camera yaw
+    float nAng = -camYaw - PI * 0.5f;
+    Vector2 nPt = { c.x + cosf(nAng) * (r - 8.0f * s), c.y + sinf(nAng) * (r - 8.0f * s) };
+    WuxiaUI_DrawText("B", nPt.x - 4.0f, nPt.y - 6.0f, 10.0f, ColorAlpha(WUXIA_GOLD_BRIGHT, 0.82f));
+
+    // Quest / Objective direction dot
+    if (hasQuestTarget) {
+        float dx = questTarget.x - playerPos.x;
+        float dz = questTarget.z - playerPos.z;
+        float dist = sqrtf(dx * dx + dz * dz);
+        float worldAng = atan2f(dx, dz) - camYaw;
+        float normDist = fminf(1.0f, dist / 60.0f) * (r - 9.0f * s);
+        Vector2 qPt = { c.x + sinf(worldAng) * normDist, c.y - cosf(worldAng) * normDist };
+        WuxiaUI_DrawDiamond(qPt, 4.5f * s, WUXIA_GOLD_BRIGHT, WUXIA_GOLD);
+    }
+
+    // Center player chevron
+    WuxiaUI_DrawDiamond(c, 3.8f * s, inSafeZone ? WUXIA_JADE : WUXIA_TEXT_PRIMARY, WUXIA_GOLD_BRIGHT);
+}
+
+void UI_DrawPlayerVitals(int agentId, int healPotions, int manaPotions,
+                         bool *outUseHeal, bool *outUseMana) {
+    if (outUseHeal) *outUseHeal = false;
+    if (outUseMana) *outUseMana = false;
+    const Agent *agent = Entity_GetAgent(agentId);
+    if (!agent) return;
+
+    const WuxiaUIContext *ctx = WuxiaUI_GetContext();
+    float s = ctx->scale;
+    float sw = ctx->screenW;
+    float sh = ctx->screenH;
+
+    float hp = agent->health, maxHp = (agent->maxHealth > 0.0f) ? agent->maxHealth : 1.0f;
+    float mana = agent->mana, maxMana = (agent->maxMana > 0.0f) ? agent->maxMana : 1.0f;
+    float stam = agent->stamina, maxStam = (agent->maxStamina > 0.0f) ? agent->maxStamina : 1.0f;
+
+    float hpRatio   = fmaxf(0.0f, fminf(1.0f, hp / maxHp));
+    float manaRatio = fmaxf(0.0f, fminf(1.0f, mana / maxMana));
+    float stamRatio = fmaxf(0.0f, fminf(1.0f, stam / maxStam));
+
+    // Bottom-center low-profile Where Winds Meet vitals bar
+    float barW = ctx->isTouchMode ? (250.0f * s) : (310.0f * s);
+    float totalH = 38.0f * s;
+    float startX = sw * 0.5f - barW * 0.5f;
+    float startY = sh - totalH - 16.0f * s;
+
+    // Element Crest on left of the bars
+    Color elemCol = ElemColor(agent->currentElement);
+    Vector2 crestC = { startX - 22.0f * s, startY + 14.0f * s };
+    WuxiaUI_DrawDiamond(crestC, 12.0f * s, ColorAlpha(elemCol, 0.35f),
+                        agent->taijiActive ? WUXIA_GOLD_BRIGHT : elemCol);
+    WuxiaUI_DrawDiamond(crestC, 6.0f * s, elemCol, WHITE);
+
+    // Numeric HP & Level/Taiji tag above the bar
+    WuxiaUI_DrawText(TextFormat("Sinh Lực %d/%d", (int)hp, (int)maxHp),
+                     startX, startY - 15.0f * s, 11.5f * s, WUXIA_TEXT_PRIMARY);
+    if (agent->taijiActive) {
+        WuxiaUI_DrawTextRight("THÁI CỰC", startX + barW, startY - 15.0f * s, 11.0f * s, WUXIA_GOLD_BRIGHT);
+    }
+
+    // Main HP bar (with white damage trail)
+    Rectangle hpRec = { startX, startY, barW, 10.0f * s };
+    WuxiaUI_DrawSleekBar(hpRec, hpRatio, s_hpTrailRatio,
+                         (Color){ 198, 52, 52, 255 }, (Color){ 238, 102, 82, 255 }, true);
+
+    // Sub-bar: Chân Khí (MP)
+    Rectangle mpRec = { startX, startY + 13.0f * s, barW * 0.86f, 5.0f * s };
+    Color mpA = agent->taijiActive ? WUXIA_GOLD : (Color){ 58, 138, 232, 255 };
+    Color mpB = agent->taijiActive ? WUXIA_GOLD_BRIGHT : (Color){ 108, 198, 252, 255 };
+    WuxiaUI_DrawSleekBar(mpRec, manaRatio, manaRatio, mpA, mpB, true);
+
+    // Sub-bar: Thể Lực (Stamina)
+    Rectangle stRec = { startX, startY + 20.5f * s, barW * 0.72f, 4.0f * s };
+    Color stA = agent->staminaExhausted ? (Color){ 185, 95, 45, 255 } : (Color){ 72, 188, 128, 255 };
+    Color stB = agent->staminaExhausted ? (Color){ 225, 135, 65, 255 } : (Color){ 126, 238, 178, 255 };
+    WuxiaUI_DrawSleekBar(stRec, stamRatio, stamRatio, stA, stB, true);
+
+    // Quick Potion slots right of the vitals bar (if any)
+    if (healPotions >= 0 && manaPotions >= 0) {
+        float px = startX + barW + 14.0f * s;
+        float py = startY + 10.0f * s;
+        float pr = 15.0f * s;
+        if (WuxiaUI_DrawSkillNode((Vector2){ px + pr, py }, pr, WUXIA_ICON_POTION,
+                                  TextFormat("%d", healPotions), "R",
+                                  WUXIA_CRIMSON, healPotions > 0, false, 0.0f, 0.0f, false)) {
+            if (outUseHeal) *outUseHeal = true;
+        }
+        if (WuxiaUI_DrawSkillNode((Vector2){ px + pr * 3.3f, py }, pr, WUXIA_ICON_POTION,
+                                  TextFormat("%d", manaPotions), "F1",
+                                  WUXIA_AZURE, manaPotions > 0, false, 0.0f, 0.0f, false)) {
+            if (outUseMana) *outUseMana = true;
+        }
+    }
+}
+
+// --- Unified Bottom-Right Skill Cluster Layout (shared PC & Mobile) ---
+typedef struct {
+    float   scale;
+    Vector2 joyCenter;
+    float   joyBaseR;
+    float   joyKnobR;
+    Vector2 attackCenter;
+    float   attackR;
+    Vector2 khinhCenter;
+    float   khinhR;
+    Vector2 dodgeCenter;
+    float   dodgeR;
+    Vector2 meditateCenter;
+    float   meditateR;
+    Vector2 skillCenter[7];
+    float   skillR;
+    float   buffR;
+} TouchCombatLayout;
+
+static TouchCombatLayout ComputeCombatClusterLayout(bool touchMode) {
+    TouchCombatLayout L;
+    float sw = (float)GetScreenWidth();
+    float sh = (float)GetScreenHeight();
+    float s = sh / 720.0f;
+    if (s < 0.78f) s = 0.78f;
+    if (s > 1.45f) s = 1.45f;
+    if (!touchMode) s *= 0.84f; // compact on PC, spacious on touch
+    L.scale = s;
+
+    L.joyCenter = (Vector2){ 126.0f * s, sh - 126.0f * s };
+    L.joyBaseR  = 60.0f * s;
+    L.joyKnobR  = 25.0f * s;
+
+    L.attackCenter = (Vector2){ sw - 96.0f * s, sh - 92.0f * s };
+    L.attackR      = 42.0f * s;
+
+    L.khinhCenter  = (Vector2){ sw - 196.0f * s, sh - 44.0f * s };
+    L.khinhR       = 24.0f * s;
+
+    L.dodgeCenter  = (Vector2){ sw - 266.0f * s, sh - 54.0f * s };
+    L.dodgeR       = 24.0f * s;
+
+    L.meditateCenter = touchMode
+        ? (Vector2){ 62.0f * s, sh - 228.0f * s }
+        : (Vector2){ sw - 332.0f * s, sh - 62.0f * s };
+    L.meditateR      = 21.0f * s;
+
+    // 5 Strike skills [0..4] on clean arc around Basic Attack
+    float arcR = 132.0f * s;
+    L.skillR   = 25.0f * s;
+    for (int k = 0; k < 5; k++) {
+        float angleRad = (176.0f - (float)k * 25.0f) * (PI / 180.0f);
+        L.skillCenter[k].x = L.attackCenter.x + cosf(angleRad) * arcR;
+        L.skillCenter[k].y = L.attackCenter.y - sinf(angleRad) * arcR;
+    }
+
+    // 2 Buff/Support slots [5..6] in dedicated upper-right vertical column
+    L.buffR = 23.0f * s;
+    L.skillCenter[5] = (Vector2){ sw - 46.0f * s, sh - 292.0f * s };
+    L.skillCenter[6] = (Vector2){ sw - 46.0f * s, sh - 354.0f * s };
+    return L;
+}
+
+static void BuildSlotsFromAgent(int agentId, UITouchSkillSlot outSlots[7]) {
+    const Agent *self = Entity_GetAgent(agentId);
+    for (int k = 0; k < 7; k++) {
+        outSlots[k].skillIndex = -1;
+        outSlots[k].shortLabel[0] = '\0';
+        outSlots[k].color = (Color){ 120, 180, 230, 255 };
+        outSlots[k].ready = false;
+        outSlots[k].cooldownRemain = 0.0f;
+        outSlots[k].cooldownTotal = 0.0f;
+        if (self && k < AGENT_SKILL_SLOTS) {
+            int idx = self->equippedSkills[k];
+            if (idx >= 0) {
+                outSlots[k].skillIndex = idx;
+                UI_FormatShortSkillName(SkillDisplayNameVN(idx), outSlots[k].shortLabel, sizeof(outSlots[k].shortLabel));
+                outSlots[k].color = GetRegisteredSkillColor(idx);
+                outSlots[k].ready = SkillManager_CanCast(idx, agentId);
+                outSlots[k].cooldownRemain = SkillManager_GetCooldownRemaining(idx, agentId);
+                outSlots[k].cooldownTotal  = Skill_GetCooldown(idx);
+            }
+        }
+    }
+}
+
 void UI_DrawOverlay(int agentId) {
-    s_aimAgentId = agentId; // remembered for UI_Update's cached recompute
+    s_aimAgentId = agentId;
     const Agent *self = Entity_GetAgent(agentId);
     int sw = GetScreenWidth();
     int sh = GetScreenHeight();
 
-    // --- Skill slot chips (keys 1-5 Strike | 6-7 Buff) — hidden on touch screens ---
+    // --- PC Bottom-Right Martial Skill Cluster (same layout as Mobile, with keycaps) ---
     if (self != NULL && !UI_IsTouchControlsEnabled()) {
-        int chipW = sw / 10;
-        if (chipW < 104) chipW = 104;
-        if (chipW > 136) chipW = 136;
-        const int chipH = 42, gap = 8, groupGap = 20;
-        int totalW = chipW * AGENT_SKILL_SLOTS + gap * (AGENT_SKILL_SLOTS - 2) + groupGap;
-        int x0 = sw / 2 - totalW / 2;
-        int y = sh - chipH - 14;
-        for (int slot = 0; slot < AGENT_SKILL_SLOTS; slot++) {
-            bool isBuff = (slot >= AGENT_STRIKE_SLOTS);
-            int x = x0 + slot * (chipW + gap) + (isBuff ? (groupGap - gap) : 0);
-            if (slot == AGENT_STRIKE_SLOTS) {
-                int divX = x - groupGap / 2;
-                DrawLine(divX, y + 4, divX, y + chipH - 4, (Color){ 110, 210, 200, 140 });
-            }
-            int skillIdx = self->equippedSkills[slot];
-            bool ready = (skillIdx >= 0) && SkillManager_CanCast(skillIdx, agentId);
-            Color back = ready
-                ? (isBuff ? (Color){ 16, 30, 38, 225 } : (Color){ 20, 24, 34, 225 })
-                : (Color){ 14, 15, 20, 215 };
-            Rectangle chipRec = { (float)x, (float)y, (float)chipW, (float)chipH };
-            DrawRectangleRec(chipRec, back);
+        UITouchSkillSlot slots[7];
+        BuildSlotsFromAgent(agentId, slots);
+        TouchCombatLayout L = ComputeCombatClusterLayout(false);
 
-            Color c = (skillIdx >= 0) ? GetRegisteredSkillColor(skillIdx) : (Color){ 110, 115, 130, 255 };
-            if (!ready) { c.r = (unsigned char)(c.r / 2); c.g = (unsigned char)(c.g / 2); c.b = (unsigned char)(c.b / 2); }
+        WuxiaUI_DrawSkillNode(L.attackCenter, L.attackR, WUXIA_ICON_SWORD,
+                              "Đánh", "RMB", WUXIA_GOLD, true,
+                              IsMouseButtonDown(MOUSE_BUTTON_RIGHT), 0.0f, 0.0f, false);
 
-            // Subtle element bar at bottom of chip
-            if (skillIdx >= 0) {
-                DrawRectangle(x + 2, y + chipH - 4, chipW - 4, 3, c);
-            }
-            Color borderCol = ready
-                ? (isBuff ? (Color){ 95, 220, 205, 225 } : (Color){ 195, 170, 105, 215 })
-                : (Color){ 75, 80, 95, 170 };
-            DrawRectangleLinesEx(chipRec, 1.5f, borderCol);
+        WuxiaUI_DrawSkillNode(L.khinhCenter, L.khinhR, WUXIA_ICON_WIND_BOOT,
+                              "Nhảy", "Space", WUXIA_JADE, true,
+                              IsKeyDown(KEY_SPACE), 0.0f, 0.0f, false);
 
-            const char *tag = isBuff ? TextFormat("[%d-B%d]", slot + 1, slot - AGENT_STRIKE_SLOTS + 1)
-                                     : TextFormat("[%d]", slot + 1);
-            DrawText(tag, x + 6, y + 5, 10,
-                     ready ? (isBuff ? (Color){ 125, 235, 220, 240 } : (Color){ 210, 195, 145, 235 })
-                           : (Color){ 120, 120, 130, 200 });
-            if (skillIdx >= 0) {
-                const char *sname = GetRegisteredSkillName(skillIdx);
-                int fontSize = 11;
-                int maxTextW = chipW - 14;
-                if (MeasureText(sname, fontSize) > maxTextW) fontSize = 10;
-                if (MeasureText(sname, fontSize) > maxTextW) fontSize = 9;
-                char fitted[32];
-                snprintf(fitted, sizeof(fitted), "%s", sname);
-                int len = (int)strlen(fitted);
-                while (len > 3 && MeasureText(fitted, fontSize) > maxTextW) {
-                    fitted[--len] = '\0';
-                    if (len >= 2) { fitted[len - 1] = '.'; fitted[len - 2] = '.'; }
-                }
-                DrawText(fitted, x + 7, y + 19, fontSize, c);
-            } else {
-                DrawText("-", x + chipW / 2 - 3, y + 18, 12, (Color){ 90, 95, 110, 200 });
+        WuxiaUI_DrawSkillNode(L.dodgeCenter, L.dodgeR, WUXIA_ICON_WIND_BOOT,
+                              "Né", "Shift", WUXIA_GOLD, true,
+                              IsKeyDown(KEY_LEFT_SHIFT), 0.0f, 0.0f, false);
+
+        WuxiaUI_DrawSkillNode(L.meditateCenter, L.meditateR, WUXIA_ICON_LOTUS,
+                              "Thiền", "G", WUXIA_AZURE, true,
+                              self->isMeditating, 0.0f, 0.0f, false);
+
+        static const char *kHotkeys[7] = { "1", "2", "3", "4", "5", "6", "7" };
+        for (int k = 0; k < 7; k++) {
+            bool isBuff = (k >= 5);
+            float r = isBuff ? L.buffR : L.skillR;
+            bool hasSkill = (slots[k].skillIndex >= 0);
+            Color col = isBuff ? WUXIA_JADE : (hasSkill ? slots[k].color : WUXIA_TEXT_MUTED);
+            if (isBuff && hasSkill) {
+                DrawRing(L.skillCenter[k], r + 2.0f, r + 3.5f, 0.0f, 360.0f, 28,
+                         ColorAlpha(WUXIA_JADE, slots[k].ready ? 0.45f : 0.14f));
             }
+            WuxiaUI_DrawSkillNode(L.skillCenter[k], r, WUXIA_ICON_NONE,
+                                  hasSkill ? slots[k].shortLabel : "-", kHotkeys[k],
+                                  col, hasSkill && slots[k].ready,
+                                  IsKeyDown(KEY_ONE + k),
+                                  slots[k].cooldownRemain, slots[k].cooldownTotal, !isBuff);
         }
     }
 
-    // --- Loadout panel (TAB) ---
+    // --- Loadout panel (TAB in PvP) ---
     if (s_loadoutOpen && self != NULL) {
-        DrawRectangle(0, 0, sw, sh, (Color){ 0, 0, 0, 155 }); // dim the fight
+        DrawRectangle(0, 0, sw, sh, (Color){ 6, 8, 14, 175 });
         Rectangle p = LoadoutPanel();
         WuxiaUI_DrawPanel(p, WUXIA_GOLD, true);
-        WuxiaUI_DrawText("TRANG BI VO HOC", p.x + 20.0f, p.y + 15.0f, 22.0f, WUXIA_GOLD);
-        const char *elemNames[5] = { "THUY", "MOC", "HOA", "THO", "KIM" };
+        WuxiaUI_DrawDiamond((Vector2){ p.x + 22.0f, p.y + 26.0f }, 5.5f, WUXIA_GOLD, WUXIA_GOLD_BRIGHT);
+        WuxiaUI_DrawTextTitle("TRANG BỊ VÕ HỌC", p.x + 36.0f, p.y + 13.0f, 22.0f, WUXIA_GOLD_BRIGHT);
+
+        static const char *elemNames[5] = { "THỦY", "MỘC", "HỎA", "THỔ", "KIM" };
         int ce = self->currentElement;
         if (ce >= 0 && ce <= 4) {
-            DrawText(TextFormat("HE: %s", elemNames[ce]),
-                     (int)(p.x + p.width) - 210, (int)p.y + 20, 18, ElemColor(ce));
+            WuxiaUI_DrawTextRight(TextFormat("HỆ HIỆN TẠI: %s", elemNames[ce]),
+                                  p.x + p.width - 112.0f, p.y + 19.0f, 15.0f, ElemColor(ce));
         }
         Rectangle closeRec = LoadoutCloseRect(p);
-        DrawRectangleRec(closeRec, (Color){ 95, 32, 32, 240 });
-        DrawRectangleLinesEx(closeRec, 1.5f, (Color){ 235, 130, 120, 235 });
-        DrawText("DONG", (int)closeRec.x + 19, (int)closeRec.y + 9, 15, WHITE);
+        if (WuxiaUI_DrawButton(closeRec, "ĐÓNG", WUXIA_CRIMSON, false, 13.0f)) {
+            s_loadoutOpen = false;
+            return;
+        }
+        WuxiaUI_DrawSpecularRule(p.x + 16.0f, p.y + 54.0f, p.width - 32.0f, WUXIA_GOLD, true);
 
-        Vector2 m = GetMousePosition();
+        const WuxiaUIContext *ctx = WuxiaUI_GetContext();
+        Vector2 m = ctx->pointerPos;
 
-        // Left: the 4 equip slots.
         for (int slot = 0; slot < AGENT_SKILL_SLOTS; slot++) {
             Rectangle r = LoadoutSlotRect(p, slot);
             bool sel = (slot == s_selSlot);
             bool hov = CheckCollisionPointRec(m, r);
-            DrawRectangleRec(r, hov ? (Color){ 45, 45, 58, 255 } : (Color){ 30, 30, 40, 255 });
-            DrawRectangleLinesEx(r, sel ? 3.0f : 1.0f,
-                                 sel ? (Color){ 240, 220, 130, 255 } : (Color){ 120, 120, 135, 180 });
-            DrawText(TextFormat("%d", slot + 1), (int)r.x + 8, (int)r.y + 6, 12, (Color){ 150, 150, 160, 255 });
+            bool isBuff = (slot >= AGENT_STRIKE_SLOTS);
+            Color brd = sel ? WUXIA_GOLD_BRIGHT : (hov ? WUXIA_GOLD : (isBuff ? ColorAlpha(WUXIA_JADE, 0.55f) : WUXIA_BORDER_SUBTLE));
+            DrawRectangleRec(r, sel ? (Color){ 44, 40, 26, 245 } : (hov ? WUXIA_BG_CARD_HOV : WUXIA_BG_CARD));
+            DrawRectangleLinesEx(r, sel ? 2.0f : 1.0f, brd);
+
+            WuxiaUI_DrawText(isBuff ? TextFormat("Ô TRỢ [%d]", slot + 1) : TextFormat("Ô ĐẢ [%d]", slot + 1),
+                             r.x + 10.0f, r.y + 6.0f, 11.5f, isBuff ? WUXIA_JADE : WUXIA_TEXT_MUTED);
             int idx = self->equippedSkills[slot];
             if (idx >= 0) {
                 int e = self->equippedElements[slot];
-                DrawRectangle((int)r.x + 8, (int)r.y + r.height - 12, 42, 5, ElemColor(e));
-                DrawText(GetRegisteredSkillName(idx), (int)r.x + 26, (int)r.y + 22, 14,
-                         GetRegisteredSkillColor(idx));
+                DrawRectangle((int)r.x, (int)r.y, 4, (int)r.height, ElemColor(e));
+                WuxiaUI_DrawText(SkillDisplayNameVN(idx), r.x + 12.0f, r.y + 24.0f, 14.5f,
+                                 GetRegisteredSkillColor(idx));
             } else {
-                DrawText("-", (int)r.x + 26, (int)r.y + 22, 14, (Color){ 110, 110, 120, 255 });
+                WuxiaUI_DrawText("<Trống>", r.x + 12.0f, r.y + 24.0f, 13.0f, WUXIA_TEXT_MUTED);
             }
         }
 
-        // Right: every equippable skill in the registry.
         int vis = 0;
         for (int i = 0; i < GetRegisteredSkillCount(); i++) {
             if (!SkillEquippable(i)) continue;
             Rectangle r = LoadoutSkillRect(p, vis);
+            if (r.y + r.height > p.y + p.height - 14.0f) break;
             bool hov = CheckCollisionPointRec(m, r);
-            DrawRectangleRec(r, hov ? (Color){ 48, 48, 62, 255 } : (Color){ 26, 26, 34, 255 });
-            DrawRectangleLinesEx(r, 1, (Color){ 110, 110, 125, 170 });
-            DrawRectangle((int)r.x + 6, (int)r.y + r.height - 9, 30, 4, ElemColor(SkillElement(i)));
-            DrawText(GetRegisteredSkillName(i), (int)r.x + 8, (int)r.y + 8, 13,
-                     GetRegisteredSkillColor(i));
+            Color ec = ElemColor(SkillElement(i));
+            DrawRectangleRec(r, hov ? WUXIA_BG_CARD_HOV : WUXIA_BG_CARD);
+            DrawRectangleLinesEx(r, 1.0f, hov ? WUXIA_GOLD_BRIGHT : ColorAlpha(ec, 0.55f));
+            DrawRectangle((int)r.x, (int)r.y + 4, 3, (int)r.height - 8, ec);
+            WuxiaUI_DrawText(SkillDisplayNameVN(i), r.x + 10.0f, r.y + 13.0f, 13.5f,
+                             GetRegisteredSkillColor(i));
             vis++;
         }
     }
 
-    // --- Auto-aim reticle: pulsing double diamond over the current target
-    // (đối-đòn/boss lock — casts fly here). ---
+    // --- Auto-aim reticle ---
     if (s_hasTarget && s_camera != NULL) {
         Vector2 p = GetWorldToScreen((Vector3){ s_aimPoint.x, s_aimPoint.y + 0.4f, s_aimPoint.z }, *s_camera);
         if (p.x > -50 && p.x < sw + 50 && p.y > -50 && p.y < sh + 50) {
@@ -354,12 +554,12 @@ void UI_DrawOverlay(int agentId) {
             Color c = (Color){ 250, 235, 140, 255 };
             for (int layer = 0; layer < 2; layer++) {
                 float r = (layer == 0 ? 12.0f : 7.0f) * pulse;
-                DrawLineV((Vector2){ p.x, p.y - r }, (Vector2){ p.x + r, p.y }, c);
-                DrawLineV((Vector2){ p.x + r, p.y }, (Vector2){ p.x, p.y + r }, c);
-                DrawLineV((Vector2){ p.x, p.y + r }, (Vector2){ p.x - r, p.y }, c);
-                DrawLineV((Vector2){ p.x - r, p.y }, (Vector2){ p.x, p.y - r }, c);
+                DrawLineEx((Vector2){ p.x, p.y - r }, (Vector2){ p.x + r, p.y }, 1.4f, c);
+                DrawLineEx((Vector2){ p.x + r, p.y }, (Vector2){ p.x, p.y + r }, 1.4f, c);
+                DrawLineEx((Vector2){ p.x, p.y + r }, (Vector2){ p.x - r, p.y }, 1.4f, c);
+                DrawLineEx((Vector2){ p.x - r, p.y }, (Vector2){ p.x, p.y - r }, 1.4f, c);
             }
-            DrawCircleV(p, 2.0f, c);
+            DrawCircleV(p, 2.2f, c);
         }
     }
 }
@@ -390,6 +590,7 @@ bool UI_IsTouchControlsEnabled(void) {
     return s_touchControlsEnabled;
 }
 
+// Preserves UTF-8 multi-byte Vietnamese characters cleanly when abbreviating to 2 words / <= 14 bytes
 void UI_FormatShortSkillName(const char *fullName, char *outBuf, int bufSize) {
     if (!outBuf || bufSize <= 0) return;
     outBuf[0] = '\0';
@@ -397,77 +598,35 @@ void UI_FormatShortSkillName(const char *fullName, char *outBuf, int bufSize) {
         snprintf(outBuf, (size_t)bufSize, "-");
         return;
     }
-    int maxChars = bufSize - 1;
-    if (maxChars > 6) maxChars = 6;
-    int len = 0;
-    for (int i = 0; fullName[i] != '\0' && len < maxChars; i++) {
-        if (fullName[i] == '_') {
-            if (len >= 3) break; // keep first word if >= 3 chars (e.g. GLACIAL, STONE, LEAF)
+
+    const VoHocSkillDef *def = VoHoc_FindByName(fullName);
+    const char *src = (def && def->displayName && def->displayName[0]) ? def->displayName : fullName;
+
+    // Take up to first 2 words (or 1st segment if underscore-delimited)
+    int words = 0;
+    int outLen = 0;
+    int i = 0;
+    while (src[i] != '\0' && outLen < bufSize - 1) {
+        unsigned char c = (unsigned char)src[i];
+        int charBytes = 1;
+        if ((c & 0xE0) == 0xC0) charBytes = 2;
+        else if ((c & 0xF0) == 0xE0) charBytes = 3;
+        else if ((c & 0xF8) == 0xF0) charBytes = 4;
+
+        if (c == ' ' || c == '_') {
+            words++;
+            if (words >= 2 || (c == '_' && outLen >= 3)) break;
+            if (outLen + 1 >= bufSize - 1) break;
+            outBuf[outLen++] = ' ';
+            i++;
             continue;
         }
-        outBuf[len++] = fullName[i];
+        if (outLen + charBytes >= bufSize) break;
+        for (int b = 0; b < charBytes && src[i] != '\0'; b++) {
+            outBuf[outLen++] = src[i++];
+        }
     }
-    outBuf[len] = '\0';
-}
-
-typedef struct {
-    float   scale;
-    Vector2 joyCenter;
-    float   joyBaseR;
-    float   joyKnobR;
-    Vector2 attackCenter;
-    float   attackR;
-    Vector2 khinhCenter;
-    float   khinhR;
-    Vector2 dodgeCenter;
-    float   dodgeR;
-    Vector2 meditateCenter;
-    float   meditateR;
-    Vector2 skillCenter[7];
-    float   skillR;
-    float   buffR;
-} TouchCombatLayout;
-
-static TouchCombatLayout ComputeTouchCombatLayout(void) {
-    TouchCombatLayout L;
-    float sw = (float)GetScreenWidth();
-    float sh = (float)GetScreenHeight();
-    float s = sh / 700.0f;
-    if (s < 0.75f) s = 0.75f;
-    if (s > 1.45f) s = 1.45f;
-    L.scale = s;
-
-    L.joyCenter = (Vector2){ 130.0f * s, sh - 130.0f * s };
-    L.joyBaseR  = 62.0f * s;
-    L.joyKnobR  = 26.0f * s;
-
-    L.attackCenter = (Vector2){ sw - 105.0f * s, sh - 102.0f * s };
-    L.attackR      = 46.0f * s;
-
-    L.khinhCenter  = (Vector2){ sw - 208.0f * s, sh - 44.0f * s };
-    L.khinhR       = 25.0f * s;
-
-    L.dodgeCenter  = (Vector2){ sw - 282.0f * s, sh - 54.0f * s };
-    L.dodgeR       = 25.0f * s;
-
-    /* Move Meditate above the left joystick to keep the upper-right free for Buffs */
-    L.meditateCenter = (Vector2){ 62.0f * s, sh - 232.0f * s };
-    L.meditateR      = 22.0f * s;
-
-    /* 5 Strike skills [0..4] on a clean arc around Basic Attack (178°..78°, step 25°) */
-    float arcR = 136.0f * s;
-    L.skillR   = 25.0f * s;
-    for (int k = 0; k < 5; k++) {
-        float angleRad = (178.0f - (float)k * 25.0f) * (PI / 180.0f);
-        L.skillCenter[k].x = L.attackCenter.x + cosf(angleRad) * arcR;
-        L.skillCenter[k].y = L.attackCenter.y - sinf(angleRad) * arcR;
-    }
-
-    /* 2 Buff/Support slots [5..6] separated into a dedicated upper-right vertical column */
-    L.buffR = 24.0f * s;
-    L.skillCenter[5] = (Vector2){ sw - 46.0f * s, sh - 308.0f * s }; /* B1 (Key 6) */
-    L.skillCenter[6] = (Vector2){ sw - 46.0f * s, sh - 372.0f * s }; /* B2 (Key 7) */
-    return L;
+    outBuf[outLen] = '\0';
 }
 
 static float Dist2D(Vector2 a, Vector2 b) {
@@ -486,7 +645,7 @@ void UI_PollTouchCombat(const UITouchSkillSlot slots[7], UITouchCombatInput *out
         return;
     }
 
-    TouchCombatLayout L = ComputeTouchCombatLayout();
+    TouchCombatLayout L = ComputeCombatClusterLayout(true);
     Vector2 pts[10];
     int     ids[10];
     int count = GetTouchPointCount();
@@ -501,7 +660,6 @@ void UI_PollTouchCombat(const UITouchSkillSlot slots[7], UITouchCombatInput *out
         count = 1;
     }
 
-    // Keep joystick locked to its pointer ID even when right-hand fingers lift/press.
     int joyIdx = -1;
     if (s_touchJoyPointerId != -1) {
         for (int i = 0; i < count; i++) {
@@ -574,58 +732,24 @@ void UI_PollTouchCombat(const UITouchSkillSlot slots[7], UITouchCombatInput *out
         }
     }
 
-    outInput->attackHeld    = attackNow;
-    outInput->attackPressed = attackNow && !s_prevTouchAttack;
-    s_prevTouchAttack       = attackNow;
+    outInput->attackHeld       = attackNow;
+    outInput->attackPressed    = attackNow && !s_prevTouchAttack;
+    s_prevTouchAttack          = attackNow;
 
     outInput->khinhCongHeld    = khinhNow;
     outInput->khinhCongPressed = khinhNow && !s_prevTouchKhinh;
     s_prevTouchKhinh           = khinhNow;
 
-    outInput->dodgeHeld    = dodgeNow;
-    outInput->dodgePressed = dodgeNow && !s_prevTouchDodge;
-    s_prevTouchDodge       = dodgeNow;
+    outInput->dodgeHeld        = dodgeNow;
+    outInput->dodgePressed     = dodgeNow && !s_prevTouchDodge;
+    s_prevTouchDodge           = dodgeNow;
 
-    outInput->meditateHeld = meditateNow;
+    outInput->meditateHeld     = meditateNow;
 
     for (int k = 0; k < 7; k++) {
         outInput->skillHeld[k]    = skillNow[k];
         outInput->skillPressed[k] = skillNow[k] && !s_prevTouchSkill[k];
         s_prevTouchSkill[k]       = skillNow[k];
-    }
-}
-
-static void DrawWuxiaTouchCircleBtn(Vector2 center, float radius, Color accent, bool active,
-                                    bool ready, const char *topTag, const char *mainLabel,
-                                    float scale) {
-    Color inner = active
-        ? (Color){ (unsigned char)(accent.r / 3 + 35), (unsigned char)(accent.g / 3 + 35), (unsigned char)(accent.b / 3 + 35), 225 }
-        : (ready ? (Color){ 16, 20, 30, 205 } : (Color){ 10, 12, 16, 185 });
-    Color outer = (Color){ (unsigned char)(inner.r * 0.65f), (unsigned char)(inner.g * 0.65f), (unsigned char)(inner.b * 0.65f), inner.a };
-    Color ring = active ? WUXIA_GOLD_BRIGHT : (ready ? accent : (Color){ 78, 84, 96, 160 });
-
-    DrawCircleGradient(center, radius, inner, outer);
-    DrawRing(center, radius - 2.2f * scale, radius, 0.0f, 360.0f, 36, ring);
-    DrawRing(center, radius - 5.2f * scale, radius - 4.2f * scale, 0.0f, 360.0f, 36, ColorAlpha(WUXIA_GOLD, ready ? 0.35f : 0.14f));
-
-    if (topTag && topTag[0]) {
-        float tagSize = 11.0f * scale;
-        if (tagSize < 10.0f) tagSize = 10.0f;
-        float tw = WuxiaUI_MeasureText(topTag, tagSize);
-        WuxiaUI_DrawText(topTag, center.x - tw * 0.5f, center.y - radius * 0.68f,
-                         tagSize, ColorAlpha(ready ? WUXIA_GOLD_BRIGHT : GRAY, 0.92f));
-    }
-    if (mainLabel && mainLabel[0]) {
-        float fontSize = 13.5f * scale;
-        if (fontSize < 11.0f) fontSize = 11.0f;
-        float lw = WuxiaUI_MeasureText(mainLabel, fontSize);
-        while (lw > radius * 1.72f && fontSize > 9.0f) {
-            fontSize -= 0.5f;
-            lw = WuxiaUI_MeasureText(mainLabel, fontSize);
-        }
-        float ty = (topTag && topTag[0]) ? (center.y - fontSize * 0.25f) : (center.y - fontSize * 0.5f);
-        WuxiaUI_DrawText(mainLabel, center.x - lw * 0.5f, ty, fontSize,
-                         ready ? WUXIA_TEXT_PRIMARY : (Color){ 155, 160, 172, 220 });
     }
 }
 
@@ -641,15 +765,14 @@ void UI_DrawTouchCombat(const UITouchSkillSlot slots[7], const UITouchCombatInpu
     BeginMode2D(cam2d);
     rlSetTexture(0);
 
-    TouchCombatLayout L = ComputeTouchCombatLayout();
+    TouchCombatLayout L = ComputeCombatClusterLayout(true);
     float s = L.scale;
 
     // 1. Left Movement Joystick
     bool joyActive = input ? input->joyActive : (s_touchJoyPointerId != -1);
     DrawCircleV(L.joyCenter, L.joyBaseR, (Color){ 14, 18, 26, 125 });
     DrawRing(L.joyCenter, L.joyBaseR - 2.0f * s, L.joyBaseR, 0.0f, 360.0f, 36,
-             joyActive ? (Color){ 130, 225, 210, 210 } : (Color){ 185, 170, 120, 130 });
-    // Cardinal tick dots
+             joyActive ? WUXIA_JADE : ColorAlpha(WUXIA_GOLD, 0.55f));
     for (int d = 0; d < 4; d++) {
         float a = (float)d * (PI * 0.5f);
         Vector2 tick = { L.joyCenter.x + cosf(a) * (L.joyBaseR - 8.0f * s),
@@ -657,49 +780,46 @@ void UI_DrawTouchCombat(const UITouchSkillSlot slots[7], const UITouchCombatInpu
         DrawCircleV(tick, 2.2f * s, ColorAlpha(WHITE, 0.35f));
     }
     Vector2 knobPos = { L.joyCenter.x + s_touchJoyKnob.x, L.joyCenter.y + s_touchJoyKnob.y };
-    DrawCircleV(knobPos, L.joyKnobR, joyActive ? (Color){ 90, 205, 190, 215 } : (Color){ 175, 185, 200, 155 });
+    DrawCircleV(knobPos, L.joyKnobR, joyActive ? ColorAlpha(WUXIA_JADE, 0.85f) : (Color){ 175, 185, 200, 155 });
     DrawRing(knobPos, L.joyKnobR - 2.0f * s, L.joyKnobR, 0.0f, 360.0f, 24, WHITE);
 
-    // 2. Large Basic Attack Button ("DANH")
+    // 2. Basic Attack
     bool atkActive = input ? input->attackHeld : s_prevTouchAttack;
-    Color atkAccent = (Color){ 235, 175, 75, 240 };
-    DrawWuxiaTouchCircleBtn(L.attackCenter, L.attackR, atkAccent, atkActive, true, NULL, "DANH", s * 1.18f);
+    WuxiaUI_DrawSkillNode(L.attackCenter, L.attackR, WUXIA_ICON_SWORD, "Đánh", NULL,
+                          WUXIA_GOLD, true, atkActive, 0.0f, 0.0f, false);
 
-    // 3. Khinh Công ("KHINH"), Dodge ("NE"), and Meditate ("THIEN")
+    // 3. Khinh Công, Né, Thiền
     bool khinhActive = input ? input->khinhCongHeld : s_prevTouchKhinh;
-    Color khinhAccent = (Color){ 95, 220, 215, 235 };
-    DrawWuxiaTouchCircleBtn(L.khinhCenter, L.khinhR, khinhAccent, khinhActive, true, "^", "KHINH", s * 0.92f);
+    WuxiaUI_DrawSkillNode(L.khinhCenter, L.khinhR, WUXIA_ICON_WIND_BOOT, "Khinh", NULL,
+                          WUXIA_JADE, true, khinhActive, 0.0f, 0.0f, false);
 
     bool dodgeActive = input ? input->dodgeHeld : s_prevTouchDodge;
-    Color dodgeAccent = (Color){ 240, 205, 110, 235 };
-    DrawWuxiaTouchCircleBtn(L.dodgeCenter, L.dodgeR, dodgeAccent, dodgeActive, true, NULL, "NE", s * 0.96f);
+    WuxiaUI_DrawSkillNode(L.dodgeCenter, L.dodgeR, WUXIA_ICON_WIND_BOOT, "Né", NULL,
+                          WUXIA_GOLD, true, dodgeActive, 0.0f, 0.0f, false);
 
     bool medActive = input ? input->meditateHeld : false;
-    Color medAccent = (Color){ 130, 195, 255, 235 };
-    DrawWuxiaTouchCircleBtn(L.meditateCenter, L.meditateR, medAccent, medActive, true, NULL, "THIEN", s * 0.85f);
+    WuxiaUI_DrawSkillNode(L.meditateCenter, L.meditateR, WUXIA_ICON_LOTUS, "Thiền", NULL,
+                          WUXIA_AZURE, true, medActive, 0.0f, 0.0f, false);
 
-    // 4. 5 Strike Buttons [0..4] on arc + 2 Buff Buttons [5..6] in dedicated upper-right column
+    // 4. 5 Strike Buttons [0..4] + 2 Buff Buttons [5..6]
     for (int k = 0; k < 7; k++) {
         if (slots && slots[k].skillIndex < 0) continue;
         bool isBuff = (k >= 5);
         bool held = input ? input->skillHeld[k] : s_prevTouchSkill[k];
         bool ready = slots ? slots[k].ready : true;
         float cd = slots ? slots[k].cooldownRemain : 0.0f;
-        Color col = isBuff
-            ? (Color){ 85, 225, 205, 240 }
-            : (slots ? slots[k].color : (Color){ 120, 190, 255, 230 });
-        const char *lbl = (!ready && cd > 0.05f)
-            ? TextFormat("%.1fs", cd)
-            : ((slots && slots[k].shortLabel[0]) ? slots[k].shortLabel
-                                                 : (isBuff ? TextFormat("B%d", k - 4) : TextFormat("S%d", k + 1)));
-        const char *topTag = isBuff ? TextFormat("B%d", k - 4) : TextFormat("%d", k + 1);
+        float cdTot = slots ? slots[k].cooldownTotal : 0.0f;
+        Color col = isBuff ? WUXIA_JADE : (slots ? slots[k].color : WUXIA_AZURE);
+        const char *lbl = (slots && slots[k].shortLabel[0])
+            ? slots[k].shortLabel
+            : (isBuff ? TextFormat("Trợ %d", k - 4) : TextFormat("Chiêu %d", k + 1));
         float btnR = isBuff ? L.buffR : L.skillR;
         if (isBuff) {
-            /* Subtle outer jade aura halo to visually separate Buff slots from Strike arc */
             DrawRing(L.skillCenter[k], btnR + 1.5f * s, btnR + 3.2f * s, 0.0f, 360.0f, 32,
-                     ColorAlpha((Color){ 95, 235, 215, 255 }, ready ? 0.55f : 0.16f));
+                     ColorAlpha(WUXIA_JADE, ready ? 0.55f : 0.16f));
         }
-        DrawWuxiaTouchCircleBtn(L.skillCenter[k], btnR, col, held, ready, topTag, lbl, s * 0.90f);
+        WuxiaUI_DrawSkillNode(L.skillCenter[k], btnR, WUXIA_ICON_NONE, lbl, NULL,
+                              col, ready, held, cd, cdTot, false);
     }
 
     EndMode2D();

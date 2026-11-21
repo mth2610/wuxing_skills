@@ -207,9 +207,9 @@ bool OWLoot_GetNearestAvailableNodePos(Vector3 fromPos, Vector3 *outPos) {
 const char *OWLoot_GetNearbyPrompt(Vector3 playerPos) {
     for (int i = 0; i < s_nodeCount; i++) {
         if (s_nodes[i].active && s_nodes[i].available && DistXZ(playerPos, s_nodes[i].pos) <= 2.8f) {
-            if (s_nodes[i].kind == OW_NODE_ORE_VEIN) return "[F] KHAI THAC KHOANG THACH";
-            if (s_nodes[i].kind == OW_NODE_HERB)     return "[F] HAI LINH THAO";
-            return "[F] MO RUONG KHO BAU!";
+            if (s_nodes[i].kind == OW_NODE_ORE_VEIN) return "[F] Khai Thác Khoáng Thạch";
+            if (s_nodes[i].kind == OW_NODE_HERB)     return "[F] Hái Linh Thảo";
+            return "[F] Mở Rương Kho Báu!";
         }
     }
     return NULL;

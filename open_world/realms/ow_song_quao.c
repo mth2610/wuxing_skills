@@ -18,10 +18,10 @@ static const OWRealmDef kSongQuaoWaterRealm = {
     .badlandsCenter  = { 110.0f, 0.0f, 92.0f  },
     .zoneCount = 4,
     .zones = {
-        { { 94.15f, 0.0f, 150.0f }, 16.0f, "DINH THAO NGUYEN [AN TOAN]" },
-        { { 118.0f, 0.0f, 175.0f }, 26.0f, "DOI CO XANH [TAN THU]" },
-        { { 148.0f, 0.0f, 212.0f }, 34.0f, "HO SONG QUAO [GIANG HO]" },
-        { { 110.0f, 0.0f, 92.0f  }, 36.0f, "THUNG LUNG THUONG NGUON [HUNG HIEM]" }
+        { { 94.15f, 0.0f, 150.0f }, 16.0f, "Đỉnh Thảo Nguyên [An Toàn]" },
+        { { 118.0f, 0.0f, 175.0f }, 26.0f, "Đồi Cỏ Xanh [Tân Thủ]" },
+        { { 148.0f, 0.0f, 212.0f }, 34.0f, "Hồ Sông Quao [Giang Hồ]" },
+        { { 110.0f, 0.0f, 92.0f  }, 36.0f, "Thung Lũng Thượng Nguồn [Hung Hiểm]" }
     },
     .nodeCount = 10,
     .nodes = {
@@ -62,15 +62,15 @@ static const OWRealmDef kSongQuaoWaterRealm = {
     .weatherProfileCount = 2,
     .weatherProfiles = {
         {
-            .type = OW_WEATHER_CLEAR, .name = "NANG SOM THAO NGUYEN",
-            .startBanner = "GIO THUNG LUNG THOI NHE — DAO CANH & LUYEN VO",
+            .type = OW_WEATHER_CLEAR, .name = "Nắng Sớm Thảo Nguyên",
+            .startBanner = "GIÓ THUNG LŨNG THỔI NHẸ — DẠO CẢNH & LUYỆN VÕ",
             .defaultDurationSec = 70.0f, .atmoMode = ATMO_MODE_SPIRIT_SPARKS,
             .windDirection = { 0.80f, 0.60f }, .windSpeedMps = 3.2f, .windTurbulence = 0.25f,
             .accentColor = { 135, 225, 245, 255 }, .xpMultiplier = 1.0f
         },
         {
-            .type = OW_WEATHER_SPIRIT_PHENOM, .name = "LINH KHI SONG QUAO",
-            .startBanner = "LINH KHI TU HOI! x1.5 EXP VO HOC & +15% TOC CHAY!",
+            .type = OW_WEATHER_SPIRIT_PHENOM, .name = "Linh Khí Sông Quao",
+            .startBanner = "LINH KHÍ TỤ HỘI! x1.5 EXP VÕ HỌC & +15% TỐC CHẠY!",
             .defaultDurationSec = 50.0f, .atmoMode = ATMO_MODE_SPIRIT_SPARKS,
             .windDirection = { 0.70f, 0.70f }, .windSpeedMps = 6.5f, .windTurbulence = 0.45f,
             .accentColor = { 115, 245, 210, 255 }, .moveSpeedBonus = 0.15f, .xpMultiplier = 1.50f,

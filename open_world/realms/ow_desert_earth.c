@@ -19,10 +19,10 @@ static const OWRealmDef kDesertEarthRealm = {
     .badlandsCenter  = { 65.0f,   0.0f, 95.0f   },
     .zoneCount = 4,
     .zones = {
-        { { 170.68f, 0.0f, 230.41f }, 22.0f, "OC DAO HOANG SA [AN TOAN]" },
-        { { 135.0f,  0.0f, 195.0f  }, 32.0f, "DOI CAT PHONG SA [TAN THU]" },
-        { { 94.10f,  0.0f, 150.0f  }, 45.0f, "THACH LAM CO DAO [GIANG HO]" },
-        { { 65.0f,   0.0f, 95.0f   }, 40.0f, "HUYET DAO HAC DIEN [HUNG HIEM]" }
+        { { 170.68f, 0.0f, 230.41f }, 22.0f, "Ốc Đảo Hoàng Sa [An Toàn]" },
+        { { 135.0f,  0.0f, 195.0f  }, 32.0f, "Đồi Cát Phong Sa [Tân Thủ]" },
+        { { 94.10f,  0.0f, 150.0f  }, 45.0f, "Thạch Lâm Cổ Đạo [Giang Hồ]" },
+        { { 65.0f,   0.0f, 95.0f   }, 40.0f, "Huyết Đạo Hắc Diện [Hung Hiểm]" }
     },
     .nodeCount = 16,
     .nodes = {
@@ -78,8 +78,8 @@ static const OWRealmDef kDesertEarthRealm = {
     .weatherProfiles = {
         {
             .type                = OW_WEATHER_CLEAR,
-            .name                = "NANG VANG GIO NHE",
-            .startBanner         = "BAU TROI HOANG SA QUANG DANG — THICH HOP DAO CANH & KHAI KHOANG",
+            .name                = "Nắng Vàng Gió Nhẹ",
+            .startBanner         = "BẦU TRỜI HOÀNG SA QUANG ĐÃNG — THÍCH HỢP DẠO CẢNH & KHAI KHOÁNG",
             .defaultDurationSec  = 65.0f,
             .atmoMode            = ATMO_MODE_DESERT_DUST,
             .windDirection       = { 0.85f, 0.52f },
@@ -95,8 +95,8 @@ static const OWRealmDef kDesertEarthRealm = {
         },
         {
             .type                = OW_WEATHER_STORM,
-            .name                = "BAO CAT HOANG SA",
-            .startBanner         = "CUONG PHONG BAO CAT! +25% TOC CHAY & LO DIEN RUONG CO MO!",
+            .name                = "Bão Cát Hoàng Sa",
+            .startBanner         = "CUỒNG PHONG BÃO CÁT! +25% TỐC CHẠY & LỘ DIỆN RƯƠNG CỔ MỘ!",
             .defaultDurationSec  = 50.0f,
             .atmoMode            = ATMO_MODE_DESERT_DUST,
             .windDirection       = { 0.92f, 0.38f },
@@ -112,8 +112,8 @@ static const OWRealmDef kDesertEarthRealm = {
         },
         {
             .type                = OW_WEATHER_SPIRIT_PHENOM,
-            .name                = "HAI THI THAN LAU",
-            .startBanner         = "AO ANH HAI THI THAN LAU! LINH CHAU XUAT HIEN & x1.5 EXP VO HOC!",
+            .name                = "Hải Thị Thận Lâu",
+            .startBanner         = "ẢO ẢNH HẢI THỊ THẬN LÂU! LINH CHÂU XUẤT HIỆN & x1.5 EXP VÕ HỌC!",
             .defaultDurationSec  = 50.0f,
             .atmoMode            = ATMO_MODE_SPIRIT_SPARKS,
             .windDirection       = { -0.60f, 0.80f },
@@ -129,8 +129,8 @@ static const OWRealmDef kDesertEarthRealm = {
         },
         {
             .type                = OW_WEATHER_CATACLYSM,
-            .name                = "MUA THIEN THACH",
-            .startBanner         = "THIEN THACH GIANG THE! KHOANG THACH HUYEN THOAI ROI KHAP SA MAC!",
+            .name                = "Mưa Thiên Thạch",
+            .startBanner         = "THIÊN THẠCH GIÁNG THẾ! KHOÁNG THẠCH HUYỀN THOẠI RƠI KHẮP SA MẠC!",
             .defaultDurationSec  = 45.0f,
             .atmoMode            = ATMO_MODE_WAR_EMBERS,
             .windDirection       = { 0.45f, -0.89f },
