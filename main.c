@@ -1191,6 +1191,8 @@ int main(int argc, char **argv) {
             Entity_RestoreMana(player.agentId, 1000.0f);
         } else if (hubAct == UI_HUB_ACT_VFX_TESTER) {
             currentScreen = SCREEN_VFX_TESTER;
+        } else if (hubAct == UI_HUB_ACT_EXIT) {
+            break;
         }
         continue;
     }

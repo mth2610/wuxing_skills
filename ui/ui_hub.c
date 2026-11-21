@@ -466,5 +466,12 @@ UIHubAction UI_Hub_UpdateDrawMain(int *outParam, char *joinCodeBuf, int joinCode
         WuxiaUI_DrawTextWrapped(statusMsg, (Rectangle){ dx, dy, dw, 48.0f }, 13.0f, WUXIA_CRIMSON, 4.0f);
     }
 
+    // Bottom of right-hand drawer: Exit Game button
+    Rectangle exitBtn = { dx, drawer.y + drawer.height - 52.0f, dw, 36.0f };
+    if (WuxiaUI_DrawIconPill(exitBtn, WUXIA_ICON_CLOSE, "Thoát Game",
+                             ctx->isTouchMode ? NULL : "ESC", WUXIA_CRIMSON, false)) {
+        return UI_HUB_ACT_EXIT;
+    }
+
     return UI_HUB_ACT_NONE;
 }

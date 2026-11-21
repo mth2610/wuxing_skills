@@ -18,7 +18,8 @@ typedef enum {
     UI_HUB_ACT_HOST_ONLINE,
     UI_HUB_ACT_JOIN_ONLINE,
     UI_HUB_ACT_SANDBOX,
-    UI_HUB_ACT_VFX_TESTER
+    UI_HUB_ACT_VFX_TESTER,
+    UI_HUB_ACT_EXIT
 } UIHubAction;
 
 void UI_Hub_Init(void);
