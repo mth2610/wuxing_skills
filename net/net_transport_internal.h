@@ -4,9 +4,9 @@
 // a backend REPLACES it for the session (online play). net/-internal only —
 // no other module includes this.
 //
-// Multi-peer (protocol v3): every callback carries an opaque peerRef
+// Multi-peer (protocol v5): every callback carries an opaque peerRef
 // identifying the remote player — the backend's stable per-peer handle
-// (EOS: the ProductUserId). The core maps peerRef → its HostPeer slot.
+// (EOS: the ProductUserId). The core maps peerRef -> its HostPeer slot.
 // CLIENT role has exactly one link (the host): pass peerRef = NULL.
 #ifndef NET_TRANSPORT_INTERNAL_H
 #define NET_TRANSPORT_INTERNAL_H
@@ -14,7 +14,7 @@
 #include "net/net_transport.h"
 
 // Deliver a whole logical packet (already de-fragmented) to the core.
-// Channel is NET_CH_STREAM / NET_CH_CONTROL semantics from net_transport.c.
+// Channel is NET_CH_STREAM / NET_CH_CONTROL / NET_CH_PROBE from net_transport.c.
 void NetTransport_BackendPacket(void *peerRef, int channel,
                                 const unsigned char *data, int len);
 
@@ -24,17 +24,21 @@ void NetTransport_BackendPacket(void *peerRef, int channel,
 void NetTransport_BackendConnected(void *peerRef);
 void NetTransport_BackendDisconnected(void *peerRef);
 
-// Install a backend and set the role. send() targets one peer (peerRef,
-// NULL = the host link on CLIENT role) — the core loops for broadcasts;
-// packets up to a full agent snapshot (the backend fragments if its MTU is
-// smaller). tick() pumps the backend once per frame (before the core's send
-// phase); stop() tears the session down (Net_Stop calls it, then clears the
-// hooks).
+// Install a backend and set the role.
+// - send() queues bytes to one peer (peerRef, NULL = host on CLIENT) without
+//   re-entrantly ticking the SDK.
+// - flush() (optional) pushes queued outgoing packets to the OS socket ONCE
+//   after a send batch (e.g. end of host snapshot broadcast or client intent).
+// - tick() pumps the backend once per frame / sub-frame.
+// - stop() tears the session down (Net_Stop calls it, then clears the hooks).
 typedef bool (*NetBackendSendFn)(void *peerRef, int channel,
                                  const void *data, int len, bool reliable);
+typedef void (*NetBackendFlushFn)(void);
 typedef void (*NetBackendTickFn)(float dt);
 typedef void (*NetBackendStopFn)(void);
+
 void NetTransport_SetBackend(NetMode mode, NetBackendSendFn send,
+                             NetBackendFlushFn flush,
                              NetBackendTickFn tick, NetBackendStopFn stop);
 
 #endif // NET_TRANSPORT_INTERNAL_H

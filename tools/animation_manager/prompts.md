@@ -471,99 +471,35 @@ Không được cố tình bỏ qua lỗi FK hoặc trả về animation chưa �
 
 ---
 
-# 8. Bài quyền: Lưu Thủy Hồi Chưởng – Dẫn Lực Phản Kích
+# 8. Miêu tả animation
 
-**Đặc điểm chuyển động:** Võ thuật mềm mại, uyển chuyển như dòng nước, kết hợp kỹ thuật gạt đòn theo đường cong và chưởng kích thẳng về phía trước. Động tác phải có nhịp điệu rõ ràng: dẫn lực → chuyển thế → phát lực → thu thế.
+**Animation name:** `combat_strafe_left`  
+**Slot:** `walk`  
+**Loop:** `true`  
+**Tổng thời lượng:** `0.9 giây`  
+**Hướng dạt mô phỏng:** Sang trái nhân vật `+X`  
+**Hướng mặt:** Luôn giữ `+Z`.
 
-**Tổng thời lượng:** 1.4 giây  
-**Hướng tấn công:** Phía trước (`+Z`)  
-**Tay phát lực chính:** Tay phải.
+### Tư thế và chuyển động
 
-### Giai đoạn 1: Dẫn lực (0.0s – 0.35s)
+- Nhân vật giữ mặt và ngực hướng về đối thủ phía trước `+Z`; không xoay người quay sang trái.
+- Thực hiện bước ngang sang trái: chân trái mở sang `+X`, chân phải thu theo để duy trì khoảng cách chiến đấu. Không bắt chéo hai chân.
+- Trọng lượng chuyển sang chân trái khi đặt chân; chân phải giữ khả năng phản ứng, không bị kéo lê.
+- Hông dịch chuyển tương đối nhờ phối hợp khớp chân và nghiêng thân nhẹ; không tạo translation X cho Hips.
+- Kiếm giữ trước thân, tay trái mở nhẹ để cân bằng. Vai không xoay quá mức.
 
-**Tư thế: Thủy Bộ – Khai Lưu**
+### Nhịp thời gian
 
-- Hai chân đứng cách nhau vừa phải, đầu gối hơi chùng, tạo tư thế thủ vững chắc.
-- Chân trái đặt phía trước, chân phải ở phía sau, tạo thế đứng võ thuật tự nhiên.
-- Trọng tâm hơi dồn về chân phải, chuẩn bị chuyển về phía trước.
-- Tay trái đưa ra trước ngực, lòng bàn tay hướng chếch ra ngoài, khuỷu tay hơi cong.
-- Tay phải thu gần vùng eo hoặc hông phải, lòng bàn tay hướng lên, tạo tư thế chuẩn bị phát lực.
-- Hai cánh tay tạo thành đường cong mềm mại, không duỗi thẳng hoặc khóa cứng khớp.
-- Thân trên xoay nhẹ theo hướng chuẩn bị chuyển động, hông giữ ổn định.
-- Đầu giữ thẳng, ánh mắt tập trung về phía trước.
+- `0.0–0.3s`: hạ nhẹ trọng tâm, chân trái bắt đầu mở ngang.
+- `0.3–0.6s`: chân trái đặt vững; chân phải thu theo, khoảng cách hai chân trở lại thế thủ.
+- `0.6–0.9s`: ổn định trọng tâm và trở về đúng pha mở đầu để lặp.
 
-**Yêu cầu:** Tạo cảm giác đang điều khiển và dẫn hướng một luồng lực vô hình. Hai tay chuyển động nhịp nhàng như dòng nước, không tạo tư thế cứng nhắc. Đây là giai đoạn tích tụ lực và chuẩn bị phản kích.
+**Yêu cầu loop:** Không trượt chân, không bắt chéo chân, không xoay mặt khỏi mục tiêu. Hips X/Z giữ nguyên theo quy tắc in-place.
 
-### Giai đoạn 2: Chuyển thế và phát lực (0.35s – 0.75s)
 
-**Tư thế: Lưu Thủy – Hồi Chưởng Phản Kích**
 
-- Chân trái bước nhẹ về phía trước, tạo điểm trụ chắc chắn; đầu gối chùng tự nhiên, không khóa khớp.
-- Trọng tâm chuyển từ chân phải sang chân trái một cách liên tục.
-- Tay trái thực hiện động tác gạt vòng cung từ phía trong ra ngoài, mô phỏng kỹ thuật dẫn hướng và hóa giải đòn tấn công.
-- Chuyển động tay trái đi theo đường cong tự nhiên trước thân người, không vung tay quá rộng hoặc xoay khớp vai bất thường.
-- Đồng thời, tay phải từ vị trí gần hông xoay lòng bàn tay hướng về phía trước và tung một đòn **Chưởng Kích** thẳng theo hướng `+Z`.
-- Hông và eo xoay phối hợp với vai phải, truyền lực từ chân trụ qua thân trên đến cánh tay.
-- Khuỷu tay phải mở ra tự nhiên trong quá trình phát lực, cổ tay giữ thẳng hàng với cẳng tay.
-- Bàn tay phải mở tự nhiên, các ngón tay khép vừa phải, lòng bàn tay hướng về mục tiêu.
-- Vai trái và tay trái giữ vị trí phòng thủ sau khi hoàn thành động tác gạt.
-- Đầu và ánh mắt tiếp tục hướng về phía trước, không cúi đầu hoặc ngửa cổ.
 
-**Yêu cầu:** Đây là thời điểm phát lực chính. Đòn chưởng phải nhanh, dứt khoát và có điểm kết thúc rõ ràng. Chuyển động hông, vai, khuỷu tay và cổ tay phải liên kết thành một chuỗi truyền lực thống nhất. Cảm giác tổng thể phải giống dòng nước đang cuộn xoáy rồi bất ngờ bùng phát thành một đợt sóng mạnh.
 
-### Giai đoạn 3: Thu thế và ổn định (0.75s – 1.4s)
 
-**Tư thế: Thủy Bộ – Hồi Lưu Thủ Thế**
 
-- Tay phải thu về theo một đường vòng cung mềm mại, không kéo giật ngược về phía sau.
-- Tay trái từ vị trí gạt đòn trở về phía trước ngực, tạo thế phòng thủ cân bằng.
-- Hông và eo giảm dần chuyển động xoay, thân trên trở lại trạng thái ổn định.
-- Trọng tâm được phân phối hợp lý trên hai chân, giữ đầu gối hơi chùng để duy trì khả năng di chuyển.
-- Hai bàn chân giữ nguyên vị trí hoặc điều chỉnh rất nhẹ để duy trì thăng bằng.
-- Hai cánh tay giữ độ cong tự nhiên, một tay bảo vệ vùng thân trên, tay còn lại ở tư thế sẵn sàng phản công.
-- Vai thả lỏng, khuỷu tay không khóa cứng, cổ tay không gập bất thường.
-- Đầu giữ thẳng, ánh mắt tiếp tục quan sát phía trước.
 
-**Yêu cầu:** Chuyển động phải giảm tốc tự nhiên, thể hiện khả năng kiểm soát lực sau đòn đánh. Không dừng đột ngột, không bật trở lại tư thế đứng mặc định và không chuyển về T-Pose. Kết thúc trong thế thủ Thủy Bộ linh hoạt, sẵn sàng nối tiếp một động tác khác.
-
-**Tư thế: Thủ Hình Hạc Cân Bằng**
-
-- Thu tay phải về một cách mượt mà, không giật cục.
-- Tay trái điều chỉnh trở lại vị trí thủ thế cân bằng.
-- Hông và thân người từ từ ổn định, kết thúc chuyển động xoay.
-- Trọng tâm được phân phối lại hợp lý trên hai chân hoặc tư thế trụ phù hợp.
-- Các khớp vai, khuỷu và cổ tay thả lỏng tự nhiên.
-- Đầu giữ hướng nhìn về phía trước.
-- Kết thúc trong tư thế thủ Hình Hạc, sẵn sàng cho động tác tiếp theo.
-
-**Yêu cầu:** Thu lực có kiểm soát, không dừng đột ngột, không chuyển về T-Pose hoặc tư thế đứng mặc định.
-
----
-
-## 9. YÊU CẦU CHẤT LƯỢNG CHUYỂN ĐỘNG
-
-- Ưu tiên chuyển động võ thuật có tính thực chiến và đúng cơ sinh học.
-- Phân biệt rõ ba giai đoạn: **tụ lực → phát kình → thu thế**.
-- Chuyển động phải có trọng tâm, quán tính và sự phối hợp toàn thân.
-- Không để tay di chuyển độc lập mà không có sự hỗ trợ từ hông và thân.
-- Không để chân trượt vô lý hoặc mất tiếp xúc với mặt đất khi đang trụ.
-- Không tạo ra các tư thế gãy khớp, vặn cổ tay hoặc xoay vai quá giới hạn.
-- Không thêm chuyển động thừa, múa tay, nhảy lên hoặc lắc lư không cần thiết.
-- Không thay đổi hệ tọa độ, Rest Pose hoặc cấu trúc 22 xương đã quy định.
-
----
-
-## 10. ĐẦU RA CUỐI CÙNG
-
-Hãy xuất file `.gltf` hoàn chỉnh với các yêu cầu:
-
-- GlTF 2.0 JSON hợp lệ.
-- Buffer nhúng Base64, không phụ thuộc file ngoài.
-- Đầy đủ 22 node xương và Skin.
-- Animation có đầy đủ rotation track, Hips có translation track.
-- Metadata `extras` đúng cấu trúc dành cho Raylib.
-- Đúng thời lượng 1.4 giây, 30 FPS, `loop = false`.
-- Đã kiểm tra quaternion và Forward Kinematics.
-- Tương thích với hệ xương của `character.glb`.
-
-**ƯU TIÊN SỐ MỘT:** Chất lượng chuyển động Hình Hạc Quyền phải đúng võ thuật, đúng cơ sinh học và đẹp khi phát lại trên nhân vật 3D. Không được hy sinh chất lượng chuyển động để tạo ra một file chỉ đúng về mặt cấu trúc kỹ thuật.
