@@ -7,6 +7,7 @@
 #include "maps/map_manager.h"
 #include <math.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -26,191 +27,49 @@ static int s_explosionCount = 0;
 static void UpdateCampMonsters(float dt);
 static void UpdateMinionBolts(float dt);
 static void UpdateHordeZones(float dt);
+static void SpawnMinionBolt(int ownerId, int element, Vector3 startPos, Vector3 targetPos);
 
 // Fast O(1) lookup from agentId -> camp monster slot (-1 if not a camp monster)
 static int s_agentToCamp[MAX_AGENTS];
+static float s_laneMinionShootCd[MAX_AGENTS];
 
 void AI_Init(void) {
     s_explosionCount = 0;
-    for (int i = 0; i < MAX_AGENTS; i++) s_agentToCamp[i] = -1;
+    for (int i = 0; i < MAX_AGENTS; i++) {
+        s_agentToCamp[i] = -1;
+        s_laneMinionShootCd[i] = 0.0f;
+    }
     AI_ClearMonsterCamps();
     AI_ClearHordeZones();
+    AI_SetBotWorldContext(NULL);
 }
 
 static int FindMarchTarget(const Agent *self) {
-    int best = -1, bestBoss = -1;
-    float bestSq = 0.0f, bestBossSq = 0.0f;
+    int bestMinion = -1, bestHero = -1, bestBoss = -1;
+    float bestMinionSq = 6.0f * 6.0f;
+    float bestHeroSq = 8.5f * 8.5f;
+    float bestBossSq = 1e12f;
     for (int i = 0; i < MAX_AGENTS; i++) {
         const Agent *a = Entity_GetAgent(i);
-        if (!a || a->team == self->team) continue;
+        if (!a || a->isStatic || a->team == self->team) continue;
         float dx = a->position.x - self->position.x;
         float dz = a->position.z - self->position.z;
         float dSq = dx * dx + dz * dz;
-        if (best == -1 || dSq < bestSq) { best = i; bestSq = dSq; }
-        if (a->archetype == ARCH_BOSS && (bestBoss == -1 || dSq < bestBossSq)) {
+        if (a->archetype == ARCH_MINION && dSq < bestMinionSq) {
+            bestMinion = i; bestMinionSq = dSq;
+        } else if (a->archetype == ARCH_HERO && dSq < bestHeroSq) {
+            bestHero = i; bestHeroSq = dSq;
+        } else if (a->archetype == ARCH_BOSS && dSq < bestBossSq) {
             bestBoss = i; bestBossSq = dSq;
         }
     }
-    return (bestBoss != -1) ? bestBoss : best;
+    if (bestMinion != -1) return bestMinion;
+    if (bestHero != -1)   return bestHero;
+    return bestBoss;
 }
 
-// --- Hero bots (Dot A4) -------------------------------------------------------
-
-static const float BOT_MOVE_MPS       = 3.5f;
-static const float BOT_RANGE_FAR      = 9.0f;
-static const float BOT_RANGE_NEAR     = 5.0f;
-static const float BOT_EDGE_MARGIN    = 2.5f;
-static const float BOT_THINK_SECONDS  = 1.2f;
-static const float BOT_DODGE_COOLDOWN = 2.5f;
-static const float BOT_DODGE_RANGE    = 4.0f;
-
-typedef struct {
-    bool  used;
-    int   agentId;
-    float thinkTimer;
-    float dodgeTimer;
-    float strafePhase;
-} HeroBot;
-static HeroBot s_bots[AI_MAX_HERO_BOTS];
-
-static HeroBotCast s_botCasts[16];
-static int         s_botCastCount = 0;
-
-int AI_SpawnHeroBot(Vector3 pos, AgentTeam team) {
-    int slot = -1;
-    for (int i = 0; i < AI_MAX_HERO_BOTS; i++)
-        if (!s_bots[i].used) { slot = i; break; }
-    if (slot < 0) return -1;
-    int agentId = Entity_SpawnAgent(pos, 100.0f, 0, team, ARCH_HERO);
-    if (agentId < 0) return -1;
-    s_bots[slot] = (HeroBot){ true, agentId,
-                              0.3f + 0.2f * (float)slot,
-                              0.0f, (float)slot * 1.7f };
-    return agentId;
-}
-
-void AI_ClearHeroBots(void) {
-    for (int i = 0; i < AI_MAX_HERO_BOTS; i++) {
-        if (s_bots[i].used && Entity_GetAgent(s_bots[i].agentId) != NULL)
-            Entity_ApplyDamage(s_bots[i].agentId, 1e9f, (Vector3){ 0 });
-        s_bots[i].used = false;
-    }
-}
-
-bool AI_IsHeroBot(int agentId) {
-    for (int i = 0; i < AI_MAX_HERO_BOTS; i++)
-        if (s_bots[i].used && s_bots[i].agentId == agentId) return true;
-    return false;
-}
-
-int AI_GetHeroBotCount(AgentTeam team) {
-    int n = 0;
-    for (int i = 0; i < AI_MAX_HERO_BOTS; i++) {
-        if (!s_bots[i].used) continue;
-        const Agent *a = Entity_GetAgent(s_bots[i].agentId);
-        if (a != NULL && a->team == team) n++;
-    }
-    return n;
-}
-
-static int BotFindTarget(int myId, const Agent *me) {
-    int best = -1;
-    float bestScore = 1e9f;
-    for (int i = 0; i < MAX_AGENTS; i++) {
-        const Agent *a = Entity_GetAgent(i);
-        if (a == NULL || a == me || a->archetype != ARCH_HERO) continue;
-        if (!Entity_CanDamageTarget(myId, i)) continue;
-        float dx = a->position.x - me->position.x;
-        float dz = a->position.z - me->position.z;
-        float score = sqrtf(dx * dx + dz * dz) + a->health * 0.05f;
-        if (score < bestScore) { bestScore = score; best = i; }
-    }
-    return best;
-}
-
-static void UpdateHeroBots(float dt) {
-    Vector3 arenaC; float arenaR;
-    Entity_GetArenaBounds(&arenaC, &arenaR);
-
-    for (int b = 0; b < AI_MAX_HERO_BOTS; b++) {
-        HeroBot *bot = &s_bots[b];
-        if (!bot->used) continue;
-        const Agent *me = Entity_GetAgent(bot->agentId);
-        if (me == NULL) { bot->used = false; continue; }
-
-        bot->thinkTimer -= dt;
-        bot->dodgeTimer -= dt;
-        bot->strafePhase += dt;
-
-        int targetId = BotFindTarget(bot->agentId, me);
-        const Agent *target = (targetId >= 0) ? Entity_GetAgent(targetId) : NULL;
-
-        if (bot->dodgeTimer <= 0.0f) {
-            CombatProjectileInfo proj[32];
-            int np = Combat_QueryProjectiles(proj, 32);
-            for (int p = 0; p < np; p++) {
-                if (!Entity_CanDamageTarget(bot->agentId, proj[p].ownerAgentId)) continue;
-                float dx = proj[p].pos.x - me->position.x;
-                float dz = proj[p].pos.z - me->position.z;
-                if (dx * dx + dz * dz > BOT_DODGE_RANGE * BOT_DODGE_RANGE) continue;
-                Vector3 dir = { -dz, 0.0f, dx };
-                Entity_Dash(bot->agentId, dir, 10.0f);
-                bot->dodgeTimer = BOT_DODGE_COOLDOWN;
-                break;
-            }
-        }
-
-        if (target != NULL && me->vState == AGENT_GROUNDED &&
-            !Entity_IsCrowdControlled(bot->agentId) && me->dashTimer <= 0.0f) {
-            float dx = target->position.x - me->position.x;
-            float dz = target->position.z - me->position.z;
-            float dist = sqrtf(dx * dx + dz * dz);
-            float mx = 0.0f, mz = 0.0f;
-            if (dist > 0.01f) {
-                float nx = dx / dist, nz = dz / dist;
-                if (dist > BOT_RANGE_FAR)       { mx = nx;  mz = nz;  }
-                else if (dist < BOT_RANGE_NEAR) { mx = -nx; mz = -nz; }
-                else {
-                    float side = sinf(bot->strafePhase * 1.3f) > 0.0f ? 1.0f : -1.0f;
-                    mx = -nz * side; mz = nx * side;
-                }
-            }
-            Vector3 pos = me->position;
-            float speed = BOT_MOVE_MPS * Entity_GetSpeedMult(bot->agentId);
-            pos.x += mx * speed * dt;
-            pos.z += mz * speed * dt;
-            pos.y = MapManager_GetGroundHeightAt(pos.x, pos.z);
-            float ex = pos.x - arenaC.x, ez = pos.z - arenaC.z;
-            bool inBounds = (arenaR > 50.0f) ? (pos.y > -40.0f)
-                                             : (sqrtf(ex * ex + ez * ez) <= arenaR - BOT_EDGE_MARGIN);
-            if (inBounds)
-                Entity_SetPosition(bot->agentId, pos);
-        }
-
-        if (target != NULL && bot->thinkTimer <= 0.0f &&
-            !Entity_IsStunned(bot->agentId)) {
-            bot->thinkTimer = BOT_THINK_SECONDS + 0.2f * (float)(rand() % 5);
-            int start = rand() % AGENT_SKILL_SLOTS;
-            for (int k = 0; k < AGENT_SKILL_SLOTS; k++) {
-                int skillIndex = me->equippedSkills[(start + k) % AGENT_SKILL_SLOTS];
-                if (skillIndex < 0 || !SkillManager_CanCast(skillIndex, bot->agentId))
-                    continue;
-                if (VoHoc_GetSkillRoleByName(GetRegisteredSkillName(skillIndex)) == VH_ROLE_SUPPORT &&
-                    me->health > me->maxHealth * 0.70f)
-                    continue;
-                if (CastSkill(skillIndex, bot->agentId, me->position,
-                              target->position,
-                              (SkillParams){ .level = 1, .quantity = 1, .sizeScale = 1.0f })) {
-                    SkillManager_TriggerCooldown(skillIndex, bot->agentId, Skill_GetCooldown(skillIndex));
-                    if (s_botCastCount < 16)
-                        s_botCasts[s_botCastCount++] = (HeroBotCast){
-                            bot->agentId, skillIndex, target->position };
-                    break;
-                }
-            }
-        }
-    }
-}
+// --- Hero bots (Dot A4 + Utility AI Simulated Players) -------------------------
+#include "ai/ai_bot_brain.inl"
 
 void AI_Update(float dt) {
     UpdateHeroBots(dt);
@@ -228,11 +87,14 @@ void AI_Update(float dt) {
         if (targetId < 0) continue;
         const Agent *target = Entity_GetAgent(targetId);
 
+        int kind = (int)(m->netMonsterMeta & 0x3u);
+        bool isRanged = (kind == MONSTER_RANGED_CASTER);
+
         float dx = target->position.x - m->position.x;
         float dz = target->position.z - m->position.z;
         float dist = sqrtf(dx * dx + dz * dz);
 
-        if (dist <= MINION_TRIGGER_RANGE) {
+        if (!isRanged && dist <= MINION_TRIGGER_RANGE) {
             Vector3 at = m->position;
             int elem = m->currentElement;
             AgentTeam team = m->team;
@@ -245,14 +107,55 @@ void AI_Update(float dt) {
             continue;
         }
 
-        float speed = MINION_SPEED_MPS * Entity_GetSpeedMult(i);
-        Vector3 pos = m->position;
-        pos.x += (dx / dist) * speed * dt;
-        pos.z += (dz / dist) * speed * dt;
-        pos.y = MapManager_GetGroundHeightAt(pos.x, pos.z);
-        Entity_SetPosition(i, pos);
+        if (s_laneMinionShootCd[i] > 0.0f) s_laneMinionShootCd[i] -= dt;
+
+        // Soft Boids separation from nearby friendly minions
+        float sepX = 0.0f, sepZ = 0.0f;
+        int nearAllies[8];
+        int na = Entity_GetNearbyTargetsTeam(m->position, 1.4f, m->team, nearAllies, 8);
+        for (int k = 0; k < na; k++) {
+            int aid = nearAllies[k];
+            if (aid == i) continue;
+            const Agent *ally = Entity_GetAgent(aid);
+            if (!ally || ally->archetype != ARCH_MINION) continue;
+            float ax = m->position.x - ally->position.x;
+            float az = m->position.z - ally->position.z;
+            float d2 = ax * ax + az * az;
+            if (d2 > 0.0001f && d2 < 1.4f * 1.4f) {
+                float inv = 1.0f / sqrtf(d2);
+                sepX += ax * inv * 0.65f;
+                sepZ += az * inv * 0.65f;
+            }
+        }
+
+        float moveX = 0.0f, moveZ = 0.0f;
+        if (isRanged && dist <= 7.2f) {
+            if (dist < 4.5f && dist > 0.01f) {
+                moveX = -dx / dist;
+                moveZ = -dz / dist;
+            }
+            if (s_laneMinionShootCd[i] <= 0.0f) {
+                SpawnMinionBolt(i, m->currentElement, m->position, target->position);
+                s_laneMinionShootCd[i] = 1.8f;
+            }
+        } else if (dist > 0.01f) {
+            moveX = dx / dist;
+            moveZ = dz / dist;
+        }
+
+        float steerX = moveX + sepX;
+        float steerZ = moveZ + sepZ;
+        float steerLen = sqrtf(steerX * steerX + steerZ * steerZ);
+        if (steerLen > 0.05f) {
+            float speed = (isRanged ? 1.85f : 2.2f) * Entity_GetSpeedMult(i);
+            Vector3 pos = m->position;
+            pos.x += (steerX / steerLen) * speed * dt;
+            pos.z += (steerZ / steerLen) * speed * dt;
+            pos.y = MapManager_GetGroundHeightAt(pos.x, pos.z);
+            Entity_SetPosition(i, pos);
+        }
         Entity_SetFacingYaw(i, atan2f(dx, dz));
-        Entity_SetNetMonsterMeta(i, (unsigned char)((MONSTER_RANGED_CASTER & 0x3u) |
+        Entity_SetNetMonsterMeta(i, (unsigned char)((kind & 0x3u) |
                                                     ((MON_STATE_CHASE & 0x7u) << 2)));
     }
 }
@@ -270,6 +173,10 @@ int AI_SpawnMinionWave(int bossAgentId, int count) {
         int id = Entity_SpawnAgent(pos, MINION_HP, boss->currentElement,
                                    boss->team, ARCH_MINION);
         if (id < 0) break;
+        MonsterKind kind = ((k % 3) == 2) ? MONSTER_RANGED_CASTER : MONSTER_SWARM_MELEE;
+        s_laneMinionShootCd[id] = 0.6f + 0.25f * (float)(k % 3);
+        Entity_SetNetMonsterMeta(id, (unsigned char)((kind & 0x3u) |
+                                                     ((MON_STATE_CHASE & 0x7u) << 2)));
         spawned++;
     }
     return spawned;
@@ -283,13 +190,7 @@ int AI_PollExplosions(MinionExplosion *out, int max) {
     return n;
 }
 
-int AI_PollHeroCasts(HeroBotCast *out, int max) {
-    if (out == NULL || max <= 0) { s_botCastCount = 0; return 0; }
-    int n = (s_botCastCount < max) ? s_botCastCount : max;
-    for (int i = 0; i < n; i++) out[i] = s_botCasts[i];
-    s_botCastCount = 0;
-    return n;
-}
+// AI_PollHeroCasts is defined in ai_bot_brain.inl
 
 // =============================================================================
 // Lightweight Minion Bolt Pool (Replaces heavy CastSkill for Spitter Minions)

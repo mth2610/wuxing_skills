@@ -25,6 +25,9 @@ typedef struct {
     int            waypointIdx;
     bool           hasRoute;
     bool           reachedConvergence;
+    int            lastTargetId;
+    Vector3        lastTargetPos;
+    Vector3        targetVelEst;
 } BossSlot;
 
 static BossSlot s_slots[BOSS_MAX_INSTANCES];
@@ -53,6 +56,10 @@ static void UpdateBossSlot(BossSlot *b, float dt) {
         b->phase = phase;
         b->phaseTime = 0.0f;
         Entity_SetElement(b->agentId, (int)b->def->phaseElements[phase]);
+        // Phase-break responsiveness: allow new phase skill to fire shortly
+        if (b->phaseSkillIdx[phase] >= 0) {
+            SkillManager_TriggerCooldown(b->phaseSkillIdx[phase], b->agentId, 0.25f);
+        }
     }
 
     if (hpFrac < TAIJI_HP_FRACTION && !self->taijiActive) {
@@ -63,36 +70,71 @@ static void UpdateBossSlot(BossSlot *b, float dt) {
     int ids[16];
     int n = Entity_GetNearbyTargetsTeam(self->position, BOSS_TARGET_RANGE, targetTeam, ids, 16);
 
+    // Weighted target priority: Hero > Boss (highest at convergence) > Minion, with stickiness
     int target = -1;
-    float bestSq = 0.0f;
+    float bestScore = -1e9f;
     for (int i = 0; i < n; i++) {
         const Agent *cand = Entity_GetAgent(ids[i]);
-        if (!cand) continue;
+        if (!cand || cand->isStatic) continue;
         float dx = cand->position.x - self->position.x;
         float dz = cand->position.z - self->position.z;
-        float dSq = dx * dx + dz * dz;
-        if (target == -1 || dSq < bestSq) { target = ids[i]; bestSq = dSq; }
+        float dist = sqrtf(dx * dx + dz * dz);
+
+        float prio = 2.0f; // ARCH_MINION
+        if (cand->archetype == ARCH_HERO) {
+            prio = 10.0f;
+            if (cand->maxHealth > 0.0f) prio += (1.0f - cand->health / cand->maxHealth) * 2.5f;
+        } else if (cand->archetype == ARCH_BOSS) {
+            prio = b->reachedConvergence ? 12.0f : 8.5f;
+        }
+        float score = prio - dist * 0.28f;
+        if (ids[i] == b->lastTargetId) score += 2.5f; // Hysteresis stickiness
+        if (score > bestScore) { bestScore = score; target = ids[i]; }
+    }
+
+    // Update target velocity estimate for predictive aim leading
+    if (target >= 0) {
+        const Agent *vt = Entity_GetAgent(target);
+        if (vt) {
+            if (target == b->lastTargetId && dt > 0.0001f) {
+                b->targetVelEst.x = (vt->position.x - b->lastTargetPos.x) / dt;
+                b->targetVelEst.z = (vt->position.z - b->lastTargetPos.z) / dt;
+            } else {
+                b->targetVelEst = (Vector3){ 0 };
+            }
+            b->lastTargetId = target;
+            b->lastTargetPos = vt->position;
+        }
+    } else {
+        b->lastTargetId = -1;
+        b->targetVelEst = (Vector3){ 0 };
     }
 
     // Movement: Waypoint route marching (if assigned & not yet at convergence),
-    // otherwise standard combat drift/strafe around target.
+    // otherwise standard combat drift/strafe around target (tethered near convergence).
     if (self->vState == AGENT_GROUNDED && !Entity_IsCrowdControlled(b->agentId)) {
         if (b->hasRoute && !b->reachedConvergence && b->waypointIdx < b->route.waypointCount) {
             // Check escort link: ally hero within 6m & no enemy hero within 6m -> +25% speed
             bool allyNear = false;
             bool enemyNear = false;
+            bool enemyBlocking = false;
             int nearAll[16];
             int nc = Entity_GetNearbyTargets(self->position, BOSS_ESCORT_RADIUS, nearAll, 16);
             for (int i = 0; i < nc; i++) {
                 const Agent *na = Entity_GetAgent(nearAll[i]);
                 if (!na || na->archetype != ARCH_HERO) continue;
                 if (na->team == self->team) allyNear = true;
-                else enemyNear = true;
+                else {
+                    enemyNear = true;
+                    float bdx = na->position.x - self->position.x;
+                    float bdz = na->position.z - self->position.z;
+                    if (bdx * bdx + bdz * bdz <= 4.0f * 4.0f) enemyBlocking = true;
+                }
             }
             float baseSpeed = (b->route.marchSpeedMps > 0.0f) ? b->route.marchSpeedMps : 1.2f;
             float speed = baseSpeed * (allyNear && !enemyNear ? 1.25f : 1.0f);
-            // Slow down slightly if actively fighting close enemy
-            if (enemyNear) speed *= 0.45f;
+            if (enemyBlocking) speed *= 0.25f;
+            else if (enemyNear) speed *= 0.50f;
 
             Vector3 wp = b->route.waypoints[b->waypointIdx];
             float dx = wp.x - self->position.x;
@@ -111,6 +153,12 @@ static void UpdateBossSlot(BossSlot *b, float dt) {
                 pos.z += (dz / dist) * step;
                 pos.y = MapManager_GetGroundHeightAt(pos.x, pos.z);
                 Entity_SetPosition(b->agentId, pos);
+                if (target >= 0) {
+                    const Agent *vt = Entity_GetAgent(target);
+                    if (vt) Entity_SetFacingYaw(b->agentId, atan2f(vt->position.x - pos.x, vt->position.z - pos.z));
+                } else {
+                    Entity_SetFacingYaw(b->agentId, atan2f(dx, dz));
+                }
                 self = Entity_GetAgent(b->agentId);
             }
         } else if (target >= 0) {
@@ -133,6 +181,16 @@ static void UpdateBossSlot(BossSlot *b, float dt) {
                         pos.x += -nz * dir * BOSS_STRAFE_MPS * dt;
                         pos.z +=  nx * dir * BOSS_STRAFE_MPS * dt;
                     }
+                    // Tether near Convergence Pillar if route completed
+                    if (b->reachedConvergence && b->route.waypointCount > 0) {
+                        Vector3 anchor = b->route.waypoints[b->route.waypointCount - 1];
+                        float adx = pos.x - anchor.x, adz = pos.z - anchor.z;
+                        float ad = sqrtf(adx * adx + adz * adz);
+                        if (ad > 10.0f) {
+                            pos.x = anchor.x + (adx / ad) * 10.0f;
+                            pos.z = anchor.z + (adz / ad) * 10.0f;
+                        }
+                    }
                     pos.y = MapManager_GetGroundHeightAt(pos.x, pos.z);
                     Entity_SetPosition(b->agentId, pos);
                     Entity_SetFacingYaw(b->agentId, atan2f(dx, dz));
@@ -145,15 +203,22 @@ static void UpdateBossSlot(BossSlot *b, float dt) {
     int skillIdx = b->phaseSkillIdx[b->phase];
     if (skillIdx >= 0 && target >= 0 && SkillManager_CanCast(skillIdx, b->agentId)) {
         const Agent *victim = Entity_GetAgent(target);
-        if (victim && CastSkill(skillIdx, b->agentId, self->position,
-                                victim->position, (SkillParams){ .level = 1, .quantity = 1, .sizeScale = 1.0f })) {
-            SkillManager_TriggerCooldown(skillIdx, b->agentId,
-                                         (b->def->castIntervalSeconds > 0.0f)
-                                             ? b->def->castIntervalSeconds : 3.0f);
-            if (s_bossCastCount < 16) {
-                s_bossCasts[s_bossCastCount++] = (BossCastEvent){
-                    .agentId = b->agentId, .skillIndex = skillIdx, .aim = victim->position
-                };
+        if (victim) {
+            Vector3 aimPt = {
+                victim->position.x + b->targetVelEst.x * 0.22f,
+                victim->position.y,
+                victim->position.z + b->targetVelEst.z * 0.22f
+            };
+            if (CastSkill(skillIdx, b->agentId, self->position,
+                          aimPt, (SkillParams){ .level = 1, .quantity = 1, .sizeScale = 1.0f })) {
+                SkillManager_TriggerCooldown(skillIdx, b->agentId,
+                                             (b->def->castIntervalSeconds > 0.0f)
+                                                 ? b->def->castIntervalSeconds : 3.0f);
+                if (s_bossCastCount < 16) {
+                    s_bossCasts[s_bossCastCount++] = (BossCastEvent){
+                        .agentId = b->agentId, .skillIndex = skillIdx, .aim = aimPt
+                    };
+                }
             }
         }
     }

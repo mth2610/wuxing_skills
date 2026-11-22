@@ -13,6 +13,7 @@
 #include "maps/map_manager.h"
 #include "maps/toolkit/map_props.h"
 #include "game/game_rules.h"
+#include "game/match_layout.h"
 #include "game/quest_datau.h"
 #include "game/horde_renderer.h"
 #include "open_world/ow_world.h"
@@ -77,6 +78,14 @@ static float s_failoverBannerTimer = 0.0f;
 static Camera3D s_hudCamera = { 0 };
 static UITouchCombatInput s_gameTouchInput = {0};
 
+typedef struct {
+    bool      active;
+    int       agentId;
+    AgentTeam team;
+    float     respawnTimer;
+} MobaBotSlot;
+static MobaBotSlot s_mobaBotSlots[AI_MAX_HERO_BOTS];
+
 static void BuildGameTouchSlots(const PlayerEntity *player, UITouchSkillSlot outSlots[7])
 {
     const Agent *a = player ? Entity_GetAgent(player->agentId) : NULL;
@@ -106,9 +115,9 @@ static void BuildGameTouchSlots(const PlayerEntity *player, UITouchSkillSlot out
     }
 }
 
-// Team battle: two spawn clusters facing each other across the plateau
-// center; heroes fan out ±z within their cluster.
-static const Vector3 TEAM_SPAWN[2] = {{86.0f, 0.0f, 150.0f}, {102.0f, 0.0f, 150.0f}};
+// Dynamic symmetric match layout (recomputed on ResetMatch / Intro).
+static MatchLayout s_matchLayout = { 0 };
+static bool        s_matchLayoutReady = false;
 
 // Per-agent render state for OTHER heroes (remote players + bots), so each
 // gets its own walk/idle animation + facing on the shared character model.
@@ -127,7 +136,47 @@ static void EnsureRemoteModularInit(int agentId)
     ModularInstance_Init(&s_remoteModular[agentId], MODULAR_TIER_HERO);
     s_remoteModular[agentId].useUniqueGpuBuffers = true;
     PlayerWardrobe rw;
-    PlayerWardrobe_Init(&rw, "Remote_Hero");
+    AIBotProfile botProf;
+    if (AI_GetHeroBotProfile(agentId, &botProf))
+    {
+        PlayerWardrobe_Init(&rw, botProf.displayName);
+        int catCount = Wardrobe_GetCatalogCount();
+        if (catCount > 0)
+        {
+            const WardrobeCatalogItem *slotChoices[MODULAR_SLOT_COUNT][16];
+            int slotCounts[MODULAR_SLOT_COUNT] = {0};
+            for (int c = 0; c < catCount; c++)
+            {
+                const WardrobeCatalogItem *ci = Wardrobe_GetCatalogItemByIndex(c);
+                if (!ci || ci->slot < 0 || ci->slot >= MODULAR_SLOT_COUNT) continue;
+                if (ci->slot == MODULAR_SLOT_BASE_BODY) continue;
+                if (slotCounts[ci->slot] < 16)
+                    slotChoices[ci->slot][slotCounts[ci->slot]++] = ci;
+            }
+            static const ModularSlot kBotWearSlots[] = {
+                MODULAR_SLOT_HAIR, MODULAR_SLOT_HEADGEAR, MODULAR_SLOT_TORSO,
+                MODULAR_SLOT_LEGS, MODULAR_SLOT_BOOTS, MODULAR_SLOT_BRACERS,
+                MODULAR_SLOT_WAIST, MODULAR_SLOT_WEAPON_R
+            };
+            uint32_t rng = (uint32_t)botProf.outfitSeed * 2654435761u + 17u;
+            for (int k = 0; k < (int)(sizeof(kBotWearSlots) / sizeof(kBotWearSlots[0])); k++)
+            {
+                ModularSlot sl = kBotWearSlots[k];
+                if (sl == MODULAR_SLOT_HEADGEAR && (rng % 3u) != 0u) continue; // Some bots bare-headed
+                if (slotCounts[sl] > 0)
+                {
+                    rng = rng * 1664525u + 1013904223u;
+                    const WardrobeCatalogItem *pick = slotChoices[sl][rng % (uint32_t)slotCounts[sl]];
+                    PlayerWardrobe_UnlockItem(&rw, pick->id);
+                    PlayerWardrobe_Equip(&rw, pick->id);
+                }
+            }
+        }
+    }
+    else
+    {
+        PlayerWardrobe_Init(&rw, "Remote_Hero");
+    }
     PlayerWardrobe_ApplyToInstance(&rw, &s_remoteModular[agentId]);
     s_remoteModularInit[agentId] = true;
 }
@@ -362,6 +411,50 @@ static void EquipDefaultLoadout(int agentId)
     }
 }
 
+static void EquipBotVariedLoadout(int botId, int seed)
+{
+    static const struct { const char *name; int elem; } kStrikes[8] = {
+        {"TTQP_PHA_LANG_QUYEN", 0},
+        {"TTQP_NGHICH_LUU_CAM_NA", 0},
+        {"TTQP_BANG_TRIEU_DAO_HAI", 0},
+        {"ICE_CRYSTAL_LANCE", 0},
+        {"INFERNO_SURGE", 2},
+        {"VINE_SNARE", 1},
+        {"EARTH_DISC_VOLLEY", 3},
+        {"METAL_BLADE_STORM", 4}
+    };
+    static const struct { const char *name; int elem; } kSupports[2] = {
+        {"TTQP_THUY_KINH_QUYEN_THUAN", 0},
+        {"TTQP_TRIEU_TICH_LINH_TUYEN", 0}
+    };
+    if ((seed % 3) == 0)
+    {
+        // Full 7-piece Thuy Trieu Quyen Phap set
+        static const char *kFullSet[AGENT_SKILL_SLOTS] = {
+            "TTQP_PHA_LANG_QUYEN", "TTQP_NGHICH_LUU_CAM_NA", "TTQP_BANG_TRIEU_DAO_HAI",
+            "TTQP_HAN_UYEN_QUYEN_TOAN", "TTQP_NO_HAI_LONG_QUYEN",
+            "TTQP_THUY_KINH_QUYEN_THUAN", "TTQP_TRIEU_TICH_LINH_TUYEN"
+        };
+        for (int s = 0; s < AGENT_SKILL_SLOTS; s++)
+        {
+            int idx = Skill_GetIndexByName(kFullSet[s]);
+            if (idx >= 0) Entity_SetEquippedSkill(botId, s, idx, 0);
+        }
+        return;
+    }
+    for (int s = 0; s < AGENT_STRIKE_SLOTS; s++)
+    {
+        int pick = (seed + s * 3) % 8;
+        int idx = Skill_GetIndexByName(kStrikes[pick].name);
+        if (idx >= 0) Entity_SetEquippedSkill(botId, s, idx, kStrikes[pick].elem);
+    }
+    for (int s = 0; s < AGENT_BUFF_SLOTS; s++)
+    {
+        int idx = Skill_GetIndexByName(kSupports[s].name);
+        if (idx >= 0) Entity_SetEquippedSkill(botId, AGENT_STRIKE_SLOTS + s, idx, kSupports[s].elem);
+    }
+}
+
 static const char *ExploreMapNameForRealm(int realm)
 {
     switch (realm) {
@@ -415,6 +508,7 @@ static void ResetMatch(PlayerEntity *player)
         UI_Hub_CloseModal();
     AI_ClearMonsterCamps();
     AI_ClearHeroBots();
+    memset(s_mobaBotSlots, 0, sizeof(s_mobaBotSlots));
     for (int i = 0; i < MAX_AGENTS; i++)
     {
         s_remoteAnimInit[i] = false;
@@ -461,8 +555,6 @@ GameMode GameScreen_GetMode(void) { return s_mode; }
 void GameScreen_SetExploreRealm(int realmId) { s_exploreRealm = (realmId >= 0 && realmId < 5) ? realmId : 0; }
 int  GameScreen_GetExploreRealm(void) { return s_exploreRealm; }
 
-// Host, team battle: line every living hero up on its side's spawn cluster
-// (remote heroes joined at the invasion point; the round starts in ranks).
 static void PlaceHeroesAtTeamSpawns(void)
 {
     int placed[2] = {0, 0};
@@ -472,10 +564,14 @@ static void PlaceHeroesAtTeamSpawns(void)
         if (a == NULL || a->archetype != ARCH_HERO)
             continue;
         int t = (a->team == TEAM_ALLY) ? 0 : 1;
-        Vector3 pos = TEAM_SPAWN[t];
-        pos.z += (float)placed[t] * 1.8f - 2.7f;
+        int slot = placed[t] % MATCH_MAX_TEAM_SLOTS;
+        Vector3 pos = s_matchLayoutReady
+            ? s_matchLayout.heroSpawns[t][slot]
+            : (Vector3){ 94.15f + (t == 0 ? -10.0f : 10.0f), 0.0f, 150.0f };
         pos.y = MapManager_GetGroundHeightAt(pos.x, pos.z);
         Entity_SetPosition(i, pos);
+        Entity_SetFacingYaw(i, atan2f(s_matchLayout.arenaCenter.x - pos.x,
+                                      s_matchLayout.arenaCenter.z - pos.z));
         placed[t]++;
     }
 }
@@ -586,6 +682,10 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
         {
             Entity_ClearPlayableRect();
             Entity_SetArenaBounds(MATCH_ARENA_CENTER, MATCH_ARENA_RADIUS);
+            bool isEscort = (s_mode == GAME_MODE_PVP_ESCORT_1V1 || s_mode == GAME_MODE_PVP_ESCORT_2V2);
+            int tSize = (s_mode == GAME_MODE_PVP_ESCORT_2V2) ? 2 : 1;
+            MatchLayout_Compute(MATCH_ARENA_CENTER, MATCH_ARENA_RADIUS, isEscort, tSize, &s_matchLayout);
+            s_matchLayoutReady = true;
         }
         if (s_mode == GAME_MODE_TEAM_BATTLE)
         {
@@ -629,10 +729,12 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
                     AgentTeam team = (t == 0) ? TEAM_ALLY : TEAM_ENEMY;
                     while (AI_GetHeroBotCount(team) < want[t])
                     {
-                        int botId = AI_SpawnHeroBot(TEAM_SPAWN[t], team);
+                        int botId = AI_SpawnHeroBot(s_matchLayout.heroSpawns[t][0], team);
                         if (botId < 0)
                             break;
-                        EquipDefaultLoadout(botId);
+                        AIBotProfile bp = {0};
+                        AI_GetHeroBotProfile(botId, &bp);
+                        EquipBotVariedLoadout(botId, bp.outfitSeed);
                     }
                 }
                 PlaceHeroesAtTeamSpawns();
@@ -643,7 +745,7 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
         }
         else if (s_mode == GAME_MODE_PVP_ESCORT_1V1 || s_mode == GAME_MODE_PVP_ESCORT_2V2)
         {
-            Vector3 spA = TEAM_SPAWN[0];
+            Vector3 spA = s_matchLayout.heroSpawns[0][0];
             spA.y = MapManager_GetGroundHeightAt(spA.x, spA.z);
             player->position = spA;
             Entity_SetPosition(player->agentId, spA);
@@ -694,47 +796,36 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
                 int teamSize = (s_mode == GAME_MODE_PVP_ESCORT_2V2) ? 2 : 1;
                 if (!Net_ClientDrivesWorld())
                 {
+                    int mbIdx = 0;
                     while (GameRules_CountAliveHeroes(TEAM_ALLY) < teamSize)
                     {
-                        int b = AI_SpawnHeroBot(TEAM_SPAWN[0], TEAM_ALLY);
+                        int b = AI_SpawnHeroBotEx(s_matchLayout.heroSpawns[0][1], TEAM_ALLY, AI_PERSONA_GUARDIAN, NULL);
                         if (b < 0) break;
-                        EquipDefaultLoadout(b);
+                        AIBotProfile bp = {0};
+                        AI_GetHeroBotProfile(b, &bp);
+                        EquipBotVariedLoadout(b, bp.outfitSeed);
+                        if (mbIdx < AI_MAX_HERO_BOTS)
+                            s_mobaBotSlots[mbIdx++] = (MobaBotSlot){ true, b, TEAM_ALLY, 0.0f };
                     }
                     while (GameRules_CountAliveHeroes(TEAM_ENEMY) < teamSize)
                     {
-                        int b = AI_SpawnHeroBot(TEAM_SPAWN[1], TEAM_ENEMY);
+                        int slotIdx = GameRules_CountAliveHeroes(TEAM_ENEMY) % MATCH_MAX_TEAM_SLOTS;
+                        AIBotPersona ep = (slotIdx == 0) ? AI_PERSONA_VANGUARD : AI_PERSONA_DUELIST;
+                        int b = AI_SpawnHeroBotEx(s_matchLayout.heroSpawns[1][slotIdx], TEAM_ENEMY, ep, NULL);
                         if (b < 0) break;
-                        EquipDefaultLoadout(b);
+                        AIBotProfile bp = {0};
+                        AI_GetHeroBotProfile(b, &bp);
+                        EquipBotVariedLoadout(b, bp.outfitSeed);
+                        if (mbIdx < AI_MAX_HERO_BOTS)
+                            s_mobaBotSlots[mbIdx++] = (MobaBotSlot){ true, b, TEAM_ENEMY, 0.0f };
                     }
                     PlaceHeroesAtTeamSpawns();
 
-                    Vector3 bPosA = { 78.0f, 0.0f, 142.0f };
-                    bPosA.y = MapManager_GetGroundHeightAt(bPosA.x, bPosA.z);
-                    Boss_SpawnSlot(0, &BOSS_MOC_LINH, bPosA, TEAM_ALLY);
-                    BossRoute routeA = {
-                        .waypoints = {
-                            { 84.0f, 0.0f, 138.0f },
-                            { 90.0f, 0.0f, 142.0f },
-                            MATCH_ARENA_CENTER
-                        },
-                        .waypointCount = 3,
-                        .marchSpeedMps = 1.25f
-                    };
-                    Boss_SetRoute(0, &routeA);
+                    Boss_SpawnSlot(0, &BOSS_MOC_LINH, s_matchLayout.bossSpawns[0], TEAM_ALLY);
+                    Boss_SetRoute(0, &s_matchLayout.bossRoutes[0]);
 
-                    Vector3 bPosB = { 110.0f, 0.0f, 158.0f };
-                    bPosB.y = MapManager_GetGroundHeightAt(bPosB.x, bPosB.z);
-                    Boss_SpawnSlot(1, &BOSS_HAC_DIEN_TON_GIA, bPosB, TEAM_ENEMY);
-                    BossRoute routeB = {
-                        .waypoints = {
-                            { 104.0f, 0.0f, 162.0f },
-                            { 98.0f, 0.0f, 158.0f },
-                            MATCH_ARENA_CENTER
-                        },
-                        .waypointCount = 3,
-                        .marchSpeedMps = 1.25f
-                    };
-                    Boss_SetRoute(1, &routeB);
+                    Boss_SpawnSlot(1, &BOSS_HAC_DIEN_TON_GIA, s_matchLayout.bossSpawns[1], TEAM_ENEMY);
+                    Boss_SetRoute(1, &s_matchLayout.bossRoutes[1]);
                 }
             }
             else if (!Net_ClientDrivesWorld())
@@ -890,6 +981,13 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
         }
         else if (s_mode == GAME_MODE_TEAM_BATTLE)
         {
+            AIBotWorldContext bctx = {
+                .mode           = AI_BOT_MODE_ARENA_DUEL,
+                .primaryHumanId = player->agentId,
+                .allyBossId     = -1,
+                .enemyBossId    = -1
+            };
+            AI_SetBotWorldContext(&bctx);
             // Elimination (Đợt A3): a side with no living heroes loses.
             // Bots (A4) and remote players are heroes in the same pool.
             const Agent *pa = Entity_GetAgent(player->agentId);
@@ -1032,6 +1130,66 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
         }
         else if (s_mode == GAME_MODE_PVP_ESCORT_1V1 || s_mode == GAME_MODE_PVP_ESCORT_2V2)
         {
+            AIBotWorldContext bctx = {
+                .mode            = AI_BOT_MODE_MOBA_ESCORT,
+                .primaryHumanId  = player->agentId,
+                .allyBossId      = Boss_GetSlotAgentId(0),
+                .enemyBossId     = Boss_GetSlotAgentId(1),
+                .pillarPos       = MATCH_ARENA_CENTER,
+                .pillarCapture   = s_pillarCapture,
+                .spiritOrbActive = s_spiritOrbActive,
+                .spiritOrbPos    = s_spiritOrbPos
+            };
+            AI_SetBotWorldContext(&bctx);
+
+            if (!Net_ClientDrivesWorld())
+            {
+                for (int mb = 0; mb < AI_MAX_HERO_BOTS; mb++)
+                {
+                    MobaBotSlot *ms = &s_mobaBotSlots[mb];
+                    if (!ms->active) continue;
+                    if (Entity_GetAgent(ms->agentId) == NULL)
+                    {
+                        if (ms->respawnTimer == 0.0f)
+                        {
+                            int bossSlot = (ms->team == TEAM_ALLY) ? 0 : 1;
+                            int bossId = Boss_GetSlotAgentId(bossSlot);
+                            const Agent *ba = Entity_GetAgent(bossId);
+                            if (ba)
+                            {
+                                Entity_ApplyDamage(bossId, ba->maxHealth * 0.05f, (Vector3){ 0 });
+                                Entity_ApplyStun(bossId, 2.0f);
+                            }
+                        }
+                        ms->respawnTimer += dt;
+                        if (ms->respawnTimer >= 5.0f)
+                        {
+                            ms->respawnTimer = 0.0f;
+                            int tIdx = (ms->team == TEAM_ALLY) ? 0 : 1;
+                            Vector3 sp = s_matchLayoutReady
+                                ? s_matchLayout.heroSpawns[tIdx][mb % MATCH_MAX_TEAM_SLOTS]
+                                : MATCH_ARENA_CENTER;
+                            sp.y = MapManager_GetGroundHeightAt(sp.x, sp.z);
+                            AIBotPersona rp = (ms->team == TEAM_ALLY) ? AI_PERSONA_GUARDIAN : AI_PERSONA_VANGUARD;
+                            int nb = AI_SpawnHeroBotEx(sp, ms->team, rp, NULL);
+                            if (nb >= 0)
+                            {
+                                AIBotProfile bp = {0};
+                                AI_GetHeroBotProfile(nb, &bp);
+                                EquipBotVariedLoadout(nb, bp.outfitSeed);
+                                Entity_SetPvEBonuses(nb, NULL);
+                                Entity_AddModifier(nb, 1.5f, 4.0f);
+                                ms->agentId = nb;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        ms->respawnTimer = 0.0f;
+                    }
+                }
+            }
+
             s_pvpMatchTimer -= dt;
             if (s_pvpMatchTimer < 0.0f) s_pvpMatchTimer = 0.0f;
 
@@ -1052,7 +1210,9 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
                 if (s_playerRespawnTimer >= 5.0f)
                 {
                     s_playerRespawnTimer = 0.0f;
-                    Vector3 sp = TEAM_SPAWN[0];
+                    Vector3 sp = s_matchLayoutReady
+                        ? s_matchLayout.heroSpawns[0][0]
+                        : MATCH_ARENA_CENTER;
                     sp.y = MapManager_GetGroundHeightAt(sp.x, sp.z);
                     player->agentId = Entity_SpawnAgent(sp, 100.0f, 0, TEAM_ALLY, ARCH_HERO);
                     Control_Init(player->agentId);
@@ -1923,7 +2083,9 @@ void GameScreen_DrawHUD(const PlayerEntity *player)
             if (ea->archetype == ARCH_MINION && i != manualTgt && ea->health >= ea->maxHealth - 0.1f)
                 continue;
             bool isHostileHero = (ea->archetype == ARCH_HERO) && Entity_CanDamageTarget(player->agentId, i);
-            if (ea->archetype == ARCH_HERO && !isHostileHero) continue;
+            AIBotProfile botProf;
+            bool isBotHero = (ea->archetype == ARCH_HERO) && AI_GetHeroBotProfile(i, &botProf);
+            if (ea->archetype == ARCH_HERO && !isHostileHero && !isBotHero) continue;
             float dx = ea->position.x - player->position.x;
             float dz = ea->position.z - player->position.z;
             if (dx * dx + dz * dz > 24.0f * 24.0f) continue;
@@ -1939,6 +2101,13 @@ void GameScreen_DrawHUD(const PlayerEntity *player)
             Color barCol = isHostileHero ? WUXIA_CRIMSON
                          : (ea->team == TEAM_ALLY) ? WUXIA_AZURE : WUXIA_CRIMSON;
             WuxiaUI_DrawSleekBar((Rectangle){ sp.x - bw * 0.5f, sp.y, bw, bh }, frac, frac, barCol, barCol, false);
+            if (isBotHero)
+            {
+                Color nameCol = isHostileHero ? (Color){ 255, 165, 150, 255 } : (Color){ 175, 225, 255, 255 };
+                WuxiaUI_DrawTextCentered(botProf.displayName,
+                                         (Rectangle){ sp.x - 80.0f, sp.y - 16.0f, 160.0f, 14.0f },
+                                         11.5f, nameCol);
+            }
         }
     }
 
@@ -2191,4 +2360,38 @@ void GameScreen_SetOnlineCode(const char *code)
     }
     strncpy(s_onlineCode, code, sizeof(s_onlineCode) - 1);
     s_onlineCode[sizeof(s_onlineCode) - 1] = '\0';
+}
+
+void GameScreen_OnBotCast(int agentId, int skillIndex, Vector3 aim)
+{
+    if (agentId < 0 || agentId >= MAX_AGENTS)
+        return;
+    if (!s_remoteAnimInit[agentId])
+    {
+        CharacterModel_ResetState(&s_remoteAnim[agentId]);
+        s_remoteAnimInit[agentId] = true;
+    }
+    const Agent *ca = Entity_GetAgent(agentId);
+    if (ca)
+    {
+        float dx = aim.x - ca->position.x;
+        float dz = aim.z - ca->position.z;
+        if (dx * dx + dz * dz > 0.001f)
+            s_remoteYaw[agentId] = atan2f(dx, dz);
+    }
+    if (skillIndex >= 250 && skillIndex <= 252)
+    {
+        int bType = skillIndex - 250;
+        CharacterAnimSlot meleeSlot = (bType == 0) ? CHAR_ANIM_PUNCH
+                                    : (bType == 1) ? CHAR_ANIM_KICK
+                                                   : CHAR_ANIM_PALM;
+        float swingSecs = Entity_GetBasicAttackSeconds((BasicAttackType)bType);
+        CharacterModel_TriggerAttackTimed(&s_remoteAnim[agentId], meleeSlot, swingSecs);
+    }
+    else
+    {
+        bool hasSword = s_remoteModularInit[agentId] &&
+                        (s_remoteModular[agentId].loadout.itemIndices[MODULAR_SLOT_WEAPON_R] >= 0);
+        CharacterModel_Trigger(&s_remoteAnim[agentId], hasSword ? CHAR_ANIM_SWORD_SLASH : CHAR_ANIM_CAST);
+    }
 }

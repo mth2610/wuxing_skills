@@ -295,6 +295,7 @@ add_executable(wuxing
 
     # --- Game Screen & Open World (production-bound; sandbox/ stays the dev harness) ---
     game/game_screen.c
+    game/match_layout.c
     game/game_rules.c
     game/quest_datau.c
     game/horde_renderer.c

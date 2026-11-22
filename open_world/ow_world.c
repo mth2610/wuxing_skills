@@ -4,6 +4,8 @@
 #include "open_world/ow_quest_npc.h"
 #include "open_world/ow_sandbox_modes.h"
 #include "open_world/ow_weather.h"
+#include "ai/ai.h"
+#include "boss/boss_system.h"
 #include "character/player_profile.h"
 #include "combat/combat.h"
 #include "core/composition/visual_composer.h"
@@ -74,6 +76,52 @@ static float s_sparCountdown     = 0.0f;
 static bool  s_sparStarting      = false;
 static float s_prevHeroHp[MAX_AGENTS];
 static bool  s_prevHeroHpInit[MAX_AGENTS];
+
+#define OW_MAX_LIVING_BOTS 3
+static int   s_owBotIds[OW_MAX_LIVING_BOTS] = { -1, -1, -1 };
+static float s_owBotRespawn[OW_MAX_LIVING_BOTS] = { 0 };
+static bool  s_owBotsEnabled = false;
+
+static void EquipOwBotLoadout(int botId, int seed) {
+    static const struct { const char *name; int elem; } kStrikes[8] = {
+        { "TTQP_PHA_LANG_QUYEN", 0 },
+        { "TTQP_NGHICH_LUU_CAM_NA", 0 },
+        { "TTQP_BANG_TRIEU_DAO_HAI", 0 },
+        { "ICE_CRYSTAL_LANCE", 0 },
+        { "INFERNO_SURGE", 2 },
+        { "VINE_SNARE", 1 },
+        { "EARTH_DISC_VOLLEY", 3 },
+        { "METAL_BLADE_STORM", 4 }
+    };
+    for (int s = 0; s < AGENT_STRIKE_SLOTS; s++) {
+        int pick = (seed + s * 3) % 8;
+        int idx = Skill_GetIndexByName(kStrikes[pick].name);
+        if (idx >= 0) Entity_SetEquippedSkill(botId, s, idx, kStrikes[pick].elem);
+    }
+    int sup0 = Skill_GetIndexByName("TTQP_THUY_KINH_QUYEN_THUAN");
+    int sup1 = Skill_GetIndexByName("TTQP_TRIEU_TICH_LINH_TUYEN");
+    if (sup0 >= 0) Entity_SetEquippedSkill(botId, AGENT_STRIKE_SLOTS, sup0, 0);
+    if (sup1 >= 0) Entity_SetEquippedSkill(botId, AGENT_STRIKE_SLOTS + 1, sup1, 0);
+}
+
+static void SpawnOwBotSlot(int slot) {
+    static const AIBotPersona kPersonas[OW_MAX_LIVING_BOTS] = {
+        AI_PERSONA_WANDERER, AI_PERSONA_WANDERER, AI_PERSONA_RIVAL
+    };
+    Vector3 base = (slot == 2) ? s_realm.duelBannerPos : s_realm.daTauNpcPos;
+    if (base.x == 0.0f && base.z == 0.0f) base = s_realm.defaultStartPos;
+    float ang = (float)slot * 2.1f + 0.5f;
+    Vector3 sp = { base.x + cosf(ang) * 4.5f, 0.0f, base.z + sinf(ang) * 4.5f };
+    sp.y = MapManager_GetGroundHeightAt(sp.x, sp.z);
+    int bid = AI_SpawnHeroBotEx(sp, TEAM_ALLY, kPersonas[slot], NULL);
+    if (bid >= 0) {
+        AIBotProfile prof = { 0 };
+        AI_GetHeroBotProfile(bid, &prof);
+        EquipOwBotLoadout(bid, prof.outfitSeed);
+        s_owBotIds[slot] = bid;
+        s_owBotRespawn[slot] = 0.0f;
+    }
+}
 
 static float DistXZ(Vector3 a, Vector3 b) {
     float dx = a.x - b.x, dz = a.z - b.z;
@@ -303,6 +351,11 @@ void OW_Init(const OWRealmDef *realm, bool spawnCamps) {
 
     AI_ClearHordeZones();
     AI_SetSafeZone(s_realm.safeCenter, s_realm.safeRadius);
+    for (int i = 0; i < OW_MAX_LIVING_BOTS; i++) {
+        s_owBotIds[i] = -1;
+        s_owBotRespawn[i] = 0.0f;
+    }
+    s_owBotsEnabled = spawnCamps;
     if (spawnCamps) {
         for (int i = 0; i < s_realm.campCount && i < OW_MAX_CAMPS; i++) {
             const OWCampSpawn *c = &s_realm.camps[i];
@@ -310,6 +363,9 @@ void OW_Init(const OWRealmDef *realm, bool spawnCamps) {
         }
         for (int i = 0; i < s_realm.hordeZoneCount && i < OW_MAX_CAMPS; i++) {
             AI_RegisterHordeZone(&s_realm.hordeZones[i]);
+        }
+        for (int i = 0; i < OW_MAX_LIVING_BOTS; i++) {
+            SpawnOwBotSlot(i);
         }
     }
 
@@ -337,6 +393,83 @@ void OW_Update(PlayerEntity *player, float dt) {
     if (s_killStreakTimer > 0.0f) {
         s_killStreakTimer -= dt;
         if (s_killStreakTimer <= 0.0f) s_killStreak = 0;
+    }
+
+    if (!Net_ClientDrivesWorld()) {
+        // Push Open-World context to Hero Bots
+        AIBotWorldContext bctx = {
+            .mode            = AI_BOT_MODE_OPEN_WORLD,
+            .realmId         = s_realm.realmId,
+            .primaryHumanId  = player ? player->agentId : -1,
+            .allyBossId      = -1,
+            .enemyBossId     = -1,
+            .safeCenter      = s_realm.safeCenter,
+            .safeRadius      = s_realm.safeRadius,
+            .npcQuestPos     = s_realm.daTauNpcPos,
+            .npcAlchemistPos = s_realm.alchemistPos
+        };
+        if (Boss_IsSlotAlive(0)) {
+            int bid = Boss_GetSlotAgentId(0);
+            const Agent *ba = Entity_GetAgent(bid);
+            if (ba) {
+                bctx.worldBossActive = true;
+                bctx.worldBossPos = ba->position;
+                bctx.enemyBossId = bid;
+            }
+        }
+        for (int i = 0; i < s_realm.campCount && bctx.poiCount < AI_MAX_WORLD_POIS; i++) {
+            bctx.pois[bctx.poiCount++] = s_realm.camps[i].center;
+        }
+        for (int i = 0; i < s_realm.hordeZoneCount && bctx.poiCount < AI_MAX_WORLD_POIS; i++) {
+            bctx.pois[bctx.poiCount++] = s_realm.hordeZones[i].center;
+        }
+        AI_SetBotWorldContext(&bctx);
+
+        // Living Jianghu Population Director: keep up to 4 total heroes (humans + bots)
+        if (s_owBotsEnabled) {
+            int humanCount = 0;
+            for (int i = 0; i < MAX_AGENTS; i++) {
+                const Agent *ha = Entity_GetAgent(i);
+                if (ha && ha->archetype == ARCH_HERO && !AI_IsHeroBot(i)) humanCount++;
+            }
+            int wantBots = 4 - humanCount;
+            if (wantBots < 0) wantBots = 0;
+            if (wantBots > OW_MAX_LIVING_BOTS) wantBots = OW_MAX_LIVING_BOTS;
+
+            for (int i = 0; i < OW_MAX_LIVING_BOTS; i++) {
+                if (i >= wantBots) {
+                    if (s_owBotIds[i] >= 0 && Entity_GetAgent(s_owBotIds[i]) != NULL) {
+                        Entity_ApplyDamage(s_owBotIds[i], 1e9f, (Vector3){ 0 });
+                    }
+                    s_owBotIds[i] = -1;
+                    continue;
+                }
+                if (s_owBotIds[i] < 0 || Entity_GetAgent(s_owBotIds[i]) == NULL) {
+                    s_owBotRespawn[i] += dt;
+                    if (s_owBotRespawn[i] >= 6.0f) {
+                        SpawnOwBotSlot(i);
+                    }
+                } else {
+                    s_owBotRespawn[i] = 0.0f;
+                }
+            }
+        }
+
+        // Poll Bot social emote replies & Spar acceptances
+        AIBotSocialEvent bsev[8];
+        int nbsev = AI_PollBotSocialEvents(bsev, 8);
+        for (int i = 0; i < nbsev; i++) {
+            if (bsev[i].emoteId == OW_EMOTE_SPAR_ACCEPT) {
+                s_sparInvitePending = false;
+                s_sparPartnerId     = bsev[i].agentId;
+                s_sparCountdown     = 3.0f;
+                s_sparStarting      = true;
+                OW_SetBanner("DONG DAO DA DONG Y! CHUAN BI TY THI...", 2.0f);
+            } else {
+                RecordEmote(bsev[i].agentId, bsev[i].emoteId);
+                Net_SendSocialState(bsev[i].agentId, bsev[i].emoteId, false);
+            }
+        }
     }
 
     OWWeather_Update(player, dt);
@@ -536,6 +669,7 @@ void OW_Update(PlayerEntity *player, float dt) {
         if (chosen > 0) {
             RecordEmote(player->agentId, chosen);
             Net_SendSocialState(player->agentId, chosen, Entity_GetDuelFlag(player->agentId));
+            AI_NotifyBotSocialEvent(player->agentId, -1, chosen);
             s_emoteMenuOpen = false;
         }
     }
@@ -780,10 +914,12 @@ void OW_DrawHUD(const PlayerEntity *player, Camera3D cam) {
             if (WuxiaUI_DrawButton(br, eLbls[i], bc, (i == 4 && pa && pa->duelFlag), 12.5f)) {
                 if (i == 2) {
                     Net_SendSocialState(player->agentId, OW_EMOTE_SPAR_ASK, false);
+                    AI_NotifyBotSocialEvent(player->agentId, -1, OW_EMOTE_SPAR_ASK);
                     OW_SetBanner("ĐÃ GỬI LỜI MỜI TỶ THÍ! CHỜ ĐỒNG ĐẠO ĐỒNG Ý...", 2.8f);
                 } else if (i < 4) {
                     RecordEmote(player->agentId, i + 1);
                     Net_SendSocialState(player->agentId, i + 1, Entity_GetDuelFlag(player->agentId));
+                    AI_NotifyBotSocialEvent(player->agentId, -1, i + 1);
                     if (i == 3) s_tradeMenuOpen = true;
                 } else {
                     s_touchDuelReq = true;

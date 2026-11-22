@@ -82,4 +82,7 @@ bool GameScreen_RequestedBackToMenu(void);
 // after Net_StartHostOnline succeeds and clears it on back-to-menu).
 void GameScreen_SetOnlineCode(const char *code);
 
+// Triggered by main.c when a host-driven Hero Bot casts a skill or melee swing.
+void GameScreen_OnBotCast(int agentId, int skillIndex, Vector3 aim);
+
 #endif // GAME_SCREEN_H

@@ -5,10 +5,9 @@
 
 ## 1. Scope & Design — engine/data split
 
-- **ENGINE** (`boss_system.h/.c`, written once): spawns the boss as a normal
-  `ARCH_BOSS` agent in the shared entities pool, runs the %HP phase machine,
-  biến hệ via `Entity_SetElement`, picks the nearest opposing-team target
-  (`Entity_GetNearbyTargetsTeam`, 25 m) and casts the phase skill through
+- **ENGINE** (`boss_system.h/.c`, written once): spawns up to `BOSS_MAX_INSTANCES` (2) bosses as normal
+  `ARCH_BOSS` agents in the shared entities pool, runs the %HP phase machine,
+  biến hệ via `Entity_SetElement`, picks targets using weighted priority (`ARCH_HERO > ARCH_BOSS > ARCH_MINION` with hysteresis stickiness), leads projectile casts with target velocity estimation, marches along `BossRoute` waypoints (with +25% escort speed & blocker-hold), and casts the phase skill through
   `core/skill_manager` on a cooldown cadence. **No VFX headers.**
 - **DATA** (`boss/<ten_boss>_def.c`, one per boss — the AI-creates-bosses
   surface): a `BossDef` table + `drawVisual` callback. Only `_def.c` files

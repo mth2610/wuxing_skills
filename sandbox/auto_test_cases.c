@@ -13,6 +13,7 @@
 #include "boss/boss_system.h"
 #include "game/game_screen.h"
 #include "game/game_rules.h"
+#include "game/match_layout.h"
 #include "game/quest_datau.h"
 #include "open_world/ow_world.h"
 #include "open_world/ow_weather.h"
@@ -2119,6 +2120,155 @@ static AutoTestResult AutoTest_DemDualScaleTiledStep(int frameInCase, char *outR
   return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
 }
 
+static AutoTestResult AutoTest_BotUtilityAIStep(int frameInCase, char *outReason, int outReasonSize)
+{
+  (void)frameInCase;
+  Entity_Init();
+  AI_Init();
+  Combat_Init();
+  Entity_SetArenaBounds((Vector3){ 6.0f, 0.0f, 4.4f }, 30.0f);
+
+  // 1. Spawn bot with explicit persona + verify profile metadata
+  int botId = AI_SpawnHeroBotEx((Vector3){ 6.0f, 0.0f, 4.4f }, TEAM_ALLY, AI_PERSONA_WANDERER, NULL);
+  bool ok = AutoTest_ExpectTrue(botId >= 0, "AI_SpawnHeroBotEx returns valid agentId", outReason, outReasonSize);
+  AIBotProfile prof = { 0 };
+  ok &= AutoTest_ExpectTrue(AI_GetHeroBotProfile(botId, &prof) && prof.displayName[0] != '\0',
+                            "bot has valid Wuxia profile & displayName", outReason, outReasonSize);
+
+  int strikeIdx = Skill_GetIndexByName("TTQP_PHA_LANG_QUYEN");
+  int healIdx = Skill_GetIndexByName("TTQP_TRIEU_TICH_LINH_TUYEN");
+  if (strikeIdx >= 0) Entity_SetEquippedSkill(botId, 0, strikeIdx, 0);
+  if (healIdx >= 0) Entity_SetEquippedSkill(botId, 5, healIdx, 0);
+
+  // 2. Open-World mode: spawn camp monster & verify bot attacks/damages it
+  int monId = AI_SpawnOneShotMonster((Vector3){ 10.5f, 0.0f, 4.4f }, 2, MONSTER_SWARM_MELEE);
+  const Agent *monInit = Entity_GetAgent(monId);
+  float monHp0 = monInit ? monInit->health : 30.0f;
+
+  AIBotWorldContext owCtx = {
+      .mode = AI_BOT_MODE_OPEN_WORLD,
+      .safeCenter = (Vector3){ 0.0f, 0.0f, 0.0f },
+      .safeRadius = 3.0f,
+      .npcQuestPos = (Vector3){ 0.0f, 0.0f, 0.0f },
+      .allyBossId = -1,
+      .enemyBossId = -1
+  };
+  AI_SetBotWorldContext(&owCtx);
+
+  for (int f = 0; f < 90; f++) {
+    Combat_BeginFrame();
+    Entity_Update(1.0f / 60.0f);
+    AI_Update(1.0f / 60.0f);
+    UpdateSkillManager(1.0f / 60.0f, (Vector3){ 10.5f, 0.0f, 4.4f }, 0.5f);
+    Combat_Update(1.0f / 60.0f);
+  }
+  const Agent *monAfter = Entity_GetAgent(monId);
+  ok &= AutoTest_ExpectTrue(monAfter == NULL || monAfter->health < monHp0,
+                            "Open-world bot targets and damages camp monster", outReason, outReasonSize);
+
+  // 3. MOBA Escort mode: Spirit Orb contest moves bot toward orb
+  AI_ClearMonsterCamps();
+  const Agent *baBefore = Entity_GetAgent(botId);
+  Vector3 orbPos = { baBefore ? baBefore->position.x + 8.0f : 14.0f, 0.0f, 4.4f };
+  float distBefore = baBefore ? fabsf(baBefore->position.x - orbPos.x) : 8.0f;
+  AIBotWorldContext mobaCtx = {
+      .mode = AI_BOT_MODE_MOBA_ESCORT,
+      .allyBossId = -1,
+      .enemyBossId = -1,
+      .spiritOrbActive = true,
+      .spiritOrbPos = orbPos
+  };
+  AI_SetBotWorldContext(&mobaCtx);
+  for (int f = 0; f < 45; f++) {
+    Entity_Update(1.0f / 60.0f);
+    AI_Update(1.0f / 60.0f);
+  }
+  const Agent *baAfter = Entity_GetAgent(botId);
+  float distAfter = baAfter ? fabsf(baAfter->position.x - orbPos.x) : 999.0f;
+  ok &= AutoTest_ExpectTrue(distAfter < distBefore - 0.5f,
+                            "MOBA bot moves to contest active Spirit Orb", outReason, outReasonSize);
+
+  // 4. Social emote reply
+  int senderId = Entity_SpawnAgent(baAfter ? baAfter->position : (Vector3){ 6.0f, 0.0f, 4.4f },
+                                   100.0f, 0, TEAM_ALLY, ARCH_HERO);
+  AI_NotifyBotSocialEvent(senderId, botId, 1);
+  for (int f = 0; f < 100; f++) {
+    AI_Update(1.0f / 60.0f);
+  }
+  AIBotSocialEvent sev[4];
+  int nsev = AI_PollBotSocialEvents(sev, 4);
+  ok &= AutoTest_ExpectTrue(nsev >= 1 && sev[0].agentId == botId && sev[0].emoteId == 1,
+                            "Bot replies to Greet social emote", outReason, outReasonSize);
+
+  AI_ClearHeroBots();
+  AI_SetBotWorldContext(NULL);
+  Entity_ApplyDamage(senderId, 1e9f, (Vector3){ 0 });
+  return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
+}
+
+static AutoTestResult AutoTest_MatchLayoutAndLaneAIStep(int frameInCase, char *outReason, int outReasonSize)
+{
+  (void)frameInCase;
+  Entity_Init();
+  AI_Init();
+  Boss_ClearAll();
+  Combat_Init();
+  Vector3 center = { 6.0f, 0.0f, 4.4f };
+  Entity_SetArenaBounds(center, 30.0f);
+
+  // 1. Symmetric MatchLayout_Compute
+  MatchLayout ml;
+  MatchLayout_Compute(center, 30.0f, true, 2, &ml);
+  bool ok = AutoTest_ExpectTrue(ml.bossRoutes[0].waypointCount == 5 && ml.bossRoutes[1].waypointCount == 5,
+                                "MatchLayout produces 5-waypoint dual-lane Boss routes", outReason, outReasonSize);
+  float end0 = fabsf(ml.bossRoutes[0].waypoints[4].x - center.x) + fabsf(ml.bossRoutes[0].waypoints[4].z - center.z);
+  float end1 = fabsf(ml.bossRoutes[1].waypoints[4].x - center.x) + fabsf(ml.bossRoutes[1].waypoints[4].z - center.z);
+  ok &= AutoTest_ExpectTrue(end0 < 0.5f && end1 < 0.5f,
+                            "Both Boss routes converge at arenaCenter", outReason, outReasonSize);
+  float spawnSep = fabsf(ml.heroSpawns[0][0].x - ml.heroSpawns[1][0].x);
+  ok &= AutoTest_ExpectTrue(spawnSep >= 12.0f &&
+                            ml.heroSpawns[0][0].x < center.x &&
+                            ml.heroSpawns[1][0].x > center.x,
+                            "Team spawns are symmetrically separated across arenaCenter", outReason, outReasonSize);
+
+  // 2. Boss weighted targeting: Hero > Minion at equal distance
+  int bossId = Boss_SpawnSlot(0, &BOSS_HAC_DIEN_TON_GIA, center, TEAM_ALLY);
+  int minId = Entity_SpawnAgent((Vector3){ center.x + 5.0f, 0.0f, center.z }, 50.0f, 0, TEAM_ENEMY, ARCH_MINION);
+  int heroId = Entity_SpawnAgent((Vector3){ center.x - 5.0f, 0.0f, center.z }, 100.0f, 0, TEAM_ENEMY, ARCH_HERO);
+  Boss_Update(0.05f);
+  const Agent *ba = Entity_GetAgent(bossId);
+  ok &= AutoTest_ExpectTrue(ba != NULL && ba->facingYaw < 0.0f,
+                            "Boss prioritizes enemy Hero (-X) over equidistant Minion (+X)", outReason, outReasonSize);
+  (void)minId;
+  (void)heroId;
+
+  // 3. 2-Role Minion Wave: spawns Vanguard + Ranged Spirit & fires bolts
+  int waveCount = AI_SpawnMinionWave(bossId, 3);
+  ok &= AutoTest_ExpectTrue(waveCount == 3, "AI_SpawnMinionWave spawns 3 lane minions", outReason, outReasonSize);
+  int rangedFound = 0;
+  for (int i = 0; i < MAX_AGENTS; i++) {
+    const Agent *a = Entity_GetAgent(i);
+    if (a && a->archetype == ARCH_MINION && a->team == TEAM_ALLY) {
+      if ((a->netMonsterMeta & 0x3u) == MONSTER_RANGED_CASTER) rangedFound++;
+    }
+  }
+  ok &= AutoTest_ExpectTrue(rangedFound == 1, "3-minion wave contains 1 Ranged Spirit Caster", outReason, outReasonSize);
+
+  for (int f = 0; f < 85; f++) {
+    Combat_BeginFrame();
+    Entity_Update(1.0f / 60.0f);
+    AI_Update(1.0f / 60.0f);
+    Combat_Update(1.0f / 60.0f);
+  }
+  AIMinionBoltRenderInfo bolts[16];
+  int nb = AI_QueryMinionBolts(bolts, 16);
+  ok &= AutoTest_ExpectTrue(nb >= 1, "Ranged lane minion fires MinionBolts at opposing target", outReason, outReasonSize);
+
+  Boss_ClearAll();
+  AI_ClearMonsterCamps();
+  return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
+}
+
 void AutoTestCases_Register(PlayerEntity *player)
 {
   s_player = player;
@@ -2160,5 +2310,7 @@ void AutoTestCases_Register(PlayerEntity *player)
   AutoTest_Register("vo_hoc_entities_ext", AutoTest_VoHocEntitiesExtStep, 5);
   AutoTest_Register("skill_cooldown_registry", AutoTest_SkillCooldownRegistryStep, 5);
   AutoTest_Register("liquid_swe_wiring", AutoTest_LiquidSweWiringStep, 5);
+  AutoTest_Register("bot_utility_ai", AutoTest_BotUtilityAIStep, 5);
+  AutoTest_Register("match_layout_and_lane_ai", AutoTest_MatchLayoutAndLaneAIStep, 5);
 }
 

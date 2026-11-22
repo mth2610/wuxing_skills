@@ -682,8 +682,12 @@ void OWSandbox_DrawHUD(const PlayerEntity *player, Camera3D cam) {
             s_heroPopupRect = (Rectangle){ px, py, popW, popH };
 
             WuxiaUI_DrawPanel(s_heroPopupRect, WUXIA_GOLD, true);
-            WuxiaUI_DrawText(TextFormat("Đồng Đạo #%d  (HP %d/%d) [%s]",
-                                        s_selectedHeroId, (int)tgt->health, (int)tgt->maxHealth,
+            AIBotProfile botProf;
+            const char *heroLabel = AI_GetHeroBotProfile(s_selectedHeroId, &botProf)
+                ? botProf.displayName
+                : TextFormat("Đồng Đạo #%d", s_selectedHeroId);
+            WuxiaUI_DrawText(TextFormat("%s  (HP %d/%d) [%s]",
+                                        heroLabel, (int)tgt->health, (int)tgt->maxHealth,
                                         OWSandbox_GetPkModeLabel(tgt->pkMode)),
                              px + 12.0f, py + 10.0f, 12.0f, WUXIA_TEXT_PRIMARY);
 

@@ -8,11 +8,7 @@
 Minions are ordinary `ARCH_MINION` agents in the shared entities pool
 (`MAX_AGENTS 256` — no separate pool). `ai/` adds BEHAVIOR only, walking the
 pool every frame like `Entity_Update` does:
-- **March**: steady 2.0 m/s (× `Entity_GetSpeedMult`) toward the nearest
-  opposing-team agent, preferring `ARCH_BOSS` (trudges doggedly toward the
-  enemy boss).
-  Movement is an external mover: `Entity_SetPosition` per frame, yields
-  while airborne/crowd-controlled.
+- **March & Lane Roles**: MOBA wave minions (`AI_SpawnMinionWave`) spawn as a 2-role mix (~65% **Vanguard Kamikaze** + ~35% **Ranged Spirit Caster**). Both apply soft Boids separation (`r < 1.4m`) and prioritize opposing `ARCH_MINION` (`< 6m`) > opposing `ARCH_HERO` (`< 8.5m`) > opposing `ARCH_BOSS`. Ranged Spirits hold at `7.2m` and fire lightweight `SpawnMinionBolt` projectiles.
 - **Self-destruct**: within 1.2 m of the target — the minion dies first,
   then a team-aware `Entity_ApplyAoEDamage` (2 m radius, 15 dmg, 3 kb).
 - Pure logic: no VFX includes. Explosions surface as poll events (same
@@ -39,28 +35,43 @@ int AI_PollExplosions(MinionExplosion *out, int max); // drained per frame (main
   + rotating ring + smart shadow) — ai/ never draws.
 - Tuning constants (speed/trigger/blast) are statics in `ai.c` — meter-scaled.
 
-## 3b. Hero bots (Phase A4 — virtual players)
+## 3b. Hero bots (Phase A4 + Utility AI Simulated Players)
 
 ```c
 #define AI_MAX_HERO_BOTS 8
-int  AI_SpawnHeroBot(Vector3 pos, AgentTeam team); // agent + brain; caller equips
-void AI_ClearHeroBots(void);                       // match reset / room close
+#define AI_MAX_WORLD_POIS 8
+
+typedef enum {
+    AI_BOT_MODE_ARENA_DUEL = 0, // Team Battle / Sparring
+    AI_BOT_MODE_MOBA_ESCORT,    // 1v1 / 2v2 Dual-Boss + Convergence Pillar
+    AI_BOT_MODE_OPEN_WORLD      // Living Jianghu: Quests, Camps, Loot, World Boss, Social
+} AIBotGameMode;
+
+typedef enum {
+    AI_PERSONA_BALANCED = 0, AI_PERSONA_VANGUARD, AI_PERSONA_GUARDIAN,
+    AI_PERSONA_DUELIST, AI_PERSONA_WANDERER, AI_PERSONA_RIVAL
+} AIBotPersona;
+
+void AI_SetBotWorldContext(const AIBotWorldContext *ctx);
+int  AI_SpawnHeroBot(Vector3 pos, AgentTeam team);
+int  AI_SpawnHeroBotEx(Vector3 pos, AgentTeam team, AIBotPersona persona, const char *nameOverride);
+void AI_ClearHeroBots(void);
 int  AI_GetHeroBotCount(AgentTeam team);
 bool AI_IsHeroBot(int agentId);
+bool AI_GetHeroBotProfile(int agentId, AIBotProfile *outProfile);
+void AI_NotifyBotSocialEvent(int senderAgentId, int targetBotAgentId, int emoteId);
+int  AI_PollBotSocialEvents(AIBotSocialEvent *out, int max);
+
 typedef struct { int agentId; int skillIndex; Vector3 aim; } HeroBotCast;
-int  AI_PollHeroCasts(HeroBotCast *out, int max);  // → net cast mirroring
+int  AI_PollHeroCasts(HeroBotCast *out, int max);  // skillIndex >= 250 = basic attack
 ```
 
-A bot is an ordinary ARCH_HERO plus a brain slot: nearest/weakest-enemy
-targeting, hold-skill-range movement (close in >9m, back off <5m, strafe in
-band), dash perpendicular to a close enemy projectile
-(`Combat_QueryProjectiles`), edge guard against the ring-out
-(`Entity_GetArenaBounds`), casts off `equippedSkills` on a ~1.2s think
-cadence. Runs HOST-side only — clients see bots through the same snapshot
-path as humans. game/'s team-battle INTRO spawns them from the lobby
-roster's BOT entries and equips the default loadout; ai/ itself never
-touches the registry names. Extra reads this brought: `core/
-skill_manager.h` (CanCast/CastSkill) + `combat/combat.h` (projectiles).
+Implemented in `ai/ai_bot_brain.inl` via a 3-layer extensible architecture:
+1. **Perception & Skill Introspection (`BotPerceive`)**: scans nearby heroes/minions/bosses, incoming hostile projectiles (`Combat_QueryProjectiles`), and queries `VoHoc_FindByName` at runtime so bots auto-adapt to any future Võ Học set without hardcoded skill logic.
+2. **Declarative Utility AI Goal Table (`ScoreGoal` / `SelectBestGoal`)**: scores 8 modular goals (`SURVIVE_RECOVER`, `MOBA_CONTEST_ORB`, `MOBA_ESCORT_BOSS`, `MOBA_ASSAULT_OBJECTIVE`, `COMBAT_DUEL_HERO`, `OW_WORLD_BOSS_RAID`, `OW_HUNT_MONSTERS`, `OW_TOWN_QUEST`) weighted by `AIBotPersona` with hysteresis.
+3. **Humanized Motor (`SteerHumanizedMove` & Tactical Combat)**: 8-ray context steering, Khinh Công jump/dash, Thiền Định meditation when low Mana, Đấu Pháp counter-projectiles, Tương Sinh element chaining, predictive aim leading, and melee weaving (`Entity_ExecuteBasicAttack`).
+
+Runs HOST-side only — clients see bots through the same snapshot + cast-mirror path as humans. `open_world/ow_world.c` maintains up to 3 simulated players (`2x WANDERER + 1x RIVAL`) when human peer count is low and rotates them out as real players join.
 
 ## 4. Explicitly NOT in this version
 

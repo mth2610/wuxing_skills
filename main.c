@@ -1746,7 +1746,8 @@ int main(int argc, char **argv) {
         int nCasts = AI_PollHeroCasts(botCasts, 16);
         for (int ci = 0; ci < nCasts; ci++) {
             const Agent *ba = Entity_GetAgent(botCasts[ci].agentId);
-            if (ba) Audio_PlaySFXAt(SFX_AI_CAST, ba->position);
+            if (ba) Audio_PlaySFXAt((botCasts[ci].skillIndex >= 250) ? SFX_MARTIAL_SWING : SFX_AI_CAST, ba->position);
+            GameScreen_OnBotCast(botCasts[ci].agentId, botCasts[ci].skillIndex, botCasts[ci].aim);
             Net_HostNotifyCast(botCasts[ci].agentId, botCasts[ci].skillIndex,
                                botCasts[ci].aim);
         }
