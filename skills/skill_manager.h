@@ -308,4 +308,11 @@ float Skill_GetCastAnimSeconds(int skillIndex);
 void Skill_RequestAnim(int agentId, const char *clipName, float seconds);
 bool Skill_ConsumeAnimTrigger(int agentId, char *outClipName, int maxLen, float *outSeconds);
 
+// Read-only animation state provider — lets skills sample live bone sockets
+// (sword tip, fist, foot) without depending on game/ or sandbox/.
+struct CharacterAnimState;
+typedef const struct CharacterAnimState* (*AgentAnimProviderFn)(int agentId);
+void SkillManager_SetAgentAnimProvider(AgentAnimProviderFn fn);
+const struct CharacterAnimState* SkillManager_GetAgentAnim(int agentId);
+
 #endif // SKILL_MANAGER_H

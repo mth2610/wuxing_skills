@@ -1748,3 +1748,17 @@ bool Skill_ConsumeAnimTrigger(int agentId, char *outClipName, int maxLen, float 
   }
   return false;
 }
+
+static AgentAnimProviderFn s_agentAnimProvider = NULL;
+
+void SkillManager_SetAgentAnimProvider(AgentAnimProviderFn fn)
+{
+  s_agentAnimProvider = fn;
+}
+
+const struct CharacterAnimState* SkillManager_GetAgentAnim(int agentId)
+{
+  if (!s_agentAnimProvider)
+    return NULL;
+  return s_agentAnimProvider(agentId);
+}

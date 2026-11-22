@@ -16,6 +16,8 @@ extern "C" {
 typedef enum {
     VH_SET_NONE = 0,
     VH_SET_THUY_TRIEU_QUYEN_PHAP = 1, /* Bộ Thủy 7 chiêu (SWE) */
+    VH_SET_BAN_THACH_BAT_CUC_QUYEN = 2, /* Bộ Thổ 7 chiêu (Bát Cực Quyền) */
+    VH_SET_THIEN_CANG_DOAN_KIM_KIEM = 3, /* Bộ Kim 7 chiêu (Thiên Cang Đoạn Kim Kiếm Pháp) */
     VH_SET_COUNT
 } VoHocSetId;
 

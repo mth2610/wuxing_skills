@@ -112,6 +112,7 @@ void CastTtqpHanUyenQuyenToanSkill(int agentId, Vector3 startPos, Vector3 target
     inst->sweHandle = -1; /* Spawned at eruption after telegraph */
 
     /* Phase 1 Telegraph: subtle bubbling SSF water & frost mist warning on ground */
+    Skill_RequestAnim(agentId, "taiji_cloud_hands", HYQT_TELEGRAPH_SECS);
     SpawnGeyserSSF(center, 2.2f, 0.35f, 0.9f * scale);
     VFX_ComposeMistVeilEx(center, VC_MAT_WATER, 3.5f * scale, HYQT_TELEGRAPH_SECS + 0.6f);
     PlayCastSound(EFFECT_PRESET_WATER_SPLASH);
@@ -128,6 +129,7 @@ void UpdateTtqpHanUyenQuyenToanSkill(float dt, Vector3 enemyPos, float enemyRadi
         /* Phase 2: After 0.70s clear ground telegraph -> SWE cryo spout + SSF geyser + Freeze */
         if (!inst->erupted && inst->elapsed >= HYQT_TELEGRAPH_SECS) {
             inst->erupted = true;
+            Skill_RequestAnim(inst->ownerAgentId, "standing_2h_cast_spell_01", 0.45f);
             float radius = 3.5f * inst->sizeScale;
 
             LiquidSWEDesc desc = LiquidSWE_DefaultDesc();

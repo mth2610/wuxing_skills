@@ -1025,6 +1025,91 @@ static AutoTestResult AutoTest_CharacterAnimSystemStep(int frameInCase, char *ou
   bool triggered = CharacterModel_TriggerByName(&testState, "jumping_down", 0.0f);
   ok &= AutoTest_ExpectTrue(triggered, "TriggerByName finds and triggers jumping_down", outReason, outReasonSize);
 
+  // Verify every skill/combo clip name and canonical alias resolves in humanoid_anims.glb
+  static const char *kRequiredClips[] = {
+      "withdrawing_sword",
+      "sheath_sword_1",
+      "stable_sword_outward_slash",
+      "sword_and_shield_slash",
+      "sword_and_shield_slash_2",
+      "great_sword_impact",
+      "thrust_slash",
+      "sword_and_shield_casting",
+      "standing_1h_cast_spell_01",
+      "taiji_cloud_hands",
+      "hell_slammer_a",
+      "crouch_idle",
+      "mutant_jump_attack",
+      "mutant_roaring",
+      "crane_wing_strike",
+      "flying_kick",
+      "fist_fight_a",
+      "receive_stomach_uppercut",
+      "sword_horizontal_cleave",
+      "sword_diagonal_backhand",
+      "sword_lunge_thrust",
+      "sword_parry_guard"
+  };
+  for (int i = 0; i < (int)(sizeof(kRequiredClips) / sizeof(kRequiredClips[0])); i++) {
+    int idx = CharacterModel_FindAnimIndex(kRequiredClips[i]);
+    if (idx < 0) {
+      snprintf(outReason, (size_t)outReasonSize, "Missing clip in humanoid_anims.glb: %s", kRequiredClips[i]);
+      ok = false;
+      break;
+    }
+  }
+
+  // Verify 4-beat combo, hit-apex resolution, cancel window, and active parry
+  Entity_Init();
+  int hero = Entity_SpawnAgent((Vector3){0.0f, 0.0f, 0.0f}, 200.0f, 3 /* ELEMENT_METAL */, TEAM_ALLY, ARCH_HERO);
+  int dummy = Entity_SpawnAgent((Vector3){0.0f, 0.0f, 1.5f}, 200.0f, 1 /* ELEMENT_WOOD */, TEAM_ENEMY, ARCH_MINION);
+  ok &= AutoTest_ExpectTrue(hero >= 0 && dummy >= 0, "Spawned hero and dummy for combo test", outReason, outReasonSize);
+
+  if (hero >= 0 && dummy >= 0) {
+    float swingSec = 0.0f;
+    Vector3 tgtPos = {0};
+    int beat0 = Entity_StartBasicAttackCombo(hero, (Vector3){0.0f, 0.0f, 1.0f}, &tgtPos, &swingSec);
+    ok &= AutoTest_ExpectTrue(beat0 == 0 && swingSec > 0.0f, "Beat 0 starts with positive swing duration", outReason, outReasonSize);
+
+    // Step past hit apex (0.12s) into cancel window (0.28s duration)
+    BasicAttackHitEvent hits[4];
+    int totalHits = 0;
+    for (int step = 0; step < 4; step++) {
+      Entity_Update(0.05f);
+      totalHits += Entity_PollBasicAttackHits(hits + totalHits, 4 - totalHits);
+    }
+    ok &= AutoTest_ExpectTrue(totalHits >= 1 && hits[0].targetId == dummy && hits[0].beat == 0,
+                              "Beat 0 resolved hit at apex", outReason, outReasonSize);
+    ok &= AutoTest_ExpectTrue(Entity_IsInCancelWindow(hero), "Cancel window active during combo recovery", outReason, outReasonSize);
+    const Agent *dummyAgent = Entity_GetAgent(dummy);
+    ok &= AutoTest_ExpectTrue(dummyAgent && dummyAgent->health < 200.0f,
+                              "Dummy took damage from beat 0 apex", outReason, outReasonSize);
+
+    // Step past cadence (0.28s) and chain beats 1 -> 2 -> 3
+    for (int step = 0; step < 4; step++) {
+      Entity_Update(0.05f);
+    }
+    int beat1 = Entity_StartBasicAttackCombo(hero, (Vector3){0.0f, 0.0f, 1.0f}, NULL, NULL);
+    ok &= AutoTest_ExpectTrue(beat1 == 1, "Combo chained to beat 1", outReason, outReasonSize);
+    for (int step = 0; step < 8; step++) Entity_Update(0.05f);
+    Entity_PollBasicAttackHits(hits, 4);
+
+    int beat2 = Entity_StartBasicAttackCombo(hero, (Vector3){0.0f, 0.0f, 1.0f}, NULL, NULL);
+    for (int step = 0; step < 8; step++) Entity_Update(0.05f);
+    Entity_PollBasicAttackHits(hits, 4);
+
+    int beat3 = Entity_StartBasicAttackCombo(hero, (Vector3){0.0f, 0.0f, 1.0f}, NULL, NULL);
+    ok &= AutoTest_ExpectTrue(beat2 == 2 && beat3 == 3, "Combo chained through beats 2 and 3", outReason, outReasonSize);
+    for (int step = 0; step < 10; step++) Entity_Update(0.05f);
+    Entity_PollBasicAttackHits(hits, 4);
+
+    // Active Parry/Deflect window
+    bool parryStarted = Entity_StartParry(hero);
+    ok &= AutoTest_ExpectTrue(parryStarted && Entity_IsParrying(hero),
+                              "Entity_StartParry activates parry window", outReason, outReasonSize);
+  }
+  Entity_Init();
+
   return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
 }
 
@@ -1634,6 +1719,12 @@ static AutoTestResult AutoTest_VoHocEntitiesExtStep(int frameInCase, char *outRe
   ok &= AutoTest_ExpectTrue(!VoHoc_ApplyWaterMark(a, b, 2), "2 marks no freeze yet", outReason, outReasonSize);
   ok &= AutoTest_ExpectTrue(VoHoc_ApplyWaterMark(a, b, 1), "3rd mark triggers freeze", outReason, outReasonSize);
   ok &= AutoTest_ExpectTrue(Entity_IsFrozen(b), "target frozen on 3rd mark", outReason, outReasonSize);
+
+  /* 3 Tử Kim Ấn triggers Cộng Hưởng Phá Khí (Silence + Vulnerable) */
+  ok &= AutoTest_ExpectTrue(!VoHoc_ApplyMetalMark(a, b, 2), "2 metal marks no silence yet", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(VoHoc_ApplyMetalMark(a, b, 1), "3rd metal mark triggers silence + vuln", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(Entity_IsSilenced(b) && Entity_HasStatus(b, STATUS_VULNERABLE),
+                            "target silenced and vulnerable on 3rd metal mark", outReason, outReasonSize);
 
   Entity_ApplyDamage(a, 1e9f, (Vector3){ 0 });
   Entity_ApplyDamage(b, 1e9f, (Vector3){ 0 });

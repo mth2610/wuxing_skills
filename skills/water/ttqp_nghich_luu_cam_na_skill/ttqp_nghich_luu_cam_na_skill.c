@@ -105,6 +105,8 @@ void CastTtqpNghichLuuCamNaSkill(int agentId, Vector3 startPos, Vector3 target, 
     float range = 8.0f * scale;
     Vector3 endPos = Vector3Add(startPos, Vector3Scale(dir, range));
 
+    Skill_RequestAnim(agentId, "wide_arm_spell_casting", 0.35f);
+
     NghichLuuInst *inst = &s_inst[slot];
     inst->active = true;
     inst->ownerAgentId = agentId;
@@ -159,6 +161,7 @@ void UpdateTtqpNghichLuuCamNaSkill(float dt, Vector3 enemyPos, float enemyRadius
                     break;
                 } else if (events[e].outcome == CLASH_HIT_AGENT) {
                     inst->impacted = true;
+                    Skill_RequestAnim(inst->ownerAgentId, "elbow_punch", 0.30f);
                     Vector3 pullDest = inst->origin;
                     const Agent *owner = Entity_GetAgent(inst->ownerAgentId);
                     if (owner) pullDest = owner->position;

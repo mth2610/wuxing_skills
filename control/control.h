@@ -20,6 +20,7 @@ typedef struct {
     bool    jump;
     bool    dash;
     bool    meditate;
+    bool    parry;         // F key / touch deflect-guard
     int     castSkillSlot; // -1 = none; 0..4 = Agent.equippedSkills slot
     // Basic attack (đấm/đá/chưởng): 0 = none, else BasicAttackType + 1
     // (offset so a zeroed intent means "no attack"). Carried in the intent

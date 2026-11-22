@@ -113,6 +113,8 @@ void CastTtqpBangTrieuDaoHaiSkill(int agentId, Vector3 startPos, Vector3 target,
     float range = 6.0f * scale;
     Vector3 endPos = Vector3Add(startPos, Vector3Scale(dir, range));
 
+    Skill_RequestAnim(agentId, "two_hand_spell_casting", 0.42f);
+
     BangTrieuInst *inst = &s_inst[slot];
     inst->active = true;
     inst->ownerAgentId = agentId;

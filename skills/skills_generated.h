@@ -13,11 +13,25 @@
 #include "skills/water/ttqp_no_hai_long_quyen_skill/ttqp_no_hai_long_quyen_skill.h"
 #include "skills/water/ttqp_trieu_tich_linh_tuyen_skill/ttqp_trieu_tich_linh_tuyen_skill.h"
 #include "skills/water/ttqp_thuy_kinh_quyen_thuan_skill/ttqp_thuy_kinh_quyen_thuan_skill.h"
+#include "skills/metal/tcdk_thien_la_kiem_vong_skill/tcdk_thien_la_kiem_vong_skill.h"
 #include "skills/metal/metal_blade_storm_skill/metal_blade_storm_skill.h"
+#include "skills/metal/tcdk_canh_kim_kiem_vuc_skill/tcdk_canh_kim_kiem_vuc_skill.h"
+#include "skills/metal/tcdk_nhat_kiem_doan_thien_skill/tcdk_nhat_kiem_doan_thien_skill.h"
+#include "skills/metal/tcdk_kim_cang_phan_chan_skill/tcdk_kim_cang_phan_chan_skill.h"
+#include "skills/metal/tcdk_chan_am_kiem_tran_skill/tcdk_chan_am_kiem_tran_skill.h"
+#include "skills/metal/tcdk_luu_tinh_thu_skill/tcdk_luu_tinh_thu_skill.h"
+#include "skills/metal/tcdk_toai_giap_tram_skill/tcdk_toai_giap_tram_skill.h"
 #include "skills/taiji/galaxy_spiral_skill/galaxy_spiral_skill.h"
+#include "skills/earth/btbc_dia_liet_chan_ba_skill/btbc_dia_liet_chan_ba_skill.h"
 #include "skills/earth/earth_disc_volley_skill/earth_disc_volley_skill.h"
+#include "skills/earth/btbc_bang_son_toai_chuong_skill/btbc_bang_son_toai_chuong_skill.h"
+#include "skills/earth/btbc_hau_tho_tran_nhac_tran_skill/btbc_hau_tho_tran_nhac_tran_skill.h"
+#include "skills/earth/btbc_khai_son_thach_dan_skill/btbc_khai_son_thach_dan_skill.h"
+#include "skills/earth/btbc_thach_tru_xung_thien_skill/btbc_thach_tru_xung_thien_skill.h"
+#include "skills/earth/btbc_thiet_son_khao_skill/btbc_thiet_son_khao_skill.h"
 #include "skills/earth/earth_pillar_prison_skill/earth_pillar_prison_skill.h"
 #include "skills/earth/sand_storm_skill/sand_storm_skill.h"
+#include "skills/earth/btbc_ban_thach_kim_cang_giap_skill/btbc_ban_thach_kim_cang_giap_skill.h"
 
 static inline void RegisterGeneratedSkills(void) {
     RegisterSkill("VINE_SNARE", ELEMENT_COLOR_WOOD, InitVineSnareSkill, CastVineSnareSkill, UpdateVineSnareSkill, DrawVineSnareSkill, UnloadVineSnareSkill);
@@ -29,11 +43,25 @@ static inline void RegisterGeneratedSkills(void) {
     RegisterSkill("TTQP_NO_HAI_LONG_QUYEN", ELEMENT_COLOR_WATER, InitTtqpNoHaiLongQuyenSkill, CastTtqpNoHaiLongQuyenSkill, UpdateTtqpNoHaiLongQuyenSkill, DrawTtqpNoHaiLongQuyenSkill, UnloadTtqpNoHaiLongQuyenSkill);
     RegisterSkill("TTQP_TRIEU_TICH_LINH_TUYEN", ELEMENT_COLOR_WATER, InitTtqpTrieuTichLinhTuyenSkill, CastTtqpTrieuTichLinhTuyenSkill, UpdateTtqpTrieuTichLinhTuyenSkill, DrawTtqpTrieuTichLinhTuyenSkill, UnloadTtqpTrieuTichLinhTuyenSkill);
     RegisterSkill("TTQP_THUY_KINH_QUYEN_THUAN", ELEMENT_COLOR_WATER, InitTtqpThuyKinhQuyenThuanSkill, CastTtqpThuyKinhQuyenThuanSkill, UpdateTtqpThuyKinhQuyenThuanSkill, DrawTtqpThuyKinhQuyenThuanSkill, UnloadTtqpThuyKinhQuyenThuanSkill);
+    RegisterSkill("TCDK_THIEN_LA_KIEM_VONG", ELEMENT_COLOR_METAL, InitTcdkThienLaKiemVongSkill, CastTcdkThienLaKiemVongSkill, UpdateTcdkThienLaKiemVongSkill, DrawTcdkThienLaKiemVongSkill, UnloadTcdkThienLaKiemVongSkill);
     RegisterSkill("METAL_BLADE_STORM", ELEMENT_COLOR_METAL, InitMetalBladeStormSkill, CastMetalBladeStormSkill, UpdateMetalBladeStormSkill, DrawMetalBladeStormSkill, UnloadMetalBladeStormSkill);
+    RegisterSkill("TCDK_CANH_KIM_KIEM_VUC", ELEMENT_COLOR_METAL, InitTcdkCanhKimKiemVucSkill, CastTcdkCanhKimKiemVucSkill, UpdateTcdkCanhKimKiemVucSkill, DrawTcdkCanhKimKiemVucSkill, UnloadTcdkCanhKimKiemVucSkill);
+    RegisterSkill("TCDK_NHAT_KIEM_DOAN_THIEN", ELEMENT_COLOR_METAL, InitTcdkNhatKiemDoanThienSkill, CastTcdkNhatKiemDoanThienSkill, UpdateTcdkNhatKiemDoanThienSkill, DrawTcdkNhatKiemDoanThienSkill, UnloadTcdkNhatKiemDoanThienSkill);
+    RegisterSkill("TCDK_KIM_CANG_PHAN_CHAN", ELEMENT_COLOR_METAL, InitTcdkKimCangPhanChanSkill, CastTcdkKimCangPhanChanSkill, UpdateTcdkKimCangPhanChanSkill, DrawTcdkKimCangPhanChanSkill, UnloadTcdkKimCangPhanChanSkill);
+    RegisterSkill("TCDK_CHAN_AM_KIEM_TRAN", ELEMENT_COLOR_METAL, InitTcdkChanAmKiemTranSkill, CastTcdkChanAmKiemTranSkill, UpdateTcdkChanAmKiemTranSkill, DrawTcdkChanAmKiemTranSkill, UnloadTcdkChanAmKiemTranSkill);
+    RegisterSkill("TCDK_LUU_TINH_THU", ELEMENT_COLOR_METAL, InitTcdkLuuTinhThuSkill, CastTcdkLuuTinhThuSkill, UpdateTcdkLuuTinhThuSkill, DrawTcdkLuuTinhThuSkill, UnloadTcdkLuuTinhThuSkill);
+    RegisterSkill("TCDK_TOAI_GIAP_TRAM", ELEMENT_COLOR_METAL, InitTcdkToaiGiapTramSkill, CastTcdkToaiGiapTramSkill, UpdateTcdkToaiGiapTramSkill, DrawTcdkToaiGiapTramSkill, UnloadTcdkToaiGiapTramSkill);
     RegisterSkill("GALAXY_SPIRAL", ELEMENT_COLOR_TAIJI, InitGalaxySpiralSkill, CastGalaxySpiralSkill, UpdateGalaxySpiralSkill, DrawGalaxySpiralSkill, UnloadGalaxySpiralSkill);
+    RegisterSkill("BTBC_DIA_LIET_CHAN_BA", ELEMENT_COLOR_EARTH, InitBtbcDiaLietChanBaSkill, CastBtbcDiaLietChanBaSkill, UpdateBtbcDiaLietChanBaSkill, DrawBtbcDiaLietChanBaSkill, UnloadBtbcDiaLietChanBaSkill);
     RegisterSkill("EARTH_DISC_VOLLEY", ELEMENT_COLOR_EARTH, InitEarthDiscVolleySkill, CastEarthDiscVolleySkill, UpdateEarthDiscVolleySkill, DrawEarthDiscVolleySkill, UnloadEarthDiscVolleySkill);
+    RegisterSkill("BTBC_BANG_SON_TOAI_CHUONG", ELEMENT_COLOR_EARTH, InitBtbcBangSonToaiChuongSkill, CastBtbcBangSonToaiChuongSkill, UpdateBtbcBangSonToaiChuongSkill, DrawBtbcBangSonToaiChuongSkill, UnloadBtbcBangSonToaiChuongSkill);
+    RegisterSkill("BTBC_HAU_THO_TRAN_NHAC_TRAN", ELEMENT_COLOR_EARTH, InitBtbcHauThoTranNhacTranSkill, CastBtbcHauThoTranNhacTranSkill, UpdateBtbcHauThoTranNhacTranSkill, DrawBtbcHauThoTranNhacTranSkill, UnloadBtbcHauThoTranNhacTranSkill);
+    RegisterSkill("BTBC_KHAI_SON_THACH_DAN", ELEMENT_COLOR_EARTH, InitBtbcKhaiSonThachDanSkill, CastBtbcKhaiSonThachDanSkill, UpdateBtbcKhaiSonThachDanSkill, DrawBtbcKhaiSonThachDanSkill, UnloadBtbcKhaiSonThachDanSkill);
+    RegisterSkill("BTBC_THACH_TRU_XUNG_THIEN", ELEMENT_COLOR_EARTH, InitBtbcThachTruXungThienSkill, CastBtbcThachTruXungThienSkill, UpdateBtbcThachTruXungThienSkill, DrawBtbcThachTruXungThienSkill, UnloadBtbcThachTruXungThienSkill);
+    RegisterSkill("BTBC_THIET_SON_KHAO", ELEMENT_COLOR_EARTH, InitBtbcThietSonKhaoSkill, CastBtbcThietSonKhaoSkill, UpdateBtbcThietSonKhaoSkill, DrawBtbcThietSonKhaoSkill, UnloadBtbcThietSonKhaoSkill);
     RegisterSkill("EARTH_PILLAR_PRISON", ELEMENT_COLOR_EARTH, InitEarthPillarPrisonSkill, CastEarthPillarPrisonSkill, UpdateEarthPillarPrisonSkill, DrawEarthPillarPrisonSkill, UnloadEarthPillarPrisonSkill);
     RegisterSkill("SAND_STORM", ELEMENT_COLOR_EARTH, InitSandStormSkill, CastSandStormSkill, UpdateSandStormSkill, DrawSandStormSkill, UnloadSandStormSkill);
+    RegisterSkill("BTBC_BAN_THACH_KIM_CANG_GIAP", ELEMENT_COLOR_EARTH, InitBtbcBanThachKimCangGiapSkill, CastBtbcBanThachKimCangGiapSkill, UpdateBtbcBanThachKimCangGiapSkill, DrawBtbcBanThachKimCangGiapSkill, UnloadBtbcBanThachKimCangGiapSkill);
 }
 
 #endif // SKILLS_GENERATED_H

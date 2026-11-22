@@ -80,6 +80,18 @@ static const float   WALL_CHECK_RADIUS = 3.0f;
 static const float   AUTO_TARGET_RADIUS = 10.0f;
 static float         s_preSparHealth[MAX_AGENTS] = { 0 };
 
+#define MAX_BASIC_HIT_EVENTS 32
+static BasicAttackHitEvent s_basicHitEvents[MAX_BASIC_HIT_EVENTS];
+static int                 s_basicHitEventCount = 0;
+
+static void PushBasicHitEvent(BasicAttackHitEvent ev) {
+    if (s_basicHitEventCount < MAX_BASIC_HIT_EVENTS) {
+        s_basicHitEvents[s_basicHitEventCount++] = ev;
+    }
+}
+
+static void ResolvePendingBasicAttack(int attackerId, Agent *attacker);
+
 void Entity_Init(void) {
     for (int i = 0; i < MAX_AGENTS; i++) {
         agentPool[i] = (Agent){ 0 };
@@ -195,12 +207,55 @@ void Entity_Update(float dt) {
             a->dodgeGraceTimer -= dt;
             if (a->dodgeGraceTimer < 0.0f) a->dodgeGraceTimer = 0.0f;
         }
+        if (a->comboWindowTimer > 0.0f) {
+            a->comboWindowTimer -= dt;
+            if (a->comboWindowTimer <= 0.0f) {
+                a->comboWindowTimer = 0.0f;
+                a->comboStep = 0;
+            }
+        }
+        if (a->attackCadenceTimer > 0.0f) {
+            a->attackCadenceTimer -= dt;
+            if (a->attackCadenceTimer < 0.0f) a->attackCadenceTimer = 0.0f;
+        }
+        if (a->cancelWindowTimer > 0.0f) {
+            a->cancelWindowTimer -= dt;
+            if (a->cancelWindowTimer < 0.0f) a->cancelWindowTimer = 0.0f;
+        }
+        if (a->markComboIcdTimer > 0.0f) {
+            a->markComboIcdTimer -= dt;
+            if (a->markComboIcdTimer < 0.0f) a->markComboIcdTimer = 0.0f;
+        }
+        if (a->parryWindowTimer > 0.0f) {
+            a->parryWindowTimer -= dt;
+            if (a->parryWindowTimer < 0.0f) a->parryWindowTimer = 0.0f;
+        }
+        if (a->parryCooldownTimer > 0.0f) {
+            a->parryCooldownTimer -= dt;
+            if (a->parryCooldownTimer < 0.0f) a->parryCooldownTimer = 0.0f;
+        }
+        if (a->pendingAttackType >= 0) {
+            a->pendingAttackTimer -= dt;
+            if (a->pendingAttackTimer <= 0.0f) {
+                ResolvePendingBasicAttack(i, a);
+            }
+        }
 
         // Thái Cực "Vô Sát" downside: the state lives on mana — a dry pool
         // exits it (Lôi's huge cost is the intended drain). Checked BEFORE
         // regen so the tick that drained to zero actually exits.
         if (a->taijiActive && a->mana <= 0.01f) {
             a->taijiActive = false;
+            a->comboStep = 0;
+            a->comboWindowTimer = 0.0f;
+            a->attackCadenceTimer = 0.0f;
+            a->cancelWindowTimer = 0.0f;
+            a->pendingAttackType = -1;
+            a->pendingAttackTimer = 0.0f;
+            a->pendingAttackDir = (Vector3){ 0 };
+            a->markComboIcdTimer = 0.0f;
+            a->parryWindowTimer = 0.0f;
+            a->parryCooldownTimer = 0.0f;
         }
 
         if (a->mana < a->maxMana) {
@@ -426,6 +481,11 @@ void Entity_ApplyDamageFrom(int targetId, int attackerId, float baseDamage,
     }
     if (dmg > 0.0f && tgt->statuses[STATUS_VULNERABLE].duration > 0.0f) {
         dmg *= (1.0f + tgt->statuses[STATUS_VULNERABLE].potency);
+    }
+    if (dmg > 0.0f && tgt->parryWindowTimer > 0.23f) {
+        /* Active Perfect Deflect / Guard mitigation */
+        dmg *= 0.35f;
+        Entity_RestoreMana(targetId, 6.0f);
     }
 
     CancelMeditate(tgt);
@@ -1194,6 +1254,201 @@ bool Entity_ExecuteBasicAttack(int attackerId, BasicAttackType type,
     return false;
 }
 
+static int FindNearestHostile(int attackerId, Vector3 origin, float radius, float *outDistSq) {
+    int nearbyIds[MAX_AGENTS];
+    int nearbyCount = Entity_GetNearbyTargets(origin, radius, nearbyIds, MAX_AGENTS);
+    int targetId = -1;
+    float bestDistSq = 0.0f;
+    for (int i = 0; i < nearbyCount; i++) {
+        if (nearbyIds[i] == attackerId) continue;
+        if (!Entity_CanDamageTarget(attackerId, nearbyIds[i])) continue;
+        const Agent *candidate = &agentPool[nearbyIds[i]];
+        float cdx = candidate->position.x - origin.x;
+        float cdz = candidate->position.z - origin.z;
+        float cDistSq = cdx * cdx + cdz * cdz;
+        if (targetId == -1 || cDistSq < bestDistSq) {
+            targetId = nearbyIds[i];
+            bestDistSq = cDistSq;
+        }
+    }
+    if (outDistSq) *outDistSq = bestDistSq;
+    return targetId;
+}
+
+static void ResolvePendingBasicAttack(int attackerId, Agent *attacker) {
+    int beat = attacker->comboStep;
+    int swingBeat = attacker->pendingAttackType;
+    (void)beat;
+    attacker->pendingAttackType = -1;
+    attacker->pendingAttackTimer = 0.0f;
+    attacker->cancelWindowTimer = 0.28f;
+
+    float distSq = 0.0f;
+    int targetId = FindNearestHostile(attackerId, attacker->position, BASIC_ATTACK_RANGE, &distSq);
+    if (targetId < 0) return;
+
+    Agent *target = &agentPool[targetId];
+    float dx = target->position.x - attacker->position.x;
+    float dz = target->position.z - attacker->position.z;
+    float dist = sqrtf(dx * dx + dz * dz);
+    Vector3 pushDir = (dist > 0.0001f) ? (Vector3){ dx / dist, 0.0f, dz / dist } : attacker->pendingAttackDir;
+
+    bool isFinisher = (swingBeat == 3);
+    bool guardBroken = false;
+    bool parryDeflected = false;
+
+    if (target->parryWindowTimer > 0.0f) {
+        bool inPerfectWindow = (target->parryWindowTimer > 0.23f);
+        if (isFinisher) {
+            /* Hư Chiêu / Finisher breaks through guard */
+            target->parryWindowTimer = 0.0f;
+            Entity_ApplyStatus(targetId, STATUS_VULNERABLE, 0.20f, 2.5f, attackerId);
+            Entity_ApplyDamageFrom(targetId, attackerId, 8.0f, 1.0f, Vector3Scale(pushDir, 2.0f));
+            guardBroken = true;
+        } else if (inPerfectWindow) {
+            /* Perfect Deflect: negate hit, restore defender mana, stagger attacker */
+            Entity_RestoreMana(targetId, 12.0f);
+            Entity_ApplyStun(attackerId, 0.40f);
+            parryDeflected = true;
+            PushBasicHitEvent((BasicAttackHitEvent){
+                .attackerId = attackerId,
+                .targetId = targetId,
+                .beat = swingBeat,
+                .hitPos = target->position,
+                .isFinisher = false,
+                .guardBroken = false,
+                .parryDeflected = true
+            });
+            return;
+        }
+    }
+
+    static const float kBeatDamage[4] = { 6.0f, 7.5f, 9.0f, 13.5f };
+    float dmg = kBeatDamage[(swingBeat >= 0 && swingBeat < 4) ? swingBeat : 0];
+    Vector3 kb = isFinisher ? Vector3Scale(pushDir, 2.4f) : (Vector3){ 0 };
+    Entity_ApplyDamageFrom(targetId, attackerId, dmg, 1.0f, kb);
+
+    Entity_RestoreMana(attackerId, isFinisher ? 6.0f : 3.0f);
+    if (isFinisher && attacker->markComboIcdTimer <= 0.0f) {
+        int elem = (attacker->currentElement >= 0 && attacker->currentElement < 5) ? attacker->currentElement : 0;
+        Entity_AddMark(targetId, elem, 1, 3, 4.5f);
+        attacker->markComboIcdTimer = 3.0f;
+    }
+
+    Vector3 wallPos;
+    int wallElement;
+    if (SkillManager_FindNearbyWall(attacker->position, WALL_CHECK_RADIUS, &wallPos, &wallElement)) {
+        Entity_ApplyDamageFrom(targetId, attackerId, 6.0f, 1.0f, (Vector3){ 0 });
+    }
+
+    PushBasicHitEvent((BasicAttackHitEvent){
+        .attackerId = attackerId,
+        .targetId = targetId,
+        .beat = swingBeat,
+        .hitPos = target->position,
+        .isFinisher = isFinisher,
+        .guardBroken = guardBroken,
+        .parryDeflected = parryDeflected
+    });
+}
+
+int Entity_StartBasicAttackCombo(int attackerId, Vector3 fallbackDir,
+                                 Vector3 *outTargetPos, float *outSwingSeconds) {
+    if (outTargetPos) *outTargetPos = (Vector3){ 0 };
+    if (outSwingSeconds) *outSwingSeconds = 0.48f;
+    if (attackerId < 0 || attackerId >= MAX_AGENTS) return -1;
+    Agent *attacker = &agentPool[attackerId];
+    if (!attacker->active || attacker->stunTimer > 0.0f || attacker->freezeTimer > 0.0f) return -1;
+    if (attacker->attackCadenceTimer > 0.0f) return -1;
+
+    CancelMeditate(attacker);
+
+    int beat = attacker->comboStep % 4;
+    attacker->comboStep = (beat + 1) % 4;
+    attacker->comboWindowTimer = 1.40f;
+
+    static const float kSwingSecs[4]   = { 0.46f, 0.50f, 0.54f, 0.66f };
+    static const float kCadenceSecs[4] = { 0.28f, 0.30f, 0.32f, 0.42f };
+    static const float kApexSecs[4]    = { 0.12f, 0.14f, 0.16f, 0.22f };
+
+    attacker->attackCadenceTimer = kCadenceSecs[beat];
+    attacker->pendingAttackType  = beat;
+    attacker->pendingAttackTimer = kApexSecs[beat];
+    attacker->cancelWindowTimer  = 0.0f;
+
+    float distSq = 0.0f;
+    int targetId = FindNearestHostile(attackerId, attacker->position, AUTO_TARGET_RADIUS, &distSq);
+    Vector3 dir = fallbackDir;
+    if (targetId >= 0) {
+        const Agent *tgt = &agentPool[targetId];
+        if (outTargetPos) *outTargetPos = tgt->position;
+        float dx = tgt->position.x - attacker->position.x;
+        float dz = tgt->position.z - attacker->position.z;
+        float d = sqrtf(dx * dx + dz * dz);
+        if (d > 0.001f) dir = (Vector3){ dx / d, 0.0f, dz / d };
+
+        /* Micro step-in lunge to close distance smoothly */
+        if (d > 1.35f && d <= 3.8f && attacker->vState == AGENT_GROUNDED && attacker->rootTimer <= 0.0f) {
+            float lunge = fminf(0.55f, d - 1.25f);
+            Vector3 nextPos = {
+                attacker->position.x + dir.x * lunge,
+                attacker->position.y,
+                attacker->position.z + dir.z * lunge
+            };
+            nextPos.y = MapManager_GetGroundHeightAt(nextPos.x, nextPos.z);
+            MapManager_ResolveCollision(&nextPos, 0.35f, 0.45f, &nextPos.y);
+            Entity_SetPosition(attackerId, nextPos);
+        }
+    }
+
+    attacker->pendingAttackDir = dir;
+    if (outSwingSeconds) *outSwingSeconds = kSwingSecs[beat];
+    return beat;
+}
+
+int Entity_PollBasicAttackHits(BasicAttackHitEvent *out, int max) {
+    if (!out || max <= 0) return 0;
+    int n = (s_basicHitEventCount < max) ? s_basicHitEventCount : max;
+    for (int i = 0; i < n; i++) out[i] = s_basicHitEvents[i];
+    if (n < s_basicHitEventCount) {
+        for (int i = n; i < s_basicHitEventCount; i++) {
+            s_basicHitEvents[i - n] = s_basicHitEvents[i];
+        }
+        s_basicHitEventCount -= n;
+    } else {
+        s_basicHitEventCount = 0;
+    }
+    return n;
+}
+
+bool Entity_StartParry(int agentId) {
+    if (agentId < 0 || agentId >= MAX_AGENTS) return false;
+    Agent *a = &agentPool[agentId];
+    if (!a->active || a->stunTimer > 0.0f || a->freezeTimer > 0.0f) return false;
+    if (a->parryCooldownTimer > 0.0f) return false;
+    CancelMeditate(a);
+    a->parryWindowTimer = 0.45f;
+    a->parryCooldownTimer = 2.5f;
+    a->pendingAttackType = -1;
+    return true;
+}
+
+bool Entity_IsParrying(int agentId) {
+    const Agent *a = Entity_GetAgent(agentId);
+    return a && a->parryWindowTimer > 0.0f;
+}
+
+bool Entity_IsInCancelWindow(int agentId) {
+    const Agent *a = Entity_GetAgent(agentId);
+    return a && a->cancelWindowTimer > 0.0f;
+}
+
+void Entity_CancelAttackRecovery(int agentId) {
+    if (agentId < 0 || agentId >= MAX_AGENTS || !agentPool[agentId].active) return;
+    agentPool[agentId].cancelWindowTimer = 0.0f;
+    agentPool[agentId].attackCadenceTimer = 0.0f;
+}
+
 bool Entity_CheckRingOut(int agentId) {
     if (agentId < 0 || agentId >= MAX_AGENTS) return false;
     Agent *a = &agentPool[agentId];
@@ -1477,6 +1732,16 @@ int Entity_SpawnAgent(Vector3 position, float maxHealth, int element,
             a->dashVelocity = (Vector3){ 0 };
             a->dashTimer = 0.0f;
             a->taijiActive = false;
+            a->comboStep = 0;
+            a->comboWindowTimer = 0.0f;
+            a->attackCadenceTimer = 0.0f;
+            a->cancelWindowTimer = 0.0f;
+            a->pendingAttackType = -1;
+            a->pendingAttackTimer = 0.0f;
+            a->pendingAttackDir = (Vector3){ 0 };
+            a->markComboIcdTimer = 0.0f;
+            a->parryWindowTimer = 0.0f;
+            a->parryCooldownTimer = 0.0f;
             for (int s = 0; s < AGENT_SKILL_SLOTS; s++) {
                 a->equippedSkills[s] = -1;
                 a->equippedElements[s] = -1;

@@ -224,6 +224,259 @@ static const VoHocSkillDef kVoHocSkills[] = {
             { VH_FX_CDR,  VH_TGT_ALLY,  2.0f }
         },
         .fxCount = 5
+    },
+
+    /* ===== BỘ 2: BÀN THẠCH BÁT CỰC QUYỀN (Hệ Thổ — 5 Đả + 2 Trợ) ===== */
+    {
+        .skillName = "BTBC_KHAI_SON_THACH_DAN",
+        .displayName = "Khai Sơn Thạch Đạn",
+        .setId = VH_SET_BAN_THACH_BAT_CUC_QUYEN,
+        .element = 3,
+        .role = VH_ROLE_STRIKE,
+        .mana = 14.0f, .cooldown = 1.6f, .castSecs = 0.20f,
+        .range = VH_RANGE_MID, .hit = VH_HIT_FAST, .shape = VH_SHAPE_SINGLE,
+        .allyTeamScope = false, .uptimeEnemy = 1.0f, .uptimeAlly = 1.0f,
+        .baseDamage = 17.5f,
+        .fx = {
+            { VH_FX_DMG,  VH_TGT_ENEMY, 17.5f },
+            { VH_FX_KB,   VH_TGT_ENEMY, 1.8f },
+            { VH_FX_MARK, VH_TGT_ENEMY, 1.0f }
+        },
+        .fxCount = 3
+    },
+    {
+        .skillName = "BTBC_THIET_SON_KHAO",
+        .displayName = "Thiết Sơn Khảo",
+        .setId = VH_SET_BAN_THACH_BAT_CUC_QUYEN,
+        .element = 3,
+        .role = VH_ROLE_STRIKE,
+        .mana = 20.0f, .cooldown = 5.5f, .castSecs = 0.25f,
+        .range = VH_RANGE_MELEE, .hit = VH_HIT_MELEE, .shape = VH_SHAPE_SMALL,
+        .allyTeamScope = false, .uptimeEnemy = 1.0f, .uptimeAlly = 1.0f,
+        .baseDamage = 21.5f,
+        .fx = {
+            { VH_FX_DMG,    VH_TGT_ENEMY, 21.5f },
+            { VH_FX_STUN,   VH_TGT_ENEMY, 0.60f },
+            { VH_FX_MARK,   VH_TGT_ENEMY, 1.0f },
+            { VH_FX_SHIELD, VH_TGT_ONCE,  14.0f }
+        },
+        .fxCount = 4
+    },
+    {
+        .skillName = "BTBC_DIA_LIET_CHAN_BA",
+        .displayName = "Địa Liệt Chấn Ba",
+        .setId = VH_SET_BAN_THACH_BAT_CUC_QUYEN,
+        .element = 3,
+        .role = VH_ROLE_STRIKE,
+        .mana = 24.0f, .cooldown = 7.0f, .castSecs = 0.35f,
+        .range = VH_RANGE_MID, .hit = VH_HIT_WAVE, .shape = VH_SHAPE_CONE,
+        .allyTeamScope = false, .uptimeEnemy = 1.0f, .uptimeAlly = 1.0f,
+        .baseDamage = 18.0f,
+        .fx = {
+            { VH_FX_DMG,   VH_TGT_ENEMY, 18.0f },
+            { VH_FX_KB,    VH_TGT_ENEMY, 4.5f },
+            { VH_FX_BLOCK, VH_TGT_ONCE,  1.0f },
+            { VH_FX_MARK,  VH_TGT_ENEMY, 1.0f }
+        },
+        .fxCount = 4
+    },
+    {
+        .skillName = "BTBC_THACH_TRU_XUNG_THIEN",
+        .displayName = "Thạch Trụ Xung Thiên",
+        .setId = VH_SET_BAN_THACH_BAT_CUC_QUYEN,
+        .element = 3,
+        .role = VH_ROLE_STRIKE,
+        .mana = 24.0f, .cooldown = 7.5f, .castSecs = 0.65f,
+        .range = VH_RANGE_MID, .hit = VH_HIT_GROUND, .shape = VH_SHAPE_LARGE,
+        .allyTeamScope = false, .uptimeEnemy = 1.0f, .uptimeAlly = 1.0f,
+        .baseDamage = 27.5f,
+        .fx = {
+            { VH_FX_DMG,    VH_TGT_ENEMY, 27.5f },
+            { VH_FX_LAUNCH, VH_TGT_ENEMY, 0.85f },
+            { VH_FX_WEAKEN, VH_TGT_ENEMY, 0.35f * 2.5f },
+            { VH_FX_MARK,   VH_TGT_ENEMY, 2.0f }
+        },
+        .fxCount = 4
+    },
+    {
+        .skillName = "BTBC_BANG_SON_TOAI_CHUONG",
+        .displayName = "Băng Sơn Toái Chưởng",
+        .setId = VH_SET_BAN_THACH_BAT_CUC_QUYEN,
+        .element = 3,
+        .role = VH_ROLE_STRIKE,
+        .mana = 22.0f, .cooldown = 6.5f, .castSecs = 0.35f,
+        .range = VH_RANGE_MELEE, .hit = VH_HIT_MELEE, .shape = VH_SHAPE_SMALL,
+        .allyTeamScope = false, .uptimeEnemy = 1.0f, .uptimeAlly = 1.0f,
+        .baseDamage = 28.0f,
+        .fx = {
+            /* Standalone expected mark consumption: 0.5 stack -> 1.06x dmg */
+            { VH_FX_DMG,  VH_TGT_ENEMY, 28.0f * 1.06f },
+            { VH_FX_ROOT, VH_TGT_ENEMY, 1.30f },
+            { VH_FX_VULN, VH_TGT_ENEMY, 0.25f * 3.5f }
+        },
+        .fxCount = 3
+    },
+    {
+        .skillName = "BTBC_BAN_THACH_KIM_CANG_GIAP",
+        .displayName = "Bàn Thạch Kim Cang Giáp",
+        .setId = VH_SET_BAN_THACH_BAT_CUC_QUYEN,
+        .element = 3,
+        .role = VH_ROLE_SUPPORT,
+        .mana = 26.0f, .cooldown = 12.0f, .castSecs = 0.20f,
+        .range = VH_RANGE_SELF, .hit = VH_HIT_SELF, .shape = VH_SHAPE_NONE,
+        .allyTeamScope = true, .uptimeEnemy = 1.0f, .uptimeAlly = 1.0f,
+        .baseDamage = 0.0f,
+        .fx = {
+            /* Self 39 shield + ally 50% -> average 0.75 * 39 per ally slot */
+            { VH_FX_SHIELD,  VH_TGT_ALLY, 39.0f * 0.75f },
+            { VH_FX_CLEANSE, VH_TGT_ONCE, 1.0f },
+            { VH_FX_BLOCK,   VH_TGT_ONCE, 2.0f }
+        },
+        .fxCount = 3
+    },
+    {
+        .skillName = "BTBC_HAU_THO_TRAN_NHAC_TRAN",
+        .displayName = "Hậu Thổ Trấn Nhạc Trận",
+        .setId = VH_SET_BAN_THACH_BAT_CUC_QUYEN,
+        .element = 3,
+        .role = VH_ROLE_SUPPORT,
+        .mana = 24.0f, .cooldown = 12.0f, .castSecs = 0.35f,
+        .range = VH_RANGE_SELF, .hit = VH_HIT_ZONE, .shape = VH_SHAPE_LARGE,
+        .allyTeamScope = true, .uptimeEnemy = 0.50f, .uptimeAlly = 0.55f,
+        .baseDamage = 0.0f,
+        .fx = {
+            { VH_FX_HEAL,   VH_TGT_ALLY,  6.0f * 5.0f },
+            { VH_FX_SHIELD, VH_TGT_ALLY,  6.0f * 5.0f },
+            { VH_FX_SLOW,   VH_TGT_ENEMY, 0.30f * 5.0f },
+            { VH_FX_MARK,   VH_TGT_ENEMY, 2.0f }
+        },
+        .fxCount = 4
+    },
+
+    /* ===== BỘ 3: THIÊN CANG ĐOẠN KIM KIẾM PHÁP (Hệ Kim — 5 Đả + 2 Trợ) ===== */
+    {
+        .skillName = "TCDK_LUU_TINH_THU",
+        .displayName = "Lưu Tinh Thứ",
+        .setId = VH_SET_THIEN_CANG_DOAN_KIM_KIEM,
+        .element = 4,
+        .role = VH_ROLE_STRIKE,
+        .mana = 12.0f, .cooldown = 1.5f, .castSecs = 0.15f,
+        .range = VH_RANGE_MID, .hit = VH_HIT_FAST, .shape = VH_SHAPE_LINE,
+        .allyTeamScope = false, .uptimeEnemy = 0.92f, .uptimeAlly = 1.0f,
+        .baseDamage = 13.5f,
+        .fx = {
+            { VH_FX_DMG,  VH_TGT_ENEMY, 13.5f },
+            { VH_FX_MARK, VH_TGT_ENEMY, 1.0f }
+        },
+        .fxCount = 2
+    },
+    {
+        .skillName = "TCDK_TOAI_GIAP_TRAM",
+        .displayName = "Toái Giáp Trảm",
+        .setId = VH_SET_THIEN_CANG_DOAN_KIM_KIEM,
+        .element = 4,
+        .role = VH_ROLE_STRIKE,
+        .mana = 18.0f, .cooldown = 5.0f, .castSecs = 0.25f,
+        .range = VH_RANGE_MELEE, .hit = VH_HIT_MELEE, .shape = VH_SHAPE_SMALL,
+        .allyTeamScope = false, .uptimeEnemy = 0.92f, .uptimeAlly = 1.0f,
+        .baseDamage = 24.0f,
+        .fx = {
+            { VH_FX_DMG,   VH_TGT_ENEMY, 24.0f },
+            { VH_FX_VULN,  VH_TGT_ENEMY, 0.20f * 3.0f },
+            { VH_FX_BLEED, VH_TGT_ENEMY, 10.0f },
+            { VH_FX_MARK,  VH_TGT_ENEMY, 1.0f }
+        },
+        .fxCount = 4
+    },
+    {
+        .skillName = "TCDK_THIEN_LA_KIEM_VONG",
+        .displayName = "Thiên La Kiếm Võng",
+        .setId = VH_SET_THIEN_CANG_DOAN_KIM_KIEM,
+        .element = 4,
+        .role = VH_ROLE_STRIKE,
+        .mana = 24.0f, .cooldown = 7.0f, .castSecs = 0.28f,
+        .range = VH_RANGE_MID, .hit = VH_HIT_WAVE, .shape = VH_SHAPE_CONE,
+        .allyTeamScope = false, .uptimeEnemy = 1.05f, .uptimeAlly = 1.0f,
+        .baseDamage = 16.0f,
+        .fx = {
+            { VH_FX_DMG,   VH_TGT_ENEMY, 16.0f },
+            { VH_FX_SLOW,  VH_TGT_ENEMY, 0.35f * 1.5f },
+            { VH_FX_BLEED, VH_TGT_ENEMY, 12.0f },
+            { VH_FX_MARK,  VH_TGT_ENEMY, 1.0f }
+        },
+        .fxCount = 4
+    },
+    {
+        .skillName = "TCDK_CHAN_AM_KIEM_TRAN",
+        .displayName = "Chấn Âm Kiếm Trận",
+        .setId = VH_SET_THIEN_CANG_DOAN_KIM_KIEM,
+        .element = 4,
+        .role = VH_ROLE_STRIKE,
+        .mana = 26.0f, .cooldown = 8.5f, .castSecs = 0.65f,
+        .range = VH_RANGE_LONG, .hit = VH_HIT_GROUND, .shape = VH_SHAPE_MEDIUM,
+        .allyTeamScope = false, .uptimeEnemy = 1.35f, .uptimeAlly = 1.0f,
+        .baseDamage = 22.0f,
+        .fx = {
+            { VH_FX_DMG,     VH_TGT_ENEMY, 22.0f },
+            { VH_FX_LAUNCH,  VH_TGT_ENEMY, 0.60f },
+            { VH_FX_SILENCE, VH_TGT_ENEMY, 0.80f },
+            { VH_FX_MARK,    VH_TGT_ENEMY, 2.0f }
+        },
+        .fxCount = 4
+    },
+    {
+        .skillName = "TCDK_NHAT_KIEM_DOAN_THIEN",
+        .displayName = "Nhất Kiếm Đoạn Thiên",
+        .setId = VH_SET_THIEN_CANG_DOAN_KIM_KIEM,
+        .element = 4,
+        .role = VH_ROLE_STRIKE,
+        .mana = 22.0f, .cooldown = 7.5f, .castSecs = 0.25f,
+        .range = VH_RANGE_MELEE, .hit = VH_HIT_MELEE, .shape = VH_SHAPE_SINGLE,
+        .allyTeamScope = false, .uptimeEnemy = 1.12f, .uptimeAlly = 1.0f,
+        .baseDamage = 40.0f,
+        .fx = {
+            { VH_FX_DMG,  VH_TGT_ENEMY, 40.0f },
+            { VH_FX_STUN, VH_TGT_ENEMY, 0.55f },
+            { VH_FX_KB,   VH_TGT_ENEMY, 3.0f }
+        },
+        .fxCount = 3
+    },
+    {
+        .skillName = "TCDK_KIM_CANG_PHAN_CHAN",
+        .displayName = "Kim Cang Phản Chấn",
+        .setId = VH_SET_THIEN_CANG_DOAN_KIM_KIEM,
+        .element = 4,
+        .role = VH_ROLE_SUPPORT,
+        .mana = 24.0f, .cooldown = 11.5f, .castSecs = 0.15f,
+        .range = VH_RANGE_SELF, .hit = VH_HIT_SELF, .shape = VH_SHAPE_NONE,
+        .allyTeamScope = false, .uptimeEnemy = 1.0f, .uptimeAlly = 1.0f,
+        .baseDamage = 0.0f,
+        .fx = {
+            { VH_FX_SHIELD,  VH_TGT_ALLY, 30.0f },
+            { VH_FX_BLOCK,   VH_TGT_ONCE, 2.40f },
+            { VH_FX_CLEANSE, VH_TGT_ONCE, 1.0f },
+            { VH_FX_SPEED,   VH_TGT_ALLY, 0.25f * 2.5f }
+        },
+        .fxCount = 4
+    },
+    {
+        .skillName = "TCDK_CANH_KIM_KIEM_VUC",
+        .displayName = "Canh Kim Kiếm Vực",
+        .setId = VH_SET_THIEN_CANG_DOAN_KIM_KIEM,
+        .element = 4,
+        .role = VH_ROLE_SUPPORT,
+        .mana = 24.0f, .cooldown = 12.0f, .castSecs = 0.25f,
+        .range = VH_RANGE_SELF, .hit = VH_HIT_ZONE, .shape = VH_SHAPE_LARGE,
+        .allyTeamScope = true, .uptimeEnemy = 1.05f, .uptimeAlly = 0.95f,
+        .baseDamage = 0.0f,
+        .fx = {
+            { VH_FX_MANA,   VH_TGT_ALLY,  6.0f * 5.0f },
+            { VH_FX_CDR,    VH_TGT_ALLY,  1.5f },
+            { VH_FX_SPEED,  VH_TGT_ALLY,  0.15f * 5.0f },
+            { VH_FX_WEAKEN, VH_TGT_ENEMY, 0.15f * 5.0f },
+            { VH_FX_MARK,   VH_TGT_ENEMY, 2.0f }
+        },
+        .fxCount = 5
     }
 };
 
@@ -247,6 +500,8 @@ const VoHocSkillDef *VoHoc_FindByName(const char *skillName) {
 const char *VoHoc_GetSetName(VoHocSetId setId) {
     switch (setId) {
         case VH_SET_THUY_TRIEU_QUYEN_PHAP: return "Thủy Triều Quyền Pháp";
+        case VH_SET_BAN_THACH_BAT_CUC_QUYEN: return "Bàn Thạch Bát Cực Quyền";
+        case VH_SET_THIEN_CANG_DOAN_KIM_KIEM: return "Thiên Cang Đoạn Kim Kiếm Pháp";
         default: return "Cơ Bản";
     }
 }

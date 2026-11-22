@@ -333,8 +333,19 @@ void InitHelperResources(void);
 struct CharacterAnimState;
 void SkillHelper_StartMeleeTrails(int agentId, const struct CharacterAnimState *anim,
                                   Vector3 charPos, float yaw, int attackType, float duration);
-void SkillHelper_UpdateMeleeTrails(float dt, const struct CharacterAnimState *anim,
+void SkillHelper_UpdateMeleeTrails(int agentId, float dt, const struct CharacterAnimState *anim,
                                    Vector3 charPos, float yaw);
 void SkillHelper_SpawnMeleeImpact(int agentId, Vector3 hitPos);
+
+// Kinematic bone-to-VFX helpers: sample exact world-space bone socket position
+// and instantaneous swing plane normal (bladeVec x tipVelocity) from the
+// character's live skeletal animation so Slash/Projectile VFX align 1:1.
+bool SkillHelper_GetBoneWorldPos(const struct CharacterAnimState *anim,
+                                 Vector3 charPos, float yaw, const char *boneName,
+                                 Vector3 localOffset, Vector3 *outWorldPos);
+bool SkillHelper_SampleBoneSwingPlane(const struct CharacterAnimState *anim,
+                                      Vector3 charPos, float yaw, const char *boneName,
+                                      Vector3 localTipOffset, Vector3 *outPivot,
+                                      Vector3 *outSlashDir, Vector3 *outPlaneNormal);
 
 #endif // SKILL_HELPER_H

@@ -476,6 +476,48 @@ void CharacterModel_ResetState(CharacterAnimState *state)
     state->activeAnimIndex = (s_slots[CHAR_ANIM_IDLE].count > 0) ? s_slots[CHAR_ANIM_IDLE].indices[0] : -1;
     state->oneShotActive = false;
     state->oneShotSpeed = 1.0f;
+    state->prevAnimIndex = -1;
+    state->prevFrame = 0;
+    state->blendTimer = 0.0f;
+    state->blendDuration = 0.0f;
+}
+
+static void CharacterModel_BeginBlend(CharacterAnimState *state, int oldAnimIdx, int oldFrame, float blendSecs)
+{
+    if (!state || oldAnimIdx < 0 || oldAnimIdx >= s_animCount || blendSecs <= 0.001f)
+    {
+        if (state)
+        {
+            state->prevAnimIndex = -1;
+            state->blendTimer = 0.0f;
+            state->blendDuration = 0.0f;
+        }
+        return;
+    }
+    state->prevAnimIndex = oldAnimIdx;
+    state->prevFrame = oldFrame;
+    state->blendTimer = 0.0f;
+    state->blendDuration = blendSecs;
+}
+
+static CharacterAnimSlot InferSlotForAnimIndex(int animIdx, CharacterAnimSlot fallback)
+{
+    static const CharacterAnimSlot kPriorityOrder[] = {
+        CHAR_ANIM_SWORD_SLASH, CHAR_ANIM_SWORD_THRUST, CHAR_ANIM_SWORD_PARRY, CHAR_ANIM_SWORD_BLOCK,
+        CHAR_ANIM_PUNCH, CHAR_ANIM_KICK, CHAR_ANIM_PALM,
+        CHAR_ANIM_PARRY, CHAR_ANIM_BLOCK, CHAR_ANIM_DODGE,
+        CHAR_ANIM_HIT, CHAR_ANIM_KNOCKDOWN, CHAR_ANIM_DEATH,
+        CHAR_ANIM_CAST, CHAR_ANIM_MEDITATE,
+        CHAR_ANIM_JUMP, CHAR_ANIM_JUMP_DOWN, CHAR_ANIM_FALL,
+        CHAR_ANIM_SWORD_IDLE, CHAR_ANIM_RUN, CHAR_ANIM_WALK, CHAR_ANIM_IDLE
+    };
+    for (int i = 0; i < (int)(sizeof(kPriorityOrder) / sizeof(kPriorityOrder[0])); i++)
+    {
+        CharacterAnimSlot s = kPriorityOrder[i];
+        if (SlotContainsAnim(s, animIdx))
+            return s;
+    }
+    return fallback;
 }
 
 void CharacterModel_UpdateLocomotion(CharacterAnimState *state, float dt, CharacterAnimSlot baseSlot)
@@ -486,13 +528,29 @@ void CharacterModel_UpdateLocomotion(CharacterAnimState *state, float dt, Charac
     if (baseSlot < 0 || baseSlot >= CHAR_ANIM_COUNT)
         baseSlot = CHAR_ANIM_IDLE;
 
+    if (state->prevAnimIndex >= 0 && state->blendDuration > 0.0f)
+    {
+        state->blendTimer += dt;
+        if (state->blendTimer >= state->blendDuration)
+        {
+            state->prevAnimIndex = -1;
+            state->blendTimer = 0.0f;
+            state->blendDuration = 0.0f;
+        }
+    }
+
     if (!state->oneShotActive)
     {
         if (baseSlot != state->currentSlot)
         {
+            int oldAnim = state->activeAnimIndex;
+            int oldFrame = state->frame;
+            int nextAnim = (s_slots[baseSlot].count > 0) ? s_slots[baseSlot].indices[0] : -1;
+            if (oldAnim >= 0 && nextAnim >= 0 && oldAnim != nextAnim)
+                CharacterModel_BeginBlend(state, oldAnim, oldFrame, 0.10f);
             state->currentSlot = baseSlot;
             state->activeVariant = 0;
-            state->activeAnimIndex = (s_slots[baseSlot].count > 0) ? s_slots[baseSlot].indices[0] : -1;
+            state->activeAnimIndex = nextAnim;
             state->frame = 0;
             state->frameTimer = 0.0f;
         }
@@ -514,10 +572,15 @@ void CharacterModel_UpdateLocomotion(CharacterAnimState *state, float dt, Charac
         {
             if (state->oneShotActive)
             {
+                int oldAnim = state->activeAnimIndex;
+                int oldFrame = (frameCount > 0) ? (frameCount - 1) : 0;
+                int nextAnim = (s_slots[baseSlot].count > 0) ? s_slots[baseSlot].indices[0] : -1;
+                if (oldAnim >= 0 && nextAnim >= 0 && oldAnim != nextAnim)
+                    CharacterModel_BeginBlend(state, oldAnim, oldFrame, 0.11f);
                 state->oneShotActive = false;
                 state->currentSlot = baseSlot;
                 state->activeVariant = 0;
-                state->activeAnimIndex = (s_slots[baseSlot].count > 0) ? s_slots[baseSlot].indices[0] : -1;
+                state->activeAnimIndex = nextAnim;
                 state->frame = 0;
             }
             else
@@ -578,6 +641,11 @@ void CharacterModel_TriggerVariantTimed(CharacterAnimState *state, CharacterAnim
             speed = 20.0f;
     }
 
+    int oldAnim = state->activeAnimIndex;
+    int oldFrame = state->frame;
+    if (oldAnim >= 0 && animIdx != oldAnim)
+        CharacterModel_BeginBlend(state, oldAnim, oldFrame, 0.07f);
+
     state->currentSlot = slot;
     state->activeVariant = vIdx;
     state->activeAnimIndex = animIdx;
@@ -613,6 +681,13 @@ bool CharacterModel_TriggerByIndex(CharacterAnimState *state, int animIdx, float
             speed = 20.0f;
     }
 
+    int oldAnim = state->activeAnimIndex;
+    int oldFrame = state->frame;
+    if (oldAnim >= 0 && animIdx != oldAnim)
+        CharacterModel_BeginBlend(state, oldAnim, oldFrame, 0.07f);
+
+    state->currentSlot = InferSlotForAnimIndex(animIdx, CHAR_ANIM_CAST);
+    state->activeVariant = 0;
     state->activeAnimIndex = animIdx;
     state->frame = 0;
     state->frameTimer = 0.0f;
@@ -690,8 +765,30 @@ int CharacterModel_FindAnimIndex(const char *name)
 {
     if (!name || s_animCount == 0)
         return -1;
+
+    static const struct { const char *alias; const char *target; } kAliases[] = {
+        { "sword_horizontal_cleave", "stable_sword_outward_slash" },
+        { "sword_diagonal_backhand", "sword_and_shield_slash_2" },
+        { "sword_lunge_thrust",      "thrust_slash" },
+        { "sword_heavy_cleave",      "great_sword_impact" },
+        { "sword_parry_guard",       "sword_and_shield_casting" },
+        { "sword_sheath",            "sheath_sword_1" },
+        { "palm_twin_thrust",        "two_hand_spell_casting" },
+        { "dodge_evade_step",        "dodging" },
+        { "dodge_roll",              "au_to_role" },
+        { "loco_idle_sword",         "withdrawing_sword" },
+    };
+
     char lowerTarget[64];
     ToLowerCopy(lowerTarget, name, sizeof(lowerTarget));
+    for (int a = 0; a < (int)(sizeof(kAliases) / sizeof(kAliases[0])); a++)
+    {
+        if (strcmp(lowerTarget, kAliases[a].alias) == 0)
+        {
+            ToLowerCopy(lowerTarget, kAliases[a].target, sizeof(lowerTarget));
+            break;
+        }
+    }
 
     // 1. Exact match
     for (int i = 0; i < s_animCount; i++)
@@ -897,6 +994,7 @@ static bool ApplyClothBonePose(Model *model, int boneIndex, const char *boneName
 // Fixes glTF post-order joint arrays where child bones precede parent bones.
 static void EvaluateBoneHierarchyRecursive(Model *model, int b, ModelAnimation anim,
                                            int currentFrame, int nextFrame, float blend,
+                                           const ModelAnimation *prevAnim, int prevFrame, float crossAlpha,
                                            const SpringBoneSystem *spring, bool *evaluated)
 {
     if (b < 0 || b >= model->skeleton.boneCount || evaluated[b])
@@ -905,7 +1003,8 @@ static void EvaluateBoneHierarchyRecursive(Model *model, int b, ModelAnimation a
     int parentIdx = model->skeleton.bones[b].parent;
     if (parentIdx >= 0 && parentIdx < model->skeleton.boneCount && !evaluated[parentIdx])
     {
-        EvaluateBoneHierarchyRecursive(model, parentIdx, anim, currentFrame, nextFrame, blend, spring, evaluated);
+        EvaluateBoneHierarchyRecursive(model, parentIdx, anim, currentFrame, nextFrame, blend,
+                                       prevAnim, prevFrame, crossAlpha, spring, evaluated);
     }
 
     evaluated[b] = true;
@@ -915,15 +1014,31 @@ static void EvaluateBoneHierarchyRecursive(Model *model, int b, ModelAnimation a
 
     if (animBoneIdx >= 0 && anim.keyframeCount > 0)
     {
-        model->currentPose[b].translation = Vector3Lerp(
+        Vector3 tr = Vector3Lerp(
             anim.keyframePoses[currentFrame][animBoneIdx].translation,
             anim.keyframePoses[nextFrame][animBoneIdx].translation, blend);
-        model->currentPose[b].rotation = QuaternionSlerp(
+        Quaternion rot = QuaternionSlerp(
             anim.keyframePoses[currentFrame][animBoneIdx].rotation,
             anim.keyframePoses[nextFrame][animBoneIdx].rotation, blend);
-        model->currentPose[b].scale = Vector3Lerp(
+        Vector3 scl = Vector3Lerp(
             anim.keyframePoses[currentFrame][animBoneIdx].scale,
             anim.keyframePoses[nextFrame][animBoneIdx].scale, blend);
+
+        if (prevAnim != NULL && prevAnim->keyframeCount > 0 && crossAlpha < 1.0f)
+        {
+            int prevBoneIdx = FindAnimBoneIndexByName(*prevAnim, boneName, b);
+            int pf = (prevFrame >= 0 && prevFrame < prevAnim->keyframeCount) ? prevFrame : 0;
+            if (prevBoneIdx >= 0)
+            {
+                tr  = Vector3Lerp(prevAnim->keyframePoses[pf][prevBoneIdx].translation, tr, crossAlpha);
+                rot = QuaternionSlerp(prevAnim->keyframePoses[pf][prevBoneIdx].rotation, rot, crossAlpha);
+                scl = Vector3Lerp(prevAnim->keyframePoses[pf][prevBoneIdx].scale, scl, crossAlpha);
+            }
+        }
+
+        model->currentPose[b].translation = tr;
+        model->currentPose[b].rotation = rot;
+        model->currentPose[b].scale = scl;
 
         Transform *cp = &model->currentPose[b];
         Matrix currentPoseMatrix = MatrixMultiply(
@@ -952,6 +1067,7 @@ static void EvaluateBoneHierarchyRecursive(Model *model, int b, ModelAnimation a
 }
 
 static void CharacterModel_UpdateSkinnedMeshWithCloth(Model model, ModelAnimation anim, float frame,
+                                                      const ModelAnimation *prevAnim, int prevFrame, float crossAlpha,
                                                       bool deflateTorso, bool deflateLegs,
                                                       const SpringBoneSystem *spring)
 {
@@ -1003,7 +1119,8 @@ static void CharacterModel_UpdateSkinnedMeshWithCloth(Model model, ModelAnimatio
 
     for (int b = 0; b < boneCount; b++)
     {
-        EvaluateBoneHierarchyRecursive(&model, b, anim, currentFrame, nextFrame, blend, spring, evaluated);
+        EvaluateBoneHierarchyRecursive(&model, b, anim, currentFrame, nextFrame, blend,
+                                       prevAnim, prevFrame, crossAlpha, spring, evaluated);
 
         if (b < CHAR_MAX_SKIN_BONES)
         {
@@ -1312,11 +1429,16 @@ static void CharacterModel_DrawCustomInternal(Model customModel, const Character
     if (animIndex >= 0 && animIndex < s_animCount && customModel.skeleton.boneCount > 0)
     {
         BoneDebugDump(customModel, s_animations[animIndex], "model", state->frame);
+        bool isBlending = (state->prevAnimIndex >= 0 && state->prevAnimIndex < s_animCount &&
+                           state->blendDuration > 0.0f && state->blendTimer < state->blendDuration);
+        const ModelAnimation *prevAnim = isBlending ? &s_animations[state->prevAnimIndex] : NULL;
+        float crossAlpha = isBlending ? Clamp(state->blendTimer / state->blendDuration, 0.0f, 1.0f) : 1.0f;
+
         unsigned int deflateMask = (deflateTorso ? 1u : 0u) | (deflateLegs ? 2u : 0u);
         unsigned int clothStamp = (spring != NULL) ? (spring->stamp | 0x80000000u) : 0u;
-        if (!SkinCache_IsHit(customModel.meshes, animIndex, state->frame, deflateMask, clothStamp))
+        if (isBlending || !SkinCache_IsHit(customModel.meshes, animIndex, state->frame, deflateMask, clothStamp))
         {
-            if (spring == NULL && deflateMask == 0u &&
+            if (!isBlending && spring == NULL && deflateMask == 0u &&
                 customModel.skeleton.boneCount == s_animations[animIndex].boneCount)
             {
                 UpdateModelAnimation(customModel, s_animations[animIndex], state->frame);
@@ -1327,9 +1449,11 @@ static void CharacterModel_DrawCustomInternal(Model customModel, const Character
                                         ? ((float)state->frame + Clamp(state->frameTimer, 0.0f, 1.0f))
                                         : (float)state->frame;
                 CharacterModel_UpdateSkinnedMeshWithCloth(customModel, s_animations[animIndex], frameSample,
+                                                          prevAnim, state->prevFrame, crossAlpha,
                                                           deflateTorso, deflateLegs, spring);
             }
-            SkinCache_Store(customModel.meshes, animIndex, state->frame, deflateMask, clothStamp);
+            if (!isBlending)
+                SkinCache_Store(customModel.meshes, animIndex, state->frame, deflateMask, clothStamp);
         }
     }
 
@@ -1636,6 +1760,22 @@ bool CharacterModel_GetBoneTransform(const char *boneName, const CharacterAnimSt
         t.translation = Vector3Lerp(t0.translation, t1.translation, blend);
         t.rotation = QuaternionSlerp(t0.rotation, t1.rotation, blend);
         t.scale = Vector3Lerp(t0.scale, t1.scale, blend);
+
+        if (state && state->prevAnimIndex >= 0 && state->prevAnimIndex < s_animCount &&
+            state->blendDuration > 0.0f && state->blendTimer < state->blendDuration)
+        {
+            const ModelAnimation *pa = &s_animations[state->prevAnimIndex];
+            int pBoneIdx = FindAnimBoneIndexByName(*pa, boneName, boneIdx);
+            int pf = (state->prevFrame >= 0 && state->prevFrame < pa->keyframeCount) ? state->prevFrame : 0;
+            if (pBoneIdx >= 0 && pa->keyframePoses != NULL)
+            {
+                float crossAlpha = Clamp(state->blendTimer / state->blendDuration, 0.0f, 1.0f);
+                Transform tp = pa->keyframePoses[pf][pBoneIdx];
+                t.translation = Vector3Lerp(tp.translation, t.translation, crossAlpha);
+                t.rotation = QuaternionSlerp(tp.rotation, t.rotation, crossAlpha);
+                t.scale = Vector3Lerp(tp.scale, t.scale, crossAlpha);
+            }
+        }
     }
     else if (s_model.currentPose != NULL)
     {

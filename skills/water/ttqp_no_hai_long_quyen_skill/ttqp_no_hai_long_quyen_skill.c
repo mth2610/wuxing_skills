@@ -101,6 +101,11 @@ void CastTtqpNoHaiLongQuyenSkill(int agentId, Vector3 startPos, Vector3 target, 
 
     /* Forward melee lunge from caster */
     Entity_Dash(agentId, dir, 18.0f);
+    Skill_RequestAnim(agentId, "flying_kick", 0.32f);
+    const struct CharacterAnimState *anim = SkillManager_GetAgentAnim(agentId);
+    if (anim) {
+        SkillHelper_StartMeleeTrails(agentId, anim, startPos, atan2f(dir.x, dir.z), 0, 0.38f);
+    }
 
     Vector3 impactPos = Vector3Add(startPos, Vector3Scale(dir, 2.8f * scale));
     NoHaiInst *inst = &s_inst[slot];
@@ -141,6 +146,7 @@ void UpdateTtqpNoHaiLongQuyenSkill(float dt, Vector3 enemyPos, float enemyRadius
 
         if (!inst->hitApplied && inst->elapsed >= 0.16f) {
             inst->hitApplied = true;
+            Skill_RequestAnim(inst->ownerAgentId, "fist_fight_a", 0.35f);
             Vector3 punchCenter = inst->origin;
             const Agent *owner = Entity_GetAgent(inst->ownerAgentId);
             if (owner) {

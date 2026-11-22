@@ -594,6 +594,27 @@ void                  VC_EarthSpike_Update(float dt);
 void                  VC_EarthSpike_Draw3D(Camera3D cam);
 void                  VC_EarthSpike_DrawShadowPass(void);
 
+// ── Bàn Thạch Bát Cực Quyền: Stone Plate Armor & Octagonal Formation Zone ───
+typedef enum {
+    VFX_STONE_ARMOR_FULL_BODY = 0,
+    VFX_STONE_ARMOR_SHOULDER_RAM = 1
+} VFX_StoneArmorMode;
+
+int  VFX_StoneArmor_Spawn(Vector3 pos, Vector3 forward, VFX_StoneArmorMode mode, float scale, float duration);
+void VFX_StoneArmor_SetTransform(int handle, Vector3 pos, Vector3 forward);
+void VFX_StoneArmor_SetActivePlates(int handle, int activePlates);
+void VFX_StoneArmor_Stop(int handle);
+void VFX_StoneArmor_Kill(int handle);
+void VC_StoneArmor_Update(float dt);
+void VC_StoneArmor_Draw3D(Camera3D cam);
+
+int  VFX_StoneFormationZone_Spawn(Vector3 center, float radius, float duration);
+void VFX_StoneFormationZone_SetPulse(int handle, float pulse01);
+void VFX_StoneFormationZone_Stop(int handle);
+void VFX_StoneFormationZone_Kill(int handle);
+void VC_StoneFormationZone_Update(float dt);
+void VC_StoneFormationZone_Draw3D(Camera3D cam);
+
 // ── Generalized Earth Surface Crack & Fissure API ───────────────────────────
 typedef enum VFX_EarthCrackMode {
     VFX_EARTH_CRACK_MODE_RADIAL_POINT = 0, // Spreads radially from 1 epicenter point
@@ -1398,6 +1419,8 @@ void VFX_ComposeDissolveExit(Vector3 pos, VC_MaterialId mat, float scale, float 
 // The swing plane is tilted off horizontal by the `slash_tilt` tunable.
 void VFX_ComposeSweepSlash(Vector3 origin, Vector3 dir, VC_MaterialId mat,
                            float length, float arcRad, float t01);
+void VFX_ComposeSweepSlashEx(Vector3 origin, Vector3 dir, Vector3 planeNormal,
+                             VC_MaterialId mat, float length, float arcRad, float t01);
 
 // ── E6.5b. Centripetal Catmull-Rom Martial Arts Slash ─────────────────────────
 // A dynamic crescent cleave evaluated via Centripetal Catmull-Rom Spline (alpha=0.5).
@@ -2369,6 +2392,41 @@ void VFX_MetalBlades_Kill(int handle);
 void VC_MetalBlades_Update(float dt);
 void VC_MetalBlades_Draw3D(Camera3D cam);
 void VC_MetalBlades_DrawShadowPass(void);
+
+// ── Metal Element: Thiên Cang Đoạn Kim Kiếm Pháp VFX Primitives ──────────────
+int  VFX_MetalSlash_Spawn(Vector3 origin, Vector3 dir, Vector3 planeNormal,
+                          float radius, float arcDeg, float duration,
+                          float scale, bool groundScar);
+int  VFX_MetalLance_Spawn(Vector3 pos, Vector3 dir, float scale, float duration);
+void VFX_MetalLance_SetPos(int handle, Vector3 pos, Vector3 dir);
+void VFX_MetalLance_Kill(int handle);
+int  VFX_MetalCrescentWave_Spawn(Vector3 origin, Vector3 dir, float rollDeg,
+                                 float range, float coneDeg, float duration, float scale);
+int  VFX_MetalSeverLine_Spawn(Vector3 startPos, Vector3 endPos, float duration, float scale);
+void VFX_MetalIaidoCoil_Draw(Vector3 pos, Vector3 dir, float progress, float range, Camera3D cam);
+void VC_MetalSlash_Update(float dt);
+void VC_MetalSlash_Draw3D(Camera3D cam);
+
+int  VFX_MetalResonanceArray_Spawn(Vector3 casterPos, Vector3 targetPos, float radius,
+                                   float telegraphSecs, float eruptSecs);
+void VFX_MetalResonanceArray_Kill(int handle);
+void VC_MetalResonanceArray_Update(float dt);
+void VC_MetalResonanceArray_Draw3D(Camera3D cam);
+
+int  VFX_MetalParryGuard_Spawn(Vector3 pos, float radius, float duration);
+void VFX_MetalParryGuard_SetTransform(int handle, Vector3 pos, Vector3 forward);
+void VFX_MetalParryGuard_TriggerDeflect(int handle, Vector3 deflectPos);
+void VFX_MetalParryGuard_Stop(int handle);
+void VFX_MetalParryGuard_Kill(int handle);
+void VC_MetalParryGuard_Update(float dt);
+void VC_MetalParryGuard_Draw3D(Camera3D cam);
+
+int  VFX_MetalMagneticZone_Spawn(Vector3 center, float radius, float duration);
+void VFX_MetalMagneticZone_SetPulse(int handle, float pulse01);
+void VFX_MetalMagneticZone_Stop(int handle);
+void VFX_MetalMagneticZone_Kill(int handle);
+void VC_MetalMagneticZone_Update(float dt);
+void VC_MetalMagneticZone_Draw3D(Camera3D cam);
 
 // @gen:vc_declarations begin
 void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float time);

@@ -173,8 +173,17 @@ void Sandbox_ResetTrainingDummy(void) {
 
 static float g_cameraAngle = SANDBOX_CAMERA_DEFAULT_YAW;
 static float g_camDist = SANDBOX_CAMERA_DEFAULT_DISTANCE / SANDBOX_CAMERA_DEFAULT_ZOOM; // Zoom 1.8x default (10.0f)
+static PlayerEntity *s_sandboxPlayerRef = NULL;
+
+static const struct CharacterAnimState* Sandbox_GetAgentAnimState(int agentId) {
+    if (s_sandboxPlayerRef && agentId == s_sandboxPlayerRef->agentId)
+        return &s_sandboxPlayerRef->anim;
+    return NULL;
+}
 
 void InitSandbox(PlayerEntity* player, EnemyEntity* enemy) {
+    s_sandboxPlayerRef = player;
+    SkillManager_SetAgentAnimProvider(Sandbox_GetAgentAnimState);
     // Camera (real-world-scaled: 1 unit = 1 meter)
     g_cameraAngle = SANDBOX_CAMERA_DEFAULT_YAW;
     g_camDist = SANDBOX_CAMERA_DEFAULT_DISTANCE / SANDBOX_CAMERA_DEFAULT_ZOOM; // Zoom 1.8x default
@@ -503,7 +512,7 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
     }
 
     CharacterModel_Update(&player->anim, dt, inputX != 0.0f || inputZ != 0.0f);
-    SkillHelper_UpdateMeleeTrails(dt, &player->anim, player->position, g_playerModelYaw);
+    SkillHelper_UpdateMeleeTrails(player->agentId, dt, &player->anim, player->position, g_playerModelYaw);
 
     // Modular Wardrobe Customization Hotkeys
     {

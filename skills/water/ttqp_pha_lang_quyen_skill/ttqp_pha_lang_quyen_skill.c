@@ -104,6 +104,13 @@ void CastTtqpPhaLangQuyenSkill(int agentId, Vector3 startPos, Vector3 target, Sk
     float range = 7.5f * scale;
     Vector3 endPos = Vector3Add(startPos, Vector3Scale(dir, range));
 
+    Skill_RequestAnim(agentId, "elbow_punch", 0.30f);
+    const Agent *owner = Entity_GetAgent(agentId);
+    const struct CharacterAnimState *anim = SkillManager_GetAgentAnim(agentId);
+    if (owner && anim) {
+        SkillHelper_StartMeleeTrails(agentId, anim, owner->position, atan2f(dir.x, dir.z), 0, 0.30f);
+    }
+
     PhaLangInst *inst = &s_inst[slot];
     inst->active = true;
     inst->ownerAgentId = agentId;

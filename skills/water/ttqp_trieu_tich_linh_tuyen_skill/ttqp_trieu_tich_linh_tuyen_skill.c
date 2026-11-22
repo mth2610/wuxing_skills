@@ -98,6 +98,7 @@ void CastTtqpTrieuTichLinhTuyenSkill(int agentId, Vector3 startPos, Vector3 targ
     const Agent *owner = Entity_GetAgent(agentId);
 
     /* Self-centered radial spring at caster's feet (compliant with §2.1) */
+    Skill_RequestAnim(agentId, "hell_slammer_a", 0.40f);
     TrieuTichInst *inst = &s_inst[slot];
     inst->active = true;
     inst->ownerAgentId = agentId;

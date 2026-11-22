@@ -59,6 +59,8 @@
 // arrived, so restoring a file means restoring its include too.
 #include "water/water.inl"         // -> ice_crystal.inl, water_stream.inl
 #include "earth/earth.inl"         // -> stone_pillar.inl, fissure_streak.inl
+#include "earth/vc_stone_armor.inl"
+#include "earth/vc_stone_formation_zone.inl"
 #include "metal/metal.inl"
 #include "wood/wood.inl"
 #include "taiji/vc_black_hole.inl"
@@ -137,6 +139,8 @@ void VFX_Compose_Update(float dt)
     VC_GuidedEarth_Update(dt);
     VC_SeismicWave_Update(dt);
     VC_EarthSpike_Update(dt);
+    VC_StoneArmor_Update(dt);
+    VC_StoneFormationZone_Update(dt);
     VC_EarthCrack_Update(dt);
     VC_GranularSand_Update(dt);
     VC_SandFunnel_Update(dt);
@@ -147,6 +151,10 @@ void VFX_Compose_Update(float dt)
     VC_Crystal_Update(dt);
     VC_IceCrystal_Update(dt);
     VC_MetalBlades_Update(dt);
+    VC_MetalSlash_Update(dt);
+    VC_MetalResonanceArray_Update(dt);
+    VC_MetalParryGuard_Update(dt);
+    VC_MetalMagneticZone_Update(dt);
     /* Five-body liquid stress lab (WUXING_LIQUID_BENCH=1). The heartbeat keeps
      * the fixture alive; simulation and surface submission stay in the engine's
      * normal update/composite phases. */
@@ -193,6 +201,8 @@ void VFX_Compose_Draw3D(Camera3D cam)
     VC_GuidedEarth_Draw3D(cam);
     VC_SeismicWave_Draw3D(cam);
     VC_EarthSpike_Draw3D(cam);
+    VC_StoneArmor_Draw3D(cam);
+    VC_StoneFormationZone_Draw3D(cam);
     VC_EarthCrack_Draw3D(cam);
     VC_GranularSand_Draw3D(cam);
     VC_SandFunnel_Draw3D(cam);
@@ -203,6 +213,10 @@ void VFX_Compose_Draw3D(Camera3D cam)
     VC_Crystal_Draw3D(cam);
     VC_IceCrystal_Draw3D(cam);
     VC_MetalBlades_Draw3D(cam);
+    VC_MetalSlash_Draw3D(cam);
+    VC_MetalResonanceArray_Draw3D(cam);
+    VC_MetalParryGuard_Draw3D(cam);
+    VC_MetalMagneticZone_Draw3D(cam);
 }
 
 void VFX_Compose_DrawRefraction(Camera3D cam)

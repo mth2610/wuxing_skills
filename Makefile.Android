@@ -51,6 +51,7 @@ PROJECT_SOURCE_FILES   := main.c \
                           environment/environment_system.c \
                           environment/env_shadow.c \
                           environment/atmosphere.c \
+                          environment/weather_system.c \
                           environment/volumetric/volumetric_fog.c \
                           environment/wind/wind_system.c \
                           maps/map_manager.c \
@@ -96,6 +97,7 @@ PROJECT_SOURCE_FILES   := main.c \
                           core/gas/gas_system.c \
                           core/path_spline.c \
                           post_process/post_fx.c \
+                          post_process/gtao.c \
                           post_process/taa.c \
                           post_process/color_grade_lut.c \
                           post_process/scene_targets.c \

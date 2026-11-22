@@ -58,6 +58,7 @@ PlayerIntent Control_ReadIntent(void) {
     intent.jump     = IsKeyPressed(KEY_SPACE);
     intent.dash     = IsKeyPressed(KEY_LEFT_SHIFT);
     intent.meditate = IsKeyPressed(KEY_G);
+    intent.parry    = IsKeyPressed(KEY_F);
 
     if      (IsKeyPressed(KEY_ONE))   intent.castSkillSlot = 0;
     else if (IsKeyPressed(KEY_TWO))   intent.castSkillSlot = 1;
@@ -67,11 +68,10 @@ PlayerIntent Control_ReadIntent(void) {
     else if (IsKeyPressed(KEY_SIX))   intent.castSkillSlot = 5;
     else if (IsKeyPressed(KEY_SEVEN)) intent.castSkillSlot = 6;
 
-    // Basic attack: random đấm/đá/chưởng per press (matches the pre-intent
-    // behavior; a real combo system picks deliberately later).
+    // Basic attack: deterministic combo step request (4-beat combo resolves in game/entities).
     if (IsKeyPressed(KEY_Z) || IsKeyPressed(KEY_C) ||
         IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)) {
-        intent.basicAttack = 1 + GetRandomValue(0, 2);
+        intent.basicAttack = 1;
     }
 
     // Aim: mouse ray onto the Y=0 ground plane when a camera is wired,
@@ -144,9 +144,13 @@ void Control_Apply(const PlayerIntent *in, float dt) {
     }
 
     if (in->meditate) Entity_StartMeditate(s_agentId);
+    if (in->parry) Entity_StartParry(s_agentId);
 
     if (in->castSkillSlot >= 0 && in->castSkillSlot < AGENT_SKILL_SLOTS &&
         !Entity_IsStunned(s_agentId) && !Entity_IsSilenced(s_agentId)) {
+        if (Entity_IsInCancelWindow(s_agentId)) {
+            Entity_CancelAttackRecovery(s_agentId);
+        }
         int skillIndex = a->equippedSkills[in->castSkillSlot];
         if (skillIndex >= 0 && SkillManager_CanCast(skillIndex, s_agentId)) {
             int lvl = s_skillLevelFn ? s_skillLevelFn(skillIndex) : 1;

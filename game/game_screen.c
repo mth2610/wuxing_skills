@@ -4,6 +4,8 @@
 #include "environment/env_shadow.h"
 #include "skills/skill_manager.h"
 #include "skills/skill_helper.h"
+#include "core/time_fx.h"
+#include "core/wind/wind_system.h"
 #include "core/composition/visual_composer.h"
 #include "character/character_model.h"
 #include "character/wardrobe_system.h"
@@ -129,6 +131,16 @@ static bool s_remoteAnimInit[MAX_AGENTS];
 static ModularInstance s_remoteModular[MAX_AGENTS];
 static bool s_remoteModularInit[MAX_AGENTS];
 static bool s_desktopMeditateReq = false;
+static PlayerEntity *s_animOwnerPlayer = NULL;
+
+static const struct CharacterAnimState* GameScreen_GetAgentAnimState(int agentId)
+{
+    if (s_animOwnerPlayer && agentId == s_animOwnerPlayer->agentId)
+        return &s_animOwnerPlayer->anim;
+    if (agentId >= 0 && agentId < MAX_AGENTS && s_remoteAnimInit[agentId])
+        return &s_remoteAnim[agentId];
+    return NULL;
+}
 
 static void EnsureRemoteModularInit(int agentId)
 {
@@ -579,6 +591,8 @@ static void PlaceHeroesAtTeamSpawns(void)
 
 void GameScreen_Init(PlayerEntity *player)
 {
+    s_animOwnerPlayer = player;
+    SkillManager_SetAgentAnimProvider(GameScreen_GetAgentAnimState);
     s_camAngle = 0.0f;
     s_camDist = SANDBOX_CAMERA_DEFAULT_DISTANCE / GAME_DEFAULT_ZOOM_RATIO; // Zoom 1.8x default (10.0f)
     s_camPitch = GAME_DEFAULT_TILT_DEGREES; // Tilt 35.264 deg default
@@ -1467,7 +1481,7 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
             intent.moveDir.y += -s_gameTouchInput.joyX * s + s_gameTouchInput.joyZ * c;
         }
         if (s_gameTouchInput.attackPressed && intent.basicAttack == 0)
-            intent.basicAttack = 1 + GetRandomValue(0, 2);
+            intent.basicAttack = 1;
         if (s_gameTouchInput.khinhCongPressed)
         {
             intent.jump = true;
@@ -1687,6 +1701,7 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
                 const Agent *pc = Entity_GetAgent(player->agentId);
                 // Ngũ Hành Tương Sinh 3-step combo -> Ngộ Đạo Thái Cực!
                 int castElem = GameSkillElementByName(GetRegisteredSkillName(castIdx));
+                ModularInstance_SetWeaponTrailElement(Wardrobe_GetGlobalModularInstance(), castElem);
                 if (pc != NULL) {
                     int sfxElem = (castElem >= 0) ? castElem : pc->currentElement;
                     Audio_PlaySFXAt(pc->taijiActive ? SFX_CAST_TAIJI
@@ -1717,12 +1732,50 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
     const Agent *selfAgent = Entity_GetAgent(player->agentId);
     if (selfAgent)
         player->position = selfAgent->position;
+    s_animOwnerPlayer = player;
 
     {
         char animClip[64];
         float animSecs = 0.0f;
         if (Skill_ConsumeAnimTrigger(player->agentId, animClip, sizeof(animClip), &animSecs))
             CharacterModel_TriggerByName(&player->anim, animClip, animSecs);
+        for (int i = 0; i < MAX_AGENTS; i++)
+        {
+            if (i == player->agentId || !s_remoteAnimInit[i]) continue;
+            if (Skill_ConsumeAnimTrigger(i, animClip, sizeof(animClip), &animSecs))
+                CharacterModel_TriggerByName(&s_remoteAnim[i], animClip, animSecs);
+        }
+    }
+
+    if (selfAgent)
+    {
+        if (selfAgent->dashTimer > 0.12f && player->anim.currentSlot != CHAR_ANIM_DODGE)
+        {
+            CharacterModel_TriggerTimed(&player->anim, CHAR_ANIM_DODGE, 0.30f);
+        }
+        else if (selfAgent->hitFlashTimer > 0.09f && !player->anim.oneShotActive)
+        {
+            CharacterModel_TriggerTimed(&player->anim, CHAR_ANIM_HIT, 0.28f);
+        }
+
+        if (intent.parry && selfAgent->parryWindowTimer > 0.40f)
+        {
+            CombatStance st = PlayerWardrobe_GetCombatStance(Wardrobe_GetGlobalPlayer());
+            CharacterAnimSlot pSlot = (st == COMBAT_STANCE_SWORD) ? CHAR_ANIM_SWORD_PARRY : CHAR_ANIM_PARRY;
+            CharacterModel_TriggerTimed(&player->anim, pSlot, 0.45f);
+            s_swingSlowTimer = 0.28f;
+        }
+        if (selfAgent->parryWindowTimer > 0.23f && !Net_ClientDrivesWorld())
+        {
+            int broken = Combat_DeflectProjectilesInRadius(player->position, 1.85f, player->agentId);
+            if (broken > 0)
+            {
+                Entity_RestoreMana(player->agentId, 12.0f * (float)broken);
+                VFX_ComposeContactSparkMode(player->position, VC_MAT_METAL, 0.90f, 0.95f, CONTACT_SPARK_CENTRIFUGAL);
+                Audio_PlaySFXAt(SFX_CLASH, player->position);
+                AddFloatingText(player->position, "Hóa Giải!", GOLD, 16.0f, 0.75f);
+            }
+        }
     }
 
     int jumpFired = Net_ClientDrivesWorld() ? NetPred_ConsumeLocalJumpFired() : Control_ConsumeJumpFired();
@@ -1731,8 +1784,9 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
     else if (jumpFired >= 2)
         CharacterModel_TriggerVariant(&player->anim, CHAR_ANIM_JUMP, 1);
 
+    CombatStance localStance = PlayerWardrobe_GetCombatStance(Wardrobe_GetGlobalPlayer());
     float moveLen = sqrtf(intent.moveDir.x * intent.moveDir.x + intent.moveDir.y * intent.moveDir.y);
-    CharacterAnimSlot locoSlot = CHAR_ANIM_IDLE;
+    CharacterAnimSlot locoSlot = (localStance == COMBAT_STANCE_SWORD) ? CHAR_ANIM_SWORD_IDLE : CHAR_ANIM_IDLE;
     float predVelY = 0.0f;
     if (Net_ClientDrivesWorld() && NetPred_IsLocalAirborne(&predVelY))
     {
@@ -1751,59 +1805,84 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
         locoSlot = (selfAgent && !selfAgent->staminaExhausted) ? CHAR_ANIM_RUN : CHAR_ANIM_WALK;
     }
     CharacterModel_UpdateLocomotion(&player->anim, dt, locoSlot);
-    SkillHelper_UpdateMeleeTrails(dt, &player->anim, player->position, Control_GetYaw());
+    SkillHelper_UpdateMeleeTrails(player->agentId, dt, &player->anim, player->position, Control_GetYaw());
 
-    // Basic attack (đấm/đá/chưởng) — free, no cast time, spammable, auto-
-    // targets via Entity_ExecuteBasicAttack (no enemy reference needed here
-    // at all). Z / C / right-click all fire the same basic attack with a
-    // RANDOM punch/kick/palm each press (matches sandbox's touch button —
-    // per-type mapping waits for the real combo system). This is the real
-    // production home for this input (see game_screen.h header) — sandbox
-    // no longer has a PC-keyboard copy of this.
-    // Melee rides PlayerIntent now (net-replicated): the swing anim + damping
-    // always play locally for feedback; the gameplay hit runs locally only
-    // when we own the simulation — a connected client's intent already went
-    // to the host, which executes the hit there.
-    bool basicAttackPressed = (s_state == GAME_FIGHTING) && !UI_IsLoadoutOpen() &&
+    // 4-Beat Martial Arts Combo (Stance-aware Sword vs Unarmed + Hit-Apex Sync)
+    bool basicAttackPressed = (s_state == GAME_FIGHTING) && !UI_IsLoadoutOpen() && !UI_Hub_IsModalOpen() &&
                               intent.basicAttack > 0;
 
     if (basicAttackPressed)
     {
-        BasicAttackType basicAttackType = (BasicAttackType)(intent.basicAttack - 1);
-        CharacterAnimSlot animSlot = (basicAttackType == BASIC_ATTACK_PUNCH) ? CHAR_ANIM_PUNCH : (basicAttackType == BASIC_ATTACK_KICK) ? CHAR_ANIM_KICK
-                                                                                                                                        : CHAR_ANIM_PALM;
-        float swingSecs = Entity_GetBasicAttackSeconds(basicAttackType);
-        CharacterModel_TriggerAttackTimed(&player->anim, animSlot, swingSecs);
-        SkillHelper_StartMeleeTrails(player->agentId, &player->anim, player->position,
-                                     Control_GetYaw(), (int)basicAttackType, swingSecs);
-        s_swingSlowTimer = swingSecs * 0.6f; // damp walking through the swing
-        Audio_PlaySFXAt(SFX_MARTIAL_SWING, player->position);
-
-        if (!Net_ClientDrivesWorld())
+        float yaw = Control_GetYaw();
+        Vector3 fallbackDir = { sinf(yaw), 0.0f, cosf(yaw) };
+        Vector3 targetPos = { 0 };
+        float swingSecs = 0.48f;
+        int beat = Entity_StartBasicAttackCombo(player->agentId, fallbackDir, &targetPos, &swingSecs);
+        if (beat >= 0)
         {
-            Vector3 targetPos, wallPos;
-            int wallElement;
-            bool gotWallBonus = Entity_ExecuteBasicAttack(player->agentId, basicAttackType, &targetPos, &wallPos, &wallElement);
-            Vector3 swingAim = targetPos;
-            if (swingAim.x == 0.0f && swingAim.y == 0.0f && swingAim.z == 0.0f)
-            {
-                float yaw = Control_GetYaw();
-                swingAim = (Vector3){ player->position.x + sinf(yaw), player->position.y, player->position.z + cosf(yaw) };
-            }
-            Net_HostNotifyCast(player->agentId, 250 + (int)basicAttackType, swingAim);
-            // targetPos is only written when auto-target found someone (stays
-            // (0,0,0) otherwise) — turn to face the attack direction if so.
             if (targetPos.x != 0.0f || targetPos.y != 0.0f || targetPos.z != 0.0f)
-            {
                 Control_FaceTowards(targetPos);
-                SkillHelper_SpawnMeleeImpact(player->agentId, targetPos);
-                Audio_PlaySFXAt(SFX_MELEE_HIT, targetPos);
-            }
-            if (gotWallBonus && wallElement == 3 /* Earth — only element with a real wall so far */)
+
+            if (localStance == COMBAT_STANCE_SWORD)
             {
-                (void)wallPos;
-                AddFloatingText(targetPos, "Cộng Hưởng Đất!", ELEMENT_COLOR_EARTH, 16.0f, 0.6f);
+                static const CharacterAnimSlot kSwordSlots[4] = {
+                    CHAR_ANIM_SWORD_SLASH, CHAR_ANIM_SWORD_SLASH,
+                    CHAR_ANIM_SWORD_THRUST, CHAR_ANIM_SWORD_SLASH
+                };
+                static const int kSwordVars[4] = { 0, 2, 0, 3 };
+                ModularInstance_SetWeaponTrailElement(Wardrobe_GetGlobalModularInstance(),
+                                                      selfAgent ? selfAgent->currentElement : 4);
+                CharacterModel_TriggerVariantTimed(&player->anim, kSwordSlots[beat], kSwordVars[beat], swingSecs);
             }
+            else
+            {
+                static const CharacterAnimSlot kUnarmedSlots[4] = {
+                    CHAR_ANIM_PUNCH, CHAR_ANIM_PUNCH, CHAR_ANIM_KICK, CHAR_ANIM_PALM
+                };
+                static const int kUnarmedVars[4] = { 0, 2, 0, 0 };
+                int trailType = (beat == 2) ? BASIC_ATTACK_KICK : (beat == 3) ? BASIC_ATTACK_PALM : BASIC_ATTACK_PUNCH;
+                CharacterModel_TriggerVariantTimed(&player->anim, kUnarmedSlots[beat], kUnarmedVars[beat], swingSecs);
+                SkillHelper_StartMeleeTrails(player->agentId, &player->anim, player->position,
+                                             Control_GetYaw(), trailType, swingSecs);
+            }
+            s_swingSlowTimer = swingSecs * 0.55f;
+            Audio_PlaySFXAt(SFX_MARTIAL_SWING, player->position);
+            if (!Net_ClientDrivesWorld())
+            {
+                Vector3 swingAim = (targetPos.x != 0.0f || targetPos.z != 0.0f)
+                    ? targetPos
+                    : (Vector3){ player->position.x + sinf(Control_GetYaw()), player->position.y, player->position.z + cosf(Control_GetYaw()) };
+                Net_HostNotifyCast(player->agentId, 250 + (beat % 3), swingAim);
+            }
+        }
+    }
+
+    // Consume resolved Hit-Apex events from Entities (true impact timing + Blade-Plane Slash VFX)
+    if (!Net_ClientDrivesWorld())
+    {
+        BasicAttackHitEvent hits[16];
+        int nh = Entity_PollBasicAttackHits(hits, 16);
+        for (int h = 0; h < nh; h++)
+        {
+            SkillHelper_SpawnMeleeImpact(hits[h].attackerId, hits[h].hitPos);
+            Audio_PlaySFXAt(SFX_MELEE_HIT, hits[h].hitPos);
+            if (hits[h].attackerId == player->agentId)
+            {
+                TimeFX_Hitstop(hits[h].isFinisher ? 0.045f : 0.025f, 0.08f);
+                if (localStance == COMBAT_STANCE_SWORD && hits[h].isFinisher)
+                {
+                    Vector3 bBase, bTip, sDir, pNorm;
+                    if (ModularInstance_GetBladeKinematics(Wardrobe_GetGlobalModularInstance(),
+                                                           &bBase, &bTip, &sDir, &pNorm))
+                    {
+                        VFX_MetalSlash_Spawn(bBase, sDir, pNorm, 2.2f, 110.0f, 0.28f, 1.0f, false);
+                    }
+                }
+            }
+            if (hits[h].guardBroken)
+                AddFloatingText(hits[h].hitPos, "Phá Phòng!", ELEMENT_COLOR_FIRE, 16.0f, 0.75f);
+            else if (hits[h].parryDeflected)
+                AddFloatingText(hits[h].hitPos, "Hóa Giải!", GOLD, 16.0f, 0.75f);
         }
     }
 

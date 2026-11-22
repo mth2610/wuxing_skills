@@ -149,6 +149,15 @@ void ModularInstance_Draw(ModularInstance *inst);
 void ModularInstance_DrawWithState(ModularInstance *inst, const CharacterAnimState *state,
                                    Vector3 position, float yawRadians, float scale, Color tint);
 
+// Queries world-space blade base, blade tip, and instantaneous swing plane normal
+// from the equipped right-hand weapon socket and weapon trail history.
+bool ModularInstance_GetBladeKinematics(const ModularInstance *inst,
+                                        Vector3 *outWorldBase, Vector3 *outWorldTip,
+                                        Vector3 *outSwingDir, Vector3 *outPlaneNormal);
+
+// Tints the instance's weapon trail by Wuxing element (0=Water..4=Metal, 5=Taiji).
+void ModularInstance_SetWeaponTrailElement(ModularInstance *inst, int element);
+
 // Calculates world transform for rigid socket attachment (fallback to calibrated socket anchors)
 bool ModularSystem_GetSocketMatrix(Vector3 charPos, float charYaw, float charScale,
                                    ModularSlot slot, Matrix localOffset, Matrix *outMatrix);

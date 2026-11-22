@@ -68,6 +68,10 @@ typedef struct CharacterAnimState {
     int   activeAnimIndex;  // raw ModelAnimation index currently playing (-1 if none)
     bool  oneShotActive;    // true while an action one-shot is playing
     float oneShotSpeed;     // playback multiplier for the current one-shot (1.0 = clip's natural speed)
+    int   prevAnimIndex;    // previous clip index for cross-fade blending (-1 if none)
+    int   prevFrame;        // frozen frame in prevAnimIndex at transition time
+    float blendTimer;       // elapsed blend time in seconds
+    float blendDuration;    // total cross-fade duration in seconds (0 = instant)
 } CharacterAnimState;
 
 // Loads (once, cached via core/resource_manager.h) the shared character Model + its

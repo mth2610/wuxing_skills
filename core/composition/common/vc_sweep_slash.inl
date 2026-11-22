@@ -228,13 +228,16 @@ static float SweepSlash_WidthEnv(float s)
 // `origin` = the pivot (shoulder/hilt hand), `dir` = the direction the arc's
 // MIDPOINT points, `length` = arc radius in metres, `arcRad` = total swept angle
 // in radians (2.2 ~ 126 degrees, a full body swing).
-void VFX_ComposeSweepSlash(Vector3 origin, Vector3 dir, VC_MaterialId mat,
-                           float length, float arcRad, float t01)
+void VFX_ComposeSweepSlashEx(Vector3 origin, Vector3 dir, Vector3 planeNormal,
+                             VC_MaterialId mat, float length, float arcRad, float t01)
 {
     SweepSlash_InitShared();
     if (length <= 0.0f) length = 1.5f;
-    if (arcRad <= 0.0f) arcRad = 2.2f;
-    if (arcRad > 2.0f * PI) arcRad = 2.0f * PI;
+    float sgn = (arcRad < 0.0f) ? -1.0f : 1.0f;
+    float absArc = fabsf(arcRad);
+    if (absArc <= 0.0f) absArc = 2.2f;
+    if (absArc > 2.0f * PI) absArc = 2.0f * PI;
+    float signedArc = sgn * absArc;
     if (t01 < 0.0f) t01 = 0.0f;
     if (t01 > 1.0f) t01 = 1.0f;
 
@@ -242,54 +245,39 @@ void VFX_ComposeSweepSlash(Vector3 origin, Vector3 dir, VC_MaterialId mat,
     if (fade <= 0.001f) return;
 
     // ── The swing plane ─────────────────────────────────────────────────────
-    // `dir` fixes where the arc points; the plane it sweeps in is tilted off
-    // horizontal by `slash_tilt` so the cut reads as diagonal. A flat sweep
-    // (tilt 0) is a disc on the ground and looks like a shockwave, which is a
-    // different effect.
     Vector3 d = Vector3Normalize(dir);
     if (Vector3LengthSqr(d) < 0.5f) d = (Vector3){0.0f, 0.0f, 1.0f};
-    Vector3 up   = {0.0f, 1.0f, 0.0f};
-    Vector3 side = Vector3CrossProduct(up, d);
-    if (Vector3LengthSqr(side) < 1e-6f) side = (Vector3){1.0f, 0.0f, 0.0f};
-    side = Vector3Normalize(side);
-
-    Vector3 n = Vector3Add(Vector3Scale(up,   cosf(s_slashTilt)),
-                           Vector3Scale(side, -sinf(s_slashTilt)));
-    // Orthogonalise against `d` — `up` is only perpendicular to `d` while `d` is
-    // horizontal, and a caller aiming up a slope would otherwise get a plane the
-    // arc does not lie in (the ribbon's fixed normal would then be wrong too).
+    Vector3 n;
+    if (Vector3LengthSqr(planeNormal) > 1e-5f) {
+        n = Vector3Normalize(planeNormal);
+    } else {
+        Vector3 up   = {0.0f, 1.0f, 0.0f};
+        Vector3 side = Vector3CrossProduct(up, d);
+        if (Vector3LengthSqr(side) < 1e-6f) side = (Vector3){1.0f, 0.0f, 0.0f};
+        side = Vector3Normalize(side);
+        n = Vector3Add(Vector3Scale(up,   cosf(s_slashTilt)),
+                       Vector3Scale(side, -sinf(s_slashTilt)));
+    }
     n = Vector3Normalize(Vector3Subtract(n, Vector3Scale(d, Vector3DotProduct(n, d))));
     Vector3 axU = d;                                             // arc midpoint
     Vector3 axV = Vector3Normalize(Vector3CrossProduct(n, axU)); // sweep direction
 
     // ── Head and tail ───────────────────────────────────────────────────────
-    // Two angles walking the same arc on different clocks. The head is
-    // ease-OUT — a blade is fastest at the start of its follow-through — and the
-    // tail is smoothstep, so it leaves late and arrives gently.
-    const float half = arcRad * 0.5f;
+    const float half = signedArc * 0.5f;
     float headT = Clamp(t01 / SLASH_SWEEP_T, 0.0f, 1.0f);
     float tailT = Clamp((t01 - SLASH_TAIL_LAG) / (SLASH_TAIL_END - SLASH_TAIL_LAG),
                         0.0f, 1.0f);
     float headE = 1.0f - powf(1.0f - headT, 2.2f);
     float tailE = SmoothStep01(tailT);
-    float aHead = -half + arcRad * headE;
-    float aTail = -half + arcRad * tailE;
+    float aHead = -half + signedArc * headE;
+    float aTail = -half + signedArc * tailE;
     float span  = aHead - aTail;
-    if (span <= 0.004f) return;
+    if (fabsf(span) <= 0.004f) return;
 
-    // As the tail closes the band would end up short AND fat, which reads as a
-    // blob. Width collapses with it once the band is under a third of the arc.
-    float shrink = Clamp(span / (0.33f * arcRad), 0.0f, 1.0f);
-    // WIDTH IS KEYED TO THE ARC'S LENGTH, NOT ITS RADIUS. What makes a band read
-    // as a cut is its ASPECT RATIO — a blade trail is roughly 1:20 against the
-    // distance it travelled. Keyed to radius (0.105 * length) the ratio moved
-    // with `arcRad`: at the bench's 2.2 rad the head travels 4 m and the band was
-    // 0.38 m wide, i.e. 1:10, which draws a LEAF. Same number at a 0.6 rad flick
-    // would have been 1:3, a paddle.
-    //   arcLen = length * arcRad   (metres the head actually travels)
-    //   full width = 2 * 0.022 * arcLen  ~ 1:23
-    float arcLen = length * Clamp(arcRad, 0.5f, 3.2f);
-    float halfW  = arcLen * 0.022f * s_slashWidth * shrink;
+    float shrink = Clamp(fabsf(span) / (0.33f * absArc), 0.0f, 1.0f);
+    float arcLen = length * Clamp(absArc, 0.5f, 3.2f);
+    float matWidthBoost = (mat == VC_MAT_METAL) ? 1.90f : 1.0f;
+    float halfW  = arcLen * 0.022f * s_slashWidth * matWidthBoost * shrink;
 
     const VFX_ElementMaterial *m = VFX_Material(mat);
     Color bodyCol = m->body;
@@ -310,11 +298,12 @@ void VFX_ComposeSweepSlash(Vector3 origin, Vector3 dir, VC_MaterialId mat,
     // only way plain geometry gets past 1.0 in the HDR buffer.
     // The halo was 2.7x and it is what made the band read as fog. It exists to
     // put light BEHIND the blade, not to be the blade's silhouette.
-    static const float passW[3]     = {1.5f, 1.0f, 0.34f};  // x on half-width
-    static const float passA[3]     = {0.18f, 1.0f, 1.0f};  // x on alpha
-    static const float passWhite[3] = {0.0f, 0.35f, 0.95f}; // toward white
+    static const float passW[4]     = {1.5f, 1.0f, 0.42f, 0.24f}; // x on half-width
+    static const float passA[4]     = {0.20f, 1.0f, 1.0f, 1.0f};  // x on alpha
+    static const float passWhite[4] = {0.0f, 0.35f, 0.90f, 0.98f}; // toward white
+    int passCount = (mat == VC_MAT_METAL) ? 4 : 3;
 
-    for (int pass = 0; pass < 3; pass++)
+    for (int pass = 0; pass < passCount; pass++)
     {
         for (int i = 0; i < SWEEP_SLASH_POINTS; i++)
         {
@@ -415,6 +404,7 @@ void VFX_ComposeSweepSlash(Vector3 origin, Vector3 dir, VC_MaterialId mat,
                                          Vector3Scale(axV, sinf(ang)));
             Vector3 tangent = Vector3Subtract(Vector3Scale(axV, cosf(ang)),
                                               Vector3Scale(axU, sinf(ang)));
+            if (signedArc < 0.0f) tangent = Vector3Negate(tangent);
             float rr = length * Math_Mix(0.94f, 1.06f, Random01());
             Vector3 p = Vector3Add(origin, Vector3Scale(radial, rr));
 
@@ -616,6 +606,12 @@ void VFX_ComposeCentripetalSlashEx(Vector3 origin, float yaw, Color coreColor, C
             SpawnParticle(sp);
         }
     }
+}
+
+void VFX_ComposeSweepSlash(Vector3 origin, Vector3 dir, VC_MaterialId mat,
+                           float length, float arcRad, float t01)
+{
+    VFX_ComposeSweepSlashEx(origin, dir, (Vector3){ 0.0f, 0.0f, 0.0f }, mat, length, arcRad, t01);
 }
 
 void VFX_ComposeCentripetalSlash(Vector3 origin, float yaw, VC_MaterialId mat,

@@ -161,6 +161,18 @@ typedef struct {
     float          dodgeGraceTimer;     // I-frame grace window after Dash/Jump (seconds remaining)
     float          facingYaw;           // World facing angle in radians (replicated in 18B snapshot)
     unsigned char  netMonsterMeta;      // Packed [bits 0..1 kind | bits 2..4 aiState | bits 5..7 telegraph]
+
+    // --- Martial Arts 4-Beat Combo, Hit-Frame Sync & Active Parry/Deflect ---
+    int            comboStep;           // 0..3 (4-beat combo chain)
+    float          comboWindowTimer;    // Resets comboStep to 0 when expired
+    float          attackCadenceTimer;  // Minimum interval before next basic attack beat
+    float          cancelWindowTimer;   // >0: recovery phase can be cancelled into next beat or Skill
+    int            pendingAttackType;   // -1 = none; 0..3 = beat waiting for hit-apex frame
+    float          pendingAttackTimer;  // Counts down to 0.0f (impact apex)
+    Vector3        pendingAttackDir;    // Locked forward direction of the swing
+    float          markComboIcdTimer;   // 3.0s ICD for 4th-beat Elemental Mark application
+    float          parryWindowTimer;    // >0: active Deflect/Parry window (0.22s perfect deflect)
+    float          parryCooldownTimer;  // Cooldown for manual Parry/Deflect (2.5s)
 } Agent;
 
 // Sized for the real target scale (up to 6 real players + a mixed pool of
@@ -295,6 +307,28 @@ bool Entity_ExecuteBasicAttack(int attackerId, BasicAttackType type,
 // CharacterModel_TriggerAttackTimed) to pace the swing animation. Escalates
 // with the move's weight: punch < kick < palm.
 float Entity_GetBasicAttackSeconds(BasicAttackType type);
+
+typedef struct {
+    int     attackerId;
+    int     targetId;
+    int     beat;           // 0..3
+    Vector3 hitPos;
+    bool    isFinisher;
+    bool    guardBroken;
+    bool    parryDeflected;
+} BasicAttackHitEvent;
+
+// Starts a 4-beat combo swing with micro step-in lunge and schedules hit resolution at apex.
+// Returns the beat index (0..3) started, or -1 if gated by cadence/CC.
+int  Entity_StartBasicAttackCombo(int attackerId, Vector3 fallbackDir,
+                                  Vector3 *outTargetPos, float *outSwingSeconds);
+int  Entity_PollBasicAttackHits(BasicAttackHitEvent *out, int max);
+
+// Active Parry / Deflect (F key): enters 0.45s guard with 0.22s perfect deflect window.
+bool Entity_StartParry(int agentId);
+bool Entity_IsParrying(int agentId);
+bool Entity_IsInCancelWindow(int agentId);
+void Entity_CancelAttackRecovery(int agentId);
 
 // --- Dash/afterimage hook (stub) ---
 void Entity_OnDash(int agentId);

@@ -383,6 +383,90 @@ static Matrix ComputeSocketModelMatrix(ModularSlot slot, const char *boneSocket,
     return MatrixMultiply(localOffset, socketModelMat);
 }
 
+void ModularInstance_SetWeaponTrailElement(ModularInstance *inst, int element)
+{
+    if (!inst) return;
+    static const Color kGlow[6] = {
+        {  65, 195, 255, 255 }, // Water
+        {  75, 225, 130, 255 }, // Wood
+        { 255, 110,  45, 255 }, // Fire
+        { 235, 155,  55, 255 }, // Earth
+        { 160, 220, 255, 255 }, // Metal
+        { 190, 125, 255, 255 }  // Taiji
+    };
+    static const Color kCore[6] = {
+        { 235, 252, 255, 255 },
+        { 235, 255, 235, 255 },
+        { 255, 245, 200, 255 },
+        { 255, 240, 200, 255 },
+        { 255, 255, 255, 255 },
+        { 250, 235, 255, 255 }
+    };
+    int idx = (element >= 0 && element < 6) ? element : 4;
+    WeaponTrail_SetColors(&inst->weaponTrail, kGlow[idx], kCore[idx]);
+}
+
+bool ModularInstance_GetBladeKinematics(const ModularInstance *inst,
+                                        Vector3 *outWorldBase, Vector3 *outWorldTip,
+                                        Vector3 *outSwingDir, Vector3 *outPlaneNormal)
+{
+    if (!inst) return false;
+    int itemIdx = inst->loadout.itemIndices[MODULAR_SLOT_WEAPON_R];
+    const char *boneSocket = "mixamorig:RightHand";
+    Matrix localOffset = MatrixIdentity();
+    if (itemIdx >= 0 && itemIdx < s_itemCount && s_itemRegistry[itemIdx].loaded)
+    {
+        if (s_itemRegistry[itemIdx].boneSocket[0] != '\0')
+            boneSocket = s_itemRegistry[itemIdx].boneSocket;
+        localOffset = s_itemRegistry[itemIdx].localOffset;
+    }
+
+    Matrix weaponWorldMat;
+    if (!ModularSystem_GetSocketMatrixEx(inst->position, inst->yaw, inst->scale,
+                                         MODULAR_SLOT_WEAPON_R, boneSocket,
+                                         &inst->animState, localOffset, &weaponWorldMat))
+    {
+        return false;
+    }
+
+    Vector3 worldBase = Vector3Transform((Vector3){0.0f, 0.10f, 0.0f}, weaponWorldMat);
+    Vector3 worldTip  = Vector3Transform((Vector3){0.0f, 0.85f, 0.0f}, weaponWorldMat);
+    Vector3 bladeVec  = Vector3Subtract(worldTip, worldBase);
+    if (outWorldBase) *outWorldBase = worldBase;
+    if (outWorldTip)  *outWorldTip  = worldTip;
+
+    Vector3 swingDir = (Vector3){ sinf(inst->yaw), 0.0f, cosf(inst->yaw) };
+    Vector3 planeNormal = (Vector3){ 0.0f, 1.0f, 0.0f };
+
+    if (inst->weaponTrail.count >= 2)
+    {
+        Vector3 prevTip = inst->weaponTrail.points[1].tip;
+        Vector3 tipDelta = Vector3Subtract(worldTip, prevTip);
+        if (Vector3LengthSqr(tipDelta) > 1e-5f)
+        {
+            swingDir = Vector3Normalize(tipDelta);
+            Vector3 crossN = Vector3CrossProduct(bladeVec, tipDelta);
+            if (Vector3LengthSqr(crossN) > 1e-5f)
+                planeNormal = Vector3Normalize(crossN);
+        }
+    }
+    else if (inst->weaponTrail.hasPrev)
+    {
+        Vector3 tipDelta = Vector3Subtract(worldTip, inst->weaponTrail.prevTip);
+        if (Vector3LengthSqr(tipDelta) > 1e-5f)
+        {
+            swingDir = Vector3Normalize(tipDelta);
+            Vector3 crossN = Vector3CrossProduct(bladeVec, tipDelta);
+            if (Vector3LengthSqr(crossN) > 1e-5f)
+                planeNormal = Vector3Normalize(crossN);
+        }
+    }
+
+    if (outSwingDir)    *outSwingDir    = swingDir;
+    if (outPlaneNormal) *outPlaneNormal = planeNormal;
+    return true;
+}
+
 bool ModularSystem_GetSocketMatrixEx(Vector3 charPos, float charYaw, float charScale,
                                      ModularSlot slot, const char *boneSocket,
                                      const CharacterAnimState *animState,
