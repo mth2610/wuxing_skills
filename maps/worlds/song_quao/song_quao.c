@@ -215,6 +215,14 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
 
     float density = macro * heightFade * slopeFade * shoreFade *
                     rockFade * flowerSuppression * rockSuppression;
+    if (s_scaleXZ > 1.5f)
+    {
+        float fdx = x - s_floraWindowCenter.x;
+        float fdz = z - s_floraWindowCenter.z;
+        float fdist = sqrtf(fdx * fdx + fdz * fdz);
+        float radialGrade = 1.0f - MapMath_SmoothStep01(68.0f, 155.0f, fdist) * 0.64f;
+        density *= radialGrade;
+    }
     return (density > 0.0f) ? ((density < 1.0f) ? density : 1.0f) : 0.0f;
 }
 
@@ -314,10 +322,12 @@ static void FreeFloraScratch(void)
 static void BuildFloraPlacements(void)
 {
     FreeFloraScratch();
+    int reedCap = (s_scaleXZ > 1.5f) ? 2200 : REED_COUNT;
+    int pampasCap = (s_scaleXZ > 1.5f) ? 1200 : PAMPAS_COUNT;
     s_grassPlacements = (MapMeadowPlacement *)MemAlloc((size_t)GRASS_TUFT_CAPACITY * sizeof(MapMeadowPlacement));
     s_flowerPlacements = (MapFlowerPlacement *)MemAlloc((size_t)FLOWER_COUNT * sizeof(MapFlowerPlacement));
-    s_reedPlacements = (MapMeadowPlacement *)MemAlloc((size_t)REED_COUNT * sizeof(MapMeadowPlacement));
-    s_pampasPlacements = (MapMeadowPlacement *)MemAlloc((size_t)PAMPAS_COUNT * sizeof(MapMeadowPlacement));
+    s_reedPlacements = (MapMeadowPlacement *)MemAlloc((size_t)reedCap * sizeof(MapMeadowPlacement));
+    s_pampasPlacements = (MapMeadowPlacement *)MemAlloc((size_t)pampasCap * sizeof(MapMeadowPlacement));
     if (!s_grassPlacements || !s_flowerPlacements || !s_reedPlacements || !s_pampasPlacements)
     {
         FreeFloraScratch();
@@ -333,7 +343,7 @@ static void BuildFloraPlacements(void)
         minB.y = fmaxf(8.0f, s_floraWindowCenter.z - halfWin);
         maxB.x = fminf(MAP_WIDTH - 10.0f, s_floraWindowCenter.x + halfWin);
         maxB.y = fminf(MAP_DEPTH - 8.0f, s_floraWindowCenter.z + halfWin);
-        spacing = 0.88f;
+        spacing = 0.52f;
     }
     // 1. Lush interlocking meadow across the floating island plateau
     s_grassCount = MapFlora_GenerateMeadowPlacements(
@@ -353,10 +363,10 @@ static void BuildFloraPlacements(void)
              s_grassCount, GRASS_TUFT_CAPACITY);
 
     // 2. Reeds along riverbanks & wetland margins inside the valley basin
-    float spanX = MAP_WIDTH * 0.38f;
-    float spanZ = MAP_DEPTH * 0.46f;
+    float spanX = (s_scaleXZ > 1.5f) ? 180.0f : (MAP_WIDTH * 0.38f);
+    float spanZ = (s_scaleXZ > 1.5f) ? 180.0f : (MAP_DEPTH * 0.46f);
     s_reedCount = MapFlora_GenerateReedPlacements(
-        s_reedPlacements, REED_COUNT, &s_ground, kMapCenter,
+        s_reedPlacements, reedCap, &s_ground, kMapCenter,
         (MapFloraReedConfig){
             .span = {spanX, spanZ},
             .dem = &s_dem,
@@ -368,11 +378,11 @@ static void BuildFloraPlacements(void)
             .seed = 0x9371a5u,
         });
     TraceLog(LOG_INFO, "SONG_QUAO_REEDS: placements=%d capacity=%d",
-             s_reedCount, REED_COUNT);
+             s_reedCount, reedCap);
 
     // 3. Clustered Hillside Silvergrass / Pampas Drifts (Ghost of Tsushima style)
     s_pampasCount = MapFlora_GeneratePampasPlacements(
-        s_pampasPlacements, PAMPAS_COUNT, &s_ground, kMapCenter,
+        s_pampasPlacements, pampasCap, &s_ground, kMapCenter,
         (MapFloraPampasConfig){
             .span = {spanX, spanZ},
             .clearingRadius = 11.5f * s_scaleXZ,
@@ -382,7 +392,7 @@ static void BuildFloraPlacements(void)
             .seed = 0x9371a5u,
         });
     TraceLog(LOG_INFO, "SONG_QUAO_PAMPAS: placements=%d capacity=%d",
-             s_pampasCount, PAMPAS_COUNT);
+             s_pampasCount, pampasCap);
 
     // 4. Multi-species Wildflower Colonies
     MapFlora_GenerateFlowerPlacements(
@@ -405,7 +415,7 @@ static void BuildRocks(void)
         s_scaledRocks[i] = SONG_QUAO_ROCK_ITEMS[i];
         s_scaledRocks[i].position.x *= s_scaleXZ;
         s_scaledRocks[i].position.z *= s_scaleXZ;
-        s_scaledRocks[i].radiusScale *= (1.0f + 0.35f * (s_scaleXZ - 1.0f));
+        s_scaledRocks[i].radiusScale *= (1.0f + 0.55f * (s_scaleXZ - 1.0f));
         s_scaledRocks[i].heightScale *= (1.0f + 0.25f * (s_scaleY - 1.0f));
     }
 
@@ -564,8 +574,8 @@ void InitSongQuaoMap(void)
         s_scaledFlowerClusters[i] = SONG_QUAO_FLOWER_CLUSTERS[i];
         s_scaledFlowerClusters[i].center.x *= s_scaleXZ;
         s_scaledFlowerClusters[i].center.z *= s_scaleXZ;
-        s_scaledFlowerClusters[i].radius.x *= (1.0f + 0.45f * (s_scaleXZ - 1.0f));
-        s_scaledFlowerClusters[i].radius.y *= (1.0f + 0.45f * (s_scaleXZ - 1.0f));
+        s_scaledFlowerClusters[i].radius.x *= (1.0f + 0.22f * (s_scaleXZ - 1.0f));
+        s_scaledFlowerClusters[i].radius.y *= (1.0f + 0.22f * (s_scaleXZ - 1.0f));
     }
     // Apply dedicated highland valley wind profile
     s_prevWindMacro = Wind_GetMacro();
@@ -683,6 +693,7 @@ void InitSongQuaoMap(void)
         PostFX_ClearMapProfile();
     else
         PostFX_SetMapProfile(postProfile);
+    PostFX_SetHeatHaze(0.0f, 0.0f, 0.0f);
 
     AtmosphereProfile atmos = {
         .color = {236, 228, 218, 255},
@@ -939,9 +950,9 @@ void InitSongQuaoMap(void)
             .bladesPerClump = 6,
             .bladeSegments = 4,
             .bladeWidthScale = 0.060f,
-            .lodDistance = (s_scaleXZ > 1.5f) ? 18.0f : 24.0f,
-            .midLodDistance = (s_scaleXZ > 1.5f) ? 13.0f : 18.0f,
-            .drawDistance = (s_scaleXZ > 1.5f) ? 42.0f : 58.0f,
+            .lodDistance = 36.0f,
+            .midLodDistance = 24.0f,
+            .drawDistance = 122.0f,
             .shadowDistance = (s_scaleXZ > 1.5f) ? -1.0f : 24.0f,
             .grassState = MAP_GRASS_STATE_LUSH,
             .reedRootColor = {22, 36, 16, 255},
@@ -1007,7 +1018,7 @@ void InitSongQuaoMap(void)
             scaledTrees[i].position.x *= s_scaleXZ;
             scaledTrees[i].position.z *= s_scaleXZ;
         }
-        s_trees = MapProp_CreateTreeSystem(scaledTrees, treeCount, &s_ground, kMapCenter, 120.0f * s_scaleXZ);
+        s_trees = MapProp_CreateTreeSystem(scaledTrees, treeCount, &s_ground, kMapCenter, fminf(120.0f * s_scaleXZ, 185.0f));
     }
     s_ready = true;
 }
@@ -1093,6 +1104,7 @@ void UnloadSongQuaoMap(void)
     Wind_SetMacro(&s_prevWindMacro);
     ColorGradeLut_UseNeutral();
     PostFX_ClearMapProfile();
+    PostFX_SetHeatHaze(0.0f, 0.0f, 0.0f);
     Environment_SetSunIntensity(1.0f);
     if (!s_ready)
         return;

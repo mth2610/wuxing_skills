@@ -89,9 +89,9 @@ static NatureMeadowView NatureParametric_View(const MapMeadowSurface *meadow)
                                           : 0.60f;
 #else
     float rangeScale = quality >= GFX_HIGH  ? 1.0f
-                       : quality == GFX_MED ? 0.90f
-                       : quality == GFX_LOW ? 0.78f
-                                            : 0.68f;
+                       : quality == GFX_MED ? 0.95f
+                       : quality == GFX_LOW ? 0.88f
+                                            : 0.78f;
     float lodScale = quality >= GFX_HIGH  ? 1.0f
                      : quality == GFX_MED ? 0.85f
                                           : 0.72f;
@@ -108,7 +108,7 @@ static NatureMeadowView NatureParametric_View(const MapMeadowSurface *meadow)
     float lodZoom = (zoom > 1.0f) ? sqrtf(zoom) : zoom;
     float scale = lodScale * lodZoom;
 
-    float focalOffset = fminf(focalDistanceXZ * 0.80f, 6.5f);
+    float focalOffset = focalDistanceXZ * 0.95f;
 
     NatureMeadowView view;
     view.lodScale = lodScale;
@@ -205,6 +205,7 @@ static int s_cullBandStrideLoc = -1;
 static int s_cullLodCamLoc = -1;
 static int s_cullLodBandsLoc = -1;
 static int s_cullDrawDistSqLoc = -1;
+static int s_cullFadeStartSqLoc = -1;
 static int s_cullFrustumLoc = -1;
 static bool s_meadowCullTried = false;
 static int s_natureWorldOffsetLoc[2] = {-1, -1};
@@ -808,6 +809,7 @@ static bool NatureParametric_Create(MapMeadowSurface *meadow,
                         s_cullLodCamLoc = rlGetLocationUniform(s_meadowCullProg, "u_lodCam");
                         s_cullLodBandsLoc = rlGetLocationUniform(s_meadowCullProg, "u_lodBands");
                         s_cullDrawDistSqLoc = rlGetLocationUniform(s_meadowCullProg, "u_drawDistSq");
+                        s_cullFadeStartSqLoc = rlGetLocationUniform(s_meadowCullProg, "u_fadeStartSq");
                         s_cullFrustumLoc = rlGetLocationUniform(s_meadowCullProg, "u_frustumPlanes");
                     }
                 }
@@ -1074,12 +1076,15 @@ static void NatureParametric_PrepareVisible(MapMeadowSurface *meadow, Vector3 wo
 
         unsigned int bandStride = (unsigned int)data->tuftCount;
         float drawDistSq = hasFade ? fadeEndSq : 0.0f;
+        float fadeStart = fadeEnd * 0.68f;
+        float fadeStartSq = hasFade ? (fadeStart * fadeStart) : 0.0f;
         rlEnableShader(s_meadowCullProg);
         if (s_cullTuftCountLoc >= 0) rlSetUniform(s_cullTuftCountLoc, &data->tuftCount, RL_SHADER_UNIFORM_INT, 1);
         if (s_cullBandStrideLoc >= 0) rlSetUniform(s_cullBandStrideLoc, &bandStride, RL_SHADER_UNIFORM_UINT, 1);
         if (s_cullLodCamLoc >= 0) rlSetUniform(s_cullLodCamLoc, &localEye, RL_SHADER_UNIFORM_VEC3, 1);
         if (s_cullLodBandsLoc >= 0) rlSetUniform(s_cullLodBandsLoc, &bands, RL_SHADER_UNIFORM_VEC4, 1);
         if (s_cullDrawDistSqLoc >= 0) rlSetUniform(s_cullDrawDistSqLoc, &drawDistSq, RL_SHADER_UNIFORM_FLOAT, 1);
+        if (s_cullFadeStartSqLoc >= 0) rlSetUniform(s_cullFadeStartSqLoc, &fadeStartSq, RL_SHADER_UNIFORM_FLOAT, 1);
         if (s_cullFrustumLoc >= 0) rlSetUniform(s_cullFrustumLoc, planes, RL_SHADER_UNIFORM_VEC4, 6);
         rlBindShaderBuffer(data->tuftBoundsSsbo, 0);
         rlBindShaderBuffer(data->visibleIdsSsbo, 1);
@@ -1095,7 +1100,7 @@ static void NatureParametric_PrepareVisible(MapMeadowSurface *meadow, Vector3 wo
         data->bandCount[2] = 1;
         return;
     }
-    float thinStart = fadeEnd * 0.55f;
+    float thinStart = fadeEnd * 0.68f;
     float thinStartSq = thinStart * thinStart;
     float invThinSpanSq = (fadeEndSq > thinStartSq + 1.0f) ? (1.0f / (fadeEndSq - thinStartSq)) : 0.0f;
 
@@ -1162,9 +1167,15 @@ static void NatureParametric_PrepareVisible(MapMeadowSurface *meadow, Vector3 wo
             for (int id = start; id < end; id++)
             {
                 float dx = roots[id].x - localEye.x;
-                float dy = roots[id].y - localEye.y;
+                float dy = (roots[id].y - localEye.y) * 0.35f;
                 float dz = roots[id].z - localEye.z;
-                float d2 = dx * dx + dy * dy + dz * dz;
+                float rawDist = sqrtf(dx * dx + dy * dy + dz * dz);
+                float wx = roots[id].x + worldOffset.x;
+                float wz = roots[id].z + worldOffset.z;
+                float macroNoise = sinf(wx * 0.085f + wz * 0.062f) * 0.55f +
+                                   cosf(wz * 0.125f - wx * 0.071f + 1.4f) * 0.45f;
+                float d = fmaxf(0.0f, rawDist * (1.0f + macroNoise * 0.14f));
+                float d2 = d * d;
                 if (hasFade && d2 >= fadeEndSq)
                 {
                     visLods[id] = 3;
@@ -1174,7 +1185,9 @@ static void NatureParametric_PrepareVisible(MapMeadowSurface *meadow, Vector3 wo
                 if (hasFade && d2 > thinStartSq)
                 {
                     float thinT = (d2 - thinStartSq) * invThinSpanSq;
-                    float keepProb = 1.0f - thinT * 0.76f;
+                    if (thinT < 0.0f) thinT = 0.0f;
+                    if (thinT > 1.0f) thinT = 1.0f;
+                    float keepProb = powf(fmaxf(1.0f - thinT, 0.0f), 1.20f);
                     if (rank > keepProb)
                     {
                         visLods[id] = 3;

@@ -72,7 +72,7 @@ void GfxQuality_UpdateAuto(float frameSeconds) {
     s_autoWindowFrames++;
     if (s_autoWindowSeconds < 1.0f) return;
     float averageSeconds = s_autoWindowSeconds / (float)s_autoWindowFrames;
-    s_autoSlowWindows = averageSeconds > 1.0f / 57.0f ? s_autoSlowWindows + 1 : 0;
+    s_autoSlowWindows = averageSeconds > 1.0f / 28.0f ? s_autoSlowWindows + 1 : 0;
     s_autoWindowSeconds = 0.0f;
     s_autoWindowFrames = 0;
     if (s_autoSlowWindows >= 3 && s_q > GFX_MED) {

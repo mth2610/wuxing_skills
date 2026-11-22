@@ -862,7 +862,7 @@ int main(int argc, char **argv) {
 #if !defined(PERFORMANCE_CAPTURE)
   /* renderVFXMode is a headless capture path like the other two: pacing it to 60
    * makes its frame time unmeasurable, since every frame is padded to 16.7 ms. */
-  if (!autoTestMode && !visualVerifyMode && !renderVFXMode) SetTargetFPS(60);
+  if (!autoTestMode && !visualVerifyMode && !renderVFXMode) SetTargetFPS(30);
 #endif // -DWUXING_PERF_CAPTURE=ON: no cap, so the HUD reports real frame time (see CMakeLists)
 
   bool g_gamePaused = false;

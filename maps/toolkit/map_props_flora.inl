@@ -679,17 +679,18 @@ MapFloraSystem MapProp_CreateFloraSystem(
     {
         float lodDist = (style.lodDistance > 0.0f) ? style.lodDistance : 20.0f;
         float midDist = (style.midLodDistance > 0.0f) ? style.midLodDistance : (lodDist * 0.52f);
+        float owWidthScale = (MapManager_GetWorldScaleXZ() > 1.5f) ? 1.18f : 1.0f;
         flora.valleyMeadow = MapProp_CreateMeadow(grassPlacements, grassCount,
                                                   (MapMeadowStyle){
                                                       .rootColor = (style.grassRootColor.a > 0) ? style.grassRootColor : (Color){28, 48, 20, 255},
                                                       .tipColor = (style.grassTipColor.a > 0) ? style.grassTipColor : (Color){126, 178, 66, 255},
                                                       .bladesPerClump = (style.bladesPerClump > 0) ? style.bladesPerClump : 5,
                                                       .bladeSegments = (style.bladeSegments > 0) ? style.bladeSegments : 3,
-                                                      .bladeWidthScale = (style.bladeWidthScale > 0.0f) ? style.bladeWidthScale : 0.136f,
+                                                      .bladeWidthScale = ((style.bladeWidthScale > 0.0f) ? style.bladeWidthScale : 0.136f) * owWidthScale,
                                                       .chunkSize = 8.5f,
                                                       .lodDistance = lodDist,
                                                       .midLodDistance = midDist,
-                                                      .drawDistance = (style.drawDistance > 0.0f) ? style.drawDistance : 38.0f,
+                                                      .drawDistance = (style.drawDistance > 0.0f) ? style.drawDistance : 120.0f,
                                                       .shadowDistance = (style.shadowDistance < 0.0f) ? 0.0f : ((style.shadowDistance > 0.0f) ? style.shadowDistance : 10.0f),
                                                       .texturePath = NULL,
                                                       .botanicalVariation = style.botanicalVariation,
@@ -714,7 +715,7 @@ MapFloraSystem MapProp_CreateFloraSystem(
                                                     .chunkSize = 10.0f,
                                                     .lodDistance = 13.5f,
                                                     .midLodDistance = 7.0f,
-                                                    .drawDistance = 30.0f,
+                                                    .drawDistance = (style.drawDistance > 0.0f) ? fmaxf(style.drawDistance * 0.72f, 86.0f) : 86.0f,
                                                     .shadowDistance = (style.shadowDistance < 0.0f) ? 0.0f : ((style.shadowDistance > 0.0f) ? fminf(style.shadowDistance, 7.5f) : 7.5f),
                                                     .texturePath = NULL,
                                                     .hasPlumes = false,
@@ -739,7 +740,7 @@ MapFloraSystem MapProp_CreateFloraSystem(
                                                       .chunkSize = 10.0f,
                                                       .lodDistance = 13.5f,
                                                       .midLodDistance = 7.0f,
-                                                      .drawDistance = 30.0f,
+                                                      .drawDistance = (style.drawDistance > 0.0f) ? fmaxf(style.drawDistance * 0.72f, 86.0f) : 86.0f,
                                                       .shadowDistance = (style.shadowDistance < 0.0f) ? 0.0f : ((style.shadowDistance > 0.0f) ? fminf(style.shadowDistance, 7.5f) : 7.5f),
                                                       .texturePath = NULL,
                                                       .growthForm = MAP_MEADOW_GROWTH_PAMPAS,

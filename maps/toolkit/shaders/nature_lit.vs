@@ -32,6 +32,7 @@ out vec2 fragTexCoord;
 out vec4 v_lightSpace;
 out vec4 v_staticLightSpace;
 out float v_macroPatch;
+out float v_fadeAlpha;
 
 void main()
 {
@@ -137,5 +138,6 @@ void main()
     v_macroPatch = sin(warpX * 0.055 + warpZ * 0.038) * 0.55 +
                    sin(warpZ * 0.11 - warpX * 0.045 + 1.2) * 0.30 +
                    sin(warpX * 0.19 + warpZ * 0.15) * 0.15;
+    v_fadeAlpha = 1.0;
     gl_Position = mvp * vec4(local, 1.0);
 }

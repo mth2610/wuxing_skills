@@ -194,7 +194,7 @@ static void BuildNinhThuanRocks(void)
     {
         const MapRockItem *item = &NINH_THUAN_ROCK_ITEMS[i];
         Vector3 pos = { item->position.x * s_scaleXZ, item->position.y * s_scaleY, item->position.z * s_scaleXZ };
-        float rScale = item->radiusScale * (1.0f + 0.35f * (s_scaleXZ - 1.0f));
+        float rScale = item->radiusScale * (1.0f + 0.52f * (s_scaleXZ - 1.0f));
         float hScale = item->heightScale * (1.0f + 0.25f * (s_scaleY - 1.0f));
         Vector3 gPos = pos, gNorm = {0.0f, 1.0f, 0.0f};
         if (MapProp_SampleGroundSurface(&s_ground, kMapCenter, pos.x, pos.z, &gPos, &gNorm))
@@ -219,8 +219,8 @@ static void BuildNinhThuanRocks(void)
     }
 }
 
-#define NINH_THUAN_MAX_GRASS 12000
-#define NINH_THUAN_MAX_REEDS 120
+#define NINH_THUAN_MAX_GRASS 42000
+#define NINH_THUAN_MAX_REEDS 320
 static MapMeadowPlacement s_grassPlacements[NINH_THUAN_MAX_GRASS];
 static MapMeadowPlacement s_reedPlacements[NINH_THUAN_MAX_REEDS];
 static int s_grassCount = 0;
@@ -245,7 +245,7 @@ static void BuildNinhThuanFlora(void)
         minB.y = fmaxf(12.0f * s_scaleXZ, s_floraWindowCenter.z - halfWin);
         maxB.x = fminf(MAP_WIDTH - 12.0f * s_scaleXZ, s_floraWindowCenter.x + halfWin);
         maxB.y = fminf(MAP_DEPTH - 12.0f * s_scaleXZ, s_floraWindowCenter.z + halfWin);
-        grassSpacing = 1.25f;
+        grassSpacing = 0.65f;
     }
 #endif
     MapMeadowDistribution dist = {
@@ -317,9 +317,9 @@ static void BuildNinhThuanFlora(void)
             .bladesPerClump = 6,
             .bladeSegments = 3,
             .bladeWidthScale = 0.132f,
-            .lodDistance = 26.0f,
-            .midLodDistance = 18.0f,
-            .drawDistance = 48.0f,
+            .lodDistance = 36.0f,
+            .midLodDistance = 24.0f,
+            .drawDistance = 120.0f,
             .shadowDistance = (s_scaleXZ > 1.5f) ? -1.0f : 24.0f,
             .grassState = MAP_GRASS_STATE_DRY,
             .dryness = 0.84f,

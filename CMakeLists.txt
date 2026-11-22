@@ -308,6 +308,7 @@ add_executable(wuxing
     open_world/ow_sandbox_modes.c
     open_world/realms/ow_desert_earth.c
     open_world/realms/ow_song_quao.c
+    open_world/realms/ow_wuxing_realms.c
 
     # --- Sandbox & Test Simulator ---
     sandbox/sandbox_core.c

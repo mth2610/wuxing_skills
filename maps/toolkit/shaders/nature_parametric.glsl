@@ -69,6 +69,16 @@ int NatureBladeId(int localBlade)
 }
 
 #ifdef NATURE_VISIBLE_TUFT_LOD
+float NatureHybridDist(vec3 worldRoot, vec3 camPos)
+{
+    vec3 diff = worldRoot - camPos;
+    vec3 hd = vec3(diff.x, diff.y * 0.35, diff.z);
+    float rawDist = sqrt(dot(hd, hd));
+    float macroNoise = sin(worldRoot.x * 0.085 + worldRoot.z * 0.062) * 0.55 +
+                       cos(worldRoot.z * 0.125 - worldRoot.x * 0.071 + 1.4) * 0.45;
+    return max(0.0, rawDist * (1.0 + macroNoise * 0.14));
+}
+
 bool NatureTuftUsesCurrentLod()
 {
     s_cachedTuftId = -1;
@@ -84,12 +94,10 @@ bool NatureTuftUsesCurrentLod()
     s_hasCachedClumpTexel = true;
     vec3 root = s_cachedClumpTexel.xyz;
     vec3 worldRoot = root + u_worldOffset;
-    vec3 diff = worldRoot - u_tuftLodCamera;
-    float d2 = dot(diff, diff);
+    float d = NatureHybridDist(worldRoot, u_tuftLodCamera);
 
-    if (u_tuftFadeRange.y > 0.0 && d2 >= u_tuftFadeRange.y * u_tuftFadeRange.y) return false;
+    if (u_tuftFadeRange.y > 0.0 && d >= u_tuftFadeRange.y) return false;
 
-    float d = sqrt(d2);
     s_cachedDistToCam = d;
 
     uint x = floatBitsToUint(root.x);
@@ -182,16 +190,15 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     }
 
 #ifdef NATURE_VISIBLE_TUFT_LOD
-    vec3 toCamVec = (p0.xyz + u_worldOffset) - u_tuftLodCamera;
+    vec3 worldRootPos = p0.xyz + u_worldOffset;
+    vec3 toCamVec = worldRootPos - u_tuftLodCamera;
+    float tcLenSq = max(dot(toCamVec, toCamVec), 1e-6);
+    float invDistToCam = inversesqrt(tcLenSq);
     float distToCam;
-    float invDistToCam;
     if (s_cachedDistToCam >= 0.0) {
         distToCam = s_cachedDistToCam;
-        invDistToCam = 1.0 / max(distToCam, 0.001);
     } else {
-        float tcLenSq = max(dot(toCamVec, toCamVec), 1e-6);
-        invDistToCam = inversesqrt(tcLenSq);
-        distToCam = tcLenSq * invDistToCam;
+        distToCam = NatureHybridDist(worldRootPos, u_tuftLodCamera);
         s_cachedDistToCam = distToCam;
     }
 
@@ -259,10 +266,11 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     if (u_tuftFadeRange.y > 0.0 && distToCam > u_tuftFadeRange.x) {
         float perimeterFade = clamp((u_tuftFadeRange.y - distToCam) /
                                     max(u_tuftFadeRange.y - u_tuftFadeRange.x, 0.001), 0.0, 1.0);
-        float scaleFade = perimeterFade * (2.0 - perimeterFade);
+        float scaleFade = smoothstep(0.0, 1.0, perimeterFade);
+        float widthBoost = mix(1.20, 1.0, perimeterFade);
         position = p0.xyz + (position - p0.xyz) * scaleFade;
-        s_cachedHalfWidth *= scaleFade;
-        fadeAlpha = perimeterFade;
+        s_cachedHalfWidth *= scaleFade * widthBoost;
+        fadeAlpha = smoothstep(0.0, 0.95, perimeterFade);
     }
 #endif
 

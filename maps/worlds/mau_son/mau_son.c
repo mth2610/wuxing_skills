@@ -145,7 +145,7 @@ static void BuildMauSonRocks(void)
     {
         const MapRockItem *item = &MAU_SON_ROCK_ITEMS[i];
         Vector3 pos = {item->position.x * s_scaleXZ, item->position.y * s_scaleY, item->position.z * s_scaleXZ};
-        float rScale = item->radiusScale * (1.0f + 0.35f * (s_scaleXZ - 1.0f));
+        float rScale = item->radiusScale * (1.0f + 0.52f * (s_scaleXZ - 1.0f));
         float hScale = item->heightScale * (1.0f + 0.25f * (s_scaleY - 1.0f));
         Vector3 gPos = pos, gNorm = {0.0f, 1.0f, 0.0f};
         if (MapProp_SampleGroundSurface(&s_ground, kMapCenter, pos.x, pos.z, &gPos, &gNorm))
@@ -164,9 +164,9 @@ static void BuildMauSonRocks(void)
     }
 }
 
-#define MAU_SON_MAX_GRASS 9500
-#define MAU_SON_MAX_REEDS 160
-#define MAU_SON_MAX_FLOWERS 420
+#define MAU_SON_MAX_GRASS 36000
+#define MAU_SON_MAX_REEDS 360
+#define MAU_SON_MAX_FLOWERS 840
 static MapMeadowPlacement s_grassPlacements[MAU_SON_MAX_GRASS];
 static MapMeadowPlacement s_reedPlacements[MAU_SON_MAX_REEDS];
 static int s_grassCount = 0;
@@ -192,7 +192,7 @@ static void BuildMauSonDebris(void)
             s_scaledDebris[i].position.y *= s_scaleY;
         s_scaledDebris[i].scale *= (1.0f + 0.18f * (s_scaleXZ - 1.0f));
     }
-    s_debris = MapProp_CreateDebrisSystem(s_scaledDebris, count, &s_ground, kMapCenter, 36.0f * s_scaleXZ);
+    s_debris = MapProp_CreateDebrisSystem(s_scaledDebris, count, &s_ground, kMapCenter, fminf(36.0f * s_scaleXZ, 75.0f));
 }
 
 static float MauSonFlowerHeight(float x, float z, void *ctx)
@@ -230,7 +230,7 @@ static void BuildMauSonFlora(void)
         minB.y = fmaxf(14.0f * s_scaleXZ, s_floraWindowCenter.z - halfWin);
         maxB.x = fminf(MAP_WIDTH - 14.0f * s_scaleXZ, s_floraWindowCenter.x + halfWin);
         maxB.y = fminf(MAP_DEPTH - 14.0f * s_scaleXZ, s_floraWindowCenter.z + halfWin);
-        grassSpacing = 1.30f;
+        grassSpacing = 0.68f;
     }
 #endif
     MapMeadowDistribution dist = {
@@ -331,9 +331,9 @@ static void BuildMauSonFlora(void)
             .bladesPerClump = 5,
             .bladeSegments = 3,
             .bladeWidthScale = 0.125f,
-            .lodDistance = 24.0f,
-            .midLodDistance = 16.0f,
-            .drawDistance = 44.0f,
+            .lodDistance = 36.0f,
+            .midLodDistance = 24.0f,
+            .drawDistance = 120.0f,
             .shadowDistance = (s_scaleXZ > 1.5f) ? -1.0f : 22.0f,
             .grassState = MAP_GRASS_STATE_DRY,
             .dryness = 0.65f,

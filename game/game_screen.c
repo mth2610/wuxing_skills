@@ -23,6 +23,7 @@
 #include "open_world/ow_weather.h"
 #include "open_world/realms/ow_desert_earth.h"
 #include "open_world/realms/ow_song_quao.h"
+#include "open_world/realms/ow_wuxing_realms.h"
 #include "ai/ai.h"
 #include "net/net_prediction.h"
 #include "ui/ui.h"
@@ -358,7 +359,7 @@ static void ApplyModeBalanceToPlayer(int agentId)
     float dmgOut = 1.0f + fmaxf(0.0f, ws.elementalBonus);
     float dmgTaken = fmaxf(0.25f, 1.0f - fmaxf(0.0f, ws.elementalResist));
     float moveSpd = (ws.speedMultiplier > 0.0f) ? ws.speedMultiplier : 1.0f;
-    if (s_mode == GAME_MODE_EXPLORE && s_exploreRealm >= 0 && s_exploreRealm <= 3) {
+    if (s_mode == GAME_MODE_EXPLORE && s_exploreRealm >= 0 && s_exploreRealm <= 4) {
         if (OW_GetMightTimer() > 0.0f) {
             dmgOut += 0.35f;
             dmgTaken = fmaxf(0.25f, dmgTaken - 0.30f);
@@ -458,11 +459,11 @@ static void EquipBotVariedLoadout(int botId, int seed)
 static const char *ExploreMapNameForRealm(int realm)
 {
     switch (realm) {
-        case 0: return "SONG_QUAO";     // Thủy
-        case 1: return "SONG_QUAO";     // Mộc
-        case 2: return "NINH_THUAN";    // Hỏa
-        case 3: return "NINH_THUAN";    // Thổ
-        case 4: return "DEFAULT_ARENA"; // Kim
+        case 0: return "MAU_SON";    // Thủy
+        case 1: return "SONG_QUAO";  // Mộc
+        case 2: return "LY_SON";     // Hỏa
+        case 3: return "NINH_THUAN"; // Thổ
+        case 4: return "PHU_QUOC";   // Kim
         default: return "SONG_QUAO";
     }
 }
@@ -632,7 +633,7 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
     if (s_state == GAME_ARENA_INTRO)
     {
         static MapScaleMode s_lastAppliedScale = MAP_SCALE_MOBA;
-        MapScaleMode wantScale = (s_mode == GAME_MODE_EXPLORE && s_exploreRealm != 4)
+        MapScaleMode wantScale = (s_mode == GAME_MODE_EXPLORE)
             ? MAP_SCALE_OPEN_WORLD : MAP_SCALE_MOBA;
         MapManager_SetScaleMode(wantScale);
 
@@ -770,26 +771,19 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
             else if (s_mode == GAME_MODE_EXPLORE)
             {
                 if (s_exploreRealm == 2) MapProp_SetGrassState(MAP_GRASS_STATE_SCORCHED, 0.85f);
-                else if (s_exploreRealm == 3) MapProp_SetGrassState(MAP_GRASS_STATE_DRY, 0.0f);
-                else MapProp_SetGrassState(MAP_GRASS_STATE_LUSH, 0.0f);
+                else if (s_exploreRealm == 1) MapProp_SetGrassState(MAP_GRASS_STATE_LUSH, 0.0f);
 
-                Vector3 sp = MapManager_GetActiveSpawnPoint();
                 DaTau_Init(s_exploreRealm);
-                if (s_exploreRealm >= 0 && s_exploreRealm <= 3) {
-                    const OWRealmDef *rdef = (s_exploreRealm <= 1)
-                        ? OWRealm_GetSongQuao(s_exploreRealm)
-                        : OWRealm_GetDesertEarth();
-                    OW_Init(rdef, !Net_ClientDrivesWorld());
-                } else {
-                    Vector3 ac = {0};
-                    float ar = 20.0f;
-                    MapManager_GetActiveBounds(&ac, &ar);
-                    float campDist = (ar > 25.0f) ? 11.0f : 7.0f;
-                    AI_SpawnMonsterCamp((Vector3){ sp.x + campDist, 0, sp.z }, 3, s_exploreRealm, MONSTER_SWARM_MELEE);
-                    AI_SpawnMonsterCamp((Vector3){ sp.x - campDist, 0, sp.z }, 3, s_exploreRealm, MONSTER_SWARM_MELEE);
-                    AI_SpawnMonsterCamp((Vector3){ sp.x, 0, sp.z + campDist }, 2, s_exploreRealm, MONSTER_RANGED_CASTER);
-                    AI_SpawnMonsterCamp((Vector3){ sp.x, 0, sp.z - campDist }, 1, s_exploreRealm, MONSTER_ELITE_GUARD);
+                const OWRealmDef *rdef = NULL;
+                switch (s_exploreRealm) {
+                    case 0: rdef = OWRealm_GetMauSonWater();  break;
+                    case 1: rdef = OWRealm_GetSongQuao(1);    break;
+                    case 2: rdef = OWRealm_GetLySonFire();    break;
+                    case 3: rdef = OWRealm_GetDesertEarth();  break;
+                    case 4: rdef = OWRealm_GetPhuQuocMetal(); break;
+                    default: rdef = OWRealm_GetSongQuao(1);   break;
                 }
+                OW_Init(rdef, !Net_ClientDrivesWorld());
             }
             else if (s_mode == GAME_MODE_PVP_ESCORT_1V1 || s_mode == GAME_MODE_PVP_ESCORT_2V2)
             {
@@ -910,7 +904,7 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
                 }
                 DaTau_Update(dt);
                 DaTau_TickZoneHold(dt, Entity_GetAgent(player->agentId) != NULL);
-                if (s_exploreRealm >= 0 && s_exploreRealm <= 3) {
+                if (s_exploreRealm >= 0 && s_exploreRealm <= 4) {
                     OW_Update(player, dt);
                 }
                 if (!Net_IsPeerConnected())
@@ -1013,7 +1007,7 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
         else if (s_mode == GAME_MODE_EXPLORE)
         {
             DaTau_Update(dt);
-            if (s_exploreRealm >= 0 && s_exploreRealm <= 3) {
+            if (s_exploreRealm >= 0 && s_exploreRealm <= 4) {
                 OW_Update(player, dt);
                 if (Entity_GetAgent(player->agentId))
                     ApplyModeBalanceToPlayer(player->agentId);
@@ -1095,7 +1089,7 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
                     {
                         int goldGain = (kills[k].kind == MONSTER_ELITE_GUARD) ? 60 : 12;
                         uint32_t xpGain = (kills[k].kind == MONSTER_ELITE_GUARD) ? 75u : 18u;
-                        if (s_exploreRealm >= 0 && s_exploreRealm <= 3) {
+                        if (s_exploreRealm >= 0 && s_exploreRealm <= 4) {
                             if (orbBudget > 0) {
                                 OWLoot_SpawnOrb(kills[k].pos, OW_LOOT_SKILL_XP, (int)xpGain);
                                 if ((k & 1) == 0 || kills[k].kind == MONSTER_ELITE_GUARD) {
@@ -1517,7 +1511,7 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
             if (!s_gameTouchInput.pointerOverUI && (tdx * tdx + tdy * tdy) <= 18.0f * 18.0f)
             {
                 bool handledTap = false;
-                if (s_mode == GAME_MODE_EXPLORE && s_exploreRealm >= 0 && s_exploreRealm <= 3) {
+                if (s_mode == GAME_MODE_EXPLORE && s_exploreRealm >= 0 && s_exploreRealm <= 4) {
                     handledTap = OWQuestNpc_HandleTap(player->position, up, *camera);
                     if (!handledTap)
                         handledTap = OWSandbox_HandleTap(player, up, *camera);
@@ -1933,7 +1927,7 @@ void GameScreen_Draw3D(const PlayerEntity *player)
     }
 
     if (!EnvShadow_IsCapturing() &&
-        s_mode == GAME_MODE_EXPLORE && s_exploreRealm >= 0 && s_exploreRealm <= 3 && s_state == GAME_FIGHTING)
+        s_mode == GAME_MODE_EXPLORE && s_exploreRealm >= 0 && s_exploreRealm <= 4 && s_state == GAME_FIGHTING)
     {
         OW_Draw3D(player, s_hudCamera);
     }
@@ -2218,7 +2212,7 @@ void GameScreen_DrawHUD(const PlayerEntity *player)
     }
 
     // --- 5. OPEN WORLD HUD (Zone Ribbon, Left 3x3 Toolbox, NPC Dialogs) ---
-    if (s_mode == GAME_MODE_EXPLORE && s_exploreRealm >= 0 && s_exploreRealm <= 3 && s_state == GAME_FIGHTING)
+    if (s_mode == GAME_MODE_EXPLORE && s_exploreRealm >= 0 && s_exploreRealm <= 4 && s_state == GAME_FIGHTING)
     {
         OW_DrawHUD(player, s_hudCamera);
     }
@@ -2227,7 +2221,7 @@ void GameScreen_DrawHUD(const PlayerEntity *player)
     if (s_state == GAME_FIGHTING && !UI_IsLoadoutOpen() && !UI_Hub_IsModalOpen())
     {
         static float s_hudFrameMsAvg = 16.6f;
-        static int   s_targetFpsCap  = 60;
+        static int   s_targetFpsCap  = 30;
         float curMs = GetFrameTime() * 1000.0f;
         if (curMs > 0.1f && curMs < 250.0f)
             s_hudFrameMsAvg += (curMs - s_hudFrameMsAvg) * 0.08f;

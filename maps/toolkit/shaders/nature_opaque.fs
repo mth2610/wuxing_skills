@@ -11,6 +11,7 @@ in vec2 fragTexCoord;
 in vec4 v_lightSpace;
 in vec4 v_staticLightSpace;
 in float v_macroPatch;
+in float v_fadeAlpha;
 
 uniform float u_grassTipSoftening;
 
@@ -43,6 +44,11 @@ void main()
         vec3 sheenCol = u_lightColor * vec3(1.06, 1.04, 0.82) * (windSheen * 0.24 * archMask);
         lit += sheenCol;
         lit *= 1.0 + windSheen * 0.08;
+    }
+
+    if (v_fadeAlpha < 0.999) {
+        float ign = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+        if (ign > v_fadeAlpha) discard;
     }
 
     finalColor = vec4(lit, 1.0);

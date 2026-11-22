@@ -147,8 +147,8 @@ static void BuildLySonRocks(void)
     }
 }
 
-#define LY_SON_MAX_GRASS 9000
-#define LY_SON_MAX_FLOWERS 360
+#define LY_SON_MAX_GRASS 36000
+#define LY_SON_MAX_FLOWERS 760
 static MapMeadowPlacement s_grassPlacements[LY_SON_MAX_GRASS];
 static int s_grassCount = 0;
 static MapFlowerPlacement s_flowerPlacements[LY_SON_MAX_FLOWERS];
@@ -172,7 +172,7 @@ static void BuildLySonDebris(void)
             s_scaledDebris[i].position.y *= s_scaleY;
         s_scaledDebris[i].scale *= (1.0f + 0.18f * (s_scaleXZ - 1.0f));
     }
-    s_debris = MapProp_CreateDebrisSystem(s_scaledDebris, count, &s_ground, kMapCenter, 36.0f * s_scaleXZ);
+    s_debris = MapProp_CreateDebrisSystem(s_scaledDebris, count, &s_ground, kMapCenter, fminf(36.0f * s_scaleXZ, 75.0f));
 }
 
 static float LySonFlowerHeight(float x, float z, void *ctx)
@@ -210,7 +210,7 @@ static void BuildLySonFlora(void)
         minB.y = fmaxf(14.0f * s_scaleXZ, s_floraWindowCenter.z - halfWin);
         maxB.x = fminf(MAP_WIDTH - 14.0f * s_scaleXZ, s_floraWindowCenter.x + halfWin);
         maxB.y = fminf(MAP_DEPTH - 14.0f * s_scaleXZ, s_floraWindowCenter.z + halfWin);
-        grassSpacing = 1.30f;
+        grassSpacing = 0.68f;
     }
 #endif
     MapMeadowDistribution dist = {
@@ -268,9 +268,9 @@ static void BuildLySonFlora(void)
             .bladesPerClump = 5,
             .bladeSegments = 3,
             .bladeWidthScale = 0.125f,
-            .lodDistance = 24.0f,
-            .midLodDistance = 16.0f,
-            .drawDistance = 44.0f,
+            .lodDistance = 36.0f,
+            .midLodDistance = 24.0f,
+            .drawDistance = 120.0f,
             .shadowDistance = (s_scaleXZ > 1.5f) ? -1.0f : 22.0f,
             .grassState = MAP_GRASS_STATE_DRY,
             .dryness = 0.94f,
@@ -420,7 +420,7 @@ void InitLySonMap(void)
     s_prevAtmoMode = Atmosphere_GetMode();
     Atmosphere_SetMode(ATMO_MODE_WAR_EMBERS);
     Atmosphere_Configure(s_floraWindowCenter, (Vector3){32.0f, 4.5f, 32.0f}, 380, (Color){255, 132, 48, 255});
-    PostFX_SetHeatHaze(0.0018f, 0.15f, 0.85f);
+    PostFX_SetHeatHaze(0.0008f, 0.72f, 0.96f);
 
     EnvCloudShadowConfig cloudConfig = {
         .enabled = true,

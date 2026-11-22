@@ -1827,7 +1827,7 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
         NatureParametric_BindReceivers(shader, false);
         SetShaderValue(shader, s_natureTuftLodBandsLoc, &tuftBands, SHADER_UNIFORM_VEC4);
         SetShaderValue(shader, s_natureTuftLodCameraLoc, &camera.position, SHADER_UNIFORM_VEC3);
-        Vector2 fadeRange = {view.drawDistance * 0.76f, view.drawDistance};
+        Vector2 fadeRange = {view.drawDistance * 0.66f, view.drawDistance};
         SetShaderValue(shader, s_natureTuftFadeRangeLoc, &fadeRange, SHADER_UNIFORM_VEC2);
     }
     if (!meadow->textured)

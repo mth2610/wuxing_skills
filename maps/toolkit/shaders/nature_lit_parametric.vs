@@ -28,6 +28,7 @@ out vec2 fragTexCoord;
 out vec4 v_lightSpace;
 out vec4 v_staticLightSpace;
 out float v_macroPatch;
+out float v_fadeAlpha;
 
 #define NATURE_VISIBLE_TUFT_LOD
 #include "maps/toolkit/shaders/nature_parametric.glsl"
@@ -43,6 +44,7 @@ void main()
         v_lightSpace = vec4(0.0, 0.0, 0.0, -1.0);
         v_staticLightSpace = vec4(0.0, 0.0, 0.0, -1.0);
         v_macroPatch = 0.0;
+        v_fadeAlpha = 0.0;
         gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
         return;
     }
@@ -62,6 +64,7 @@ void main()
         v_lightSpace = vec4(0.0, 0.0, 0.0, -1.0);
         v_staticLightSpace = vec4(0.0, 0.0, 0.0, -1.0);
         v_macroPatch = 0.0;
+        v_fadeAlpha = 0.0;
         gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
         return;
     }
@@ -182,5 +185,6 @@ void main()
     // Neo màu mảng cỏ (macroPatch) theo gốc cây (rootWorld) để màu không bị trôi khi ngọn cỏ nghiêng theo gió
     v_macroPatch = sin(rootWorld.x * 0.082 + rootWorld.z * 0.054) * 0.55 +
                    cos(rootWorld.z * 0.110 - rootWorld.x * 0.048 + 1.2) * 0.45;
+    v_fadeAlpha = bladeColor.a;
     gl_Position = mvp * vec4(local, 1.0);
 }

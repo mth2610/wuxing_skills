@@ -12,7 +12,7 @@
 #include "maps/toolkit/shaders/meadow_palette.glsl"
 
 // ---- Look knobs ( tinh chỉnh hài hòa màu cỏ & nền đất cho song_quao ) ----
-#define GS_DISTANT_CANOPY_GAIN 1.02
+#define GS_DISTANT_CANOPY_GAIN 1.04
 #define GS_CREST_COOL vec3(0.92, 0.99, 0.94)
 #define GS_CREST_WARM vec3(1.04, 1.03, 0.95)
 #define GS_GRASS_CHROMA 0.96
@@ -89,6 +89,19 @@ out vec4 finalColor;
 
 #define LAYER_EPS 0.003
 #define PATH_INFLUENCE 3.55
+
+float GroundValueNoise(vec2 p)
+{
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    vec2 k = vec2(0.1031, 0.1030);
+    vec3 a3 = fract(vec3(i.xyx) * k.xyx); a3 += dot(a3, a3.yzx + 33.33); float h00 = fract((a3.x + a3.y) * a3.z);
+    vec3 b3 = fract(vec3((i + vec2(1.0, 0.0)).xyx) * k.xyx); b3 += dot(b3, b3.yzx + 33.33); float h10 = fract((b3.x + b3.y) * b3.z);
+    vec3 c3 = fract(vec3((i + vec2(0.0, 1.0)).xyx) * k.xyx); c3 += dot(c3, c3.yzx + 33.33); float h01 = fract((c3.x + c3.y) * c3.z);
+    vec3 d3 = fract(vec3((i + vec2(1.0, 1.0)).xyx) * k.xyx); d3 += dot(d3, d3.yzx + 33.33); float h11 = fract((d3.x + d3.y) * d3.z);
+    return mix(mix(h00, h10, u.x), mix(h01, h11, u.x), u.y);
+}
 
 void main()
 {
@@ -450,7 +463,7 @@ void main()
 
         if (camDistSqXZ > 64.0) {
             float camDist = camDistSqXZ * inversesqrt(camDistSqXZ);
-            float distantCanopyBlend = smoothstep(12.0, 36.0, camDist) * wGrass;
+            float distantCanopyBlend = smoothstep(18.0, 54.0, camDist) * wGrass;
             if (u_ecologyEnabled != 0)
                 distantCanopyBlend *= mix(0.76, 1.0, smoothstep(0.04, 0.48, ecology.r)) * (1.0 - wCliff);
             if (distantCanopyBlend > 0.002) {
@@ -465,14 +478,17 @@ void main()
                 float macroB = cos(pRot.x * 1.7 - pRot.y * 1.3) * 0.5 + 0.5;
                 float hillCrestNoise = macroA * 0.60 + macroB * 0.40;
 
-                // Procedural velvet tuft micro-relief for distant grassy hillsides (prevents bald plastic look)
-                float tuftWaveA = sin(fragWorldPos.x * 4.6 + cos(fragWorldPos.z * 3.9));
-                float tuftWaveB = cos(fragWorldPos.z * 5.1 - sin(fragWorldPos.x * 4.2));
+                // Multi-octave rotated value-noise velvet turf micro-relief (no trig polka-dot grid)
+                vec2 tp1 = mat2(0.866, -0.5, 0.5, 0.866) * (fragWorldPos.xz * 1.35);
+                vec2 tp2 = mat2(0.60, 0.80, -0.80, 0.60) * (fragWorldPos.xz * 3.10);
+                float n1 = GroundValueNoise(tp1) * 2.0 - 1.0;
+                float n2 = GroundValueNoise(tp2) * 2.0 - 1.0;
+                float velvetGrain = n1 * 0.65 + n2 * 0.35;
                 float tuftGrain = clamp(mix(hillCrestNoise, 0.5 + (turfDetail - 0.22) * 0.65, 0.45), 0.0, 1.0);
-                distantTuftRelief = (tuftWaveA * tuftWaveB) * 0.16 * distantCanopyBlend * (1.0 - u_aridBiomeFactor);
-                distantTuftNormal = vec2(tuftWaveA, tuftWaveB) * (0.14 * distantCanopyBlend * (1.0 - u_aridBiomeFactor));
+                distantTuftRelief = velvetGrain * 0.14 * distantCanopyBlend * (1.0 - u_aridBiomeFactor);
+                distantTuftNormal = vec2(n1, n2) * (0.12 * distantCanopyBlend * (1.0 - u_aridBiomeFactor));
 
-                canopyColor *= mix(0.92, 1.08, tuftGrain);
+                canopyColor *= mix(0.90, 1.06, tuftGrain);
 
                 float hillCrestMask = smoothstep(0.20, 0.72, hillCrestNoise);
                 canopyColor = mix(canopyColor * vec3(0.94, 1.01, 0.96), canopyColor * vec3(1.06, 1.03, 0.90), hillCrestMask * 0.35);

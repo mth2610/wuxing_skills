@@ -19,6 +19,7 @@ uniform uint  u_bandStride;
 uniform vec3  u_lodCam;
 uniform vec4  u_lodBands;
 uniform float u_drawDistSq;
+uniform float u_fadeStartSq;
 uniform vec4  u_frustumPlanes[6];
 
 void main()
@@ -29,9 +30,31 @@ void main()
 
     vec4 t = b_tufts[id];
     vec3 d = t.xyz - u_lodCam;
-    float distSq = dot(d, d);
-    if (u_drawDistSq > 0.0 && distSq > u_drawDistSq)
-        return;
+    vec3 hd = vec3(d.x, d.y * 0.35, d.z);
+    float rawDist = sqrt(dot(hd, hd));
+    float macroNoise = sin(t.x * 0.085 + t.z * 0.062) * 0.55 +
+                       cos(t.z * 0.125 - t.x * 0.071 + 1.4) * 0.45;
+    float dist = max(0.0, rawDist * (1.0 + macroNoise * 0.14));
+    float distSq = dist * dist;
+
+    if (u_drawDistSq > 0.0) {
+        if (distSq > u_drawDistSq)
+            return;
+        float fadeStartSq = (u_fadeStartSq > 0.0) ? u_fadeStartSq : (u_drawDistSq * 0.4624);
+        if (distSq > fadeStartSq) {
+            float thinT = clamp((distSq - fadeStartSq) / max(u_drawDistSq - fadeStartSq, 1.0), 0.0, 1.0);
+            float keepProb = pow(max(1.0 - thinT, 0.0), 1.20);
+            uint hx = floatBitsToUint(t.x);
+            uint hz = floatBitsToUint(t.z);
+            uint h = (hx * 0x8da6b343u) ^ (hz * 0xd8163841u);
+            h ^= h >> 16; h *= 0x7feb352du; h ^= h >> 15; h *= 0x846ca68bu; h ^= h >> 16;
+            float hashRank = float(h & 0x00ffffffu) * (1.0 / 16777216.0);
+            float ign = fract(52.9829189 * fract(0.06711056 * t.x + 0.00583715 * t.z));
+            float rank = fract(hashRank * 0.65 + ign * 0.35);
+            if (rank > keepProb)
+                return;
+        }
+    }
 
     for (int p = 0; p < 6; p++) {
         if (dot(u_frustumPlanes[p].xyz, t.xyz) + u_frustumPlanes[p].w < -t.w)

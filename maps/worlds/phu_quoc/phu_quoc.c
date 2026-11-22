@@ -200,9 +200,9 @@ static void BuildPhuQuocRocksAndOres(void)
     s_ores = MapProp_CreateOreSystem(s_scaledOres, PHU_QUOC_ORE_COUNT, &s_ground, kMapCenter);
 }
 
-#define PHU_QUOC_MAX_GRASS 9500
-#define PHU_QUOC_MAX_REEDS 140
-#define PHU_QUOC_MAX_FLOWERS 380
+#define PHU_QUOC_MAX_GRASS 36000
+#define PHU_QUOC_MAX_REEDS 320
+#define PHU_QUOC_MAX_FLOWERS 800
 static MapMeadowPlacement s_grassPlacements[PHU_QUOC_MAX_GRASS];
 static MapMeadowPlacement s_reedPlacements[PHU_QUOC_MAX_REEDS];
 static int s_grassCount = 0;
@@ -228,7 +228,7 @@ static void BuildPhuQuocDebris(void)
             s_scaledDebris[i].position.y *= s_scaleY;
         s_scaledDebris[i].scale *= (1.0f + 0.18f * (s_scaleXZ - 1.0f));
     }
-    s_debris = MapProp_CreateDebrisSystem(s_scaledDebris, count, &s_ground, kMapCenter, 38.0f * s_scaleXZ);
+    s_debris = MapProp_CreateDebrisSystem(s_scaledDebris, count, &s_ground, kMapCenter, fminf(38.0f * s_scaleXZ, 75.0f));
 }
 
 static float PhuQuocFlowerHeight(float x, float z, void *ctx)
@@ -266,7 +266,7 @@ static void BuildPhuQuocFlora(void)
         minB.y = fmaxf(14.0f * s_scaleXZ, s_floraWindowCenter.z - halfWin);
         maxB.x = fminf(MAP_WIDTH - 14.0f * s_scaleXZ, s_floraWindowCenter.x + halfWin);
         maxB.y = fminf(MAP_DEPTH - 14.0f * s_scaleXZ, s_floraWindowCenter.z + halfWin);
-        grassSpacing = 1.30f;
+        grassSpacing = 0.68f;
     }
 #endif
     MapMeadowDistribution dist = {
@@ -367,9 +367,9 @@ static void BuildPhuQuocFlora(void)
             .bladesPerClump = 5,
             .bladeSegments = 3,
             .bladeWidthScale = 0.125f,
-            .lodDistance = 24.0f,
-            .midLodDistance = 16.0f,
-            .drawDistance = 44.0f,
+            .lodDistance = 36.0f,
+            .midLodDistance = 24.0f,
+            .drawDistance = 120.0f,
             .shadowDistance = (s_scaleXZ > 1.5f) ? -1.0f : 22.0f,
             .grassState = MAP_GRASS_STATE_DRY,
             .dryness = 0.72f,
