@@ -285,7 +285,7 @@ void VolumetricFog_PreFrame(void) {
         Tuning_RegisterFloat("volumetric_fog_enabled", &s_tuningEnabled, 1.0f);
     }
     if (!s_ready || !VolumetricFog_IsEnabled()) return;
-    if (s_fogRenderMode == FOG_MODE_OFF) return;
+    if (VolumetricFog_ResolveMode(s_fogRenderMode, GfxQuality_Get()) == FOG_MODE_OFF) return;
     AtmosphereProfile atmos = Environment_GetAtmosphereProfile();
     if (!atmos.enabled) return;
     SceneTargets_RequestSoftDepthRegion((Rectangle){ 0, 0, (float)SceneTargets_GetWidth(), (float)SceneTargets_GetHeight() });

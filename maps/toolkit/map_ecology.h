@@ -29,6 +29,9 @@ typedef bool (*MapEcologyEligibleFn)(float x, float z, void *user);
 /* Single cached dataset; all callbacks are init-only. One live ecology bake. */
 bool MapEcology_Bake(MapEcology *map, const MapEcologyConfig *config,
                      MapEcologyDensityFn density, MapEcologyEligibleFn eligible, void *user);
+bool MapEcology_LoadBakedAssets(MapEcology *map, const char *habitatPath, const char *distancePath,
+                                Vector4 rect, unsigned char *outShoreField, int maxShorePixels,
+                                int *outShoreW, int *outShoreH);
 MapEcologySample MapEcology_Sample(const MapEcology *map, float x, float z);
 void MapEcology_Unload(MapEcology *map);
 float MapEcology_RoadDistance(const MapEcologyConfig *config, float x, float z);

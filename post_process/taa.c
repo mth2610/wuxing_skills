@@ -213,7 +213,8 @@ void TAA_GetJitterPixels(float *outJitterX, float *outJitterY)
 
 Texture2D TAA_Resolve(Texture2D currHdr, Texture2D linearDepth, Camera3D camera)
 {
-    if (!TAA_IsEnabled() || currHdr.id == 0 || currHdr.width <= 0 || currHdr.height <= 0)
+    if (!TAA_IsEnabled() || camera.projection == CAMERA_ORTHOGRAPHIC ||
+        currHdr.id == 0 || currHdr.width <= 0 || currHdr.height <= 0)
         return currHdr;
     if (currHdr.width != s_width || currHdr.height != s_height)
         TAA_Resize(currHdr.width, currHdr.height);

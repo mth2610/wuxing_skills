@@ -50,6 +50,9 @@ uniform float u_hueRestore;    // shipping default 0.6 (§12.1); 0 = the old per
 uniform float u_shoulderView;  // diagnostic, 0 = off
 uniform vec2  u_sceneTexel;    // 1 / scene resolution
 uniform float u_rcasSharpness; // 0 = off, >0 = 5-tap RCAS sharpening in composite pass
+uniform sampler2D u_gtaoTex;   // Half-res denoised Ground-Truth AO
+uniform float u_gtaoEnabled;
+uniform float u_gtaoStrength;
 
 out vec4 finalColor;
 
@@ -163,6 +166,12 @@ void main() {
             }
             sceneCol.rgb = mix(sceneCol.rgb, acc * 0.125, w);
         }
+    }
+
+    // 1c. Half-res GTAO contact darkening in linear HDR space before bloom & tonemap
+    if (u_gtaoEnabled > 0.5) {
+        float ao = texture(u_gtaoTex, uv).r;
+        sceneCol.rgb *= mix(1.0, ao, clamp(u_gtaoStrength, 0.0, 1.0));
     }
 
     // 2. Bloom (4 bilinear taps = 3x3 tent filter)

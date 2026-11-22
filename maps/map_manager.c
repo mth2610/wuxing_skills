@@ -13,6 +13,30 @@ static MapScaleMode  s_scaleMode = MAP_SCALE_MOBA;
 static int s_mapCount = 0;
 static int s_activeMapIndex = 0;
 
+static MapSpatialMetadata s_activeMetadata = {
+    .spawnPoint = {6.0f, 0.0f, 4.4f},
+    .arenaCenter = {6.0f, 0.0f, 4.4f},
+    .arenaRadius = 18.0f,
+    .hasPlayableRect = false,
+};
+
+static void MapManager_ResetActiveMetadata(void) {
+    s_activeMetadata = (MapSpatialMetadata){
+        .spawnPoint = {6.0f, 0.0f, 4.4f},
+        .arenaCenter = {6.0f, 0.0f, 4.4f},
+        .arenaRadius = 18.0f,
+        .hasPlayableRect = false,
+    };
+}
+
+void MapManager_SetActiveMetadata(const MapSpatialMetadata *meta) {
+    if (!meta) {
+        MapManager_ResetActiveMetadata();
+        return;
+    }
+    s_activeMetadata = *meta;
+}
+
 // Virtual Trigger Zones of the ACTIVE map only — repopulated by the map's
 // Init (via MapManager_SetZones), cleared on every switch/init/unload.
 static MapZone s_zones[MAX_MAP_ZONES];
@@ -241,6 +265,7 @@ void MapManager_SetActiveIndex(int index) {
         // Clear the previous map's zones BEFORE Init so a zone-less map ends
         // up with zero zones instead of inheriting stale ones.
         s_zoneCount = 0;
+        MapManager_ResetActiveMetadata();
         // Maps remain loaded across switches; reset opt-in direct radiance
         // and global biome/grass state before Init so legacy maps cannot
         // inherit another map's HDR sun, arid biome, or grass dryness.
@@ -296,22 +321,7 @@ float MapManager_GetWorldScaleY(void) {
 
 Vector3 MapManager_GetActiveSpawnPoint(void) {
     if (s_mapCount == 0) return (Vector3){ 6.0f, 0.0f, 4.4f };
-    const char *name = s_maps[s_activeMapIndex].name;
-    float sXZ = MapManager_GetWorldScaleXZ();
-    Vector3 pt;
-    if (strcmp(name, "SONG_QUAO") == 0) {
-        pt = (Vector3){ 94.15f * sXZ, 0.0f, 150.0f * sXZ };
-    } else if (strcmp(name, "NINH_THUAN") == 0) {
-        pt = (Vector3){ 160.0f * sXZ, 0.0f, 222.0f * sXZ };
-    } else if (strcmp(name, "LY_SON") == 0) {
-        pt = (Vector3){ 144.0f * sXZ, 0.0f, 105.0f * sXZ };
-    } else if (strcmp(name, "MAU_SON") == 0) {
-        pt = (Vector3){ 135.0f * sXZ, 0.0f, 112.5f * sXZ };
-    } else if (strcmp(name, "PHU_QUOC") == 0) {
-        pt = (Vector3){ 101.0f * sXZ, 0.0f, 144.0f * sXZ };
-    } else {
-        pt = (Vector3){ 6.0f, 0.0f, 4.4f };
-    }
+    Vector3 pt = s_activeMetadata.spawnPoint;
     pt.y = MapManager_GetGroundHeightAt(pt.x, pt.z);
     return pt;
 }
@@ -322,56 +332,17 @@ void MapManager_GetActiveBounds(Vector3 *outCenter, float *outRadius) {
         if (outRadius) *outRadius = 18.0f;
         return;
     }
-    const char *name = s_maps[s_activeMapIndex].name;
-    float sXZ = MapManager_GetWorldScaleXZ();
-    if (strcmp(name, "SONG_QUAO") == 0 || strcmp(name, "NINH_THUAN") == 0) {
-        if (outCenter) *outCenter = (Vector3){ 94.15f * sXZ, 0.0f, 150.0f * sXZ };
-        if (outRadius) *outRadius = 135.0f * sXZ;
-    } else if (strcmp(name, "LY_SON") == 0) {
-        if (outCenter) *outCenter = (Vector3){ 144.0f * sXZ, 0.0f, 105.0f * sXZ };
-        if (outRadius) *outRadius = 140.0f * sXZ;
-    } else if (strcmp(name, "MAU_SON") == 0) {
-        if (outCenter) *outCenter = (Vector3){ 135.0f * sXZ, 0.0f, 112.5f * sXZ };
-        if (outRadius) *outRadius = 140.0f * sXZ;
-    } else if (strcmp(name, "PHU_QUOC") == 0) {
-        if (outCenter) *outCenter = (Vector3){ 101.0f * sXZ, 0.0f, 144.0f * sXZ };
-        if (outRadius) *outRadius = 140.0f * sXZ;
-    } else {
-        if (outCenter) *outCenter = (Vector3){ 6.0f, 0.0f, 4.4f };
-        if (outRadius) *outRadius = 18.0f;
-    }
+    if (outCenter) *outCenter = s_activeMetadata.arenaCenter;
+    if (outRadius) *outRadius = s_activeMetadata.arenaRadius;
 }
 
 bool MapManager_GetActivePlayableRect(float *minX, float *maxX, float *minZ, float *maxZ) {
-    if (s_mapCount == 0) return false;
-    const char *name = s_maps[s_activeMapIndex].name;
-    float sXZ = MapManager_GetWorldScaleXZ();
-    if (strcmp(name, "SONG_QUAO") == 0 || strcmp(name, "NINH_THUAN") == 0) {
-        if (minX) *minX = 6.0f * sXZ;
-        if (maxX) *maxX = 182.0f * sXZ;
-        if (minZ) *minZ = 6.0f * sXZ;
-        if (maxZ) *maxZ = 294.0f * sXZ;
-        return true;
-    } else if (strcmp(name, "LY_SON") == 0) {
-        if (minX) *minX = 8.0f * sXZ;
-        if (maxX) *maxX = 292.0f * sXZ;
-        if (minZ) *minZ = 8.0f * sXZ;
-        if (maxZ) *maxZ = 202.0f * sXZ;
-        return true;
-    } else if (strcmp(name, "MAU_SON") == 0) {
-        if (minX) *minX = 8.0f * sXZ;
-        if (maxX) *maxX = 292.0f * sXZ;
-        if (minZ) *minZ = 8.0f * sXZ;
-        if (maxZ) *maxZ = 217.0f * sXZ;
-        return true;
-    } else if (strcmp(name, "PHU_QUOC") == 0) {
-        if (minX) *minX = 8.0f * sXZ;
-        if (maxX) *maxX = 221.0f * sXZ;
-        if (minZ) *minZ = 8.0f * sXZ;
-        if (maxZ) *maxZ = 292.0f * sXZ;
-        return true;
-    }
-    return false;
+    if (s_mapCount == 0 || !s_activeMetadata.hasPlayableRect) return false;
+    if (minX) *minX = s_activeMetadata.minX;
+    if (maxX) *maxX = s_activeMetadata.maxX;
+    if (minZ) *minZ = s_activeMetadata.minZ;
+    if (maxZ) *maxZ = s_activeMetadata.maxZ;
+    return true;
 }
 
 void MapManager_SetZones(const MapZone *zones, int count) {

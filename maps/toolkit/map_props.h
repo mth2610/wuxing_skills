@@ -817,6 +817,8 @@ typedef struct
 {
     Model models[MAP_DEBRIS_TYPE_COUNT];
     bool modelLoaded[MAP_DEBRIS_TYPE_COUNT];
+    Texture2D instanceTextures[MAP_DEBRIS_TYPE_COUNT];
+    int instanceCounts[MAP_DEBRIS_TYPE_COUNT];
     MapDebrisPlacement *placements;
     int placementCount;
     float drawDistance;
@@ -1163,6 +1165,21 @@ void MapDem_SetWaterInteractor(const MapDemIsland *dem, const MapGroundSurface *
                                MapWaterSurface *water, Vector3 position, Vector3 velocity, float radius);
 void MapDem_AddWaterRipple(MapWaterSurface *water, Vector3 position, float radius, float intensity);
 
+typedef struct
+{
+    MapFloraSystem *flora;
+    MapRockSystem *rocks;
+    struct MapOreSystem *ores;
+    unsigned int skipMask;
+} MapDemShadowCasterCtx;
+
+void MapDem_DefaultShadowCasterCallback(Shader depthShader, void *userData);
+void MapDem_CaptureStaticShadows(MapRockSystem *rocks, Vector3 center, float radius, unsigned int skipMask);
+void MapDem_UpdateShadowFocusAndStaticCache(Vector3 cameraTarget, Vector3 *ioLastFocus, Vector3 *ioStaticCenter,
+                                            float focusRadius, float snapStep, float hystXZ, float hystY,
+                                            float scaleXZ, Vector3 mapCenter, float staticRadius,
+                                            MapRockSystem *rocks, unsigned int skipMask);
+
 // --- 3D Mineral Ore & Crystal Cluster System (map_props_ore.inl) --------
 typedef enum
 {
@@ -1182,7 +1199,7 @@ typedef struct
     MapOreType type;
 } MapOrePlacement;
 
-typedef struct
+typedef struct MapOreSystem
 {
     Model models[MAP_ORE_TYPE_COUNT];
     Vector3 boundsCenter[MAP_ORE_TYPE_COUNT];
@@ -1202,5 +1219,44 @@ MapOreSystem MapProp_CreateOreSystem(const MapOrePlacement *items, int count,
 void MapProp_DrawOreSystem(const MapOreSystem *sys, float time);
 void MapProp_DrawOreShadowCasters(MapOreSystem *sys, Shader depthShader);
 void MapProp_UnloadOreSystem(MapOreSystem *sys);
+
+// --- 3D Trees & Bamboo Groves System (map_props_trees.inl) --------------
+typedef enum
+{
+    MAP_TREE_ANCIENT_PINE = 0,
+    MAP_TREE_BAMBOO,
+    MAP_TREE_PEACH_BLOSSOM,
+    MAP_TREE_WEEPING_WILLOW,
+    MAP_TREE_ARCHETYPE_COUNT
+} MapTreeArchetype;
+
+typedef struct
+{
+    Vector3 position;
+    float scaleXZ;
+    float scaleY;
+    float rotationDeg;
+    float phase;
+    Color canopyTint;
+    MapTreeArchetype archetype;
+} MapTreePlacement;
+
+typedef struct
+{
+    Model models[MAP_TREE_ARCHETYPE_COUNT];
+    bool modelLoaded[MAP_TREE_ARCHETYPE_COUNT];
+    Texture2D instanceTextures[MAP_TREE_ARCHETYPE_COUNT];
+    int instanceCounts[MAP_TREE_ARCHETYPE_COUNT];
+    float drawDistance;
+    bool ready;
+} MapTreeSystem;
+
+MapTreeSystem MapProp_CreateTreeSystem(const MapTreePlacement *placements, int count,
+                                       const MapGroundSurface *ground, Vector3 worldCenter,
+                                       float drawDistance);
+void MapProp_DrawTreeSystem(const MapTreeSystem *sys, float time, Vector2 windDirection, float windStrength);
+void MapProp_DrawTreeSystemShadowCasters(const MapTreeSystem *sys, Shader depthShader,
+                                         float time, Vector2 windDirection, float windStrength);
+void MapProp_UnloadTreeSystem(MapTreeSystem *sys);
 
 #endif // MAP_PROPS_H

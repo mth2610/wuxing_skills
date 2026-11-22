@@ -1628,34 +1628,121 @@ void MapProp_AddCragPlacements(MapRockSystem *sys, const MapGroundSurface *groun
     }
 }
 
+static const MapRockItem *s_rockSuppItems = NULL;
+static int s_rockSuppCount = -1;
+static float s_rockSuppMaxR = 4.0f;
+#define ROCK_SUPP_HASH_BUCKETS 512
+#define ROCK_SUPP_HASH_CELL 8.0f
+static int s_rockSuppHead[ROCK_SUPP_HASH_BUCKETS];
+static int *s_rockSuppNext = NULL;
+static int s_rockSuppNextCap = 0;
+
+static inline unsigned int RockSuppHashCell(int cx, int cz)
+{
+    return (((unsigned int)cx * 73856093u) ^ ((unsigned int)cz * 19349663u)) & (ROCK_SUPP_HASH_BUCKETS - 1u);
+}
+
+static void EnsureRockSuppressionHash(const MapRockItem *items, int itemCount)
+{
+    if (s_rockSuppItems == items && s_rockSuppCount == itemCount)
+        return;
+    if (itemCount > s_rockSuppNextCap)
+    {
+        RL_FREE(s_rockSuppNext);
+        s_rockSuppNextCap = itemCount + 64;
+        s_rockSuppNext = (int *)RL_MALLOC((size_t)s_rockSuppNextCap * sizeof(int));
+    }
+    for (int b = 0; b < ROCK_SUPP_HASH_BUCKETS; b++)
+        s_rockSuppHead[b] = -1;
+    if (!s_rockSuppNext)
+        return;
+    float maxR = 2.0f;
+    const float invCell = 1.0f / ROCK_SUPP_HASH_CELL;
+    for (int i = 0; i < itemCount; i++)
+    {
+        float r = items[i].radiusScale * 0.72f;
+        if (r > maxR)
+            maxR = r;
+        int cx = (int)floorf(items[i].position.x * invCell);
+        int cz = (int)floorf(items[i].position.z * invCell);
+        unsigned int b = RockSuppHashCell(cx, cz);
+        s_rockSuppNext[i] = s_rockSuppHead[b];
+        s_rockSuppHead[b] = i;
+    }
+    s_rockSuppMaxR = maxR;
+    s_rockSuppItems = items;
+    s_rockSuppCount = itemCount;
+}
+
 float MapProp_EvaluateRockSuppression(float x, float z, const MapRockItem *items, int itemCount)
 {
     if (!items || itemCount <= 0)
         return 1.0f;
-    float suppression = 1.0f;
-    for (int i = 0; i < itemCount; i++)
+    EnsureRockSuppressionHash(items, itemCount);
+    if (!s_rockSuppNext)
     {
-        float r = items[i].radiusScale;
-        if (r <= 1e-4f)
-            continue;
-        float dx = x - items[i].position.x;
-        float dz = z - items[i].position.z;
-        // Suppress grass only inside the tight rock ground-contact core (coreR = 0.42 * r)
-        // and taper over a narrow skirt (maxR = 0.72 * r) so meadow tufts hug boulders with zero bald holes.
-        float maxR = r * 0.72f;
-        if (fabsf(dx) > maxR || fabsf(dz) > maxR)
-            continue;
-        float distSq = dx * dx + dz * dz;
-        if (distSq > maxR * maxR)
-            continue;
-        float coreR = r * 0.42f;
-        if (distSq <= coreR * coreR)
-            return 0.0f;
-        float dist = sqrtf(distSq);
-        float t = (dist - coreR) / (r * 0.30f);
-        float fade = t * t * (3.0f - 2.0f * t);
-        if (fade < suppression)
-            suppression = fade;
+        float suppression = 1.0f;
+        for (int i = 0; i < itemCount; i++)
+        {
+            float r = items[i].radiusScale;
+            if (r <= 1e-4f)
+                continue;
+            float dx = x - items[i].position.x;
+            float dz = z - items[i].position.z;
+            float maxR = r * 0.72f;
+            if (fabsf(dx) > maxR || fabsf(dz) > maxR)
+                continue;
+            float distSq = dx * dx + dz * dz;
+            if (distSq > maxR * maxR)
+                continue;
+            float coreR = r * 0.42f;
+            if (distSq <= coreR * coreR)
+                return 0.0f;
+            float dist = sqrtf(distSq);
+            float t = (dist - coreR) / (r * 0.30f);
+            float fade = t * t * (3.0f - 2.0f * t);
+            if (fade < suppression)
+                suppression = fade;
+        }
+        return suppression;
+    }
+
+    const float invCell = 1.0f / ROCK_SUPP_HASH_CELL;
+    int px = (int)floorf(x * invCell);
+    int pz = (int)floorf(z * invCell);
+    int span = (int)ceilf(s_rockSuppMaxR * invCell);
+    if (span < 1) span = 1;
+    if (span > 3) span = 3;
+
+    float suppression = 1.0f;
+    for (int dzc = -span; dzc <= span; dzc++)
+    {
+        for (int dxc = -span; dxc <= span; dxc++)
+        {
+            unsigned int b = RockSuppHashCell(px + dxc, pz + dzc);
+            for (int i = s_rockSuppHead[b]; i >= 0; i = s_rockSuppNext[i])
+            {
+                float r = items[i].radiusScale;
+                if (r <= 1e-4f)
+                    continue;
+                float dx = x - items[i].position.x;
+                float dz = z - items[i].position.z;
+                float maxR = r * 0.72f;
+                if (fabsf(dx) > maxR || fabsf(dz) > maxR)
+                    continue;
+                float distSq = dx * dx + dz * dz;
+                if (distSq > maxR * maxR)
+                    continue;
+                float coreR = r * 0.42f;
+                if (distSq <= coreR * coreR)
+                    return 0.0f;
+                float dist = sqrtf(distSq);
+                float t = (dist - coreR) / (r * 0.30f);
+                float fade = t * t * (3.0f - 2.0f * t);
+                if (fade < suppression)
+                    suppression = fade;
+            }
+        }
     }
     return suppression;
 }

@@ -334,7 +334,7 @@ void SceneTargets_Init(int width, int height)
   s_targetHeight = height;
   SceneTargets_CreateSizedTargets(width, height);
 
-  s_bgLumaShader = LoadShader(0, "core/shaders/bg_luma.fs");
+  s_bgLumaShader = LoadShader(0, "post_process/shaders/bg_luma.fs");
   s_bgLumaTexelLoc = GetShaderLocation(s_bgLumaShader, "u_srcTexel");
 
   for (int i = 0; i < 2; i++)
@@ -347,7 +347,7 @@ void SceneTargets_Init(int width, int height)
   }
   s_exposureReady = true;
 
-  s_exposureShader = LoadShader(0, "core/shaders/exposure.fs");
+  s_exposureShader = LoadShader(0, "post_process/shaders/exposure.fs");
   s_expLocLuma = GetShaderLocation(s_exposureShader, "u_lumaTex");
   s_expLocSize = GetShaderLocation(s_exposureShader, "u_lumaSize");
   s_expLocDt = GetShaderLocation(s_exposureShader, "u_dt");
@@ -356,7 +356,7 @@ void SceneTargets_Init(int width, int height)
   s_expLocDown = GetShaderLocation(s_exposureShader, "u_speedDown");
   s_expLocUp = GetShaderLocation(s_exposureShader, "u_speedUp");
 
-  depthCopyShader = LoadShader(0, "core/shaders/depth_copy.fs");
+  depthCopyShader = LoadShader(0, "post_process/shaders/depth_copy.fs");
   depthCopyNearLoc = GetShaderLocation(depthCopyShader, "u_near");
   depthCopyFarLoc = GetShaderLocation(depthCopyShader, "u_far");
 

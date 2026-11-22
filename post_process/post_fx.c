@@ -5,6 +5,7 @@
 #include "core/gfx_quality.h"             // E8 — the tier budget for the two new passes
 #include "post_process/color_grade_lut.h" // G5 — display-referred grading strip
 #include "post_process/taa.h"             // P1 — HDR Temporal Anti-Aliasing
+#include "post_process/gtao.h"            // P3 — Half-Res Ground-Truth Ambient Occlusion
 #include "post_process/post_fx_debug_internal.inl"
 #include "rlgl.h"
 #include "post_process/render_scale.h"
@@ -22,6 +23,9 @@ static int fxaaTexelLoc = -1;
 static int fxaaSharpenLoc = -1;
 static int sceneTexelLoc = -1;
 static int rcasSharpnessLoc = -1;
+static int gtaoTexLoc = -1;
+static int gtaoEnabledLoc = -1;
+static int gtaoStrengthLoc = -1;
 static Camera3D s_taaCamera = {0};
 
 // HDR (Đợt G) — the whole offscreen chain (scene + bloom pyramid) uses a
@@ -265,6 +269,7 @@ void PostFX_Resize(int width, int height)
   PostFX_DestroySizedTargets();
   PostFX_CreateSizedTargets(width, height);
   TAA_Resize(width, height);
+  GTAO_Resize(width, height);
   TraceLog(LOG_INFO, "PostFX: chain resized to %dx%d", width, height);
 }
 
@@ -277,6 +282,7 @@ void PostFX_Init(int width, int height)
 
   PostFX_CreateSizedTargets(width, height);
   TAA_Init(width, height);
+  GTAO_Init(width, height);
   TraceLog(LOG_INFO, "PostFX: %s pipeline (%s)", s_hdrActive ? "HDR float" : "LDR",
            s_hdrActive ? "R16G16B16A16" : "R8G8B8A8");
 
@@ -328,6 +334,9 @@ void PostFX_Init(int width, int height)
   fxaaSharpenLoc = GetShaderLocation(fxaaShader, "u_sharpen");
   sceneTexelLoc = GetShaderLocation(compositeShader, "u_sceneTexel");
   rcasSharpnessLoc = GetShaderLocation(compositeShader, "u_rcasSharpness");
+  gtaoTexLoc = GetShaderLocation(compositeShader, "u_gtaoTex");
+  gtaoEnabledLoc = GetShaderLocation(compositeShader, "u_gtaoEnabled");
+  gtaoStrengthLoc = GetShaderLocation(compositeShader, "u_gtaoStrength");
   radialBlurEnabledLoc = GetShaderLocation(compositeShader, "u_radialBlurEnabled");
   radialBlurCenterLoc = GetShaderLocation(compositeShader, "u_radialBlurCenter");
   radialBlurStrengthLoc = GetShaderLocation(compositeShader, "u_radialBlurStrength");
@@ -351,6 +360,7 @@ void PostFX_Unload(void)
   UnloadShader(compositeShader);
   ColorGradeLut_Unload();
   TAA_Shutdown();
+  GTAO_Shutdown();
 }
 
 void PostFX_Begin(void)
@@ -710,6 +720,10 @@ void PostFX_Draw(const PostFXConfig *config)
   if (TAA_IsEnabled())
     srcTex = TAA_Resolve(srcTex, SceneTargets_GetDepthTexture(), s_taaCamera);
 
+  Texture2D gtaoTex = {0};
+  if (GfxQuality_Get() >= GFX_HIGH && GTAO_IsEnabled())
+    gtaoTex = GTAO_Render(SceneTargets_GetDepthTexture(), s_taaCamera);
+
   const int activeLevels = PostFX_GetActiveBloomLevels();
   bool inTextureMode = false;
 
@@ -933,6 +947,18 @@ void PostFX_Draw(const PostFXConfig *config)
   if (rcasSharpnessLoc >= 0) {
     float rcas = taaActive ? ((s_sharpen >= 0.0f) ? s_sharpen : 0.25f) : 0.0f;
     SetShaderValue(compositeShader, rcasSharpnessLoc, &rcas, SHADER_UNIFORM_FLOAT);
+  }
+  if (gtaoEnabledLoc >= 0) {
+    float gtaoOn = (gtaoTex.id != 0) ? 1.0f : 0.0f;
+    SetShaderValue(compositeShader, gtaoEnabledLoc, &gtaoOn, SHADER_UNIFORM_FLOAT);
+    if (gtaoOn > 0.5f) {
+      if (gtaoTexLoc >= 0)
+        SetShaderValueTexture(compositeShader, gtaoTexLoc, gtaoTex);
+      if (gtaoStrengthLoc >= 0) {
+        float gtaoStrength = 0.42f;
+        SetShaderValue(compositeShader, gtaoStrengthLoc, &gtaoStrength, SHADER_UNIFORM_FLOAT);
+      }
+    }
   }
 
   const float outW = useFxaa ? (float)ldrTex.texture.width : (float)GetRenderWidth();

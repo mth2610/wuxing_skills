@@ -298,14 +298,128 @@ MapDebrisSystem MapProp_CreateDebrisSystem(
         debris.modelLoaded[MAP_DEBRIS_MOSS] = true;
     }
 
+    // Build GPU RGBA32F instance textures per debris type (2 texels per instance)
+    int cursor = 0;
+    for (int t = 0; t < MAP_DEBRIS_TYPE_COUNT; t++)
+    {
+        int typeCount = 0;
+        while (cursor + typeCount < debris.placementCount && debris.placements[cursor + typeCount].type == t)
+            typeCount++;
+        debris.instanceCounts[t] = typeCount;
+        if (typeCount > 0)
+        {
+            int texels = typeCount * 2;
+            int rows = (texels + 511) / 512;
+            float *pixels = (float *)MemAlloc((unsigned int)(512 * rows * 4) * sizeof(float));
+            if (pixels)
+            {
+                memset(pixels, 0, (size_t)(512 * rows * 4) * sizeof(float));
+                for (int k = 0; k < typeCount; k++)
+                {
+                    const MapDebrisPlacement *p = &debris.placements[cursor + k];
+                    float s = p->scale * ((p->type == MAP_DEBRIS_LEAF) ? 1.15f : 1.55f);
+                    int packedRGB = ((int)p->color.r << 16) | ((int)p->color.g << 8) | (int)p->color.b;
+                    int b = k * 8;
+                    pixels[b + 0] = p->position.x;
+                    pixels[b + 1] = p->position.y;
+                    pixels[b + 2] = p->position.z;
+                    pixels[b + 3] = p->rotationDeg * DEG2RAD;
+                    pixels[b + 4] = s;
+                    pixels[b + 5] = (float)packedRGB;
+                }
+                Image instImg = {
+                    .data = pixels,
+                    .width = 512,
+                    .height = rows,
+                    .mipmaps = 1,
+                    .format = PIXELFORMAT_UNCOMPRESSED_R32G32B32A32,
+                };
+                debris.instanceTextures[t] = LoadTextureFromImage(instImg);
+                MemFree(pixels);
+                if (debris.instanceTextures[t].id != 0)
+                {
+                    SetTextureFilter(debris.instanceTextures[t], TEXTURE_FILTER_POINT);
+                    SetTextureWrap(debris.instanceTextures[t], TEXTURE_WRAP_CLAMP);
+                }
+            }
+        }
+        cursor += typeCount;
+    }
+
     debris.ready = true;
     return debris;
+}
+
+static Shader s_debrisInstancedShader = {0};
+static int s_debrisInstTexLoc = -1;
+static int s_debrisDrawDistSqLoc = -1;
+static bool s_debrisInstShaderLoaded = false;
+
+static Shader Debris_GetInstancedShader(void)
+{
+    if (!s_debrisInstShaderLoaded)
+    {
+        s_debrisInstShaderLoaded = true;
+        s_debrisInstancedShader = ResourceManager_LoadShader(
+            "maps/toolkit/shaders/debris_instanced.vs",
+            "maps/toolkit/shaders/nature_opaque.fs");
+        if (s_debrisInstancedShader.id != 0 && s_debrisInstancedShader.id != rlGetShaderIdDefault())
+        {
+            s_debrisInstTexLoc = GetShaderLocation(s_debrisInstancedShader, "u_debrisInstanceTex");
+            s_debrisDrawDistSqLoc = GetShaderLocation(s_debrisInstancedShader, "u_debrisDrawDistSq");
+            VFXLight_RegisterShader(s_debrisInstancedShader);
+            MapShadow_ConfigureShader(s_debrisInstancedShader);
+        }
+    }
+    return s_debrisInstancedShader;
 }
 
 void MapProp_DrawDebrisSystem(const MapDebrisSystem *debris, Vector3 cameraPosition)
 {
     if (!debris || !debris->ready || debris->placementCount <= 0 || !debris->placements)
         return;
+
+    Shader instShader = Debris_GetInstancedShader();
+    if (instShader.id != 0 && instShader.id != rlGetShaderIdDefault())
+    {
+        Nature_BeginWindReceiverShader(instShader);
+        Nature_UpdateShader(instShader, (float)fmod(GetTime(), 3600.0), (Vector2){1.0f, 0.0f}, 0.0f,
+                            false, 0.0f, NATURE_WIND_RESPONSE_STATIC);
+        const NatureShaderLocs *locs = Nature_GetCachedLocs(instShader);
+        if (locs->viewPos >= 0)
+            SetShaderValue(instShader, locs->viewPos, &cameraPosition, SHADER_UNIFORM_VEC3);
+        float maxDistSq = debris->drawDistance * debris->drawDistance;
+        if (s_debrisDrawDistSqLoc >= 0)
+            SetShaderValue(instShader, s_debrisDrawDistSqLoc, &maxDistSq, SHADER_UNIFORM_FLOAT);
+        if (s_debrisInstTexLoc >= 0)
+        {
+            int unit0 = 0;
+            SetShaderValue(instShader, s_debrisInstTexLoc, &unit0, SHADER_UNIFORM_INT);
+        }
+
+        Matrix mvp = MatrixMultiply(MatrixMultiply(rlGetMatrixTransform(), rlGetMatrixModelview()), rlGetMatrixProjection());
+        SetShaderValueMatrix(instShader, instShader.locs[SHADER_LOC_MATRIX_MVP], mvp);
+
+        for (int t = 0; t < MAP_DEBRIS_TYPE_COUNT; t++)
+        {
+            if (!debris->modelLoaded[t] || debris->instanceCounts[t] <= 0 || debris->instanceTextures[t].id == 0)
+                continue;
+            const Mesh *mesh = &debris->models[t].meshes[0];
+            bool needTwoSided = (t == MAP_DEBRIS_LEAF || t == MAP_DEBRIS_TWIG);
+            rlDrawRenderBatchActive();
+            if (needTwoSided) rlDisableBackfaceCulling();
+            else rlEnableBackfaceCulling();
+
+            rlActiveTextureSlot(0);
+            rlEnableTexture(debris->instanceTextures[t].id);
+            rlEnableVertexArray(mesh->vaoId);
+            rlDrawVertexArrayInstanced(0, mesh->vertexCount, debris->instanceCounts[t]);
+            rlDisableVertexArray();
+        }
+        rlEnableBackfaceCulling();
+        Nature_EndWindReceiverShader();
+        return;
+    }
 
     Shader shader = Nature_GetShader(false);
     Nature_BeginWindReceiverShader(shader);
@@ -379,6 +493,12 @@ void MapProp_UnloadDebrisSystem(MapDebrisSystem *debris)
             UnloadModel(debris->models[i]);
             debris->modelLoaded[i] = false;
         }
+        if (debris->instanceTextures[i].id != 0)
+        {
+            UnloadTexture(debris->instanceTextures[i]);
+            debris->instanceTextures[i] = (Texture2D){0};
+        }
+        debris->instanceCounts[i] = 0;
     }
     if (debris->placements)
     {

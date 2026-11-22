@@ -323,4 +323,99 @@ void MapDem_AddWaterRipple(MapWaterSurface *water, Vector3 position, float radiu
         MapProp_AddWaterRipple(water, position, radius, intensity);
 }
 
+void MapDem_DefaultShadowCasterCallback(Shader depthShader, void *userData)
+{
+    const MapDemShadowCasterCtx *ctx = (const MapDemShadowCasterCtx *)userData;
+    if (!ctx || (ctx->skipMask & MAP_SKIP_SHADOWCASTERS))
+        return;
+
+    if (ctx->flora && !(ctx->skipMask & MAP_SKIP_FLORA))
+        MapProp_DrawFloraShadowCasters(ctx->flora);
+
+    if (ctx->ores)
+        MapProp_DrawOreShadowCasters((MapOreSystem *)ctx->ores, depthShader);
+
+    if ((ctx->skipMask & MAP_SKIP_ROCKS) || EnvShadow_HasStaticCache() ||
+        !ctx->rocks || !ctx->rocks->ready || !ctx->rocks->items || ctx->rocks->count <= 0)
+        return;
+
+    Vector3 focus = EnvShadow_GetFocus();
+    float maxDist = EnvShadow_GetHalfExtent() + 4.0f;
+    float maxDistSq = maxDist * maxDist;
+    Vector3 rotAxis = {0.0f, 1.0f, 0.0f};
+    for (int i = 0; i < ctx->rocks->count; i++)
+    {
+        const MapRockItem *p = &ctx->rocks->items[i];
+        if (p->archetype == MAP_ROCK_SCREE || p->radiusScale < 1.20f)
+            continue;
+        float dx = p->position.x - focus.x;
+        float dz = p->position.z - focus.z;
+        if (dx * dx + dz * dz > maxDistSq)
+            continue;
+        int arch = (int)p->archetype;
+        if (arch < 0 || arch >= MAP_ROCK_ARCHETYPE_COUNT)
+            arch = MAP_ROCK_GRANITE;
+        int variant = Rock_HashVariant(i, p->position.x, p->position.z);
+        const MapRockSet *set = Rock_ResolveArchetypeSet(ctx->rocks, (MapRockArchetype)arch, variant);
+        if (!set->ready || set->model.materialCount < 1)
+            continue;
+        Shader prev = set->model.materials[0].shader;
+        set->model.materials[0].shader = depthShader;
+        DrawModelEx(set->model, p->position, rotAxis, p->rotationDeg,
+                    (Vector3){p->radiusScale, p->heightScale, p->radiusScale}, WHITE);
+        set->model.materials[0].shader = prev;
+    }
+    rlDrawRenderBatchActive();
+}
+
+void MapDem_CaptureStaticShadows(MapRockSystem *rocks, Vector3 center, float radius, unsigned int skipMask)
+{
+    if (!EnvShadow_NeedsStaticCapture())
+        return;
+    if ((skipMask & MAP_SKIP_SHADOWCASTERS) || (skipMask & MAP_SKIP_ROCKS))
+        return;
+    EnvShadow_BeginStaticCapture(center, radius);
+    if (!EnvShadow_IsCapturing())
+        return;
+    Shader depthShader = EnvShadow_GetDepthShader();
+    MapProp_DrawRockSystemShadowCasters(rocks, depthShader);
+    EnvShadow_EndStaticCapture();
+}
+
+void MapDem_UpdateShadowFocusAndStaticCache(Vector3 cameraTarget, Vector3 *ioLastFocus, Vector3 *ioStaticCenter,
+                                            float focusRadius, float snapStep, float hystXZ, float hystY,
+                                            float scaleXZ, Vector3 mapCenter, float staticRadius,
+                                            MapRockSystem *rocks, unsigned int skipMask)
+{
+    if (ioLastFocus)
+    {
+        float rawDx = fabsf(cameraTarget.x - ioLastFocus->x);
+        float rawDy = fabsf(cameraTarget.y - ioLastFocus->y);
+        float rawDz = fabsf(cameraTarget.z - ioLastFocus->z);
+        if (rawDx > hystXZ || rawDz > hystXZ || rawDy > hystY)
+        {
+            Vector3 focus = MapProp_SnapShadowFocus(cameraTarget, snapStep);
+            if (fabsf(focus.x - ioLastFocus->x) > 0.01f ||
+                fabsf(focus.y - ioLastFocus->y) > 0.01f ||
+                fabsf(focus.z - ioLastFocus->z) > 0.01f)
+            {
+                *ioLastFocus = focus;
+                EnvShadow_SetFocus(focus, focusRadius);
+            }
+        }
+    }
+    if (scaleXZ > 1.5f && ioStaticCenter)
+    {
+        float sdx = cameraTarget.x - ioStaticCenter->x;
+        float sdz = cameraTarget.z - ioStaticCenter->z;
+        if (sdx * sdx + sdz * sdz > 70.0f * 70.0f)
+        {
+            *ioStaticCenter = cameraTarget;
+            EnvShadow_InvalidateStaticCache();
+        }
+    }
+    Vector3 center = (scaleXZ > 1.5f && ioStaticCenter) ? *ioStaticCenter : mapCenter;
+    MapDem_CaptureStaticShadows(rocks, center, staticRadius, skipMask);
+}
+
 #endif // MAP_PROPS_DEM_INL

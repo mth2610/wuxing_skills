@@ -1,4 +1,5 @@
 #include "environment_system.h"
+#include "environment/weather_system.h"
 #include "maps/map_manager.h"
 #include "environment/wind/wind_system.h"
 #include "core/resource_manager.h"
@@ -215,6 +216,7 @@ void Environment_Init(void)
     s_lastCloudLocations = NULL;
     s_shadowBatchOpen = false;
     FogVolume_RebuildActiveList();
+    Weather_Init();
 }
 
 static inline unsigned char EnvLerpByte(unsigned char a, unsigned char b, float t)
@@ -373,6 +375,7 @@ void Environment_Update(float dt)
 
     EnvDebugTick(dt);
     EnvUpdateCloudShadow(dt);
+    Weather_Update(dt);
 
     // 1. Update transient Local Fog Volumes (chỉ duyệt các fog volume đang active)
     if (s_activeFogCount > 0)

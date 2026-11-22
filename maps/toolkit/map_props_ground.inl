@@ -24,6 +24,7 @@ static int locEcologyEnabled = -1;
 static int locEcologySampler = -1, locEcologyDistanceSampler = -1;
 static int locGroundCloudUV = -1, locGroundCloudShape = -1, locGroundCloudProjection = -1;
 static int locThinShadowBoost = -1;
+static int locGroundWetness = -1;
 static int locTexGrass = -1, locTexPath = -1;
 static int locTexGrassMaterial = -1, locTexSoilMaterial = -1;
 static int locSeismicOriginDir = -1, locSeismicParams = -1, locSeismicProfile = -1;
@@ -563,6 +564,7 @@ static MapGroundSurface SetupGroundMaterial(Mesh mesh, float width, float depth,
         locEcologySampler = GetShaderLocation(groundShader, "u_ecology");
         locEcologyDistanceSampler = GetShaderLocation(groundShader, "u_ecologyDistance");
         locThinShadowBoost = GetShaderLocation(groundShader, "u_shadowThinFeatureBoost");
+        locGroundWetness = GetShaderLocation(groundShader, "u_groundWetness");
         locTexGrass = GetShaderLocation(groundShader, "texGrass");
         locTexPath = GetShaderLocation(groundShader, "texPath");
         locTexGrassMaterial = GetShaderLocation(groundShader, "texGrassMaterial");
@@ -1395,6 +1397,11 @@ void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter)
             SetShaderValue(groundShader, locThinShadowBoost, &thinShadowBoost, SHADER_UNIFORM_FLOAT);
             s_groundCachedThinBoost = thinShadowBoost;
         }
+    }
+    if (locGroundWetness >= 0)
+    {
+        float wetness = MapProp_GetWetness();
+        SetShaderValue(groundShader, locGroundWetness, &wetness, SHADER_UNIFORM_FLOAT);
     }
 
     Vector3 pos = {

@@ -77,67 +77,23 @@ static float LySonCoastalSurface(float x, float z, void *user)
     return LY_SON_SEA_Y * s_scaleY;
 }
 
+static MapDemShadowCasterCtx s_lySonShadowCtx = {0};
+
 static void DrawLySonShadowCasters(Shader depthShader, void *user)
 {
     (void)user;
-    if (s_skipMask & MAP_SKIP_SHADOWCASTERS)
-        return;
-
-    if (!(s_skipMask & MAP_SKIP_FLORA))
-        MapProp_DrawFloraShadowCasters(&s_flora);
-
-    if ((s_skipMask & MAP_SKIP_ROCKS) || EnvShadow_HasStaticCache() ||
-        !s_rocks.ready || !s_rocks.items || s_rocks.count <= 0)
-        return;
-
-    Vector3 focus = EnvShadow_GetFocus();
-    float maxDist = EnvShadow_GetHalfExtent() + 4.0f;
-    float maxDistSq = maxDist * maxDist;
-    Vector3 rotAxis = {0.0f, 1.0f, 0.0f};
-    for (int i = 0; i < s_rocks.count; i++)
-    {
-        const MapRockItem *p = &s_rocks.items[i];
-        if (p->archetype == MAP_ROCK_SCREE || p->radiusScale < 1.20f)
-            continue;
-        float dx = p->position.x - focus.x;
-        float dz = p->position.z - focus.z;
-        if (dx * dx + dz * dz > maxDistSq)
-            continue;
-        int arch = (int)p->archetype;
-        if (arch < 0 || arch >= MAP_ROCK_ARCHETYPE_COUNT)
-            arch = MAP_ROCK_BASALT;
-        unsigned int vh = (unsigned int)i * 2654435761u ^
-                          (unsigned int)((int)(p->position.x * 13.0f) * 73856093) ^
-                          (unsigned int)((int)(p->position.z * 17.0f) * 19349663);
-        int variant = (int)(vh & 3u);
-        const MapRockSet *set = (variant > 0 && variant < MAP_ROCK_VARIANTS_PER_ARCHETYPE && s_rocks.variants[arch][variant - 1].ready)
-                                    ? &s_rocks.variants[arch][variant - 1]
-                                    : &s_rocks.models[arch];
-        if (!set->ready || set->model.materialCount < 1)
-            continue;
-        Shader prev = set->model.materials[0].shader;
-        set->model.materials[0].shader = depthShader;
-        DrawModelEx(set->model, p->position, rotAxis, p->rotationDeg,
-                    (Vector3){p->radiusScale, p->heightScale, p->radiusScale}, WHITE);
-        set->model.materials[0].shader = prev;
-    }
-    rlDrawRenderBatchActive();
+    s_lySonShadowCtx.flora = &s_flora;
+    s_lySonShadowCtx.rocks = &s_rocks;
+    s_lySonShadowCtx.ores = NULL;
+    s_lySonShadowCtx.skipMask = s_skipMask;
+    MapDem_DefaultShadowCasterCallback(depthShader, &s_lySonShadowCtx);
 }
 
 static void CaptureLySonStaticShadows(void)
 {
-    if (!EnvShadow_NeedsStaticCapture())
-        return;
-    if ((s_skipMask & MAP_SKIP_SHADOWCASTERS) || (s_skipMask & MAP_SKIP_ROCKS))
-        return;
     float radius = (s_scaleXZ > 1.5f) ? 140.0f : 155.0f;
     Vector3 center = (s_scaleXZ > 1.5f) ? s_staticShadowCenter : kMapCenter;
-    EnvShadow_BeginStaticCapture(center, radius);
-    if (!EnvShadow_IsCapturing())
-        return;
-    Shader depthShader = EnvShadow_GetDepthShader();
-    MapProp_DrawRockSystemShadowCasters(&s_rocks, depthShader);
-    EnvShadow_EndStaticCapture();
+    MapDem_CaptureStaticShadows(&s_rocks, center, radius, s_skipMask);
 }
 
 static float LySonScorchedGrassDensity(float x, float z, void *user)
@@ -331,6 +287,15 @@ void InitLySonMap(void)
     s_mapDepth = LY_SON_MAP_DEPTH * s_scaleXZ;
     s_heightRange = LY_SON_HEIGHT_RANGE * s_scaleY;
     kMapCenter = (Vector3){s_mapWidth * 0.5f, 0.0f, s_mapDepth * 0.5f};
+
+    MapManager_SetActiveMetadata(&(MapSpatialMetadata){
+        .spawnPoint = {144.0f * s_scaleXZ, 0.0f, 105.0f * s_scaleXZ},
+        .arenaCenter = {144.0f * s_scaleXZ, 0.0f, 105.0f * s_scaleXZ},
+        .arenaRadius = 140.0f * s_scaleXZ,
+        .hasPlayableRect = true,
+        .minX = 8.0f * s_scaleXZ, .maxX = 292.0f * s_scaleXZ,
+        .minZ = 8.0f * s_scaleXZ, .maxZ = 202.0f * s_scaleXZ,
+    });
     s_staticShadowCenter = kMapCenter;
     s_floraWindowCenter = (Vector3){LY_SON_ARENA_X * s_scaleXZ, 0.0f, LY_SON_ARENA_Z * s_scaleXZ};
 
@@ -527,45 +492,11 @@ void InitLySonMap(void)
         "assets/maps/ly_son/textures/pahoehoe_crust_diffuse.png",
         "assets/maps/ly_son/textures/volcanic_ash_diffuse.png");
 
-    s_habitat.habitatTexture = ResourceManager_LoadTextureVariant(
-        "assets/maps/ly_son/ly_son_habitat.png", true,
-        TEXTURE_FILTER_TRILINEAR, TEXTURE_WRAP_CLAMP);
-    {
-        Image distImg = LoadImage("assets/maps/ly_son/ly_son_habitat_distance.png");
-        if (distImg.data != NULL)
-        {
-            ImageFormat(&distImg, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
-            unsigned char *bytes = (unsigned char *)distImg.data;
-            int totalPx = distImg.width * distImg.height;
-            const float kPathScale = (32.0f / 65535.0f) * (1.0f / 5.1f);
-            const float kPathBias = (-14.35f) * (1.0f / 5.1f);
-            const float kShoreScale = (32.0f / 65535.0f) * (1.0f / 5.5f);
-            const float kShoreBias = (-12.90f) * (1.0f / 5.5f);
-            for (int i = 0; i < totalPx; i++)
-            {
-                unsigned char *p = &bytes[i * 4];
-                float rawPath = (float)(((unsigned int)p[0] << 8) | (unsigned int)p[1]);
-                float rawShore = (float)(((unsigned int)p[2] << 8) | (unsigned int)p[3]);
-                float encPath = rawPath * kPathScale + kPathBias;
-                float encShore = rawShore * kShoreScale + kShoreBias;
-                encPath = (encPath > 0.0f) ? ((encPath < 1.0f) ? encPath : 1.0f) : 0.0f;
-                encShore = (encShore > 0.0f) ? ((encShore < 1.0f) ? encShore : 1.0f) : 0.0f;
-                p[0] = (unsigned char)(encPath * 255.0f + 0.5f);
-                p[1] = (unsigned char)(encShore * 255.0f + 0.5f);
-                p[2] = 0;
-                p[3] = 255;
-            }
-            s_habitat.distanceTexture = LoadTextureFromImage(distImg);
-            UnloadImage(distImg);
-            if (s_habitat.distanceTexture.id > 0)
-            {
-                SetTextureFilter(s_habitat.distanceTexture, TEXTURE_FILTER_BILINEAR);
-                SetTextureWrap(s_habitat.distanceTexture, TEXTURE_WRAP_CLAMP);
-            }
-        }
-    }
-    s_habitat.rect = (Vector4){0, 0, MAP_WIDTH, MAP_DEPTH};
-    s_habitat.ready = s_habitat.habitatTexture.id > 0 && s_habitat.distanceTexture.id > 0;
+    MapEcology_LoadBakedAssets(&s_habitat,
+                               "assets/maps/ly_son/ly_son_habitat.png",
+                               "assets/maps/ly_son/ly_son_habitat_distance.png",
+                               (Vector4){0, 0, MAP_WIDTH, MAP_DEPTH},
+                               NULL, 0, NULL, NULL);
     MapProp_SetGroundEcology(&s_ground, &s_habitat);
 
     MapProp_SetGroundTint(&s_ground, (Color){142, 134, 132, 255});
@@ -827,31 +758,10 @@ void UpdateLySonMap(float dt)
     MapProp_UpdateWaterSurface(&s_coastalSea, dt);
     MapProp_UpdateVolcanoVentSystem(&s_vents, camera.target, dt);
 
-    float rawDx = fabsf(camera.target.x - s_lastShadowFocus.x);
-    float rawDy = fabsf(camera.target.y - s_lastShadowFocus.y);
-    float rawDz = fabsf(camera.target.z - s_lastShadowFocus.z);
-    if (rawDx > SHADOW_HYSTERESIS_XZ || rawDz > SHADOW_HYSTERESIS_XZ || rawDy > SHADOW_HYSTERESIS_Y)
-    {
-        Vector3 focus = MapProp_SnapShadowFocus(camera.target, SHADOW_SNAP_STEP);
-        if (fabsf(focus.x - s_lastShadowFocus.x) > 0.01f ||
-            fabsf(focus.y - s_lastShadowFocus.y) > 0.01f ||
-            fabsf(focus.z - s_lastShadowFocus.z) > 0.01f)
-        {
-            s_lastShadowFocus = focus;
-            EnvShadow_SetFocus(s_lastShadowFocus, SHADOW_FOCUS_RADIUS);
-        }
-    }
-    if (s_scaleXZ > 1.5f)
-    {
-        float sdx = camera.target.x - s_staticShadowCenter.x;
-        float sdz = camera.target.z - s_staticShadowCenter.z;
-        if (sdx * sdx + sdz * sdz > 70.0f * 70.0f)
-        {
-            s_staticShadowCenter = camera.target;
-            EnvShadow_InvalidateStaticCache();
-        }
-    }
-    CaptureLySonStaticShadows();
+    MapDem_UpdateShadowFocusAndStaticCache(
+        camera.target, &s_lastShadowFocus, &s_staticShadowCenter,
+        SHADOW_FOCUS_RADIUS, SHADOW_SNAP_STEP, SHADOW_HYSTERESIS_XZ, SHADOW_HYSTERESIS_Y,
+        s_scaleXZ, kMapCenter, (s_scaleXZ > 1.5f) ? 140.0f : 155.0f, &s_rocks, s_skipMask);
 }
 
 void UnloadLySonMap(void)

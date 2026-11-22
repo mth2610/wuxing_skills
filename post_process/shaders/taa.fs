@@ -43,9 +43,41 @@ vec3 ToneDecompress(vec3 c)
     return c / max(1.0 - luma, 0.001);
 }
 
-vec2 ReprojectUV(vec2 uv)
+// 5-tap Catmull-Rom history filter preserves grass blade crispness vs bilinear blur
+vec3 SampleHistoryCatmullRom(sampler2D tex, vec2 uv, vec2 texelSize)
+{
+    vec2 texSize = 1.0 / max(texelSize, vec2(1e-5));
+    vec2 samplePos = uv * texSize;
+    vec2 texPos1 = floor(samplePos - 0.5) + 0.5;
+    vec2 f = samplePos - texPos1;
+
+    vec2 w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
+    vec2 w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
+    vec2 w2 = f * (0.5 + f * (2.0 - 1.5 * f));
+    vec2 w3 = f * f * (-0.5 + 0.5 * f);
+
+    vec2 w12 = w1 + w2;
+    vec2 offset12 = w2 / max(w12, vec2(1e-5));
+
+    vec2 texPos0 = (texPos1 - 1.0) * texelSize;
+    vec2 texPos3 = (texPos1 + 2.0) * texelSize;
+    vec2 texPos12 = (texPos1 + offset12) * texelSize;
+
+    vec3 result = vec3(0.0);
+    result += texture(tex, vec2(texPos12.x, texPos0.y)).rgb * (w12.x * w0.y);
+    result += texture(tex, vec2(texPos0.x,  texPos12.y)).rgb * (w0.x  * w12.y);
+    result += texture(tex, vec2(texPos12.x, texPos12.y)).rgb * (w12.x * w12.y);
+    result += texture(tex, vec2(texPos3.x,  texPos12.y)).rgb * (w3.x  * w12.y);
+    result += texture(tex, vec2(texPos12.x, texPos3.y)).rgb * (w12.x * w3.y);
+
+    float wSum = (w12.x * w0.y) + (w0.x * w12.y) + (w12.x * w12.y) + (w3.x * w12.y) + (w12.x * w3.y);
+    return max(result / max(wSum, 1e-4), vec3(0.0));
+}
+
+vec2 ReprojectUV(vec2 uv, out float outDepth)
 {
     float sceneDepth = texture(u_depthTex, uv).r;
+    outDepth = sceneDepth;
     vec4 clip = vec4(uv * 2.0 - 1.0, 1.0, 1.0);
     vec4 worldFar = u_invCurrViewProj * clip;
     vec3 rayDir = normalize(worldFar.xyz / worldFar.w - u_camPos);
@@ -72,33 +104,46 @@ void main()
         return;
     }
 
-    vec2 prevUV = ReprojectUV(fragTexCoord);
+    float centerDepth = 0.0;
+    vec2 prevUV = ReprojectUV(fragTexCoord, centerDepth);
     if (prevUV.x <= 0.001 || prevUV.x >= 0.999 || prevUV.y <= 0.001 || prevUV.y >= 0.999) {
         finalColor = vec4(currRGB, currSample.a);
         return;
     }
 
-    // 3x3 neighborhood YCoCg variance AABB in tone-compressed space
+    // 3x3 neighborhood YCoCg variance AABB in tone-compressed space + depth edge check
     vec3 m1 = vec3(0.0);
     vec3 m2 = vec3(0.0);
+    float minD = 1e9;
+    float maxD = 0.0;
     for (int dy = -1; dy <= 1; dy++) {
         for (int dx = -1; dx <= 1; dx++) {
             vec2 offset = vec2(float(dx), float(dy)) * u_texelSize;
-            vec3 s = ToneCompress(max(texture(texture0, fragTexCoord + offset).rgb, vec3(0.0)));
+            vec2 sampleUV = fragTexCoord + offset;
+            vec3 s = ToneCompress(max(texture(texture0, sampleUV).rgb, vec3(0.0)));
             vec3 ycc = RGBToYCoCg(s);
             m1 += ycc;
             m2 += ycc * ycc;
+            float nd = texture(u_depthTex, sampleUV).r;
+            minD = min(minD, nd);
+            maxD = max(maxD, nd);
         }
     }
     m1 /= 9.0;
     m2 /= 9.0;
     vec3 sigma = sqrt(max(m2 - m1 * m1, vec3(0.0)));
 
-    float gamma = 1.25;
+    // Tighten variance box on depth silhouettes & bright HDR emissives to suppress ghosting
+    float depthSpan = maxD - minD;
+    float edgeFactor = smoothstep(0.45, 2.50, depthSpan);
+    float currPeak = max(currRGB.r, max(currRGB.g, currRGB.b));
+    float emissiveReactive = smoothstep(1.25, 3.50, currPeak);
+    float gamma = mix(1.25, 0.72, max(edgeFactor, emissiveReactive * 0.8));
+
     vec3 boxMin = m1 - gamma * sigma;
     vec3 boxMax = m1 + gamma * sigma;
 
-    vec3 histRGB = max(texture(u_historyTex, prevUV).rgb, vec3(0.0));
+    vec3 histRGB = SampleHistoryCatmullRom(u_historyTex, prevUV, u_texelSize);
     vec3 histYCC = RGBToYCoCg(ToneCompress(histRGB));
     vec3 clippedYCC = clamp(histYCC, boxMin, boxMax);
     vec3 clippedRGB = YCoCgToRGB(clippedYCC);
@@ -106,7 +151,8 @@ void main()
     vec3 currComp = ToneCompress(currRGB);
     float velPx = length((fragTexCoord - prevUV) / max(u_texelSize, vec2(1e-5)));
     float blendAlpha = mix(0.11, 0.36, clamp(velPx * 0.25, 0.0, 1.0));
+    blendAlpha = max(blendAlpha, max(edgeFactor * 0.42, emissiveReactive * 0.55));
 
-    vec3 resolvedComp = mix(clippedRGB, currComp, blendAlpha);
+    vec3 resolvedComp = mix(clippedRGB, currComp, clamp(blendAlpha, 0.10, 0.85));
     finalColor = vec4(max(ToneDecompress(resolvedComp), vec3(0.0)), currSample.a);
 }

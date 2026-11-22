@@ -55,6 +55,7 @@ uniform vec4 lightColor;
 uniform vec4 ambientColor;
 uniform vec3 viewPos;
 uniform float u_time;
+uniform float u_groundWetness;
 uniform vec4 u_islandRect, u_islandShape;
 #include "maps/toolkit/shaders/map_island_boundary.glsl"
 
@@ -1082,6 +1083,27 @@ void main()
 
     if (lakeDepthFactor > 0.0) {
         groundLit += vec3(0.015, 0.035, 0.028) * actualAmbient * (1.0 - lakeDepthFactor);
+    }
+
+    // ---- 12b. Dynamic Rain Wetness & Puddle Specular (driven by Weather_GetWetness) ----
+    if (u_groundWetness > 0.01 && waterElevationMask > 0.05) {
+        float w = clamp(u_groundWetness, 0.0, 1.0);
+        // Porous soil/rock darkens when saturated
+        float porosity = clamp(wPath + wDrySoil * 0.7 + wCliff * 0.5 + wGrass * 0.25, 0.0, 1.0);
+        groundLit *= mix(1.0, 0.62, porosity * w * 0.65);
+
+        // Flat terrain hollows gather thin rain puddles with sky/sun specular sheen
+        float flatMask = smoothstep(0.88, 0.96, geomWorldNormal.y);
+        float puddleNoise = sin(fragWorldPos.x * 0.45 + cos(fragWorldPos.z * 0.38)) * 0.5 + 0.5;
+        float puddleMask = flatMask * smoothstep(0.45 - w * 0.25, 0.75, puddleNoise) * w;
+        if (puddleMask > 0.01) {
+            float oneMinusNdotV = 1.0 - max(dot(geomWorldNormal, viewDir), 0.0);
+            float fresnelPuddle = 0.04 + 0.96 * pow(oneMinusNdotV, 5.0);
+            vec3 skyRefl = actualAmbient * vec3(0.85, 0.95, 1.12);
+            float rainSpec = pow(max(dot(geomWorldNormal, normalize(light + viewDir)), 0.0), 48.0);
+            groundLit = mix(groundLit, skyRefl, puddleMask * fresnelPuddle * 0.55)
+                      + actualLight * (rainSpec * sunVisibility * puddleMask * 0.45);
+        }
     }
 
     groundLit += VFXLights_AccumulateFlat(fragPosition, blendedAlbedo);

@@ -1,5 +1,6 @@
 #include "maps/toolkit/map_ecology.h"
 #include "maps/toolkit/meadow_palette.h"
+#include "core/resource_manager.h"
 #include <math.h>
 #include <stdint.h>
 #include <string.h>
@@ -356,4 +357,71 @@ void MapEcology_Unload(MapEcology *m)
     if (s_owner == m)
         s_owner = NULL;
     memset(m, 0, sizeof(*m));
+}
+
+bool MapEcology_LoadBakedAssets(MapEcology *m, const char *habitatPath, const char *distancePath,
+                                Vector4 rect, unsigned char *outShoreField, int maxShorePixels,
+                                int *outShoreW, int *outShoreH)
+{
+    if (!m)
+        return false;
+    m->habitatTexture = (habitatPath && habitatPath[0])
+                            ? ResourceManager_LoadTextureVariant(habitatPath, true,
+                                                                 TEXTURE_FILTER_TRILINEAR, TEXTURE_WRAP_CLAMP)
+                            : (Texture2D){0};
+    m->distanceTexture = (Texture2D){0};
+    if (outShoreW) *outShoreW = 0;
+    if (outShoreH) *outShoreH = 0;
+
+    if (distancePath && distancePath[0])
+    {
+        Image distImg = LoadImage(distancePath);
+        if (distImg.data != NULL)
+        {
+            ImageFormat(&distImg, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+            unsigned char *bytes = (unsigned char *)distImg.data;
+            int totalPx = distImg.width * distImg.height;
+            bool cacheShore = (outShoreField != NULL && totalPx > 0 && totalPx <= maxShorePixels);
+            if (cacheShore)
+            {
+                if (outShoreW) *outShoreW = distImg.width;
+                if (outShoreH) *outShoreH = distImg.height;
+            }
+
+            const float kPathScale = (32.0f / 65535.0f) * (1.0f / 5.1f);
+            const float kPathBias = (-14.35f) * (1.0f / 5.1f);
+            const float kShoreScale = (32.0f / 65535.0f) * (1.0f / 5.5f);
+            const float kShoreBias = (-12.90f) * (1.0f / 5.5f);
+
+            for (int i = 0; i < totalPx; i++)
+            {
+                unsigned char *p = &bytes[i * 4];
+                float rawPath = (float)(((unsigned int)p[0] << 8) | (unsigned int)p[1]);
+                float rawShore = (float)(((unsigned int)p[2] << 8) | (unsigned int)p[3]);
+
+                float encPath = rawPath * kPathScale + kPathBias;
+                float encShore = rawShore * kShoreScale + kShoreBias;
+
+                encPath = (encPath > 0.0f) ? ((encPath < 1.0f) ? encPath : 1.0f) : 0.0f;
+                encShore = (encShore > 0.0f) ? ((encShore < 1.0f) ? encShore : 1.0f) : 0.0f;
+
+                p[0] = (unsigned char)(encPath * 255.0f + 0.5f);
+                p[1] = (unsigned char)(encShore * 255.0f + 0.5f);
+                p[2] = 0;
+                p[3] = 255;
+                if (cacheShore)
+                    outShoreField[i] = p[1];
+            }
+            m->distanceTexture = LoadTextureFromImage(distImg);
+            UnloadImage(distImg);
+            if (m->distanceTexture.id > 0)
+            {
+                SetTextureFilter(m->distanceTexture, TEXTURE_FILTER_BILINEAR);
+                SetTextureWrap(m->distanceTexture, TEXTURE_WRAP_CLAMP);
+            }
+        }
+    }
+    m->rect = rect;
+    m->ready = m->habitatTexture.id > 0 && m->distanceTexture.id > 0;
+    return m->ready;
 }

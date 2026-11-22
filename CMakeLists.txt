@@ -164,6 +164,7 @@ add_executable(wuxing
     environment/environment_system.c
     environment/env_shadow.c
     environment/atmosphere.c
+    environment/weather_system.c
     environment/volumetric/volumetric_fog.c
     environment/wind/wind_system.c
     # --- Audio System ---
@@ -214,6 +215,7 @@ add_executable(wuxing
     # --- Post Process ---
     post_process/post_fx.c
     post_process/taa.c
+    post_process/gtao.c
     post_process/color_grade_lut.c
     post_process/scene_targets.c
     post_process/render_scale.c
@@ -411,6 +413,8 @@ configure_file(post_process/shaders/distortion_mesh.fs ${CMAKE_CURRENT_BINARY_DI
 configure_file(post_process/shaders/depth_copy.fs ${CMAKE_CURRENT_BINARY_DIR}/post_process/shaders/depth_copy.fs COPYONLY)
 configure_file(post_process/shaders/exposure.fs ${CMAKE_CURRENT_BINARY_DIR}/post_process/shaders/exposure.fs COPYONLY)
 configure_file(post_process/shaders/bg_luma.fs ${CMAKE_CURRENT_BINARY_DIR}/post_process/shaders/bg_luma.fs COPYONLY)
+configure_file(post_process/shaders/gtao.fs ${CMAKE_CURRENT_BINARY_DIR}/post_process/shaders/gtao.fs COPYONLY)
+configure_file(post_process/shaders/gtao_denoise.fs ${CMAKE_CURRENT_BINARY_DIR}/post_process/shaders/gtao_denoise.fs COPYONLY)
 
 # Backward-compatibility copies for core/shaders (and external visual tests)
 configure_file(core/shaders/bloom_bright.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/bloom_bright.fs COPYONLY)

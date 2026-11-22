@@ -76,6 +76,16 @@ int MapManager_GetActiveIndex(void);
 // Valid activation resets direct solar intensity to legacy 1 before map Init;
 void MapManager_SetActiveIndex(int index);
 
+typedef struct {
+    Vector3 spawnPoint;
+    Vector3 arenaCenter;
+    float arenaRadius;
+    bool hasPlayableRect;
+    float minX, maxX, minZ, maxZ;
+} MapSpatialMetadata;
+
+void MapManager_SetActiveMetadata(const MapSpatialMetadata *meta);
+
 // Returns the recommended player spawn point on the currently active map (Y snapped to ground).
 Vector3 MapManager_GetActiveSpawnPoint(void);
 
