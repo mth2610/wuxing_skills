@@ -198,6 +198,32 @@ int MapProp_GenerateMeadowPlacements(MapMeadowPlacement *outPlacements, int maxC
             if (x > distribution.maxBounds.x) x = distribution.maxBounds.x;
             if (z < distribution.minBounds.y) z = distribution.minBounds.y;
             if (z > distribution.maxBounds.y) z = distribution.maxBounds.y;
+
+            if (distribution.focalCount > 0)
+            {
+                float minDistSq = 1e20f;
+                int fc = distribution.focalCount < 4 ? distribution.focalCount : 4;
+                for (int f = 0; f < fc; f++)
+                {
+                    float fdx = x - distribution.focalPoints[f].x;
+                    float fdz = z - distribution.focalPoints[f].y;
+                    float d2 = fdx * fdx + fdz * fdz;
+                    if (d2 < minDistSq)
+                        minDistSq = d2;
+                }
+                float coreR = (distribution.focalCoreRadius > 1.0f) ? distribution.focalCoreRadius : 65.0f;
+                if (minDistSq > coreR * coreR)
+                {
+                    float outerR = (distribution.focalOuterRadius > coreR) ? distribution.focalOuterRadius : (coreR + 140.0f);
+                    float outerFloor = (distribution.focalOuterFloor > 0.0f) ? distribution.focalOuterFloor : 0.22f;
+                    float dist = sqrtf(minDistSq);
+                    float t = MapMath_SmoothStep01(coreR, outerR, dist);
+                    float keepProb = 1.0f - t * (1.0f - outerFloor);
+                    if (Nature_Random01(&rng) > keepProb)
+                        continue;
+                }
+            }
+
             float density = densityFn ? densityFn(x, z, userData) : 1.0f;
             if (density <= 0.0f)
             {
@@ -279,6 +305,7 @@ typedef struct
 {
     bool isReed;
     bool isPampas;
+    int biomeForm;
     float clumpAngle;
     float flowX;
     float flowZ;
@@ -298,6 +325,10 @@ static void Nature_PrepareClumpContext(const MapMeadowPlacement *clump, MapMeado
     ctx->isReed = style.growthForm == MAP_MEADOW_GROWTH_REED ||
                   (style.growthForm == MAP_MEADOW_GROWTH_AUTO && clump->height > 0.95f);
     ctx->isPampas = style.growthForm == MAP_MEADOW_GROWTH_PAMPAS;
+    ctx->biomeForm = (style.growthForm == MAP_MEADOW_GROWTH_XERIC_TUSSOCK) ? 1
+                   : (style.growthForm == MAP_MEADOW_GROWTH_ALPINE_MAT)    ? 2
+                   : (style.growthForm == MAP_MEADOW_GROWTH_METALLIC_SEDGE) ? 3
+                                                                           : 0;
     ctx->clumpAngle = clump->rotationDeg * DEG2RAD;
     Nature_FastSinCos(ctx->clumpAngle, &ctx->flowZ, &ctx->flowX);
 
@@ -534,7 +565,8 @@ static NatureBladeDescriptor Nature_DescribeMeadowBladeCtx(const MapMeadowPlacem
         float radX, radZ;
         Nature_FastSinCos(rootAzimuth, &radZ, &radX);
         float diskFrac = ((float)bladeId + 0.5f) / (float)denomBlades;
-        float collarRadius = clump->radius * (0.12f + 0.36f * sqrtf(diskFrac)) * (0.86f + 0.28f * bHash3);
+        float collarScale = (ctx->biomeForm == 1) ? 0.48f : 1.0f;
+        float collarRadius = clump->radius * (0.12f + 0.36f * sqrtf(diskFrac)) * (0.86f + 0.28f * bHash3) * collarScale;
         float bx = clump->position.x + radX * collarRadius;
         float bz = clump->position.z + radZ * collarRadius;
 
@@ -542,6 +574,10 @@ static NatureBladeDescriptor Nature_DescribeMeadowBladeCtx(const MapMeadowPlacem
         // so tufts form lush interlocking locks without spiky 360-degree wire-mesh cross-hatching
         float flowBias = (archetype == 0) ? (0.42f + 0.10f * (1.0f - diskFrac))
                                           : (0.48f + 0.12f * (1.0f - diskFrac));
+        if (ctx->biomeForm == 1)
+            flowBias *= 0.42f; // Xeric tussocks splay radially like spiny cushions
+        else if (ctx->biomeForm == 2)
+            flowBias = 0.72f; // Alpine mats lean cohesively with katabatic monsoon wind
         float radialWeight = 1.0f - flowBias;
         float splayX = radX * radialWeight + flowX * flowBias;
         float splayZ = radZ * radialWeight + flowZ * flowBias;
@@ -597,6 +633,31 @@ static NatureBladeDescriptor Nature_DescribeMeadowBladeCtx(const MapMeadowPlacem
             lengthScale *= 1.22f;
             leanFactor *= 0.60f;
             droopFactor *= 0.30f;
+        }
+
+        if (ctx->biomeForm == 1)
+        {
+            // Xeric Tussock: spiky upright desert bunchgrass needles
+            lengthScale *= 0.94f;
+            widthScaleVal *= 0.84f;
+            leanFactor *= 0.76f;
+            droopFactor *= 0.30f;
+        }
+        else if (ctx->biomeForm == 2)
+        {
+            // Alpine Mat: low frost-weighed prostrate sedge
+            lengthScale *= 0.72f;
+            widthScaleVal *= 1.16f;
+            leanFactor *= 1.15f;
+            droopFactor *= 0.85f;
+        }
+        else if (ctx->biomeForm == 3)
+        {
+            // Metallic Sedge: crisp sword-lancet blades
+            lengthScale *= 1.05f;
+            widthScaleVal *= 0.92f;
+            leanFactor *= 0.78f;
+            droopFactor *= 0.45f;
         }
 
         height = clump->height * lengthScale * 1.05f;
@@ -1060,6 +1121,7 @@ MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int 
     if (style.alphaCutoff > 0.9f)
         style.alphaCutoff = 0.9f;
     if (style.growthForm == MAP_MEADOW_GROWTH_GRASS ||
+        style.growthForm >= MAP_MEADOW_GROWTH_XERIC_TUSSOCK ||
         style.grassState != MAP_GRASS_STATE_LUSH ||
         style.dryness > 0.0f || style.scorch > 0.0f)
     {

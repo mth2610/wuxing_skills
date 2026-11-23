@@ -72,6 +72,38 @@ void GetFlowerSpeciesColors(int sp, float t, float s, float isInner, float seed,
         albedo = mix(core, mix(mid, tip, sMid), sBase);
         if (isInner > 0.5) albedo = mix(vec3(0.78, 0.75, 0.68), vec3(0.90, 0.88, 0.82), t);
         sssColor = vec3(0.94, 0.90, 0.82);
+    } else if (sp == 9) {
+        // Kim Sa Liên: Desert Sunset Coral-Gold Cactus Blossom
+        vec3 core = vec3(0.88, 0.28, 0.08);
+        vec3 mid  = vec3(0.96, 0.54, 0.16) + vec3(hueShift * 0.3, hueShift * 0.5, 0.0);
+        vec3 tip  = vec3(0.99, 0.82, 0.34);
+        albedo = mix(core, mix(mid, tip, sMid), sBase);
+        if (isInner > 0.5) albedo = mix(vec3(0.98, 0.78, 0.18), vec3(1.0, 0.92, 0.56), t);
+        sssColor = vec3(0.98, 0.66, 0.22);
+    } else if (sp == 10) {
+        // Hoàng Thứ Hoa: Arid Acacia Golden Puff
+        vec3 core = vec3(0.62, 0.38, 0.06);
+        vec3 mid  = vec3(0.94, 0.78, 0.16) + vec3(hueShift * 0.4, hueShift * 0.3, 0.0);
+        vec3 tip  = vec3(0.99, 0.90, 0.42);
+        albedo = mix(core, mix(mid, tip, sMid), sBase);
+        if (isInner > 0.5) albedo = mix(vec3(0.86, 0.62, 0.10), vec3(0.98, 0.88, 0.34), t);
+        sssColor = vec3(0.96, 0.78, 0.22);
+    } else if (sp == 11) {
+        // Hỏa Liên Thảo: Ember-Tipped Obsidian Lily
+        vec3 core = vec3(0.14, 0.05, 0.05);
+        vec3 mid  = vec3(0.76, 0.14, 0.08) + vec3(hueShift * 0.4, 0.0, 0.0);
+        vec3 tip  = vec3(0.98, 0.52, 0.14);
+        albedo = mix(core, mix(mid, tip, sMid), sBase);
+        if (isInner > 0.5) albedo = mix(vec3(0.88, 0.26, 0.08), vec3(0.99, 0.76, 0.24), smoothstep(0.45, 1.0, t));
+        sssColor = vec3(0.98, 0.38, 0.12);
+    } else if (sp == 12) {
+        // Kim Ngân Linh Thảo: Crystalline Silver-Gold Blossom
+        vec3 core = vec3(0.68, 0.56, 0.22);
+        vec3 mid  = vec3(0.86, 0.89, 0.94) + vec3(hueShift * 0.2);
+        vec3 tip  = vec3(0.96, 0.97, 0.99);
+        albedo = mix(core, mix(mid, tip, sMid), sBase);
+        if (isInner > 0.5) albedo = mix(vec3(0.84, 0.68, 0.24), vec3(0.96, 0.86, 0.46), t);
+        sssColor = vec3(0.92, 0.94, 0.98);
     } else {
         vec3 core = vec3(0.86, 0.58, 0.14);
         vec3 mid  = vec3(0.93, 0.89, 0.78);
@@ -125,7 +157,7 @@ void main()
         // Xấp xỉ hữu tỉ cho exp(-s * s * 26.0)
         float s26 = s * s * 26.0;
         float centerRib = (1.0 / (1.0 + s26 + 0.48 * s26 * s26)) * (1.0 - t * 0.55);
-        float sideVeins = (distSq < 484.0) ? (sin(s * 26.0 - t * 14.0) * 0.5 + 0.5) : 0.5;
+        float sideVeins = (distSq < 256.0) ? (sin(s * 26.0 - t * 14.0) * 0.5 + 0.5) : 0.5;
         float veinMask = mix(centerRib, sideVeins * (1.0 - s * 0.40), 0.38) * (1.0 - t * 0.30);
         membraneThickness = clamp(0.16 + veinMask * 0.56 + (1.0 - t) * 0.32, 0.10, 1.0);
         float veinContrast = (u_sssParams.w > 0.01) ? u_sssParams.w : 0.92;
@@ -134,7 +166,7 @@ void main()
         albedo *= mix(0.84, 1.06, 1.0 - veinMask * 0.38 * veinContrast) * throatCup * (1.0 + edgeRoll * 0.08);
 
         // Petal vein micro-normal relief for silky specular catchlights & cupped petal curvature
-        if (part == 2 && distSq < 484.0) {
+        if (part == 2 && distSq < 256.0) {
             float veinSlope = cos(s * 26.0 - t * 14.0) * sign(v_uv.x - 0.5) * (1.0 - s * 0.40) * 0.16;
             vec3 sideVec = cross(vec3(0.0, 1.0, 0.0), N);
             float svLenSq = dot(sideVec, sideVec);

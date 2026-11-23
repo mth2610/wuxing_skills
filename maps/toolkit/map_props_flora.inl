@@ -5,7 +5,7 @@ Color MapProp_GetFlowerSpeciesColor(int variant, bool accent)
 {
     // Painterly Ghost of Tsushima & Where Winds Meet botanical palette:
     // Balanced chroma so petals glow naturally under HDR sun without clipping into flat white cones
-    static const Color primary[9] = {
+    static const Color primary[13] = {
         {248, 242, 224, 255}, // 0: Bạch Cúc / Thiên Sơn Tuyết Liên (Warm Ivory / Snow Lotus)
         {250, 204, 48, 255},  // 1: Hoàng Anh / Kim Cúc Cổ Phong (Golden Amber Buttercup)
         {232, 62, 48, 255},   // 2: Chu Sa Hồng / Bỉ Ngạn Hoa (Vermilion Crimson Spider Lily)
@@ -15,8 +15,12 @@ Color MapProp_GetFlowerSpeciesColor(int variant, bool accent)
         {164, 134, 234, 255}, // 6: Huân Y Thảo / Tử Vân Anh (Misty Lavender Violet)
         {248, 232, 158, 255}, // 7: Ngọc Lan / Linh Thảo (Soft Primrose Cream)
         {228, 230, 223, 255}, // 8: Bạch Miên Cỏ Lau (Silver-White Pampas Plume)
+        {246, 134, 48, 255},  // 9: Kim Sa Liên / Hoa Xương Rồng Sa Mạc (Desert Coral-Gold)
+        {248, 212, 42, 255},  // 10: Hoàng Thứ Hoa / Hoa Gai Vàng Khô Hạn (Arid Acacia Puff)
+        {218, 44, 24, 255},   // 11: Hỏa Liên Thảo / Hoa Lửa Dung Nham (Volcanic Ember Lily)
+        {236, 242, 248, 255}, // 12: Kim Ngân Linh Thảo / Hoa Tinh Thể Bạc (Metallic Crystal)
     };
-    static const Color secondary[9] = {
+    static const Color secondary[13] = {
         {238, 228, 202, 255},
         {242, 176, 28, 255},
         {204, 38, 36, 255},
@@ -26,8 +30,12 @@ Color MapProp_GetFlowerSpeciesColor(int variant, bool accent)
         {138, 104, 216, 255},
         {242, 212, 124, 255},
         {230, 201, 140, 255}, // 8 Accent: Golden Amber Plume
+        {252, 194, 62, 255},  // 9 Accent: Warm Desert Gold
+        {228, 168, 26, 255},  // 10 Accent: Deep Ochre Amber
+        {250, 142, 34, 255},  // 11 Accent: Molten Ember Orange
+        {232, 210, 148, 255}, // 12 Accent: Auriferous Gold
     };
-    if (variant < 0 || variant > 8)
+    if (variant < 0 || variant > 12)
         variant = 0;
     return accent ? secondary[variant] : primary[variant];
 }
@@ -214,15 +222,15 @@ void MapFlora_GenerateFlowerPlacements(
                 variant = cl->species[(int)(Nature_Random01(&rng) * 4.0f) & 3];
             }
             if (speciesOverride >= 0)
-                variant = (speciesOverride <= 8) ? speciesOverride : (speciesOverride & 7);
+                variant = (speciesOverride <= 12) ? speciesOverride : (speciesOverride & 7);
 
-            bool tallAccent = (variant == 2 || variant == 4 || variant == 6 || variant == 8);
+            bool tallAccent = (variant == 2 || variant == 4 || variant == 6 || variant == 8 || variant == 11);
             float coreLift = isColony ? (1.0f - 0.14f * radialNorm) : 0.86f;
-            // Wildflower stalks emerge proudly above the waving meadow blades (0.62m..1.05m; Cỏ Lau 2.2m..2.9m)
-            float driftHeightBase = (variant == 8) ? 2.20f : (tallAccent ? 0.68f : 0.54f);
+            // Wildflower stalks emerge proudly above the waving meadow blades (0.62m..1.05m; Cỏ Lau 2.2m..2.9m; Sa Liên 0.28m)
+            float driftHeightBase = (variant == 8) ? 2.20f : ((variant == 9) ? 0.30f : (tallAccent ? 0.68f : 0.54f));
             outPlacements[outIdx].height = (driftHeightBase + (Nature_Random01(&rng) * 0.16f - 0.05f)) * coreLift;
 
-            float baseBloomRadius = (variant == 8) ? 0.220f : (tallAccent ? 0.092f : 0.078f);
+            float baseBloomRadius = (variant == 8) ? 0.220f : ((variant == 9) ? 0.096f : (tallAccent ? 0.092f : 0.078f));
             outPlacements[outIdx].bloomRadius = baseBloomRadius * (0.86f + Nature_Random01(&rng) * 0.36f) * (0.92f + 0.12f * coreLift);
             outPlacements[outIdx].petalColor = MapProp_GetFlowerSpeciesColor(variant, Nature_Random01(&rng) > 0.74f);
             outPlacements[outIdx].petalCount = (unsigned char)(5 + (variant % 3));
@@ -340,6 +348,74 @@ float MapFlora_EvaluateFlowerSuppression(
     return 1.0f - 0.12f * weight;
 }
 
+void MapFlora_GenerateOpenWorldFlowerClusters(
+    MapFloraFlowerCluster *outClusters,
+    int clusterCount,
+    int flowersPerCluster,
+    Vector2 primaryCenter,
+    Vector2 secondaryCenter,
+    float nearRadiusMin,
+    float nearRadiusMax,
+    float farRadiusMax,
+    const int *speciesList,
+    int speciesCount,
+    Color discalCenterColor,
+    float (*sampleHeight)(float x, float z, void *ctx),
+    bool (*isExcluded)(float x, float z, void *ctx),
+    void *ctx,
+    unsigned int seed)
+{
+    if (!outClusters || clusterCount <= 0 || !speciesList || speciesCount <= 0)
+        return;
+
+    unsigned int rng = seed ? seed : 0xF10E25u;
+    int nearCount = (clusterCount * 2) / 5;
+    if (nearCount < 4 && clusterCount >= 4)
+        nearCount = 4;
+
+    for (int i = 0; i < clusterCount; i++)
+    {
+        Vector2 anchor = (i < nearCount || (i % 3 == 0)) ? primaryCenter : secondaryCenter;
+        float minR = (i < nearCount) ? nearRadiusMin : (nearRadiusMax * 1.10f);
+        float maxR = (i < nearCount) ? nearRadiusMax : farRadiusMax;
+        if (maxR <= minR)
+            maxR = minR + 12.0f;
+
+        float fx = anchor.x;
+        float fz = anchor.y;
+        for (int attempt = 0; attempt < 18; attempt++)
+        {
+            float ang = ((float)i * 2.399963f) + Nature_Random01(&rng) * 0.85f + (float)attempt * 0.45f;
+            float u = Nature_Random01(&rng);
+            float distR = minR + (maxR - minR) * sqrtf(u);
+            float tryX = anchor.x + cosf(ang) * distR;
+            float tryZ = anchor.y + sinf(ang) * distR;
+            if (!isExcluded || !isExcluded(tryX, tryZ, ctx))
+            {
+                fx = tryX;
+                fz = tryZ;
+                break;
+            }
+        }
+
+        float fy = sampleHeight ? sampleHeight(fx, fz, ctx) : 0.0f;
+        int sp = speciesList[i % speciesCount];
+        int sp2 = speciesList[(i + 1) % speciesCount];
+        float rx = 2.5f + Nature_Random01(&rng) * 0.9f;
+        float rz = 2.3f + Nature_Random01(&rng) * 0.9f;
+        outClusters[i] = (MapFloraFlowerCluster){
+            .center = {fx, fy, fz},
+            .radius = {rx, rz},
+            .flowerCount = flowersPerCluster,
+            .primarySpecies = sp,
+            .species = {(unsigned char)sp, (unsigned char)sp, (unsigned char)sp2, (unsigned char)sp},
+            .primaryColor = MapProp_GetFlowerSpeciesColor(sp, false),
+            .accentColor = MapProp_GetFlowerSpeciesColor(sp, true),
+            .discalCenterColor = discalCenterColor,
+        };
+    }
+}
+
 int MapFlora_GenerateMeadowPlacements(
     MapMeadowPlacement *outPlacements,
     int maxCount,
@@ -353,20 +429,28 @@ int MapFlora_GenerateMeadowPlacements(
     float spacing = (config.spacing > 0.0f) ? config.spacing : 0.26f;
     unsigned int seed = config.seed ? config.seed : 0x51a7c3u;
 
+    MapMeadowDistribution dist = {
+        .minBounds = config.minBounds,
+        .maxBounds = config.maxBounds,
+        .spacing = spacing,
+        .jitter = 0.92f,
+        .minRadius = 0.27f,
+        .maxRadius = 0.36f,
+        .minHeight = 0.35f,
+        .maxHeight = 0.56f,
+        .yOffset = 0.016f,
+        .seed = seed,
+        .focalCount = config.focalCount,
+        .focalCoreRadius = config.focalCoreRadius,
+        .focalOuterRadius = config.focalOuterRadius,
+        .focalOuterFloor = config.focalOuterFloor,
+    };
+    for (int f = 0; f < 4; f++)
+        dist.focalPoints[f] = config.focalPoints[f];
+
     int count = MapProp_GenerateMeadowPlacements(
         outPlacements, maxCount, ground, groundCenter,
-        (MapMeadowDistribution){
-            .minBounds = config.minBounds,
-            .maxBounds = config.maxBounds,
-            .spacing = spacing,
-            .jitter = 0.92f,
-            .minRadius = 0.27f,
-            .maxRadius = 0.36f,
-            .minHeight = 0.35f,
-            .maxHeight = 0.56f,
-            .yOffset = 0.016f,
-            .seed = seed,
-        },
+        dist,
         config.densityFn, config.densityUserData);
 
     int writeCount = 0;
@@ -694,7 +778,9 @@ MapFloraSystem MapProp_CreateFloraSystem(
                                                       .shadowDistance = (style.shadowDistance < 0.0f) ? 0.0f : ((style.shadowDistance > 0.0f) ? style.shadowDistance : 10.0f),
                                                       .texturePath = NULL,
                                                       .botanicalVariation = style.botanicalVariation,
-                                                      .growthForm = MAP_MEADOW_GROWTH_GRASS,
+                                                      .growthForm = (style.grassGrowthForm != MAP_MEADOW_GROWTH_AUTO)
+                                                                        ? style.grassGrowthForm
+                                                                        : MAP_MEADOW_GROWTH_GRASS,
                                                       .grassState = style.grassState,
                                                       .dryness = style.dryness,
                                                       .scorch = style.scorch,
@@ -801,13 +887,33 @@ MapFloraSystem MapProp_CreateFloraSystem(
         }
     }
 
-    // 4. Clustered Wildflower Fields: 100% Procedural 3D Petals
+    // 4. Clustered Wildflower Fields: 100% Procedural 3D Petals + Unified Shared Atlas
     if (flowerPlacements && clusters && clusterCount > 0)
     {
         flora.flowerFields = (MapFlowerField *)RL_MALLOC((size_t)clusterCount * sizeof(MapFlowerField));
         if (flora.flowerFields)
         {
             flora.flowerClusterCount = clusterCount;
+            int totalFlowers = 0;
+            for (int i = 0; i < clusterCount; i++)
+            {
+                if (clusters[i].flowerCount > 0)
+                    totalFlowers += clusters[i].flowerCount;
+            }
+
+            const char *envFlowerParametric = getenv("WUXING_FLOWER_PARAMETRIC");
+            bool useSharedAtlas = (GfxQuality_Get() >= GFX_MED) &&
+                                  !(envFlowerParametric && (strcmp(envFlowerParametric, "0") == 0 || strcmp(envFlowerParametric, "false") == 0)) &&
+                                  FlowerParametric_Init();
+            Texture2D sharedAtlas = {0};
+            if (useSharedAtlas && totalFlowers > 0)
+            {
+                sharedAtlas = FlowerParametric_CreateSharedAtlas(flowerPlacements, totalFlowers);
+                if (sharedAtlas.id == 0)
+                    useSharedAtlas = false;
+            }
+
+            bool assignedOwner = false;
             int placementOffset = 0;
             for (int i = 0; i < clusterCount; i++)
             {
@@ -819,27 +925,68 @@ MapFloraSystem MapProp_CreateFloraSystem(
                     continue;
                 }
 
-                Color stemColor = (Color){54, 86, 36, 255};
-                Color centerColor = (cl->discalCenterColor.a > 0) ? cl->discalCenterColor
-                                                                  : (Color){248, 196, 38, 255};
+                if (useSharedAtlas)
+                {
+                    Vector3 boundsMin = {1e9f, 1e9f, 1e9f};
+                    Vector3 boundsMax = {-1e9f, -1e9f, -1e9f};
+                    for (int k = 0; k < count; k++)
+                    {
+                        const MapFlowerPlacement *fl = &flowerPlacements[placementOffset + k];
+                        float ext = fl->bloomRadius * 1.6f;
+                        boundsMin.x = fminf(boundsMin.x, fl->position.x - ext);
+                        boundsMin.y = fminf(boundsMin.y, fl->position.y);
+                        boundsMin.z = fminf(boundsMin.z, fl->position.z - ext);
+                        boundsMax.x = fmaxf(boundsMax.x, fl->position.x + ext);
+                        boundsMax.y = fmaxf(boundsMax.y, fl->position.y + fl->height + ext);
+                        boundsMax.z = fmaxf(boundsMax.z, fl->position.z + ext);
+                    }
+                    MapFlowerField fld = {0};
+                    fld.instanceTexture = sharedAtlas;
+                    fld.instanceCount = count;
+                    fld.instanceOffset = placementOffset;
+                    fld.ownsInstanceTexture = !assignedOwner;
+                    assignedOwner = true;
+                    fld.parametric = true;
+                    fld.farReady = true;
+                    fld.boundsCenter = Vector3Scale(Vector3Add(boundsMin, boundsMax), 0.5f);
+                    fld.boundsRadius = Vector3Distance(boundsMin, boundsMax) * 0.5f;
+                    fld.ready = true;
+                    flora.flowerFields[i] = fld;
+                }
+                else
+                {
+                    Color stemColor = (Color){54, 86, 36, 255};
+                    Color centerColor = (cl->discalCenterColor.a > 0) ? cl->discalCenterColor
+                                                                      : (Color){248, 196, 38, 255};
 
-                flora.flowerFields[i] = MapProp_CreateFlowerField(
-                    &flowerPlacements[placementOffset], count,
-                    stemColor, centerColor,
-                    NULL, 0.0f, 1, 1);
+                    flora.flowerFields[i] = MapProp_CreateFlowerField(
+                        &flowerPlacements[placementOffset], count,
+                        stemColor, centerColor,
+                        NULL, 0.0f, 1, 1);
+                }
 
-                // High-fidelity LOD: near 3D petals across default 35deg viewport, far drift to 44m
-                MapProp_SetFlowerFieldLod(&flora.flowerFields[i], 26.0f, 16.0f);
-                MapProp_SetFlowerFieldDrawDistance(&flora.flowerFields[i], 44.0f);
+                // High-fidelity LOD: near 3D petals across default 35deg viewport, far drift to 76m
+                MapProp_SetFlowerFieldLod(&flora.flowerFields[i], 30.0f, 18.0f);
+                MapProp_SetFlowerFieldDrawDistance(&flora.flowerFields[i], 76.0f);
                 placementOffset += count;
             }
         }
     }
 
+    // 5. Biome Small Shrubs & Xerophytic Scrub
+    if (style.shrubPlacements && style.shrubCount > 0)
+    {
+        flora.shrubs = MapProp_CreateShrubSystem(
+            style.shrubPlacements, style.shrubCount,
+            NULL, (Vector3){0},
+            (style.shrubDrawDistance > 10.0f) ? style.shrubDrawDistance : 95.0f);
+        flora.shrubCount = style.shrubCount;
+    }
+
     flora.time = 0.0f;
     flora.ready = (flora.valleyMeadow.ready || flora.reedMeadow.ready ||
                    flora.pampasMeadow.ready || flora.coLauField.ready ||
-                   flora.flowerClusterCount > 0);
+                   flora.flowerClusterCount > 0 || flora.shrubs.ready);
     return flora;
 }
 
@@ -862,6 +1009,10 @@ void MapProp_UpdateFloraSystem(MapFloraSystem *flora, Vector3 cameraTarget, floa
     if (flora->pampasCount > 0 && flora->pampasMeadow.parametric)
     {
         MapProp_PrepareMeadow(&flora->pampasMeadow, (Vector3){0});
+    }
+    if (flora->shrubs.ready)
+    {
+        MapProp_PrepareShrubSystem(&flora->shrubs, (Vector3){0});
     }
 
     // Only run default interaction pass if the map hasn't already opened a custom interaction frame
@@ -903,6 +1054,11 @@ void MapProp_DrawFloraSystem(MapFloraSystem *flora)
     {
         MapProp_DrawFlowerFieldBatch(flora->flowerFields, flora->flowerClusterCount,
                                      (Vector3){0}, flora->time, flora->windDirection, 0.075f);
+    }
+    if (flora->shrubs.ready)
+    {
+        MapProp_DrawShrubSystem(&flora->shrubs, (Vector3){0}, flora->time,
+                                flora->windDirection, flora->windStrength);
     }
 }
 
@@ -980,6 +1136,11 @@ void MapProp_UnloadFloraSystem(MapFloraSystem *flora)
     {
         MapProp_UnloadMeadow(&flora->reedMeadow);
         flora->reedCount = 0;
+    }
+    if (flora->shrubs.ready)
+    {
+        MapProp_UnloadShrubSystem(&flora->shrubs);
+        flora->shrubCount = 0;
     }
     if (flora->valleyGrassCount > 0)
     {

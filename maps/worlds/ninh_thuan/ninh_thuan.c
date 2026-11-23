@@ -134,6 +134,19 @@ static void SpawnNinhThuanDustHaze(void)
     }
 }
 
+#define NINH_THUAN_MAX_GRASS 42000
+#define NINH_THUAN_MAX_REEDS 320
+#define NINH_THUAN_MAX_SHRUBS 520
+#define NINH_THUAN_MAX_FLOWERS 760
+static MapMeadowPlacement s_grassPlacements[NINH_THUAN_MAX_GRASS];
+static MapMeadowPlacement s_reedPlacements[NINH_THUAN_MAX_REEDS];
+static MapShrubPlacement s_shrubPlacements[NINH_THUAN_MAX_SHRUBS];
+static MapFlowerPlacement s_flowerPlacements[NINH_THUAN_MAX_FLOWERS];
+static int s_grassCount = 0;
+static int s_reedCount = 0;
+static int s_shrubCount = 0;
+static int s_flowerCount = 0;
+
 static float NinhThuanDryGrassDensity(float x, float z, void *user)
 {
     (void)user;
@@ -152,18 +165,18 @@ static float NinhThuanDryGrassDensity(float x, float z, void *user)
     float oasisFringe = (oasisDist < 24.0f * s_scaleXZ) ? (1.0f - fmaxf(0.0f, (oasisDist - 12.0f * s_scaleXZ) / (12.0f * s_scaleXZ))) * 0.65f : 0.0f;
 
     float rockShelter = 0.0f;
-    for (int i = 0; i < NINH_THUAN_ROCK_COUNT; i++)
+    for (int i = 0; i < s_rocks.count; i++)
     {
-        const MapRockItem *rk = &NINH_THUAN_ROCK_ITEMS[i];
+        const MapRockItem *rk = &s_rocks.items[i];
         if (rk->archetype == MAP_ROCK_SCREE)
             continue;
-        float rkx = rk->position.x * s_scaleXZ;
-        float rkz = rk->position.z * s_scaleXZ;
-        float rScale = rk->radiusScale * (1.0f + 0.35f * (s_scaleXZ - 1.0f));
+        float rkx = rk->position.x;
+        float rkz = rk->position.z;
+        float rScale = rk->radiusScale;
         float dx = x - rkx;
         float dz = z - rkz;
         float d2 = dx * dx + dz * dz;
-        float maxR = rScale + 3.2f;
+        float maxR = rScale + 3.4f;
         if (d2 < maxR * maxR)
         {
             float dist = sqrtf(d2) - rScale * 0.90f;
@@ -177,7 +190,8 @@ static float NinhThuanDryGrassDensity(float x, float z, void *user)
 
     float patch = sinf(x * 0.14f + z * 0.10f) * cosf(z * 0.17f - x * 0.12f);
     float pocket = (patch > 0.48f) ? ((patch - 0.48f) * 0.85f) : 0.0f;
-    return fminf(0.75f, rockShelter * 0.65f + oasisFringe + pocket);
+    float shrubNurse = MapFlora_EvaluateShrubUnderstorey(x, z, s_shrubPlacements, s_shrubCount);
+    return fminf(0.85f, rockShelter * 0.65f + oasisFringe + pocket + shrubNurse * 0.55f);
 }
 
 static void BuildNinhThuanRocks(void)
@@ -219,12 +233,32 @@ static void BuildNinhThuanRocks(void)
     }
 }
 
-#define NINH_THUAN_MAX_GRASS 42000
-#define NINH_THUAN_MAX_REEDS 320
-static MapMeadowPlacement s_grassPlacements[NINH_THUAN_MAX_GRASS];
-static MapMeadowPlacement s_reedPlacements[NINH_THUAN_MAX_REEDS];
-static int s_grassCount = 0;
-static int s_reedCount = 0;
+static float NinhThuanShrubWaterClearance(float x, float z, void *ctx)
+{
+    (void)ctx;
+    float wY = 0.0f, wD = 0.0f;
+    if (MapDem_GetWaterInfo(&s_dem, &s_ground, x, z, &wY, &wD))
+        return 0.0f;
+    return 1.0f;
+}
+
+static float NinhThuanFlowerHeight(float x, float z, void *ctx)
+{
+    (void)ctx;
+    return MapDem_GetGroundHeight(&s_dem, &s_ground, x, z);
+}
+
+static bool NinhThuanFlowerExcluded(float x, float z, void *ctx)
+{
+    (void)ctx;
+    Vector3 gp = {0}, gn = {0};
+    float wy = 0.0f, wd = 0.0f;
+    if (!MapProp_SampleGroundSurface(&s_ground, kMapCenter, x, z, &gp, &gn))
+        return true;
+    if (gn.y < 0.74f || gp.y < 0.15f)
+        return true;
+    return MapDem_GetWaterInfo(&s_dem, &s_ground, x, z, &wy, &wd);
+}
 
 static void BuildNinhThuanFlora(void)
 {
@@ -234,20 +268,33 @@ static void BuildNinhThuanFlora(void)
     const float grassSpacing = 1.25f;
     const int   maxGrass     = 3200;
 #else
-    float grassSpacing = 0.62f;
+    float grassSpacing = (s_scaleXZ > 1.5f) ? 0.58f : 0.62f;
     const int maxGrass = NINH_THUAN_MAX_GRASS;
-    if (s_scaleXZ > 1.5f)
-    {
-        // Cover the entire active Open World desert play area once at init
-        // (zero mid-gameplay flora unload/rebuild stalls).
-        float halfWin = 220.0f;
-        minB.x = fmaxf(12.0f * s_scaleXZ, s_floraWindowCenter.x - halfWin);
-        minB.y = fmaxf(12.0f * s_scaleXZ, s_floraWindowCenter.z - halfWin);
-        maxB.x = fminf(MAP_WIDTH - 12.0f * s_scaleXZ, s_floraWindowCenter.x + halfWin);
-        maxB.y = fminf(MAP_DEPTH - 12.0f * s_scaleXZ, s_floraWindowCenter.z + halfWin);
-        grassSpacing = 0.65f;
-    }
 #endif
+
+    float oasisCx = NINH_THUAN_LAKE_CENTER_X * s_scaleXZ;
+    float oasisCz = NINH_THUAN_LAKE_CENTER_Z * s_scaleXZ;
+    int shrubBudget = (s_scaleXZ > 1.5f) ? NINH_THUAN_MAX_SHRUBS : 180;
+
+    // 1. Xerophytic desert shrubs (Xeric Thorn, Desert Sage, Agave, Gnarled Deadwood)
+    s_shrubCount = MapFlora_GenerateShrubPlacements(
+        s_shrubPlacements, &s_ground, kMapCenter,
+        (MapShrubDistributionConfig){
+            .minBounds = minB,
+            .maxBounds = maxB,
+            .maxCount = shrubBudget,
+            .minSpacing = 2.60f,
+            .seed = 0xD35E27u,
+            .aridWeight = 1.0f,
+            .rocks = s_rocks.items,
+            .rockCount = s_rocks.count,
+            .sampleWaterClearance = NinhThuanShrubWaterClearance,
+            .useStratifiedGrid = (s_scaleXZ > 1.5f),
+            .focalPoints = {{s_floraWindowCenter.x, s_floraWindowCenter.z}, {oasisCx, oasisCz}},
+            .focalCount = (s_scaleXZ > 1.5f) ? 2 : 0,
+            .focalCoreRadius = 65.0f,
+        });
+
     MapMeadowDistribution dist = {
         .minBounds = minB,
         .maxBounds = maxB,
@@ -259,6 +306,11 @@ static void BuildNinhThuanFlora(void)
         .maxHeight = 0.44f,
         .yOffset = 0.0f,
         .seed = 90421u,
+        .focalPoints = {{s_floraWindowCenter.x, s_floraWindowCenter.z}, {oasisCx, oasisCz}},
+        .focalCount = (s_scaleXZ > 1.5f) ? 2 : 0,
+        .focalCoreRadius = 68.0f,
+        .focalOuterRadius = 210.0f,
+        .focalOuterFloor = 0.14f,
     };
     s_grassCount = MapProp_GenerateMeadowPlacements(
         s_grassPlacements, maxGrass,
@@ -267,8 +319,6 @@ static void BuildNinhThuanFlora(void)
 
     // Organic oasis shoreline reeds + 3D Cỏ Lau plumes hugging the true oasis water margin
     s_reedCount = 0;
-    float oasisCx = NINH_THUAN_LAKE_CENTER_X * s_scaleXZ;
-    float oasisCz = NINH_THUAN_LAKE_CENTER_Z * s_scaleXZ;
     float scanR = 24.0f * s_scaleXZ;
     unsigned int rRng = 0x541923u;
     for (int a = 0; a < 420 && s_reedCount < NINH_THUAN_MAX_REEDS; a++)
@@ -307,10 +357,51 @@ static void BuildNinhThuanFlora(void)
         }
     }
 
+    // 3. Desert Wildflower Colonies (Kim Sa Liên & Hoàng Thứ Hoa) around oasis & rock-lee pockets
+    static MapFloraFlowerCluster s_flowerClusters[20];
+    const int clusterCount = (s_scaleXZ > 1.5f) ? 20 : 10;
+    const int flowersPerCluster = 38;
+    if (s_scaleXZ > 1.5f)
+    {
+        static const int kDesertSpecies[2] = {MAP_FLOWER_SPECIES_SA_LIEN, MAP_FLOWER_SPECIES_HOANG_THU};
+        MapFlora_GenerateOpenWorldFlowerClusters(
+            s_flowerClusters, clusterCount, flowersPerCluster,
+            (Vector2){s_floraWindowCenter.x, s_floraWindowCenter.z},
+            (Vector2){oasisCx, oasisCz},
+            7.5f, 24.0f, 170.0f,
+            kDesertSpecies, 2, (Color){248, 194, 38, 255},
+            NinhThuanFlowerHeight, NinhThuanFlowerExcluded, NULL, 0xD35F10u);
+    }
+    else
+    {
+        for (int i = 0; i < clusterCount; i++)
+        {
+            float ang = (float)i * (6.2831853f / (float)clusterCount) + 0.42f;
+            float distR = 14.5f + (float)(i % 3) * 4.5f;
+            float fx = oasisCx + cosf(ang) * distR;
+            float fz = oasisCz + sinf(ang) * distR;
+            float fy = MapDem_GetGroundHeight(&s_dem, &s_ground, fx, fz);
+            int sp = (i % 2 == 0) ? MAP_FLOWER_SPECIES_SA_LIEN : MAP_FLOWER_SPECIES_HOANG_THU;
+            s_flowerClusters[i] = (MapFloraFlowerCluster){
+                .center = {fx, fy, fz},
+                .radius = {3.6f, 3.2f},
+                .flowerCount = flowersPerCluster,
+                .primarySpecies = sp,
+                .species = {(unsigned char)sp, (unsigned char)sp, MAP_FLOWER_SPECIES_HOANG_THU, MAP_FLOWER_SPECIES_SA_LIEN},
+                .primaryColor = MapProp_GetFlowerSpeciesColor(sp, false),
+                .accentColor = MapProp_GetFlowerSpeciesColor(sp, true),
+                .discalCenterColor = {248, 194, 38, 255},
+            };
+        }
+    }
+    s_flowerCount = clusterCount * flowersPerCluster;
+    MapFlora_GenerateFlowerPlacements(s_flowerPlacements, s_flowerCount, s_flowerClusters, clusterCount,
+                                      NinhThuanFlowerHeight, NinhThuanFlowerExcluded, NULL, 0xD35F10u);
+
     s_flora = MapProp_CreateFloraSystem(
         s_grassPlacements, s_grassCount,
         s_reedPlacements, s_reedCount,
-        NULL, NULL, 0,
+        s_flowerPlacements, s_flowerClusters, clusterCount,
         (MapFloraStyle){
             .grassRootColor = {112, 82, 48, 255},
             .grassTipColor = {224, 192, 122, 255},
@@ -331,6 +422,10 @@ static void BuildNinhThuanFlora(void)
             .coLauOnReeds = true,
             .coLauPlumeDensity = 0.88f,
             .coLauPlumeTint = {240, 224, 186, 255},
+            .grassGrowthForm = MAP_MEADOW_GROWTH_XERIC_TUSSOCK,
+            .shrubPlacements = s_shrubPlacements,
+            .shrubCount = s_shrubCount,
+            .shrubDrawDistance = 105.0f,
         });
 }
 

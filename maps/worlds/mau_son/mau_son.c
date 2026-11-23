@@ -50,6 +50,7 @@ static MapIceSurface s_glacialIce = {0};
 static MapRockSystem s_rocks = {0};
 static MapDebrisSystem s_debris = {0};
 static MapFloraSystem s_flora = {0};
+static MapTreeSystem s_trees = {0};
 
 static WindMacroConfig s_prevWindMacro = {0};
 static AtmosphereMode s_prevAtmoMode = ATMO_MODE_MOONLIGHT_DUST;
@@ -167,13 +168,25 @@ static void BuildMauSonRocks(void)
 #define MAU_SON_MAX_GRASS 36000
 #define MAU_SON_MAX_REEDS 360
 #define MAU_SON_MAX_FLOWERS 840
+#define MAU_SON_MAX_SHRUBS 400
 static MapMeadowPlacement s_grassPlacements[MAU_SON_MAX_GRASS];
 static MapMeadowPlacement s_reedPlacements[MAU_SON_MAX_REEDS];
 static int s_grassCount = 0;
 static int s_reedCount = 0;
 static MapFlowerPlacement s_flowerPlacements[MAU_SON_MAX_FLOWERS];
 static int s_flowerCount = 0;
+static MapShrubPlacement s_shrubPlacements[MAU_SON_MAX_SHRUBS];
+static int s_shrubCount = 0;
 static MapDebrisPlacement s_scaledDebris[MAU_SON_DEBRIS_COUNT > 0 ? MAU_SON_DEBRIS_COUNT : 1];
+
+static float MauSonShrubWaterClearance(float x, float z, void *ctx)
+{
+    (void)ctx;
+    float wY = 0.0f, wD = 0.0f;
+    if (MapDem_GetWaterInfo(&s_dem, &s_ground, x, z, &wY, &wD))
+        return 0.0f;
+    return 1.0f;
+}
 
 static void BuildMauSonDebris(void)
 {
@@ -221,18 +234,14 @@ static void BuildMauSonFlora(void)
     const float grassSpacing = 1.35f;
     const int maxGrass = 2400;
 #else
-    float grassSpacing = 0.72f;
+    float grassSpacing = (s_scaleXZ > 1.5f) ? 0.62f : 0.72f;
     const int maxGrass = MAU_SON_MAX_GRASS;
-    if (s_scaleXZ > 1.5f)
-    {
-        float halfWin = 200.0f;
-        minB.x = fmaxf(14.0f * s_scaleXZ, s_floraWindowCenter.x - halfWin);
-        minB.y = fmaxf(14.0f * s_scaleXZ, s_floraWindowCenter.z - halfWin);
-        maxB.x = fminf(MAP_WIDTH - 14.0f * s_scaleXZ, s_floraWindowCenter.x + halfWin);
-        maxB.y = fminf(MAP_DEPTH - 14.0f * s_scaleXZ, s_floraWindowCenter.z + halfWin);
-        grassSpacing = 0.68f;
-    }
 #endif
+    float lakeCx = MAU_SON_LAKE_X * s_scaleXZ;
+    float lakeCz = MAU_SON_LAKE_Z * s_scaleXZ;
+    const float arenaCx = MAU_SON_ARENA_X * s_scaleXZ;
+    const float arenaCz = MAU_SON_ARENA_Z * s_scaleXZ;
+
     MapMeadowDistribution dist = {
         .minBounds = minB,
         .maxBounds = maxB,
@@ -244,6 +253,11 @@ static void BuildMauSonFlora(void)
         .maxHeight = 0.36f,
         .yOffset = 0.0f,
         .seed = 0x50F8A2u,
+        .focalPoints = {{arenaCx, arenaCz}, {lakeCx, lakeCz}},
+        .focalCount = (s_scaleXZ > 1.5f) ? 2 : 0,
+        .focalCoreRadius = 68.0f,
+        .focalOuterRadius = 210.0f,
+        .focalOuterFloor = 0.14f,
     };
     s_grassCount = MapProp_GenerateMeadowPlacements(
         s_grassPlacements, maxGrass,
@@ -252,8 +266,6 @@ static void BuildMauSonFlora(void)
 
     // Shoreline frost reeds + silver-white Cỏ Lau plumes around Thiên Trì Hàn Đàm
     s_reedCount = 0;
-    float lakeCx = MAU_SON_LAKE_X * s_scaleXZ;
-    float lakeCz = MAU_SON_LAKE_Z * s_scaleXZ;
     float scanR = 26.0f * s_scaleXZ;
     unsigned int rRng = 0x731942u;
     for (int a = 0; a < 480 && s_reedCount < MAU_SON_MAX_REEDS; a++)
@@ -291,31 +303,59 @@ static void BuildMauSonFlora(void)
         }
     }
 
-    // 7 colonies of Thiên Sơn Tuyết Liên & U Lan Linh Thảo around the snowy saddle
-    static MapFloraFlowerCluster s_flowerClusters[7];
-    const int clusterCount = 7;
+    s_shrubCount = MapFlora_GenerateShrubPlacements(
+        s_shrubPlacements, &s_ground, kMapCenter,
+        (MapShrubDistributionConfig){
+            .minBounds = minB,
+            .maxBounds = maxB,
+            .maxCount = (s_scaleXZ > 1.5f) ? MAU_SON_MAX_SHRUBS : 110,
+            .minSpacing = 2.90f,
+            .seed = 0x50F8B3u,
+            .alpineWeight = 1.0f,
+            .rocks = s_rocks.items,
+            .rockCount = s_rocks.count,
+            .sampleWaterClearance = MauSonShrubWaterClearance,
+            .useStratifiedGrid = (s_scaleXZ > 1.5f),
+            .focalPoints = {{arenaCx, arenaCz}, {lakeCx, lakeCz}},
+            .focalCount = (s_scaleXZ > 1.5f) ? 2 : 0,
+            .focalCoreRadius = 65.0f,
+        });
+
+    // Colonies of Thiên Sơn Tuyết Liên, U Lan Linh Thảo & Kim Ngân Linh Thảo around the snowy saddle
+    static MapFloraFlowerCluster s_flowerClusters[15];
+    const int clusterCount = (s_scaleXZ > 1.5f) ? 15 : 7;
     const int flowersPerCluster = 55;
-    const float arenaCx = MAU_SON_ARENA_X * s_scaleXZ;
-    const float arenaCz = MAU_SON_ARENA_Z * s_scaleXZ;
-    for (int i = 0; i < clusterCount; i++)
+    if (s_scaleXZ > 1.5f)
     {
-        float ang = (float)i * (6.2831853f / (float)clusterCount) + 0.28f;
-        float distR = (17.0f + (float)(i % 2) * 3.8f) * s_scaleXZ;
-        float fx = arenaCx + cosf(ang) * distR;
-        float fz = arenaCz + sinf(ang) * distR;
-        float fy = MapDem_GetGroundHeight(&s_dem, &s_ground, fx, fz);
-        bool isBlueOrchid = (i % 3 == 1);
-        int sp = isBlueOrchid ? MAP_FLOWER_SPECIES_U_LAN : MAP_FLOWER_SPECIES_TUYET_LIEN;
-        s_flowerClusters[i] = (MapFloraFlowerCluster){
-            .center = {fx, fy, fz},
-            .radius = {3.2f * s_scaleXZ, 2.8f * s_scaleXZ},
-            .flowerCount = flowersPerCluster,
-            .primarySpecies = sp,
-            .species = {(unsigned char)sp, (unsigned char)sp, (unsigned char)sp, (unsigned char)sp},
-            .primaryColor = isBlueOrchid ? (Color){110, 185, 248, 255} : (Color){236, 246, 255, 255},
-            .accentColor = isBlueOrchid ? (Color){168, 224, 255, 255} : (Color){184, 228, 255, 255},
-            .discalCenterColor = {175, 232, 255, 255},
-        };
+        static const int kAlpineSpecies[3] = {MAP_FLOWER_SPECIES_TUYET_LIEN, MAP_FLOWER_SPECIES_U_LAN, MAP_FLOWER_SPECIES_KIM_NGAN};
+        MapFlora_GenerateOpenWorldFlowerClusters(
+            s_flowerClusters, clusterCount, flowersPerCluster,
+            (Vector2){arenaCx, arenaCz}, (Vector2){lakeCx, lakeCz},
+            7.5f, 24.0f, 165.0f,
+            kAlpineSpecies, 3, (Color){175, 232, 255, 255},
+            MauSonFlowerHeight, MauSonFlowerExcluded, NULL, 0xA19E55u);
+    }
+    else
+    {
+        for (int i = 0; i < clusterCount; i++)
+        {
+            float ang = (float)i * (6.2831853f / (float)clusterCount) + 0.28f;
+            float distR = 17.0f + (float)(i % 2) * 3.8f;
+            float fx = arenaCx + cosf(ang) * distR;
+            float fz = arenaCz + sinf(ang) * distR;
+            float fy = MapDem_GetGroundHeight(&s_dem, &s_ground, fx, fz);
+            int sp = (i % 3 == 1) ? MAP_FLOWER_SPECIES_U_LAN : ((i % 3 == 2) ? MAP_FLOWER_SPECIES_KIM_NGAN : MAP_FLOWER_SPECIES_TUYET_LIEN);
+            s_flowerClusters[i] = (MapFloraFlowerCluster){
+                .center = {fx, fy, fz},
+                .radius = {3.2f, 2.8f},
+                .flowerCount = flowersPerCluster,
+                .primarySpecies = sp,
+                .species = {(unsigned char)sp, (unsigned char)sp, MAP_FLOWER_SPECIES_TUYET_LIEN, MAP_FLOWER_SPECIES_KIM_NGAN},
+                .primaryColor = MapProp_GetFlowerSpeciesColor(sp, false),
+                .accentColor = MapProp_GetFlowerSpeciesColor(sp, true),
+                .discalCenterColor = {175, 232, 255, 255},
+            };
+        }
     }
     s_flowerCount = clusterCount * flowersPerCluster;
     MapFlora_GenerateFlowerPlacements(s_flowerPlacements, s_flowerCount, s_flowerClusters, clusterCount,
@@ -346,6 +386,10 @@ static void BuildMauSonFlora(void)
             .coLauOnReeds = true,
             .coLauPlumeDensity = 0.85f,
             .coLauPlumeTint = {235, 244, 255, 255},
+            .grassGrowthForm = MAP_MEADOW_GROWTH_ALPINE_MAT,
+            .shrubPlacements = s_shrubPlacements,
+            .shrubCount = s_shrubCount,
+            .shrubDrawDistance = 95.0f,
         });
 }
 
@@ -669,6 +713,37 @@ void InitMauSonMap(void)
     if (s_scaleXZ > 1.5f)
     {
         s_staticShadowCenter = s_floraWindowCenter;
+
+    // Alpine & boreal snow-laden tree grove framing spawn, frozen lake, and mountain ridges (physical meters around hubs)
+    {
+        float spX = 135.0f * s_scaleXZ;
+        float spZ = 112.5f * s_scaleXZ;
+        float lkX = MAU_SON_LAKE_X * s_scaleXZ;
+        float lkZ = MAU_SON_LAKE_Z * s_scaleXZ;
+        const MapTreePlacement kMauSonTrees[] = {
+            // Immediate foreground ring around spawn (14m - 36m in physical meters)
+            {.position = {spX - 18.0f, 0.0f, spZ - 14.0f}, .scaleXZ = 1.02f, .scaleY = 1.05f, .rotationDeg = 18.0f, .phase = 0.12f, .canopyTint = {232, 242, 252, 255}, .archetype = MAP_TREE_ALPINE_SNOW_SPRUCE},
+            {.position = {spX + 20.0f, 0.0f, spZ - 16.0f}, .scaleXZ = 1.08f, .scaleY = 1.12f, .rotationDeg = 85.0f, .phase = 0.34f, .canopyTint = {228, 240, 250, 255}, .archetype = MAP_TREE_COLUMNAR_TAIGA_SPRUCE},
+            {.position = {spX - 24.0f, 0.0f, spZ + 14.0f}, .scaleXZ = 1.04f, .scaleY = 1.06f, .rotationDeg = 142.0f, .phase = 0.56f, .canopyTint = {235, 244, 254, 255}, .archetype = MAP_TREE_OLD_GROWTH_FIR},
+            {.position = {spX + 18.0f, 0.0f, spZ + 20.0f}, .scaleXZ = 0.96f, .scaleY = 1.00f, .rotationDeg = 215.0f, .phase = 0.78f, .canopyTint = {238, 246, 255, 255}, .archetype = MAP_TREE_FROSTED_BIRCH},
+            {.position = {spX - 12.0f, 0.0f, spZ - 24.0f}, .scaleXZ = 1.10f, .scaleY = 1.08f, .rotationDeg = 278.0f, .phase = 0.21f, .canopyTint = {230, 240, 250, 255}, .archetype = MAP_TREE_GNARLED_MOUNTAIN_PINE},
+            {.position = {spX + 26.0f, 0.0f, spZ + 4.0f}, .scaleXZ = 1.02f, .scaleY = 1.02f, .rotationDeg = 310.0f, .phase = 0.44f, .canopyTint = {226, 236, 246, 255}, .archetype = MAP_TREE_FROZEN_DEADWOOD},
+            // Mid-ring around spawn (38m - 62m)
+            {.position = {spX - 42.0f, 0.0f, spZ - 34.0f}, .scaleXZ = 1.18f, .scaleY = 1.22f, .rotationDeg = 24.0f, .phase = 0.19f, .canopyTint = {232, 242, 252, 255}, .archetype = MAP_TREE_ALPINE_SNOW_SPRUCE},
+            {.position = {spX + 40.0f, 0.0f, spZ - 36.0f}, .scaleXZ = 1.15f, .scaleY = 1.20f, .rotationDeg = 112.0f, .phase = 0.51f, .canopyTint = {230, 242, 252, 255}, .archetype = MAP_TREE_COLUMNAR_TAIGA_SPRUCE},
+            {.position = {spX - 44.0f, 0.0f, spZ + 32.0f}, .scaleXZ = 1.22f, .scaleY = 1.18f, .rotationDeg = 188.0f, .phase = 0.83f, .canopyTint = {228, 240, 250, 255}, .archetype = MAP_TREE_OLD_GROWTH_FIR},
+            {.position = {spX + 42.0f, 0.0f, spZ + 34.0f}, .scaleXZ = 1.10f, .scaleY = 1.12f, .rotationDeg = 295.0f, .phase = 0.42f, .canopyTint = {236, 246, 255, 255}, .archetype = MAP_TREE_FROSTED_BIRCH},
+            // Lake & ridge boreal stands (physical meters around lake)
+            {.position = {lkX - 24.0f, 0.0f, lkZ - 14.0f}, .scaleXZ = 1.15f, .scaleY = 1.18f, .rotationDeg = 42.0f, .phase = 0.15f, .canopyTint = {232, 242, 252, 255}, .archetype = MAP_TREE_ALPINE_SNOW_SPRUCE},
+            {.position = {lkX + 22.0f, 0.0f, lkZ - 14.0f}, .scaleXZ = 1.06f, .scaleY = 1.10f, .rotationDeg = 128.0f, .phase = 0.39f, .canopyTint = {236, 246, 255, 255}, .archetype = MAP_TREE_FROSTED_BIRCH},
+            {.position = {lkX - 20.0f, 0.0f, lkZ + 18.0f}, .scaleXZ = 1.18f, .scaleY = 1.20f, .rotationDeg = 195.0f, .phase = 0.63f, .canopyTint = {228, 240, 250, 255}, .archetype = MAP_TREE_OLD_GROWTH_FIR},
+            {.position = {lkX + 26.0f, 0.0f, lkZ + 16.0f}, .scaleXZ = 1.08f, .scaleY = 1.15f, .rotationDeg = 255.0f, .phase = 0.87f, .canopyTint = {230, 242, 252, 255}, .archetype = MAP_TREE_COLUMNAR_TAIGA_SPRUCE},
+            {.position = {lkX - 32.0f, 0.0f, lkZ + 4.0f}, .scaleXZ = 1.12f, .scaleY = 1.08f, .rotationDeg = 330.0f, .phase = 0.28f, .canopyTint = {232, 242, 252, 255}, .archetype = MAP_TREE_GNARLED_MOUNTAIN_PINE},
+            {.position = {lkX + 12.0f, 0.0f, lkZ + 26.0f}, .scaleXZ = 1.00f, .scaleY = 1.00f, .rotationDeg = 64.0f, .phase = 0.72f, .canopyTint = {224, 234, 246, 255}, .archetype = MAP_TREE_FROZEN_DEADWOOD},
+        };
+        int treeCount = (int)(sizeof(kMauSonTrees) / sizeof(kMauSonTrees[0]));
+        s_trees = MapProp_CreateTreeSystem(kMauSonTrees, treeCount, &s_ground, kMapCenter, fminf(135.0f * s_scaleXZ, 195.0f));
+    }
         EnvShadow_InvalidateStaticCache();
     }
     CaptureMauSonStaticShadows();
@@ -700,6 +775,8 @@ void DrawMauSonMap(void)
     }
     if (!(s_skipMask & MAP_SKIP_FLORA))
         MapProp_DrawFloraSystem(&s_flora);
+    if (s_trees.ready)
+        MapProp_DrawTreeSystem(&s_trees, s_flora.time, s_flora.windDirection, s_flora.windStrength);
     if (!(s_skipMask & MAP_SKIP_SKY))
         MapProp_DrawSkyDome(&s_sky);
     if (!(s_skipMask & MAP_SKIP_CLOUDSEA))
@@ -763,6 +840,7 @@ void UnloadMauSonMap(void)
 
     MapProp_UnloadIceSurface(&s_glacialIce);
     MapProp_UnloadWaterSurface(&s_glacialWater);
+    MapProp_UnloadTreeSystem(&s_trees);
     MapProp_UnloadFloraSystem(&s_flora);
     MapProp_UnloadDebrisSystem(&s_debris);
     MapProp_UnloadRockSystem(&s_rocks);

@@ -376,7 +376,10 @@ typedef enum
     MAP_MEADOW_GROWTH_AUTO = 0,
     MAP_MEADOW_GROWTH_GRASS,
     MAP_MEADOW_GROWTH_REED,
-    MAP_MEADOW_GROWTH_PAMPAS
+    MAP_MEADOW_GROWTH_PAMPAS,
+    MAP_MEADOW_GROWTH_XERIC_TUSSOCK,
+    MAP_MEADOW_GROWTH_ALPINE_MAT,
+    MAP_MEADOW_GROWTH_METALLIC_SEDGE
 } MapMeadowGrowthForm;
 
 typedef enum
@@ -461,6 +464,11 @@ typedef struct
     float maxHeight;
     float yOffset;
     unsigned int seed;
+    Vector2 focalPoints[4];
+    int focalCount;
+    float focalCoreRadius;
+    float focalOuterRadius;
+    float focalOuterFloor;
 } MapMeadowDistribution;
 
 typedef float (*MapFoliageDensityFn)(float x, float z, void *userData);
@@ -527,6 +535,10 @@ typedef enum
     MAP_FLOWER_SPECIES_HUAN_Y = 6,     // Huân Y Thảo / Tử Vân Anh
     MAP_FLOWER_SPECIES_NGOC_LAN = 7,   // Ngọc Lan / Linh Thảo
     MAP_FLOWER_SPECIES_CO_LAU = 8,     // Bạch Miên Cỏ Lau / Pampas Plume
+    MAP_FLOWER_SPECIES_SA_LIEN = 9,    // Kim Sa Liên / Hoa Xương Rồng Sa Mạc
+    MAP_FLOWER_SPECIES_HOANG_THU = 10, // Hoàng Thứ Hoa / Hoa Gai Vàng Khô Hạn
+    MAP_FLOWER_SPECIES_HOA_LIEN = 11,  // Hỏa Liên Thảo / Hoa Lửa Dung Nham
+    MAP_FLOWER_SPECIES_KIM_NGAN = 12   // Kim Ngân Linh Thảo / Hoa Tinh Thể Bạc
 } MapFlowerSpeciesVariant;
 
 typedef struct
@@ -560,6 +572,8 @@ typedef struct
     bool ready;
     Texture2D instanceTexture;
     int instanceCount;
+    int instanceOffset;
+    bool ownsInstanceTexture;
     bool parametric;
 } MapFlowerField;
 
@@ -619,7 +633,99 @@ void MapProp_UnloadCoLauField(MapCoLauField *field);
 void MapProp_SetFlowerSpeciesOverride(int speciesVariant);
 int MapProp_GetFlowerSpeciesOverride(void);
 
-// --- Unified Flora System (Meadows, Reeds, Wildflower Colonies) ---------
+// --- Biome Small Shrubs & Xerophytic Scrub System (map_props_shrubs.inl) -
+
+typedef enum
+{
+    MAP_SHRUB_XERIC_THORN = 0,  // Bụi gai sa mạc / Hoàng Thứ (Arid thorn acacia scrub)
+    MAP_SHRUB_DESERT_SAGE,      // Bụi ngải đắng / Sa Thảo (Silver-grey desert sagebrush)
+    MAP_SHRUB_ARID_AGAVE,       // Bụi dứa dại / Lưỡi Hổ (Succulent sword-rosette agave)
+    MAP_SHRUB_GNARLED_DEADWOOD, // Bụi gỗ khô vặn xoắn (Wind-blasted desert/volcanic deadwood)
+    MAP_SHRUB_LUSH_AZALEA,      // Bụi đỗ quyên / Trà rừng (Lush valley flowering shrub)
+    MAP_SHRUB_ALPINE_JUNIPER,   // Bụi tùng tuyết lùn (Prostrate frost-rimmed alpine juniper)
+    MAP_SHRUB_PRICKLY_PEAR,     // Xương rồng tai thỏ (Opuntia littoralis branching cladodes + blooms & fruit)
+    MAP_SHRUB_MEADOW_HAWTHORN,  // Táo gai thảo nguyên (Crataegus monogyna white-blossom thorn bush)
+    MAP_SHRUB_MEADOW_LILAC,     // Tử đinh hương dại (Syringa vulgaris violet flower panicles)
+    MAP_SHRUB_MEADOW_DOG_ROSE,  // Hoa hồng tầm xuân (Rosa canina arching canes + pink wild roses)
+    MAP_SHRUB_MEADOW_ELDERBERRY,// Cơm cháy thảo nguyên (Sambucus nigra creamy flat umbel corymbs)
+    MAP_SHRUB_MEADOW_ROWAN,     // Thanh lương trà bụi (Sorbus aucuparia feathery leaves + vermilion berries)
+    MAP_SHRUB_ARCHETYPE_COUNT
+} MapShrubArchetype;
+
+typedef struct
+{
+    Vector3 position;
+    float scaleXZ;
+    float scaleY;
+    float rotationDeg;
+    float phase;
+    float dryness;      // 0.0 = lush, 1.0 = parched arid
+    float scorch;       // 0.0 = normal, 1.0 = charred volcanic/ember
+    float frost;        // 0.0 = normal, 1.0 = snow/rime crusted
+    Color foliageTint;
+    Color accentTint;   // Blossom buds / thorns / succulent tip tint
+    MapShrubArchetype archetype;
+} MapShrubPlacement;
+
+typedef struct
+{
+    Vector2 minBounds;
+    Vector2 maxBounds;
+    int maxCount;
+    float minSpacing;
+    unsigned int seed;
+    float aridWeight;
+    float volcanicWeight;
+    float alpineWeight;
+    float metallicWeight;
+    const MapRockItem *rocks;
+    int rockCount;
+    float (*sampleWaterClearance)(float x, float z, void *ctx);
+    float (*customDensityFn)(float x, float z, void *ctx);
+    void *ctx;
+    bool useStratifiedGrid;
+    Vector2 focalPoints[4];
+    int focalCount;
+    float focalCoreRadius;
+} MapShrubDistributionConfig;
+
+typedef struct
+{
+    Model lod0Models[MAP_SHRUB_ARCHETYPE_COUNT];
+    Model lod1Models[MAP_SHRUB_ARCHETYPE_COUNT];
+    bool modelLoaded[MAP_SHRUB_ARCHETYPE_COUNT];
+    Texture2D instanceTextures[MAP_SHRUB_ARCHETYPE_COUNT][2]; // [arch][0=LOD0, 1=LOD1]
+    int totalCounts[MAP_SHRUB_ARCHETYPE_COUNT];
+    int visibleCounts[MAP_SHRUB_ARCHETYPE_COUNT][2];
+    void *internalState; // CPU culling/compaction state
+    float drawDistance;
+    float lodDistance;
+    bool ready;
+} MapShrubSystem;
+
+int MapFlora_GenerateShrubPlacements(
+    MapShrubPlacement *outPlacements,
+    const MapGroundSurface *ground,
+    Vector3 groundCenter,
+    MapShrubDistributionConfig config);
+
+float MapFlora_EvaluateShrubUnderstorey(
+    float x, float z,
+    const MapShrubPlacement *shrubs,
+    int shrubCount);
+
+MapShrubSystem MapProp_CreateShrubSystem(
+    const MapShrubPlacement *placements, int count,
+    const MapGroundSurface *ground, Vector3 worldCenter,
+    float drawDistance);
+void MapProp_PrepareShrubSystem(MapShrubSystem *sys, Vector3 worldOffset);
+void MapProp_DrawShrubSystem(const MapShrubSystem *sys, Vector3 worldOffset,
+                             float time, Vector2 windDirection, float windStrength);
+void MapProp_DrawShrubShadowCasters(const MapShrubSystem *sys, Vector3 worldOffset,
+                                    float time, Vector2 windDirection, float windStrength);
+void MapProp_UnloadShrubSystem(MapShrubSystem *sys);
+
+// --- Unified Flora System (Meadows, Reeds, Wildflower Colonies, Shrubs) -
 
 typedef struct
 {
@@ -661,6 +767,11 @@ typedef struct
     bool coLauOnReeds; // When true (or by default when reeds present), spawns Cỏ Lau plumes along riparian stream/river margins (ven suối)
     float coLauPlumeDensity;
     Color coLauPlumeTint;
+
+    MapMeadowGrowthForm grassGrowthForm;
+    const MapShrubPlacement *shrubPlacements;
+    int shrubCount;
+    float shrubDrawDistance;
 } MapFloraStyle;
 
 typedef struct
@@ -677,6 +788,9 @@ typedef struct
 
     MapFlowerField *flowerFields;
     int flowerClusterCount;
+
+    MapShrubSystem shrubs;
+    int shrubCount;
 
     float time;
     Vector2 windDirection;
@@ -699,6 +813,11 @@ typedef struct
     int flowerClusterCount;
     float (*edgeTaperFn)(float x, float z, void *userData);
     void *edgeTaperUserData;
+    Vector2 focalPoints[4];
+    int focalCount;
+    float focalCoreRadius;
+    float focalOuterRadius;
+    float focalOuterFloor;
 } MapFloraMeadowConfig;
 
 int MapFlora_GenerateMeadowPlacements(
@@ -713,6 +832,23 @@ void MapFlora_GenerateFlowerPlacements(
     int totalFlowerCount,
     const MapFloraFlowerCluster *clusters,
     int clusterCount,
+    float (*sampleHeight)(float x, float z, void *ctx),
+    bool (*isExcluded)(float x, float z, void *ctx),
+    void *ctx,
+    unsigned int seed);
+
+void MapFlora_GenerateOpenWorldFlowerClusters(
+    MapFloraFlowerCluster *outClusters,
+    int clusterCount,
+    int flowersPerCluster,
+    Vector2 primaryCenter,
+    Vector2 secondaryCenter,
+    float nearRadiusMin,
+    float nearRadiusMax,
+    float farRadiusMax,
+    const int *speciesList,
+    int speciesCount,
+    Color discalCenterColor,
     float (*sampleHeight)(float x, float z, void *ctx),
     bool (*isExcluded)(float x, float z, void *ctx),
     void *ctx,
@@ -1227,6 +1363,14 @@ typedef enum
     MAP_TREE_BAMBOO,
     MAP_TREE_PEACH_BLOSSOM,
     MAP_TREE_WEEPING_WILLOW,
+    MAP_TREE_MEADOW_OAK,            // Sồi cổ thụ thảo nguyên (Broad spreading oak with emerald leaf fans)
+    MAP_TREE_MEADOW_BIRCH,          // Bạch dương thảo nguyên (Slender white-barked birch with spring-jade fans)
+    MAP_TREE_ALPINE_SNOW_SPRUCE,    // Thông tuyết cao sơn (Alpine snow spruce with drooping snow-laden whorls)
+    MAP_TREE_GNARLED_MOUNTAIN_PINE, // Tùng tuyết cổ thụ (S-curved Huangshan pine with tiered snow boughs)
+    MAP_TREE_FROSTED_BIRCH,         // Bạch dương băng giá (Silver-white birch with dark base & frosted amber fans)
+    MAP_TREE_COLUMNAR_TAIGA_SPRUCE, // Bách tuyết cột đứng (Slender boreal taiga spire with dense snow whorls)
+    MAP_TREE_OLD_GROWTH_FIR,        // Vân sam cổ thụ tuyết phủ (Heavy-snow broad old-growth alpine fir)
+    MAP_TREE_FROZEN_DEADWOOD,       // Cổ mộc băng giá (Ancient leafless frost-rimmed alpine deadwood)
     MAP_TREE_ARCHETYPE_COUNT
 } MapTreeArchetype;
 

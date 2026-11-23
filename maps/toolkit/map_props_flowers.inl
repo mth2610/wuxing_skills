@@ -20,7 +20,7 @@ void MapProp_SetFlowerSpeciesOverride(int speciesVariant)
     if (speciesVariant < 0)
         s_flowerSpeciesOverride = -1;
     else
-        s_flowerSpeciesOverride = speciesVariant & 7;
+        s_flowerSpeciesOverride = (speciesVariant <= 12) ? speciesVariant : (speciesVariant & 7);
 }
 
 int MapProp_GetFlowerSpeciesOverride(void)
@@ -33,8 +33,9 @@ static inline int Nature_ResolveFlowerVariant(const MapFlowerPlacement *flower)
 {
     Nature_InitFlowerSpeciesOverride();
     if (s_flowerSpeciesOverride >= 0)
-        return s_flowerSpeciesOverride & 7;
-    return ((int)flower->bloomVariant) & 7;
+        return (s_flowerSpeciesOverride <= 12) ? s_flowerSpeciesOverride : (s_flowerSpeciesOverride & 7);
+    int v = (int)flower->bloomVariant;
+    return (v >= 0 && v <= 12) ? v : (v & 7);
 }
 
 static inline Color Nature_ResolveFlowerPetalColor(const MapFlowerPlacement *flower, int resolvedVariant)
@@ -70,6 +71,7 @@ static int s_flowerInstanceTexLoc[2] = {-1, -1};
 static int s_flowerSpeciesOverrideLoc[2] = {-1, -1};
 static int s_flowerLodStrideLoc[2] = {-1, -1};
 static int s_flowerWorldOffsetLoc[2] = {-1, -1};
+static int s_flowerBaseOffsetLoc[2] = {-1, -1};
 
 static Shader FlowerParametric_GetShader(bool shadow)
 {
@@ -95,6 +97,7 @@ static Shader FlowerParametric_GetShader(bool shadow)
             s_flowerSpeciesOverrideLoc[pass] = GetShaderLocation(*shader, "u_speciesOverride");
             s_flowerLodStrideLoc[pass] = GetShaderLocation(*shader, "u_lodStride");
             s_flowerWorldOffsetLoc[pass] = GetShaderLocation(*shader, "u_worldOffset");
+            s_flowerBaseOffsetLoc[pass] = GetShaderLocation(*shader, "u_instanceBaseOffset");
             if (!shadow)
             {
                 MapShadow_ConfigureShader(*shader);
@@ -730,6 +733,68 @@ static void Nature_AddFlowerCenterDome(Mesh *mesh, int *cursor,
     }
 }
 
+static void FlowerParametric_PackPixels(const MapFlowerPlacement *placements, int count, float *pixels, int baseIndex)
+{
+    for (int i = 0; i < count; i++)
+    {
+        const MapFlowerPlacement *flower = &placements[i];
+        int dstIdx = baseIndex + i;
+        int row = dstIdx >> 8;
+        int col = (dstIdx & 255) * 2;
+        int base = (row * 512 + col) * 4;
+        float fracPhase = flower->phase - floorf(flower->phase);
+        if (fracPhase < 0.0f)
+            fracPhase += 1.0f;
+        int rawVar = (int)flower->bloomVariant;
+        if (rawVar < 0 || rawVar > 12)
+            rawVar &= 7;
+        float pScale = flower->petalLengthScale > 0.0f ? flower->petalLengthScale : 1.0f;
+        int packedRGB = ((int)flower->petalColor.r << 16) |
+                        ((int)flower->petalColor.g << 8) |
+                        (int)flower->petalColor.b;
+
+        pixels[base + 0] = flower->position.x;
+        pixels[base + 1] = flower->position.y;
+        pixels[base + 2] = flower->position.z;
+        pixels[base + 3] = (float)rawVar * 100.0f + fminf(fracPhase, 0.9999f);
+
+        pixels[base + 4] = flower->height;
+        pixels[base + 5] = flower->bloomRadius * pScale;
+        pixels[base + 6] = flower->rotationDeg * DEG2RAD;
+        pixels[base + 7] = (float)packedRGB;
+    }
+}
+
+static Texture2D FlowerParametric_CreateSharedAtlas(const MapFlowerPlacement *placements, int totalCount)
+{
+    Texture2D tex = {0};
+    if (!placements || totalCount <= 0)
+        return tex;
+    int rows = (totalCount + 255) / 256;
+    if (rows < 1)
+        rows = 1;
+    float *pixels = MemAlloc((unsigned int)(rows * 512 * 4) * sizeof(float));
+    if (!pixels)
+        return tex;
+    memset(pixels, 0, (size_t)(rows * 512 * 4) * sizeof(float));
+    FlowerParametric_PackPixels(placements, totalCount, pixels, 0);
+    Image instImg = {
+        .data = pixels,
+        .width = 512,
+        .height = rows,
+        .mipmaps = 1,
+        .format = PIXELFORMAT_UNCOMPRESSED_R32G32B32A32,
+    };
+    tex = LoadTextureFromImage(instImg);
+    MemFree(pixels);
+    if (tex.id != 0)
+    {
+        SetTextureFilter(tex, TEXTURE_FILTER_POINT);
+        SetTextureWrap(tex, TEXTURE_WRAP_CLAMP);
+    }
+    return tex;
+}
+
 MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, int count,
                                          Color stemColor, Color centerColor,
                                          const char *petalTexturePath, float alphaCutoff,
@@ -788,31 +853,7 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
         if (pixels)
         {
             memset(pixels, 0, (size_t)(rows * 512 * 4) * sizeof(float));
-            for (int i = 0; i < count; i++)
-            {
-                const MapFlowerPlacement *flower = &placements[i];
-                int row = i >> 8;
-                int col = (i & 255) * 2;
-                int base = (row * 512 + col) * 4;
-                float fracPhase = flower->phase - floorf(flower->phase);
-                if (fracPhase < 0.0f)
-                    fracPhase += 1.0f;
-                int rawVar = ((int)flower->bloomVariant) & 7;
-                float pScale = flower->petalLengthScale > 0.0f ? flower->petalLengthScale : 1.0f;
-                int packedRGB = ((int)flower->petalColor.r << 16) |
-                                ((int)flower->petalColor.g << 8) |
-                                (int)flower->petalColor.b;
-
-                pixels[base + 0] = flower->position.x;
-                pixels[base + 1] = flower->position.y;
-                pixels[base + 2] = flower->position.z;
-                pixels[base + 3] = (float)rawVar * 100.0f + fminf(fracPhase, 0.9999f);
-
-                pixels[base + 4] = flower->height;
-                pixels[base + 5] = flower->bloomRadius * pScale;
-                pixels[base + 6] = flower->rotationDeg * DEG2RAD;
-                pixels[base + 7] = (float)packedRGB;
-            }
+            FlowerParametric_PackPixels(placements, count, pixels, 0);
             Image instImg = {
                 .data = pixels,
                 .width = 512,
@@ -828,6 +869,8 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
                 SetTextureWrap(field.instanceTexture, TEXTURE_WRAP_CLAMP);
                 field.parametric = true;
                 field.instanceCount = count;
+                field.instanceOffset = 0;
+                field.ownsInstanceTexture = true;
                 field.farReady = true;
                 field.shadowReady = false;
                 field.alphaCutoff = 0.0f;
@@ -1567,6 +1610,8 @@ void MapProp_DrawFlowerFieldBatch(MapFlowerField *fields, int fieldCount, Vector
                 SetShaderValue(shader, s_flowerLodStrideLoc[0], &stride, SHADER_UNIFORM_INT);
                 activeStride = stride;
             }
+            if (s_flowerBaseOffsetLoc[0] >= 0)
+                SetShaderValue(shader, s_flowerBaseOffsetLoc[0], &field->instanceOffset, SHADER_UNIFORM_INT);
 
             if (activeTexId != field->instanceTexture.id)
             {
@@ -1671,6 +1716,7 @@ void MapProp_DrawFlowerFieldShadowCasterBatch(MapFlowerField *fields, int fieldC
     Vector3 shadowSweepOffset = {sunDir.x * 1.8f, 0.0f, sunDir.z * 1.8f};
 
     bool paramBound = false;
+    Shader paramShd = {0};
     int shadowLod = (quality >= GFX_HIGH) ? 1 : 2;
     int shadowStride = (quality >= GFX_HIGH) ? 2 : 3;
     unsigned int activeTexId = 0;
@@ -1702,29 +1748,31 @@ void MapProp_DrawFlowerFieldShadowCasterBatch(MapFlowerField *fields, int fieldC
 
         if (!paramBound)
         {
-            Shader shd = FlowerParametric_GetShader(true);
-            Nature_BeginWindReceiverShader(shd);
-            Nature_UpdateShadowShader(shd, time, windDirection, windStrength,
+            paramShd = FlowerParametric_GetShader(true);
+            Nature_BeginWindReceiverShader(paramShd);
+            Nature_UpdateShadowShader(paramShd, time, windDirection, windStrength,
                                       false, 0.0f, NATURE_WIND_RESPONSE_FLOWER);
             Matrix model = MatrixTranslate(worldOffset.x, worldOffset.y, worldOffset.z);
             Matrix mvp = MatrixMultiply(model, EnvShadow_GetLightVP());
-            SetShaderValueMatrix(shd, shd.locs[SHADER_LOC_MATRIX_MVP], mvp);
+            SetShaderValueMatrix(paramShd, paramShd.locs[SHADER_LOC_MATRIX_MVP], mvp);
             if (s_flowerWorldOffsetLoc[1] >= 0)
-                SetShaderValue(shd, s_flowerWorldOffsetLoc[1], &worldOffset, SHADER_UNIFORM_VEC3);
+                SetShaderValue(paramShd, s_flowerWorldOffsetLoc[1], &worldOffset, SHADER_UNIFORM_VEC3);
             int spOverride = MapProp_GetFlowerSpeciesOverride();
             if (s_flowerSpeciesOverrideLoc[1] >= 0)
-                SetShaderValue(shd, s_flowerSpeciesOverrideLoc[1], &spOverride, SHADER_UNIFORM_INT);
+                SetShaderValue(paramShd, s_flowerSpeciesOverrideLoc[1], &spOverride, SHADER_UNIFORM_INT);
             if (s_flowerLodStrideLoc[1] >= 0)
-                SetShaderValue(shd, s_flowerLodStrideLoc[1], &shadowStride, SHADER_UNIFORM_INT);
+                SetShaderValue(paramShd, s_flowerLodStrideLoc[1], &shadowStride, SHADER_UNIFORM_INT);
             int unit0 = 0;
             if (s_flowerInstanceTexLoc[1] >= 0)
-                SetShaderValue(shd, s_flowerInstanceTexLoc[1], &unit0, SHADER_UNIFORM_INT);
+                SetShaderValue(paramShd, s_flowerInstanceTexLoc[1], &unit0, SHADER_UNIFORM_INT);
             rlDisableBackfaceCulling();
             rlEnableVertexArray(s_flowerTemplates[shadowLod].vao);
             paramBound = true;
         }
 
         int instances = (field->instanceCount + shadowStride - 1) / shadowStride;
+        if (s_flowerBaseOffsetLoc[1] >= 0)
+            SetShaderValue(paramShd, s_flowerBaseOffsetLoc[1], &field->instanceOffset, SHADER_UNIFORM_INT);
         if (activeTexId != field->instanceTexture.id)
         {
             rlActiveTextureSlot(0);
@@ -1814,11 +1862,14 @@ void MapProp_UnloadFlowerField(MapFlowerField *field)
 {
     if (!field || !field->ready)
         return;
-    if (field->instanceTexture.id != 0)
+    if (field->instanceTexture.id != 0 && field->ownsInstanceTexture)
     {
         UnloadTexture(field->instanceTexture);
         field->instanceTexture = (Texture2D){0};
     }
+    field->instanceTexture = (Texture2D){0};
+    field->ownsInstanceTexture = false;
+    field->instanceOffset = 0;
     if (!field->parametric)
     {
         if (field->shadowReady)

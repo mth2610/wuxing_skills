@@ -203,13 +203,25 @@ static void BuildPhuQuocRocksAndOres(void)
 #define PHU_QUOC_MAX_GRASS 36000
 #define PHU_QUOC_MAX_REEDS 320
 #define PHU_QUOC_MAX_FLOWERS 800
+#define PHU_QUOC_MAX_SHRUBS 390
 static MapMeadowPlacement s_grassPlacements[PHU_QUOC_MAX_GRASS];
 static MapMeadowPlacement s_reedPlacements[PHU_QUOC_MAX_REEDS];
 static int s_grassCount = 0;
 static int s_reedCount = 0;
 static MapFlowerPlacement s_flowerPlacements[PHU_QUOC_MAX_FLOWERS];
 static int s_flowerCount = 0;
+static MapShrubPlacement s_shrubPlacements[PHU_QUOC_MAX_SHRUBS];
+static int s_shrubCount = 0;
 static MapDebrisPlacement s_scaledDebris[PHU_QUOC_DEBRIS_COUNT > 0 ? PHU_QUOC_DEBRIS_COUNT : 1];
+
+static float PhuQuocShrubWaterClearance(float x, float z, void *ctx)
+{
+    (void)ctx;
+    float wY = 0.0f, wD = 0.0f;
+    if (MapDem_GetWaterInfo(&s_dem, &s_ground, x, z, &wY, &wD))
+        return 0.0f;
+    return 1.0f;
+}
 
 static void BuildPhuQuocDebris(void)
 {
@@ -257,18 +269,14 @@ static void BuildPhuQuocFlora(void)
     const float grassSpacing = 1.35f;
     const int maxGrass = 2400;
 #else
-    float grassSpacing = 0.72f;
+    float grassSpacing = (s_scaleXZ > 1.5f) ? 0.62f : 0.72f;
     const int maxGrass = PHU_QUOC_MAX_GRASS;
-    if (s_scaleXZ > 1.5f)
-    {
-        float halfWin = 200.0f;
-        minB.x = fmaxf(14.0f * s_scaleXZ, s_floraWindowCenter.x - halfWin);
-        minB.y = fmaxf(14.0f * s_scaleXZ, s_floraWindowCenter.z - halfWin);
-        maxB.x = fminf(MAP_WIDTH - 14.0f * s_scaleXZ, s_floraWindowCenter.x + halfWin);
-        maxB.y = fminf(MAP_DEPTH - 14.0f * s_scaleXZ, s_floraWindowCenter.z + halfWin);
-        grassSpacing = 0.68f;
-    }
 #endif
+    float lakeCx = PHU_QUOC_LAKE_X * s_scaleXZ;
+    float lakeCz = PHU_QUOC_LAKE_Z * s_scaleXZ;
+    const float arenaCx = PHU_QUOC_ARENA_X * s_scaleXZ;
+    const float arenaCz = PHU_QUOC_ARENA_Z * s_scaleXZ;
+
     MapMeadowDistribution dist = {
         .minBounds = minB,
         .maxBounds = maxB,
@@ -280,6 +288,11 @@ static void BuildPhuQuocFlora(void)
         .maxHeight = 0.38f,
         .yOffset = 0.0f,
         .seed = 0x7A4B91u,
+        .focalPoints = {{arenaCx, arenaCz}, {lakeCx, lakeCz}},
+        .focalCount = (s_scaleXZ > 1.5f) ? 2 : 0,
+        .focalCoreRadius = 68.0f,
+        .focalOuterRadius = 210.0f,
+        .focalOuterFloor = 0.14f,
     };
     s_grassCount = MapProp_GenerateMeadowPlacements(
         s_grassPlacements, maxGrass,
@@ -288,8 +301,6 @@ static void BuildPhuQuocFlora(void)
 
     // Shoreline reeds + silver-white Cỏ Lau plumes around Kim Tinh Đàm placer lagoon
     s_reedCount = 0;
-    float lakeCx = PHU_QUOC_LAKE_X * s_scaleXZ;
-    float lakeCz = PHU_QUOC_LAKE_Z * s_scaleXZ;
     float scanR = 24.0f * s_scaleXZ;
     unsigned int rRng = 0x628194u;
     for (int a = 0; a < 440 && s_reedCount < PHU_QUOC_MAX_REEDS; a++)
@@ -327,31 +338,59 @@ static void BuildPhuQuocFlora(void)
         }
     }
 
-    // 7 colonies of Kim Cúc (Golden Chrysanthemum) & Bạch Cúc (Silver-White Daisy)
-    static MapFloraFlowerCluster s_flowerClusters[7];
-    const int clusterCount = 7;
+    s_shrubCount = MapFlora_GenerateShrubPlacements(
+        s_shrubPlacements, &s_ground, kMapCenter,
+        (MapShrubDistributionConfig){
+            .minBounds = minB,
+            .maxBounds = maxB,
+            .maxCount = (s_scaleXZ > 1.5f) ? PHU_QUOC_MAX_SHRUBS : 105,
+            .minSpacing = 2.80f,
+            .seed = 0x7A4C01u,
+            .metallicWeight = 1.0f,
+            .rocks = s_rocks.items,
+            .rockCount = s_rocks.count,
+            .sampleWaterClearance = PhuQuocShrubWaterClearance,
+            .useStratifiedGrid = (s_scaleXZ > 1.5f),
+            .focalPoints = {{arenaCx, arenaCz}, {lakeCx, lakeCz}},
+            .focalCount = (s_scaleXZ > 1.5f) ? 2 : 0,
+            .focalCoreRadius = 65.0f,
+        });
+
+    // Colonies of Kim Cúc, Kim Ngân Linh Thảo & Hoàng Thứ Hoa
+    static MapFloraFlowerCluster s_flowerClusters[15];
+    const int clusterCount = (s_scaleXZ > 1.5f) ? 15 : 7;
     const int flowersPerCluster = 52;
-    const float arenaCx = PHU_QUOC_ARENA_X * s_scaleXZ;
-    const float arenaCz = PHU_QUOC_ARENA_Z * s_scaleXZ;
-    for (int i = 0; i < clusterCount; i++)
+    if (s_scaleXZ > 1.5f)
     {
-        float ang = (float)i * (6.2831853f / (float)clusterCount) + 0.25f;
-        float distR = (17.5f + (float)(i % 2) * 3.6f) * s_scaleXZ;
-        float fx = arenaCx + cosf(ang) * distR;
-        float fz = arenaCz + sinf(ang) * distR;
-        float fy = MapDem_GetGroundHeight(&s_dem, &s_ground, fx, fz);
-        bool isSilver = (i % 3 == 1);
-        int sp = isSilver ? MAP_FLOWER_SPECIES_TUYET_LIEN : MAP_FLOWER_SPECIES_KIM_CUC;
-        s_flowerClusters[i] = (MapFloraFlowerCluster){
-            .center = {fx, fy, fz},
-            .radius = {3.2f * s_scaleXZ, 2.8f * s_scaleXZ},
-            .flowerCount = flowersPerCluster,
-            .primarySpecies = sp,
-            .species = {(unsigned char)sp, (unsigned char)sp, (unsigned char)sp, (unsigned char)sp},
-            .primaryColor = isSilver ? (Color){236, 242, 250, 255} : (Color){248, 206, 72, 255},
-            .accentColor = isSilver ? (Color){206, 218, 236, 255} : (Color){255, 232, 134, 255},
-            .discalCenterColor = {245, 190, 62, 255},
-        };
+        static const int kMetallicSpecies[3] = {MAP_FLOWER_SPECIES_KIM_CUC, MAP_FLOWER_SPECIES_KIM_NGAN, MAP_FLOWER_SPECIES_HOANG_THU};
+        MapFlora_GenerateOpenWorldFlowerClusters(
+            s_flowerClusters, clusterCount, flowersPerCluster,
+            (Vector2){arenaCx, arenaCz}, (Vector2){lakeCx, lakeCz},
+            7.5f, 24.0f, 165.0f,
+            kMetallicSpecies, 3, (Color){245, 190, 62, 255},
+            PhuQuocFlowerHeight, PhuQuocFlowerExcluded, NULL, 0xC49F12u);
+    }
+    else
+    {
+        for (int i = 0; i < clusterCount; i++)
+        {
+            float ang = (float)i * (6.2831853f / (float)clusterCount) + 0.25f;
+            float distR = 17.5f + (float)(i % 2) * 3.6f;
+            float fx = arenaCx + cosf(ang) * distR;
+            float fz = arenaCz + sinf(ang) * distR;
+            float fy = MapDem_GetGroundHeight(&s_dem, &s_ground, fx, fz);
+            int sp = (i % 3 == 1) ? MAP_FLOWER_SPECIES_KIM_NGAN : ((i % 3 == 2) ? MAP_FLOWER_SPECIES_HOANG_THU : MAP_FLOWER_SPECIES_KIM_CUC);
+            s_flowerClusters[i] = (MapFloraFlowerCluster){
+                .center = {fx, fy, fz},
+                .radius = {3.2f, 2.8f},
+                .flowerCount = flowersPerCluster,
+                .primarySpecies = sp,
+                .species = {(unsigned char)sp, (unsigned char)sp, MAP_FLOWER_SPECIES_KIM_NGAN, MAP_FLOWER_SPECIES_KIM_CUC},
+                .primaryColor = MapProp_GetFlowerSpeciesColor(sp, false),
+                .accentColor = MapProp_GetFlowerSpeciesColor(sp, true),
+                .discalCenterColor = {245, 190, 62, 255},
+            };
+        }
     }
     s_flowerCount = clusterCount * flowersPerCluster;
     MapFlora_GenerateFlowerPlacements(s_flowerPlacements, s_flowerCount, s_flowerClusters, clusterCount,
@@ -382,6 +421,10 @@ static void BuildPhuQuocFlora(void)
             .coLauOnReeds = true,
             .coLauPlumeDensity = 0.85f,
             .coLauPlumeTint = {244, 238, 220, 255},
+            .grassGrowthForm = MAP_MEADOW_GROWTH_METALLIC_SEDGE,
+            .shrubPlacements = s_shrubPlacements,
+            .shrubCount = s_shrubCount,
+            .shrubDrawDistance = 95.0f,
         });
 }
 

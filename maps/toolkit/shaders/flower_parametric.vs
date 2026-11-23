@@ -20,6 +20,7 @@ uniform int u_interactionEnabled;
 uniform sampler2D u_flowerInstances;
 uniform int u_speciesOverride;
 uniform int u_lodStride;
+uniform int u_instanceBaseOffset;
 
 out vec3 fragPosition;
 out vec3 fragNormal;
@@ -156,6 +157,30 @@ void EvaluateFlowerGeometry(
         wid = petalR * (isInner ? 0.16 : 0.24) * sinPiT;
         cupY = t * len * 0.85;
         radialDist = sin(t * 1.45) * petalR * 0.35;
+    } else if (sp == 9) {
+        // Kim Sa Liên: multi-layered cupped desert cactus blossom
+        len = petalR * (isInner ? 0.72 : 1.08);
+        wid = petalR * (isInner ? 0.42 : 0.52) * sinShaped;
+        cupY = (t * sqrt(t)) * petalR * (isInner ? 0.82 : 0.56);
+        radialDist = sin(t * 1.32) * len * (isInner ? 0.68 : 0.92);
+    } else if (sp == 10) {
+        // Hoàng Thứ Hoa: compact golden desert puff
+        len = petalR * (isInner ? 0.64 : 0.88);
+        wid = petalR * (isInner ? 0.44 : 0.48) * sinPiT;
+        cupY = sin(t * 2.4) * petalR * 0.45;
+        radialDist = sin(t * 1.55) * len * 0.76;
+    } else if (sp == 11) {
+        // Hỏa Liên Thảo: sharp recurved volcanic flame-lily petals
+        len = petalR * (isInner ? 1.32 : 1.22);
+        wid = petalR * (isInner ? 0.10 : 0.26) * sinPiT * (1.0 - t * 0.28);
+        cupY = sinPiT * (petalR * 0.48) - (t2 * sqrt(sqrtT)) * (petalR * 0.44);
+        radialDist = t * len;
+    } else if (sp == 12) {
+        // Kim Ngân Linh Thảo: crisp faceted crystalline diamond petals
+        len = petalR * (isInner ? 0.62 : 1.14);
+        wid = petalR * (isInner ? 0.26 : 0.38) * (1.0 - abs(t - 0.38) * 1.35);
+        cupY = t * petalR * (isInner ? 0.42 : 0.24);
+        radialDist = t * len;
     } else {
         len = petalR * (isInner ? 0.56 : 1.05);
         wid = petalR * (isInner ? 0.26 : 0.48) * sinShaped;
@@ -178,7 +203,7 @@ void EvaluateFlowerGeometry(
 
 void main()
 {
-    int instanceId = gl_InstanceID * max(u_lodStride, 1);
+    int instanceId = u_instanceBaseOffset + gl_InstanceID * max(u_lodStride, 1);
     int col = (instanceId & 255) * 2;
     int row = instanceId >> 8;
 
@@ -189,8 +214,8 @@ void main()
     int rawSpecies = int(floor(tex0.w * 0.01 + 0.01));
     float seed = clamp(tex0.w - float(rawSpecies) * 100.0, 0.0, 0.9999);
     int sp = (u_speciesOverride >= 0)
-        ? ((u_speciesOverride <= 8) ? u_speciesOverride : (u_speciesOverride & 7))
-        : ((rawSpecies <= 8) ? rawSpecies : (rawSpecies & 7));
+        ? ((u_speciesOverride <= 12) ? u_speciesOverride : (u_speciesOverride & 7))
+        : ((rawSpecies <= 12) ? rawSpecies : (rawSpecies & 7));
 
     float stemH = max(tex1.x, 0.16);
     float petalR = clamp(tex1.y * 0.92, 0.042, stemH * 0.16);

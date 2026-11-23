@@ -755,8 +755,16 @@ static bool NatureParametric_Create(MapMeadowSurface *meadow,
                     if (wrappedAngle < 0.0f) wrappedAngle += 6.2831853f;
                     float qAngle = floorf((wrappedAngle / 6.2831853f) * 4096.0f);
                     if (qAngle > 4095.0f) qAngle = 4095.0f;
+                    int biomeForm = 0;
+                    if (style.growthForm == MAP_MEADOW_GROWTH_XERIC_TUSSOCK)
+                        biomeForm = 1;
+                    else if (style.growthForm == MAP_MEADOW_GROWTH_ALPINE_MAT)
+                        biomeForm = 2;
+                    else if (style.growthForm == MAP_MEADOW_GROWTH_METALLIC_SEDGE)
+                        biomeForm = 3;
                     float packedMeta = qAngle + (d.isReed ? 4096.0f : 0.0f) +
-                                       (d.isSeedhead ? 8192.0f : 0.0f);
+                                       (d.isSeedhead ? 8192.0f : 0.0f) +
+                                       (float)(biomeForm * 16384);
                     const Vector4 values[5] = {
                         {d.p0.x, d.p0.y, d.p0.z, d.phase},
                         {d.p1.x, d.p1.y, d.p1.z, d.width},

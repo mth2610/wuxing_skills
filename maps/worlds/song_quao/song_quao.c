@@ -335,16 +335,7 @@ static void BuildFloraPlacements(void)
     }
     Vector2 minB = {10.0f, 8.0f};
     Vector2 maxB = {MAP_WIDTH - 10.0f, MAP_DEPTH - 8.0f};
-    float spacing = 0.30f;
-    if (s_scaleXZ > 1.5f)
-    {
-        float halfWin = 160.0f;
-        minB.x = fmaxf(10.0f, s_floraWindowCenter.x - halfWin);
-        minB.y = fmaxf(8.0f, s_floraWindowCenter.z - halfWin);
-        maxB.x = fminf(MAP_WIDTH - 10.0f, s_floraWindowCenter.x + halfWin);
-        maxB.y = fminf(MAP_DEPTH - 8.0f, s_floraWindowCenter.z + halfWin);
-        spacing = 0.52f;
-    }
+    float spacing = (s_scaleXZ > 1.5f) ? 0.44f : 0.30f;
     // 1. Lush interlocking meadow across the floating island plateau
     s_grassCount = MapFlora_GenerateMeadowPlacements(
         s_grassPlacements, GRASS_TUFT_CAPACITY, &s_ground, kMapCenter,
@@ -358,6 +349,11 @@ static void BuildFloraPlacements(void)
             .flowerClusters = s_scaledFlowerClusters,
             .flowerClusterCount = SONG_QUAO_FLOWER_CLUSTER_COUNT,
             .edgeTaperFn = SongQuaoEdgeTaper,
+            .focalPoints = {{94.15f * s_scaleXZ, 150.0f * s_scaleXZ}, {SONG_QUAO_LAKE_CENTER_X * s_scaleXZ, SONG_QUAO_LAKE_CENTER_Z * s_scaleXZ}},
+            .focalCount = (s_scaleXZ > 1.5f) ? 2 : 0,
+            .focalCoreRadius = 62.0f,
+            .focalOuterRadius = 180.0f,
+            .focalOuterFloor = 0.09f,
         });
     TraceLog(LOG_INFO, "SONG_QUAO_MEADOW: placements=%d capacity=%d",
              s_grassCount, GRASS_TUFT_CAPACITY);
@@ -400,6 +396,19 @@ static void BuildFloraPlacements(void)
         s_scaledFlowerClusters, SONG_QUAO_FLOWER_CLUSTER_COUNT,
         SongQuaoSampleGroundHeight, SongQuaoIsFlowerExcluded, NULL, 0x9371a5u);
     s_flowerCount = FLOWER_COUNT;
+}
+
+#define SONG_QUAO_MAX_SHRUBS 720
+static MapShrubPlacement s_songQuaoShrubs[SONG_QUAO_MAX_SHRUBS];
+static int s_songQuaoShrubCount = 0;
+
+static float SongQuaoShrubWaterClearance(float x, float z, void *ctx)
+{
+    (void)ctx;
+    float signedShore = SongQuaoSampleSignedShore(x, z);
+    if (signedShore < 0.85f)
+        return 0.0f;
+    return 1.0f;
 }
 
 static void BuildRocks(void)
@@ -574,8 +583,8 @@ void InitSongQuaoMap(void)
         s_scaledFlowerClusters[i] = SONG_QUAO_FLOWER_CLUSTERS[i];
         s_scaledFlowerClusters[i].center.x *= s_scaleXZ;
         s_scaledFlowerClusters[i].center.z *= s_scaleXZ;
-        s_scaledFlowerClusters[i].radius.x *= (1.0f + 0.22f * (s_scaleXZ - 1.0f));
-        s_scaledFlowerClusters[i].radius.y *= (1.0f + 0.22f * (s_scaleXZ - 1.0f));
+        s_scaledFlowerClusters[i].radius.x *= (1.0f + 0.12f * (s_scaleXZ - 1.0f));
+        s_scaledFlowerClusters[i].radius.y *= (1.0f + 0.12f * (s_scaleXZ - 1.0f));
     }
     // Apply dedicated highland valley wind profile
     s_prevWindMacro = Wind_GetMacro();
@@ -938,6 +947,23 @@ void InitSongQuaoMap(void)
 
     BuildFloraPlacements();
 
+    s_songQuaoShrubCount = MapFlora_GenerateShrubPlacements(
+        s_songQuaoShrubs, &s_ground, kMapCenter,
+        (MapShrubDistributionConfig){
+            .minBounds = {14.0f * s_scaleXZ, 14.0f * s_scaleXZ},
+            .maxBounds = {MAP_WIDTH - 14.0f * s_scaleXZ, MAP_DEPTH - 14.0f * s_scaleXZ},
+            .maxCount = (s_scaleXZ > 1.5f) ? SONG_QUAO_MAX_SHRUBS : 180,
+            .minSpacing = 2.60f,
+            .seed = 0x5A8811u,
+            .rocks = s_scaledRocks,
+            .rockCount = SONG_QUAO_ROCK_ITEM_COUNT,
+            .sampleWaterClearance = SongQuaoShrubWaterClearance,
+            .useStratifiedGrid = (s_scaleXZ > 1.5f),
+            .focalPoints = {{94.15f * s_scaleXZ, 150.0f * s_scaleXZ}, {SONG_QUAO_LAKE_CENTER_X * s_scaleXZ, SONG_QUAO_LAKE_CENTER_Z * s_scaleXZ}},
+            .focalCount = 2,
+            .focalCoreRadius = (s_scaleXZ > 1.5f) ? 68.0f : 32.0f,
+        });
+
     // [VISUAL AAA & 60+ FPS FLORA]:
     // - Bản lá thanh mảnh tự nhiên (bladeWidthScale = 0.065f ~ 2.1cm) đan kết rosettes mềm mại
     s_flora = MapProp_CreateFloraSystem(
@@ -967,6 +993,9 @@ void InitSongQuaoMap(void)
             .coLauOnReeds = true,
             .coLauPlumeDensity = 0.92f,
             .coLauPlumeTint = {238, 239, 233, 255}, // Ethereal silver-white (Bạch Miên Cỏ Lau)
+            .shrubPlacements = s_songQuaoShrubs,
+            .shrubCount = s_songQuaoShrubCount,
+            .shrubDrawDistance = 95.0f,
         });
     FreeFloraScratch();
 
@@ -1009,6 +1038,11 @@ void InitSongQuaoMap(void)
             {.position = {67.2f, 0.0f, 148.5f}, .scaleXZ = 1.08f, .scaleY = 1.18f, .rotationDeg = 225.0f, .phase = 0.51f, .canopyTint = {238, 252, 225, 255}, .archetype = MAP_TREE_BAMBOO},
             {.position = {122.0f, 0.0f, 142.0f}, .scaleXZ = 1.05f, .scaleY = 1.12f, .rotationDeg = 40.0f, .phase = 0.19f, .canopyTint = {232, 250, 220, 255}, .archetype = MAP_TREE_BAMBOO},
             {.position = {123.4f, 0.0f, 140.6f}, .scaleXZ = 0.92f, .scaleY = 1.02f, .rotationDeg = 165.0f, .phase = 0.63f, .canopyTint = {226, 245, 214, 255}, .archetype = MAP_TREE_BAMBOO},
+            // Lush Meadow Oaks & Silver-White Birches (learned spline-tube + arched frond algorithm)
+            {.position = {72.0f, 0.0f, 122.0f}, .scaleXZ = 1.15f, .scaleY = 1.12f, .rotationDeg = 35.0f, .phase = 0.14f, .canopyTint = {226, 246, 206, 255}, .archetype = MAP_TREE_MEADOW_OAK},
+            {.position = {118.0f, 0.0f, 178.0f}, .scaleXZ = 1.22f, .scaleY = 1.18f, .rotationDeg = 155.0f, .phase = 0.48f, .canopyTint = {230, 248, 210, 255}, .archetype = MAP_TREE_MEADOW_OAK},
+            {.position = {78.0f, 0.0f, 184.0f}, .scaleXZ = 1.05f, .scaleY = 1.10f, .rotationDeg = 70.0f, .phase = 0.31f, .canopyTint = {236, 250, 216, 255}, .archetype = MAP_TREE_MEADOW_BIRCH},
+            {.position = {116.0f, 0.0f, 128.0f}, .scaleXZ = 1.08f, .scaleY = 1.14f, .rotationDeg = 240.0f, .phase = 0.77f, .canopyTint = {232, 248, 212, 255}, .archetype = MAP_TREE_MEADOW_BIRCH},
         };
         MapTreePlacement scaledTrees[sizeof(kSongQuaoTrees) / sizeof(kSongQuaoTrees[0])];
         int treeCount = (int)(sizeof(kSongQuaoTrees) / sizeof(kSongQuaoTrees[0]));

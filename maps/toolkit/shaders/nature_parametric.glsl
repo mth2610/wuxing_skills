@@ -158,9 +158,11 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
         : texelFetch(u_bladeParameters, ivec2(baseCoord.x + 4, baseCoord.y), 0);
     s_cachedClumpTexel = vec4(p0.xyz, clump.w);
     s_hasCachedClumpTexel = true;
-    float metaFlags = floor(clump.w * (1.0 / 4096.0));
-    bool isReed = mod(metaFlags, 2.0) > 0.5;
-    bool isSeedhead = metaFlags >= 1.5;
+    float metaFlags = floor(clump.w * (1.0 / 4096.0) + 0.001);
+    int metaInt = int(metaFlags);
+    bool isReed = (metaInt & 1) != 0;
+    bool isSeedhead = (metaInt & 2) != 0;
+    int biomeForm = (metaInt >> 2) & 3; // 0=default, 1=xeric tussock, 2=alpine mat, 3=metallic sedge
 
     NatureApplyCanonicalLod(p0, p1, p2, p3);
 
@@ -238,6 +240,21 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
         float stalk = min(1.0, 0.54 + 1.35 * t);
         float tasselTaper = (t > 0.75) ? max(0.22, 1.0 - (t - 0.75) * 3.1) : 1.0;
         profile = stalk * tasselTaper;
+    } else if (biomeForm == 1) {
+        // Xeric Tussock: stiff spiny bunchgrass needle tapering sharply to dry awn
+        float sheath = 0.86 + 0.16 * (1.0 - smoothstep(0.0, 0.22, t));
+        float taper = max(0.08, 1.0 - 0.68 * t - 0.24 * t2);
+        profile = sheath * taper;
+    } else if (biomeForm == 2) {
+        // Alpine Mat: wider frost-bent tundra sedge blade
+        float sheath = 1.08 + 0.14 * (1.0 - smoothstep(0.0, 0.20, t));
+        float taper = max(0.14, 1.0 - 0.50 * t - 0.36 * t2);
+        profile = sheath * taper;
+    } else if (biomeForm == 3) {
+        // Metallic Sedge: crisp sword-lancet blade
+        float lancet = 0.94 + 0.24 * sinPiT;
+        float taper = max(0.09, 1.0 - 0.58 * t - 0.33 * t2);
+        profile = lancet * taper;
     } else {
         // Taper smoothly to a sharp needle tip (0.10 floor resolved cleanly by HDR TAA)
         float sheath = 1.0 + 0.16 * (1.0 - smoothstep(0.0, 0.18, t));
@@ -256,7 +273,7 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     halfWidth = max(halfWidth * 1.40, 0.020);
 #endif
 
-    float spineArch = p1.w * 0.105 * sinPiT;
+    float spineArch = p1.w * ((biomeForm == 3) ? 0.145 : 0.105) * sinPiT;
     s_cachedTangent = tangent;
     s_cachedSide = side;
     s_cachedHalfWidth = halfWidth;
@@ -311,6 +328,15 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
 
     float baseOcclusion = mix(0.92, 1.0, smoothstep(0.0, 0.24, t));
     vec3 smoothCol = clamp(gradCol * (baseOcclusion * bladeTone), 0.0, 1.0);
+    if (biomeForm == 2 && t > 0.58) {
+        // Hoarfrost rime on alpine sedge tips
+        float rimeT = smoothstep(0.58, 0.96, t);
+        smoothCol = mix(smoothCol, vec3(0.84, 0.90, 0.96), rimeT * 0.40);
+    } else if (biomeForm == 3 && t > 0.65) {
+        // Subtle metallic-gold mineral edge glint on metallic sedge
+        float minT = smoothstep(0.65, 0.96, t);
+        smoothCol = mix(smoothCol, tipNorm * vec3(1.12, 1.08, 0.92), minT * 0.32);
+    }
     if (isSeedhead && t > 0.70) {
         float plumeT = smoothstep(0.70, 0.88, t);
         vec3 plumeSilk = mix(tipNorm, vec3(0.84, 0.82, 0.65), 0.58);

@@ -149,11 +149,23 @@ static void BuildLySonRocks(void)
 
 #define LY_SON_MAX_GRASS 36000
 #define LY_SON_MAX_FLOWERS 760
+#define LY_SON_MAX_SHRUBS 380
 static MapMeadowPlacement s_grassPlacements[LY_SON_MAX_GRASS];
 static int s_grassCount = 0;
 static MapFlowerPlacement s_flowerPlacements[LY_SON_MAX_FLOWERS];
 static int s_flowerCount = 0;
+static MapShrubPlacement s_shrubPlacements[LY_SON_MAX_SHRUBS];
+static int s_shrubCount = 0;
 static MapDebrisPlacement s_scaledDebris[LY_SON_DEBRIS_COUNT > 0 ? LY_SON_DEBRIS_COUNT : 1];
+
+static float LySonShrubWaterClearance(float x, float z, void *ctx)
+{
+    (void)ctx;
+    float wY = 0.0f, wD = 0.0f;
+    if (MapDem_GetWaterInfo(&s_dem, &s_ground, x, z, &wY, &wD))
+        return 0.0f;
+    return 1.0f;
+}
 
 static void BuildLySonDebris(void)
 {
@@ -201,18 +213,14 @@ static void BuildLySonFlora(void)
     const float grassSpacing = 1.35f;
     const int maxGrass = 2400;
 #else
-    float grassSpacing = 0.72f;
+    float grassSpacing = (s_scaleXZ > 1.5f) ? 0.62f : 0.72f;
     const int maxGrass = LY_SON_MAX_GRASS;
-    if (s_scaleXZ > 1.5f)
-    {
-        float halfWin = 200.0f;
-        minB.x = fmaxf(14.0f * s_scaleXZ, s_floraWindowCenter.x - halfWin);
-        minB.y = fmaxf(14.0f * s_scaleXZ, s_floraWindowCenter.z - halfWin);
-        maxB.x = fminf(MAP_WIDTH - 14.0f * s_scaleXZ, s_floraWindowCenter.x + halfWin);
-        maxB.y = fminf(MAP_DEPTH - 14.0f * s_scaleXZ, s_floraWindowCenter.z + halfWin);
-        grassSpacing = 0.68f;
-    }
 #endif
+    const float arenaCx = LY_SON_ARENA_X * s_scaleXZ;
+    const float arenaCz = LY_SON_ARENA_Z * s_scaleXZ;
+    const float calderaCx = LY_SON_CALDERA_X * s_scaleXZ;
+    const float calderaCz = LY_SON_CALDERA_Z * s_scaleXZ;
+
     MapMeadowDistribution dist = {
         .minBounds = minB,
         .maxBounds = maxB,
@@ -224,35 +232,70 @@ static void BuildLySonFlora(void)
         .maxHeight = 0.38f,
         .yOffset = 0.0f,
         .seed = 0x71F0E3u,
+        .focalPoints = {{arenaCx, arenaCz}, {calderaCx, calderaCz}},
+        .focalCount = (s_scaleXZ > 1.5f) ? 2 : 0,
+        .focalCoreRadius = 68.0f,
+        .focalOuterRadius = 210.0f,
+        .focalOuterFloor = 0.14f,
     };
     s_grassCount = MapProp_GenerateMeadowPlacements(
         s_grassPlacements, maxGrass,
         &s_ground, kMapCenter,
         dist, LySonScorchedGrassDensity, NULL);
 
-    // Sparse crimson Bỉ Ngạn Hoa (Spider Lily) colonies around sheltered obsidian arena margins
-    static MapFloraFlowerCluster s_flowerClusters[6];
-    const int clusterCount = 6;
+    s_shrubCount = MapFlora_GenerateShrubPlacements(
+        s_shrubPlacements, &s_ground, kMapCenter,
+        (MapShrubDistributionConfig){
+            .minBounds = minB,
+            .maxBounds = maxB,
+            .maxCount = (s_scaleXZ > 1.5f) ? LY_SON_MAX_SHRUBS : 95,
+            .minSpacing = 3.10f,
+            .seed = 0x71F0A2u,
+            .volcanicWeight = 1.0f,
+            .rocks = s_rocks.items,
+            .rockCount = s_rocks.count,
+            .sampleWaterClearance = LySonShrubWaterClearance,
+            .useStratifiedGrid = (s_scaleXZ > 1.5f),
+            .focalPoints = {{arenaCx, arenaCz}, {calderaCx, calderaCz}},
+            .focalCount = (s_scaleXZ > 1.5f) ? 2 : 0,
+            .focalCoreRadius = 65.0f,
+        });
+
+    // Sparse crimson Bỉ Ngạn Hoa & Hỏa Liên Thảo colonies around sheltered obsidian arena margins
+    static MapFloraFlowerCluster s_flowerClusters[16];
+    const int clusterCount = (s_scaleXZ > 1.5f) ? 16 : 6;
     const int flowersPerCluster = 45;
-    const float arenaCx = LY_SON_ARENA_X * s_scaleXZ;
-    const float arenaCz = LY_SON_ARENA_Z * s_scaleXZ;
-    for (int i = 0; i < clusterCount; i++)
+    if (s_scaleXZ > 1.5f)
     {
-        float ang = (float)i * (6.2831853f / (float)clusterCount) + 0.35f;
-        float distR = (17.5f + (float)(i % 2) * 3.5f) * s_scaleXZ;
-        float fx = arenaCx + cosf(ang) * distR;
-        float fz = arenaCz + sinf(ang) * distR;
-        float fy = MapDem_GetGroundHeight(&s_dem, &s_ground, fx, fz);
-        s_flowerClusters[i] = (MapFloraFlowerCluster){
-            .center = {fx, fy, fz},
-            .radius = {3.2f * s_scaleXZ, 2.8f * s_scaleXZ},
-            .flowerCount = flowersPerCluster,
-            .primarySpecies = MAP_FLOWER_SPECIES_BI_NGAN,
-            .species = {MAP_FLOWER_SPECIES_BI_NGAN, MAP_FLOWER_SPECIES_BI_NGAN, MAP_FLOWER_SPECIES_BI_NGAN, MAP_FLOWER_SPECIES_BI_NGAN},
-            .primaryColor = {212, 28, 34, 255},
-            .accentColor = {245, 72, 42, 255},
-            .discalCenterColor = {255, 190, 68, 255},
-        };
+        static const int kVolcanicSpecies[2] = {MAP_FLOWER_SPECIES_BI_NGAN, MAP_FLOWER_SPECIES_HOA_LIEN};
+        MapFlora_GenerateOpenWorldFlowerClusters(
+            s_flowerClusters, clusterCount, flowersPerCluster,
+            (Vector2){arenaCx, arenaCz}, (Vector2){calderaCx, calderaCz},
+            7.5f, 24.0f, 165.0f,
+            kVolcanicSpecies, 2, (Color){255, 190, 68, 255},
+            LySonFlowerHeight, LySonFlowerExcluded, NULL, 0xB146A4u);
+    }
+    else
+    {
+        for (int i = 0; i < clusterCount; i++)
+        {
+            float ang = (float)i * (6.2831853f / (float)clusterCount) + 0.35f;
+            float distR = 17.5f + (float)(i % 2) * 3.5f;
+            float fx = arenaCx + cosf(ang) * distR;
+            float fz = arenaCz + sinf(ang) * distR;
+            float fy = MapDem_GetGroundHeight(&s_dem, &s_ground, fx, fz);
+            int sp = (i % 2 == 0) ? MAP_FLOWER_SPECIES_BI_NGAN : MAP_FLOWER_SPECIES_HOA_LIEN;
+            s_flowerClusters[i] = (MapFloraFlowerCluster){
+                .center = {fx, fy, fz},
+                .radius = {3.2f, 2.8f},
+                .flowerCount = flowersPerCluster,
+                .primarySpecies = sp,
+                .species = {(unsigned char)sp, (unsigned char)sp, MAP_FLOWER_SPECIES_HOA_LIEN, MAP_FLOWER_SPECIES_BI_NGAN},
+                .primaryColor = MapProp_GetFlowerSpeciesColor(sp, false),
+                .accentColor = MapProp_GetFlowerSpeciesColor(sp, true),
+                .discalCenterColor = {255, 190, 68, 255},
+            };
+        }
     }
     s_flowerCount = clusterCount * flowersPerCluster;
     MapFlora_GenerateFlowerPlacements(s_flowerPlacements, s_flowerCount, s_flowerClusters, clusterCount,
@@ -276,6 +319,10 @@ static void BuildLySonFlora(void)
             .dryness = 0.94f,
             .scorch = 0.0f,
             .botanicalVariation = 0.85f,
+            .grassGrowthForm = MAP_MEADOW_GROWTH_XERIC_TUSSOCK,
+            .shrubPlacements = s_shrubPlacements,
+            .shrubCount = s_shrubCount,
+            .shrubDrawDistance = 95.0f,
         });
 }
 

@@ -17,6 +17,7 @@ uniform int u_interactionEnabled;
 uniform sampler2D u_flowerInstances;
 uniform int u_speciesOverride;
 uniform int u_lodStride;
+uniform int u_instanceBaseOffset;
 
 out vec2 fragTexCoord;
 
@@ -34,7 +35,7 @@ mat3 FlowerBasisFromAxis(vec3 upAxis, float cosYaw, float sinYaw)
 
 void main()
 {
-    int instanceId = gl_InstanceID * max(u_lodStride, 1);
+    int instanceId = u_instanceBaseOffset + gl_InstanceID * max(u_lodStride, 1);
     int col = (instanceId & 255) * 2;
     int row = instanceId >> 8;
 
@@ -44,7 +45,9 @@ void main()
     vec3 rootLocal = tex0.xyz;
     int rawSpecies = int(floor(tex0.w * 0.01 + 0.01));
     float seed = clamp(tex0.w - float(rawSpecies) * 100.0, 0.0, 0.9999);
-    int sp = (u_speciesOverride >= 0) ? (u_speciesOverride & 7) : (rawSpecies & 7);
+    int sp = (u_speciesOverride >= 0)
+        ? ((u_speciesOverride <= 12) ? u_speciesOverride : (u_speciesOverride & 7))
+        : ((rawSpecies <= 12) ? rawSpecies : (rawSpecies & 7));
 
     float stemH = max(tex1.x, 0.16);
     float petalR = clamp(tex1.y * 0.92, 0.042, stemH * 0.16);
