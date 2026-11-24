@@ -46,10 +46,6 @@ void main()
         lit *= 1.0 + windSheen * 0.08;
     }
 
-    if (v_fadeAlpha < 0.999) {
-        float ign = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
-        if (ign > v_fadeAlpha) discard;
-    }
-
+    // Hardware Early-Z preserved: far tufts taper to substrate in VS and thin stochastically in C/Compute.
     finalColor = vec4(lit, 1.0);
 }

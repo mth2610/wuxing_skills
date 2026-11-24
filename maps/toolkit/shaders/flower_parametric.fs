@@ -147,8 +147,24 @@ void main()
     if (part < 2) {
         vec3 stemBase = vec3(0.11, 0.26, 0.08);
         vec3 stemTip  = vec3(0.24, 0.48, 0.14);
-        albedo = mix(stemBase, stemTip, t);
         sssTint = vec3(0.36, 0.68, 0.16);
+        if (sp == 9 || sp == 10) {
+            // Arid desert olive-ochre stems
+            stemBase = vec3(0.18, 0.20, 0.10);
+            stemTip  = vec3(0.36, 0.38, 0.19);
+            sssTint  = vec3(0.50, 0.52, 0.24);
+        } else if (sp == 11) {
+            // Volcanic russet-bronze charred stems
+            stemBase = vec3(0.14, 0.09, 0.07);
+            stemTip  = vec3(0.28, 0.18, 0.12);
+            sssTint  = vec3(0.46, 0.24, 0.14);
+        } else if (sp == 0 || sp == 12) {
+            // Alpine / crystalline frosted sage-silver stems
+            stemBase = vec3(0.14, 0.24, 0.20);
+            stemTip  = vec3(0.30, 0.44, 0.38);
+            sssTint  = vec3(0.44, 0.64, 0.54);
+        }
+        albedo = mix(stemBase, stemTip, t);
         membraneThickness = mix(0.85, 0.35, t);
     } else {
         float isInner = (part == 3) ? 1.0 : 0.0;

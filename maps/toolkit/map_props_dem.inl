@@ -332,6 +332,10 @@ void MapDem_DefaultShadowCasterCallback(Shader depthShader, void *userData)
     if (ctx->flora && !(ctx->skipMask & MAP_SKIP_FLORA))
         MapProp_DrawFloraShadowCasters(ctx->flora);
 
+    if (ctx->trees && ctx->trees->ready && !(ctx->skipMask & MAP_SKIP_FLORA))
+        MapProp_DrawTreeSystemShadowCasters(ctx->trees, depthShader,
+                                            (float)GetTime(), (Vector2){1.0f, 0.0f}, 1.0f);
+
     if (ctx->ores)
         MapProp_DrawOreShadowCasters((MapOreSystem *)ctx->ores, depthShader);
 

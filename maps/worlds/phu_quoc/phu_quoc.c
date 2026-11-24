@@ -409,7 +409,7 @@ static void BuildPhuQuocFlora(void)
             .lodDistance = 36.0f,
             .midLodDistance = 24.0f,
             .drawDistance = 120.0f,
-            .shadowDistance = (s_scaleXZ > 1.5f) ? -1.0f : 22.0f,
+            .shadowDistance = (s_scaleXZ > 1.5f) ? 18.0f : 22.0f,
             .grassState = MAP_GRASS_STATE_DRY,
             .dryness = 0.72f,
             .scorch = 0.0f,

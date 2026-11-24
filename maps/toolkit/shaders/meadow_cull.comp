@@ -37,6 +37,14 @@ void main()
     float dist = max(0.0, rawDist * (1.0 + macroNoise * 0.14));
     float distSq = dist * dist;
 
+    uint hx = floatBitsToUint(t.x);
+    uint hz = floatBitsToUint(t.z);
+    uint h = (hx * 0x8da6b343u) ^ (hz * 0xd8163841u);
+    h ^= h >> 16; h *= 0x7feb352du; h ^= h >> 15; h *= 0x846ca68bu; h ^= h >> 16;
+    float hashRank = float(h & 0x00ffffffu) * (1.0 / 16777216.0);
+    float ign = fract(52.9829189 * fract(0.06711056 * t.x + 0.00583715 * t.z));
+    float rank = fract(hashRank * 0.65 + ign * 0.35);
+
     if (u_drawDistSq > 0.0) {
         if (distSq > u_drawDistSq)
             return;
@@ -44,13 +52,6 @@ void main()
         if (distSq > fadeStartSq) {
             float thinT = clamp((distSq - fadeStartSq) / max(u_drawDistSq - fadeStartSq, 1.0), 0.0, 1.0);
             float keepProb = pow(max(1.0 - thinT, 0.0), 1.20);
-            uint hx = floatBitsToUint(t.x);
-            uint hz = floatBitsToUint(t.z);
-            uint h = (hx * 0x8da6b343u) ^ (hz * 0xd8163841u);
-            h ^= h >> 16; h *= 0x7feb352du; h ^= h >> 15; h *= 0x846ca68bu; h ^= h >> 16;
-            float hashRank = float(h & 0x00ffffffu) * (1.0 / 16777216.0);
-            float ign = fract(52.9829189 * fract(0.06711056 * t.x + 0.00583715 * t.z));
-            float rank = fract(hashRank * 0.65 + ign * 0.35);
             if (rank > keepProb)
                 return;
         }
@@ -61,11 +62,19 @@ void main()
             return;
     }
 
-    int lod = 2;
-    if (distSq <= u_lodBands.y * u_lodBands.y)
-        lod = 0;
-    else if (distSq <= u_lodBands.w * u_lodBands.w)
-        lod = 1;
+    // u_lodBands = (midDist, lodDist, nearBlend, farBlend)
+    int lod = 0;
+    if (u_lodBands.y > 0.0) {
+        float farWeight = smoothstep(u_lodBands.y - u_lodBands.w,
+                                     u_lodBands.y + u_lodBands.w, dist);
+        if (rank < farWeight) {
+            lod = 2;
+        } else if (u_lodBands.x > 0.0) {
+            float midWeight = smoothstep(u_lodBands.x - u_lodBands.z,
+                                         u_lodBands.x + u_lodBands.z, dist);
+            lod = (rank < midWeight) ? 1 : 0;
+        }
+    }
 
     uint slot = atomicAdd(b_cmds[lod * 5 + 1], 1u);
     b_visibleIds[uint(lod) * u_bandStride + slot] = id;

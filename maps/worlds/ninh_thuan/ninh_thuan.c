@@ -411,7 +411,7 @@ static void BuildNinhThuanFlora(void)
             .lodDistance = 36.0f,
             .midLodDistance = 24.0f,
             .drawDistance = 120.0f,
-            .shadowDistance = (s_scaleXZ > 1.5f) ? -1.0f : 24.0f,
+            .shadowDistance = (s_scaleXZ > 1.5f) ? 20.0f : 24.0f,
             .grassState = MAP_GRASS_STATE_DRY,
             .dryness = 0.84f,
             .reedRootColor = {38, 62, 26, 255},

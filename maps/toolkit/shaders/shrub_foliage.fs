@@ -35,7 +35,8 @@ void main()
     vec3 toCam = u_viewPos - fragPosition;
     float distSq = max(dot(toCam, toCam), 1e-6);
     vec3 V = toCam * inversesqrt(distSq);
-    vec3 L = -u_lightDir * inversesqrt(max(dot(u_lightDir, u_lightDir), 1e-8));
+    // Nature_UpdateShader uploads u_lightDir pointing upward toward the sun (y > 0)
+    vec3 L = u_lightDir * inversesqrt(max(dot(u_lightDir, u_lightDir), 1e-8));
 
     // Physiological dryness, scorch, and alpine frost modulation
     if (dryness > 0.01) {
@@ -80,12 +81,13 @@ void main()
     vec3 sssTint = mix(vec3(1.20, 1.38, 0.65), vec3(1.18, 1.02, 0.68), dryness);
     vec3 sss = u_lightColor * (albedo * sssTint * (backScatter * 0.38 * directVis));
 
-    // Ground root contact AO + subtle leaf-sprig rim separation
-    float rootAO = mix(0.42, 1.0, smoothstep(0.0, 0.34, rootHeight));
-    float leafTipBoost = mix(0.92, 1.12, smoothstep(0.35, 0.95, rootHeight)) * foliageMask + (1.0 - foliageMask);
+    // Ground root contact AO + interior bush-core darkening + subtle leaf-sprig rim separation
+    float rootAO = mix(0.38, 1.0, smoothstep(0.0, 0.42, rootHeight));
+    float coreAO = mix(0.68, 1.04, smoothstep(0.10, 0.88, rootHeight));
+    float leafTipBoost = mix(0.90, 1.14, smoothstep(0.35, 0.95, rootHeight)) * foliageMask + (1.0 - foliageMask);
 
     vec3 hemi = Environment_HemisphereIrradiance(N, u_ambientColor);
-    vec3 lit = albedo * leafTipBoost * (hemi + u_lightColor * (ndl * directVis)) * rootAO;
+    vec3 lit = albedo * leafTipBoost * (hemi + u_lightColor * (ndl * directVis)) * (rootAO * coreAO);
     lit += u_lightColor * (sageSheen * mix(0.45, 1.0, directVis)) + sss + emberGlow;
 
     if (distSq < 1225.0) {

@@ -83,6 +83,7 @@ static void DrawMauSonShadowCasters(Shader depthShader, void *user)
     s_mauSonShadowCtx.flora = &s_flora;
     s_mauSonShadowCtx.rocks = &s_rocks;
     s_mauSonShadowCtx.ores = NULL;
+    s_mauSonShadowCtx.trees = &s_trees;
     s_mauSonShadowCtx.skipMask = s_skipMask;
     MapDem_DefaultShadowCasterCallback(depthShader, &s_mauSonShadowCtx);
 }
@@ -374,7 +375,7 @@ static void BuildMauSonFlora(void)
             .lodDistance = 36.0f,
             .midLodDistance = 24.0f,
             .drawDistance = 120.0f,
-            .shadowDistance = (s_scaleXZ > 1.5f) ? -1.0f : 22.0f,
+            .shadowDistance = (s_scaleXZ > 1.5f) ? 18.0f : 22.0f,
             .grassState = MAP_GRASS_STATE_DRY,
             .dryness = 0.65f,
             .scorch = 0.0f,
@@ -713,8 +714,10 @@ void InitMauSonMap(void)
     if (s_scaleXZ > 1.5f)
     {
         s_staticShadowCenter = s_floraWindowCenter;
+        EnvShadow_InvalidateStaticCache();
+    }
 
-    // Alpine & boreal snow-laden tree grove framing spawn, frozen lake, and mountain ridges (physical meters around hubs)
+    // Alpine & boreal snow-laden tree grove framing spawn, frozen lake, and mountain ridges (both 1x and Open World)
     {
         float spX = 135.0f * s_scaleXZ;
         float spZ = 112.5f * s_scaleXZ;
@@ -743,8 +746,7 @@ void InitMauSonMap(void)
         };
         int treeCount = (int)(sizeof(kMauSonTrees) / sizeof(kMauSonTrees[0]));
         s_trees = MapProp_CreateTreeSystem(kMauSonTrees, treeCount, &s_ground, kMapCenter, fminf(135.0f * s_scaleXZ, 195.0f));
-    }
-        EnvShadow_InvalidateStaticCache();
+        MapProp_SetTreeSnowCoverage(&s_trees, 0.70f);
     }
     CaptureMauSonStaticShadows();
     MapManager_SetZones(s_mauSonZones, MAU_SON_ZONE_COUNT);
@@ -802,6 +804,8 @@ void UpdateMauSonMap(float dt)
         return;
 
     MapProp_UpdateFloraSystem(&s_flora, camera.target, dt);
+    if (s_trees.ready)
+        MapProp_PrepareTreeSystem(&s_trees, camera);
     MapProp_UpdateWaterSurface(&s_glacialWater, dt);
     MapProp_UpdateSnow(dt);
 

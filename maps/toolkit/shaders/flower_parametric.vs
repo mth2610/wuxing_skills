@@ -101,7 +101,11 @@ void EvaluateFlowerGeometry(
     vec3 headPos = rootPos + tipOffset;
 
     bool isInner = (part == 3);
-    float baseAngle = float(idx) * 1.04719755 + (isInner ? 0.5235988 : 0.0) + seed * 6.2831853;
+    float petalSeed = fract(seed * 13.7 + float(idx) * 0.6180339 + (isInner ? 0.37 : 0.0));
+    float angleJitter = (petalSeed - 0.5) * 0.28; // +/-0.14 rad organic petal asymmetry
+    float lengthScale = 0.88 + 0.24 * fract(petalSeed * 3.17);
+    float cupJitter = (fract(petalSeed * 5.73) - 0.5) * 0.14;
+    float baseAngle = float(idx) * 1.04719755 + (isInner ? 0.5235988 : 0.0) + seed * 6.2831853 + angleJitter;
     float cA = cos(baseAngle);
     float sA = sin(baseAngle);
     vec3 radial = headBasis[0] * cA + headBasis[2] * sA;
@@ -189,7 +193,8 @@ void EvaluateFlowerGeometry(
     }
 
     float cupDish = (1.0 - s * s) * (-0.08 * petalR * t);
-    cupY += cupDish + flutter * t * petalR * 0.28;
+    cupY = cupY * (1.0 + cupJitter) + cupDish + flutter * t * petalR * 0.28;
+    radialDist *= lengthScale;
 
     vec3 localPetal = radial * radialDist + headBasis[1] * cupY + tangent * (s * wid);
     outLocalPos = headPos + localPetal;

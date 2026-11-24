@@ -1086,7 +1086,9 @@ int MapFlora_GenerateShrubPlacements(
                 focalBoost = 1.45f;
         }
 
-        float density = (0.42f + rockShelter * 0.58f) * focalBoost;
+        // Ecological shrub mantle: rare solitary bushes in open flat meadow (0.09),
+        // heavily concentrated around rock shelters (+0.86) and tree drip-lines
+        float density = (0.09f + rockShelter * 0.86f) * focalBoost;
         if (config.customDensityFn)
         {
             float custom = config.customDensityFn(x, z, config.ctx);
@@ -1409,9 +1411,13 @@ void MapProp_PrepareShrubSystem(MapShrubSystem *sys, Vector3 worldOffset)
 
     Nature_RefreshFrustumCache();
 
+    float fdx = camera.position.x - camera.target.x;
+    float fdz = camera.position.z - camera.target.z;
+    float focalDist = sqrtf(fdx * fdx + fdz * fdz);
+    float zoomFactor = tanf(22.5f * DEG2RAD) / fmaxf(tanf(camera.fovy * 0.5f * DEG2RAD), 0.15f);
     float maxDist = sys->drawDistance * rangeScale;
     float maxDistSq = maxDist * maxDist;
-    float lodDist = sys->lodDistance * lodScale;
+    float lodDist = focalDist + sys->lodDistance * lodScale * zoomFactor;
     float lodDistSq = lodDist * lodDist;
 
     for (int a = 0; a < MAP_SHRUB_ARCHETYPE_COUNT; a++)
@@ -1533,16 +1539,65 @@ void MapProp_DrawShrubSystem(const MapShrubSystem *sys, Vector3 worldOffset,
     Nature_EndWindReceiverShader();
 }
 
+static Shader s_shrubShadowShader = {0};
+static bool s_shrubShadowShaderReady = false;
+static int s_shrubShadowLocInstTex = -1;
+static int s_shrubShadowLocBaseOffset = -1;
+
 void MapProp_DrawShrubShadowCasters(const MapShrubSystem *sys, Vector3 worldOffset,
                                     float time, Vector2 windDirection, float windStrength)
 {
     (void)worldOffset;
-    (void)time;
-    (void)windDirection;
-    (void)windStrength;
     if (!sys || !sys->ready || GfxQuality_Get() < GFX_HIGH)
         return;
-    // Shrubs use ground root contact AO + hemisphere ambient; optional depth casters can reuse LOD1 here if needed.
+    if (!s_shrubShadowShaderReady)
+    {
+        s_shrubShadowShader = ResourceManager_LoadShader("maps/toolkit/shaders/shrub_shadow_instanced.vs",
+                                                         "maps/toolkit/shaders/nature_shadow.fs");
+        if (s_shrubShadowShader.id != 0)
+        {
+            s_shrubShadowLocInstTex = GetShaderLocation(s_shrubShadowShader, "u_shrubInstanceTex");
+            s_shrubShadowLocBaseOffset = GetShaderLocation(s_shrubShadowShader, "u_instanceBaseOffset");
+        }
+        s_shrubShadowShaderReady = true;
+    }
+    if (s_shrubShadowShader.id == 0 || s_shrubShadowShader.id == rlGetShaderIdDefault())
+        return;
+
+    Nature_BeginWindReceiverShader(s_shrubShadowShader);
+    Nature_UpdateShadowShader(s_shrubShadowShader, time, windDirection, windStrength,
+                              false, 0.0f, NATURE_WIND_RESPONSE_FLOWER);
+    rlDisableBackfaceCulling();
+    if (s_shrubShadowLocInstTex >= 0)
+    {
+        int unit0 = 0;
+        SetShaderValue(s_shrubShadowShader, s_shrubShadowLocInstTex, &unit0, SHADER_UNIFORM_INT);
+    }
+    if (s_shrubShadowLocBaseOffset >= 0)
+    {
+        int zero = 0;
+        SetShaderValue(s_shrubShadowShader, s_shrubShadowLocBaseOffset, &zero, SHADER_UNIFORM_INT);
+    }
+    Matrix model = MatrixTranslate(worldOffset.x, worldOffset.y, worldOffset.z);
+    Matrix mvp = MatrixMultiply(model, EnvShadow_GetLightVP());
+    SetShaderValueMatrix(s_shrubShadowShader, s_shrubShadowShader.locs[SHADER_LOC_MATRIX_MVP], mvp);
+
+    for (int a = 0; a < MAP_SHRUB_ARCHETYPE_COUNT; a++)
+    {
+        if (!sys->modelLoaded[a])
+            continue;
+        int visCount = sys->visibleCounts[a][0];
+        if (visCount <= 0 || sys->instanceTextures[a][0].id == 0)
+            continue;
+        const Mesh *mesh = &sys->lod1Models[a].meshes[0];
+        rlActiveTextureSlot(0);
+        rlEnableTexture(sys->instanceTextures[a][0].id);
+        rlEnableVertexArray(mesh->vaoId);
+        rlDrawVertexArrayInstanced(0, mesh->vertexCount, visCount);
+        rlDisableVertexArray();
+    }
+    rlEnableBackfaceCulling();
+    Nature_EndWindReceiverShader();
 }
 
 void MapProp_UnloadShrubSystem(MapShrubSystem *sys)

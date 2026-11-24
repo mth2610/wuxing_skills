@@ -1093,7 +1093,12 @@ void MapProp_DrawFloraShadowCasters(MapFloraSystem *flora)
             MapProp_DrawCoLauFieldShadowCaster(
                 &flora->coLauField, offset, flora->time, flora->windDirection, flora->windStrength);
         }
-        if (GfxQuality_Get() >= GFX_ULTRA && flora->flowerFields && flora->flowerClusterCount > 0)
+        if (flora->shrubs.ready)
+        {
+            MapProp_DrawShrubShadowCasters(
+                &flora->shrubs, offset, flora->time, flora->windDirection, flora->windStrength);
+        }
+        if (GfxQuality_Get() >= GFX_HIGH && flora->flowerFields && flora->flowerClusterCount > 0)
         {
             MapProp_DrawFlowerFieldShadowCasterBatch(
                 flora->flowerFields, flora->flowerClusterCount, offset,

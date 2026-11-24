@@ -1306,6 +1306,7 @@ typedef struct
     MapFloraSystem *flora;
     MapRockSystem *rocks;
     struct MapOreSystem *ores;
+    struct MapTreeSystem *trees;
     unsigned int skipMask;
 } MapDemShadowCasterCtx;
 
@@ -1371,6 +1372,8 @@ typedef enum
     MAP_TREE_COLUMNAR_TAIGA_SPRUCE, // Bách tuyết cột đứng (Slender boreal taiga spire with dense snow whorls)
     MAP_TREE_OLD_GROWTH_FIR,        // Vân sam cổ thụ tuyết phủ (Heavy-snow broad old-growth alpine fir)
     MAP_TREE_FROZEN_DEADWOOD,       // Cổ mộc băng giá (Ancient leafless frost-rimmed alpine deadwood)
+    MAP_TREE_ARID_ACACIA,           // Keo gai sa mạc (Wind-sculpted flat-topped desert acacia / tamarisk)
+    MAP_TREE_COASTAL_PINE,          // Thông biển nghiêng gió (Wind-sheared coastal island pine)
     MAP_TREE_ARCHETYPE_COUNT
 } MapTreeArchetype;
 
@@ -1385,22 +1388,44 @@ typedef struct
     MapTreeArchetype archetype;
 } MapTreePlacement;
 
-typedef struct
+typedef struct MapTreeSystem
 {
-    Model models[MAP_TREE_ARCHETYPE_COUNT];
+    Model models[MAP_TREE_ARCHETYPE_COUNT][3]; // 0 = Hero LOD0, 1 = Mid LOD1, 2 = Far LOD2
     bool modelLoaded[MAP_TREE_ARCHETYPE_COUNT];
     Texture2D instanceTextures[MAP_TREE_ARCHETYPE_COUNT];
     int instanceCounts[MAP_TREE_ARCHETYPE_COUNT];
+    float *allTexels[MAP_TREE_ARCHETYPE_COUNT];     // Immutable source texels (8 floats/instance)
+    float *visibleTexels[MAP_TREE_ARCHETYPE_COUNT]; // CPU-compacted visible texels [LOD0 | LOD1 | LOD2]
+    int texWidth[MAP_TREE_ARCHETYPE_COUNT];
+    int texHeight[MAP_TREE_ARCHETYPE_COUNT];
+    int lodOffsets[MAP_TREE_ARCHETYPE_COUNT][3];
+    int lodCounts[MAP_TREE_ARCHETYPE_COUNT][3];
+    unsigned int lastUploadedHash[MAP_TREE_ARCHETYPE_COUNT];
+    MapTreePlacement *placements;
+    int totalPlacements;
     float drawDistance;
+    float lod0Distance;
+    float lod1Distance;
+    float snowCoverage; // -1.0 = auto per-archetype; 0.0..1.0 = explicit snow coverage ratio
+    bool preparedThisFrame;
     bool ready;
 } MapTreeSystem;
 
 MapTreeSystem MapProp_CreateTreeSystem(const MapTreePlacement *placements, int count,
                                        const MapGroundSurface *ground, Vector3 worldCenter,
                                        float drawDistance);
+void MapProp_SetTreeSnowCoverage(MapTreeSystem *sys, float coverage);
+void MapProp_PrepareTreeSystem(MapTreeSystem *sys, Camera3D camera);
 void MapProp_DrawTreeSystem(const MapTreeSystem *sys, float time, Vector2 windDirection, float windStrength);
 void MapProp_DrawTreeSystemShadowCasters(const MapTreeSystem *sys, Shader depthShader,
                                          float time, Vector2 windDirection, float windStrength);
+Vector3 MapProp_ResolveTreeSystemCollision(const MapTreeSystem *sys, Vector3 pos, float radius);
 void MapProp_UnloadTreeSystem(MapTreeSystem *sys);
+
+// Ecological guild helper: evaluate root-collar exclusion, canopy shade, and drip-line shrub mantle boost
+void MapFlora_EvaluateTreeUnderstorey(float x, float z,
+                                      const MapTreePlacement *trees, int treeCount,
+                                      float *outGrassDensityScale, float *outGrassHeightScale,
+                                      float *outShrubBoost);
 
 #endif // MAP_PROPS_H

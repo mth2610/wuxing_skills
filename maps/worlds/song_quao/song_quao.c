@@ -539,11 +539,12 @@ static void SpawnSongQuaoMistVolumes(void)
 
 static void DrawSongQuaoShadowCasters(Shader depthShader, void *userData)
 {
-    (void)depthShader;
     (void)userData;
     if (!(s_skipMask & MAP_SKIP_SHADOWCASTERS) && !(s_skipMask & MAP_SKIP_FLORA))
     {
         MapProp_DrawFloraShadowCasters(&s_flora);
+        if (s_trees.ready)
+            MapProp_DrawTreeSystemShadowCasters(&s_trees, depthShader, s_flora.time, s_flora.windDirection, s_flora.windStrength);
     }
 }
 
@@ -979,7 +980,7 @@ void InitSongQuaoMap(void)
             .lodDistance = 36.0f,
             .midLodDistance = 24.0f,
             .drawDistance = 122.0f,
-            .shadowDistance = (s_scaleXZ > 1.5f) ? -1.0f : 24.0f,
+            .shadowDistance = (s_scaleXZ > 1.5f) ? 20.0f : 24.0f,
             .grassState = MAP_GRASS_STATE_LUSH,
             .reedRootColor = {22, 36, 16, 255},
             .reedTipColor = {104, 138, 58, 255},
@@ -1072,6 +1073,8 @@ void UpdateSongQuaoMap(float dt)
     MapProp_EndNatureInteraction();
 
     MapProp_UpdateFloraSystem(&s_flora, camera.target, dt);
+    if (s_trees.ready)
+        MapProp_PrepareTreeSystem(&s_trees, camera);
     UpdateSongQuaoWaterObstacles(camera.target);
     // Rain mode (] cycles dry -> drizzle -> heavy -> storm): drives SWE rain/runoff + streaks
     if (IsKeyPressed(KEY_RIGHT_BRACKET))

@@ -399,4 +399,17 @@
   3. When snapping ground boundary vertices, recompute continuous Gouraud normals across the entire mesh and apply boundary neighbor smoothing.
   4. In `GroundLookup_Sample`, borrow `mesh->normals` into `MapGroundLookup` and interpolate normals using the triangle's barycentric weights ($w_0, w_1, w_2$) to eliminate per-triangle normal faceting.
 
+### `u_lightDir` double-negation lights foliage from underground (shrubs / trees)
+
+- **Symptom:** Shrubs or trees have dark, shadowed upper canopies and brightly lit undersides, with backlit subsurface scattering glowing when looking away from the sun.
+- **Cause:** `Nature_UpdateShader` (`map_props_nature.inl`) already negates `Environment_GetSunDirection()`, uploading `u_lightDir` pointing **upward toward the sun** (`y > 0`). Fragment shaders (`shrub_foliage.fs`, `tree_foliage.fs`) that compute `vec3 L = -normalize(u_lightDir)` negate it a second time, inverting all diffuse, SSS, and shadow-bias math.
+- **Rule:** Every shader fed by `Nature_UpdateShader` MUST treat `u_lightDir` as pointing **toward the sun** (`L = normalize(u_lightDir)`). Never negate `u_lightDir` in nature shaders.
+
+### `meadow_cull.comp` LOD1 skip & `nature_opaque.fs` late-Z `discard`
+
+- **Symptom:** GPU compute grass culling produces 0 `LOD1` instances (`bandCount[1] == 0`), forcing 100% of tufts within ~48m into 6-blade/6-segment `LOD0` and popping abruptly to `LOD2`; meanwhile `nature_opaque.fs` loses hardware Early-Z/HSR on Vulkan and mobile TBDR.
+- **Cause:** `u_lodBands` packs `(midDist, lodDist, nearBlend, farBlend)` (e.g., `(24, 36, 3.2, 6.5)`), so testing `distSq <= u_lodBands.w * u_lodBands.w` for `LOD1` compared against `farBlend` (`6.5m < 36m`), making `LOD1` unreachable. Separately, `if (ign > v_fadeAlpha) discard;` in `nature_opaque.fs` disabled Early-Z even though far tufts already taper to root in VS and thin stochastically in C/Compute.
+- **Rule:** In `meadow_cull.comp`, classify `LOD0 / LOD1 / LOD2` stochastically using `u_lodBands.x` (`midDist`) ± `u_lodBands.z` (`nearBlend`) and `u_lodBands.y` (`lodDist`) ± `u_lodBands.w` (`farBlend`). Keep `nature_opaque.fs` 100% free of `discard` to preserve hardware Early-Z.
+
+
 
