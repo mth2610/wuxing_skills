@@ -72,6 +72,7 @@ MapIceSurface MapProp_CreateTerrainIce(const char *meshPath, MapIceConfig config
     ice.shader = ResourceManager_LoadShader("maps/toolkit/shaders/ice_surface.vs",
                                             "maps/toolkit/shaders/ice_surface.fs");
     Ice_EnsureShaderLocs(ice.shader);
+    MapShadow_ConfigureShader(ice.shader);
 
     ice.noiseTex = MapLoadMippedTexture("assets/textures/cloud_noise.png", TEXTURE_WRAP_REPEAT);
     if (FileExists("assets/maps/mau_son/textures/glacial_ice_plates.png"))
@@ -108,7 +109,10 @@ void MapProp_DrawIceSurface(const MapIceSurface *ice, float time)
     }
 
     Ice_EnsureShaderLocs(ice->shader);
+    MapShadow_AttachMaterial((Material *)&ice->model.materials[0]);
     BeginShaderMode(ice->shader);
+    MapShadow_UpdateShader(ice->shader);
+    Environment_BindCloudShadowShader(ice->shader);
 
     if (s_iceLocTime >= 0)
         SetShaderValue(ice->shader, s_iceLocTime, &time, SHADER_UNIFORM_FLOAT);

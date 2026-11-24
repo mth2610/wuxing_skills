@@ -135,22 +135,37 @@ def bake_mau_son():
 
     water_plane = np.full_like(terrain, -cliff_depth - 1.0)
     if saddle_lake.any():
-        # Set lake surface BELOW the lowest surrounding rim so water sits inside a true depressed bowl
+        # Smooth C2 basin carving + wide hillside shoulder grading (eliminates hard cliff ring!)
         rim_ring = (gaussian_filter_2d(saddle_lake.astype(np.float64), 2.5) > 0.05) & (~saddle_lake) & valid
-        rim_low = float(np.percentile(terrain[rim_ring], 12)) if rim_ring.any() else float(np.percentile(terrain[saddle_lake], 25))
-        s_water_y = max(1.8, rim_low - 0.18)
+        rim_low = float(np.percentile(terrain[rim_ring], 18)) if rim_ring.any() else float(np.percentile(terrain[saddle_lake], 25))
+        s_water_y = max(1.8, rim_low - 0.16)
         s_w = gaussian_filter_2d(saddle_lake.astype(np.float64), 2.6)
+        s_shoulder = gaussian_filter_2d(saddle_lake.astype(np.float64), 5.8)
+        s_blend = np.clip(s_shoulder / 0.55, 0.0, 1.0)
+        s_blend = s_blend * s_blend * (3.0 - 2.0 * s_blend)
         s_bed = s_water_y - 1.75 * np.clip(s_w * 1.35, 0.0, 1.0)
-        terrain = np.where(valid & (s_w > 0.02), np.minimum(terrain, s_bed), terrain)
+        # Gently grade uphill banks down toward lake rim so max shore slope stays <= 26 deg
+        s_target = np.minimum(terrain, s_water_y + 0.45)
+        terrain = np.where(valid, terrain * (1.0 - s_blend) + s_target * s_blend, terrain)
+        s_in = np.clip(s_w / 0.42, 0.0, 1.0)
+        s_in = s_in * s_in * (3.0 - 2.0 * s_in)
+        terrain = np.where(valid, terrain * (1.0 - s_in) + np.minimum(terrain, s_bed) * s_in, terrain)
         water_plane = np.where(saddle_lake, np.maximum(water_plane, s_water_y), water_plane)
 
     if upper_tarn.any():
         rim_ring_u = (gaussian_filter_2d(upper_tarn.astype(np.float64), 2.5) > 0.05) & (~upper_tarn) & valid
-        rim_low_u = float(np.percentile(terrain[rim_ring_u], 12)) if rim_ring_u.any() else float(np.percentile(terrain[upper_tarn], 25))
-        u_water_y = max(2.8, rim_low_u - 0.18)
+        rim_low_u = float(np.percentile(terrain[rim_ring_u], 18)) if rim_ring_u.any() else float(np.percentile(terrain[upper_tarn], 25))
+        u_water_y = max(2.8, rim_low_u - 0.16)
         u_w = gaussian_filter_2d(upper_tarn.astype(np.float64), 2.6)
+        u_shoulder = gaussian_filter_2d(upper_tarn.astype(np.float64), 5.2)
+        u_blend = np.clip(u_shoulder / 0.55, 0.0, 1.0)
+        u_blend = u_blend * u_blend * (3.0 - 2.0 * u_blend)
         u_bed = u_water_y - 1.55 * np.clip(u_w * 1.35, 0.0, 1.0)
-        terrain = np.where(valid & (u_w > 0.02), np.minimum(terrain, u_bed), terrain)
+        u_target = np.minimum(terrain, u_water_y + 0.45)
+        terrain = np.where(valid, terrain * (1.0 - u_blend) + u_target * u_blend, terrain)
+        u_in = np.clip(u_w / 0.42, 0.0, 1.0)
+        u_in = u_in * u_in * (3.0 - 2.0 * u_in)
+        terrain = np.where(valid, terrain * (1.0 - u_in) + np.minimum(terrain, u_bed) * u_in, terrain)
         water_plane = np.where(upper_tarn, np.maximum(water_plane, u_water_y), water_plane)
 
     # ── 2. D8 Cascading Mountain Streams & Glacial Ice Flowmap ──
@@ -209,13 +224,30 @@ def bake_mau_son():
     has_stream_surf = stream_surf_den > 1e-4
     avg_stream_surf = np.where(has_stream_surf, stream_surf_num / np.maximum(stream_surf_den, 1e-4), terrain - 0.25)
 
-    bed_smooth = normalized_smooth(terrain, valid, 2.2)
-    smooth_mask = np.clip(corridor * 0.88 + lakes_smooth * 0.92, 0.0, 0.94)
+    bed_smooth = normalized_smooth(terrain, valid, 2.8)
+    smooth_mask = np.clip(corridor * 0.90 + lakes_smooth * 0.94, 0.0, 0.96)
     terrain = terrain * (1.0 - smooth_mask) + bed_smooth * smooth_mask
     terrain[~valid] = -cliff_depth
 
     stream_plane = np.where(has_stream_surf, avg_stream_surf, terrain - 0.25)
     water_plane = np.where(lakes_all, water_plane, stream_plane)
+    # Smooth stream-to-lake elevation transition so cascades slope gently (<= 26 deg) instead of vertical cliffs
+    water_active = lakes_all | has_stream_surf
+    for _ in range(8):
+        wp_smooth = normalized_smooth(water_plane, water_active, 2.8)
+        water_plane = np.where(lakes_all, water_plane, np.where(has_stream_surf, water_plane * 0.30 + wp_smooth * 0.70, water_plane))
+    # Soft C2 channel grading beneath smoothed stream cascade (zero hard boolean cliff edges!)
+    stream_grade = gaussian_filter_2d((has_stream_surf & (~lakes_all)).astype(np.float64), 2.4)
+    stream_grade = np.clip(stream_grade / 0.45, 0.0, 1.0)
+    stream_grade = stream_grade * stream_grade * (3.0 - 2.0 * stream_grade)
+    terrain = np.where(valid, terrain * (1.0 - stream_grade) + np.minimum(terrain, water_plane - 0.42) * stream_grade, terrain)
+    # Final gentle shoreline bank relaxation around all water bodies
+    bank_zone = gaussian_filter_2d(water_active.astype(np.float64), 3.2)
+    bank_mask = np.clip(bank_zone * 1.4, 0.0, 0.85) * valid.astype(np.float64)
+    for _ in range(2):
+        t_sm = normalized_smooth(terrain, valid, 2.6)
+        terrain = terrain * (1.0 - bank_mask) + t_sm * bank_mask
+    terrain[~valid] = -cliff_depth
     rim_taper = np.clip((perimeter - 2.5) / 4.5, 0.0, 1.0)
     water_plane = np.where(valid, water_plane * rim_taper + (terrain - 0.35) * (1.0 - rim_taper), terrain - 0.35)
 
@@ -382,10 +414,13 @@ def bake_mau_son():
     placements = []
     occupied = []
 
+    # Precompute 2.2m dry-shore clearance mask so rocks never clip into water/cascades
+    wet_buffer = gaussian_filter_2d(wet_water.astype(np.float64), 2.2) > 0.04
+
     def sample_cell(x, z):
         r = int(np.clip(z / sz, 0, h - 1))
         c = int(np.clip(x / sx, 0, w - 1))
-        return float(ground[r, c]), float(slope_s[r, c]), float(tpi_m[r, c]), bool(valid[r, c]), bool(wet_water[r, c])
+        return float(ground[r, c]), float(slope_s[r, c]), float(tpi_m[r, c]), bool(valid[r, c]), bool(wet_water[r, c] or wet_buffer[r, c])
 
     def can_place(x, z, r_scale, min_sep=0.62):
         if x < 16.0 or x > width - 16.0 or z < 16.0 or z > depth - 16.0:
@@ -399,7 +434,7 @@ def bake_mau_son():
 
     def add_rock(x, z, r_scale, h_scale, rot, arch, allow_stack=False):
         gy, sl, _, val, is_wet = sample_cell(x, z)
-        if not val or is_wet or gy < -0.10 or sl > 36.0:
+        if not val or is_wet or gy < 0.25 or sl > 34.0:
             return False
         if not allow_stack and not can_place(x, z, r_scale):
             return False
@@ -408,34 +443,41 @@ def bake_mau_son():
             occupied.append((x, z, r_scale))
         return True
 
-    # 4A. Cổng Băng Tuyết (Frost-Covered Natural Stone/Ice Arch on NW Ridge Overlook)
-    nw_mask = valid & (X < width * 0.36) & (Z < depth * 0.45) & (perimeter >= 3.0) & (perimeter <= 8.5) & (~wet_water)
+    # 4A. Cổng Băng Tuyết (Frost-Covered Natural Granite/Slate Arch on NW Ridge Overlook)
+    nw_mask = valid & (X < width * 0.36) & (Z < depth * 0.45) & (perimeter >= 3.0) & (perimeter <= 8.5) & (~wet_buffer)
     nw_r, nw_c = np.where(nw_mask)
     arch_x, arch_z = width * 0.22, depth * 0.32
     if len(nw_r) > 0:
         pick = len(nw_r) // 2
         arch_x, arch_z = float(nw_c[pick] * sx), float(nw_r[pick] * sz)
         gy_a, _, _, _, _ = sample_cell(arch_x, arch_z)
-        placements.append((arch_x - 3.3, gy_a, arch_z - 1.2, 1.90, 3.80, 24.0, "MAP_ROCK_CRAG"))
-        placements.append((arch_x + 3.3, gy_a, arch_z + 1.2, 1.90, 3.80, 204.0, "MAP_ROCK_CRAG"))
-        placements.append((arch_x - 1.4, gy_a + 3.4, arch_z - 0.5, 2.40, 1.15, 20.0, "MAP_ROCK_SLATE"))
-        placements.append((arch_x + 1.4, gy_a + 3.4, arch_z + 0.5, 2.40, 1.15, 200.0, "MAP_ROCK_SLATE"))
+        placements.append((arch_x - 3.3, gy_a, arch_z - 1.2, 2.10, 1.95, 24.0, "MAP_ROCK_CRAG"))
+        placements.append((arch_x + 3.3, gy_a, arch_z + 1.2, 2.10, 1.95, 204.0, "MAP_ROCK_CRAG"))
+        placements.append((arch_x - 1.4, gy_a + 3.2, arch_z - 0.5, 2.50, 1.65, 20.0, "MAP_ROCK_SLATE"))
+        placements.append((arch_x + 1.4, gy_a + 3.2, arch_z + 0.5, 2.50, 1.65, 200.0, "MAP_ROCK_SLATE"))
         occupied.append((arch_x, arch_z, 5.8))
 
-    # 4B. Hàn Băng Thạch Trận (Monolithic Glacial Ice Spires & Slate Pillars framing Arena & Lakes)
+    # 4B. Hàn Băng Thạch Trận (Frosted Alpine Granite & Slate Monoliths framing Arena & Lakes)
+    # Note: MAP_ROCK_CRAG mesh already has 2.65x internal Y stretch -> keep h_scale = rp * 0.58..0.90!
+    # MAP_ROCK_SLATE mesh has flat Y -> boost h_scale = rp * 1.45..2.05 for solid vertical outcrops.
     for i in range(14):
         ang = i * (2.0 * np.pi / 14.0) + rng.uniform(-0.12, 0.12)
         dist = float(rng.uniform(18.5, 28.0))
         px_i = arena_x + np.cos(ang) * dist
         pz_i = arena_z + np.sin(ang) * dist
-        rp = float(rng.uniform(1.25, 2.20))
-        arch = "MAP_ROCK_OBSIDIAN" if (i % 2 == 0) else "MAP_ROCK_CRAG"
-        if add_rock(px_i, pz_i, rp, rp * float(rng.uniform(1.50, 2.15)), float(np.degrees(ang)), arch):
+        rp = float(rng.uniform(1.35, 2.25))
+        if i % 2 == 0:
+            arch = "MAP_ROCK_GRANITE"
+            hp = rp * float(rng.uniform(0.85, 1.25))
+        else:
+            arch = "MAP_ROCK_CRAG"
+            hp = rp * float(rng.uniform(0.60, 0.90))
+        if add_rock(px_i, pz_i, rp, hp, float(np.degrees(ang)), arch):
             add_rock(px_i + np.cos(ang + 0.45) * rp * 0.85, pz_i + np.sin(ang + 0.45) * rp * 0.85,
-                     rp * 0.58, rp * 1.05, float(np.degrees(ang) + 28.0), "MAP_ROCK_SLATE", allow_stack=True)
+                     rp * 0.65, rp * 1.45, float(np.degrees(ang) + 28.0), "MAP_ROCK_SLATE", allow_stack=True)
 
-    # 4C. Frost-Rimed Alpine Slate Crags & Summit Outcrops
-    rim_mask = valid & (~wet_water) & (ground > 3.0) & (slope_s > 10.0) & (slope_s < 34.0)
+    # 4C. Frost-Rimed Alpine Granite Crags & Summit Outcrops
+    rim_mask = valid & (~wet_buffer) & (ground > 3.0) & (slope_s > 9.0) & (slope_s < 32.0)
     r_rows, r_cols = np.where(rim_mask)
     if len(r_rows) > 0:
         order = rng.permutation(len(r_rows))
@@ -444,45 +486,50 @@ def bake_mau_son():
             if crag_clusters >= 24:
                 break
             bx, bz = float(r_cols[idx] * sx), float(r_rows[idx] * sz)
-            rb = float(rng.uniform(1.75, 3.00))
+            rb = float(rng.uniform(1.85, 3.10))
             if not can_place(bx, bz, rb, min_sep=1.35):
                 continue
-            hb = rb * float(rng.uniform(1.20, 1.85))
+            hb = rb * float(rng.uniform(0.58, 0.88))
             if add_rock(bx, bz, rb, hb, float(rng.uniform(0, 360)), "MAP_ROCK_CRAG"):
                 crag_clusters += 1
                 for k in range(int(rng.integers(3, 6))):
                     ang = k * (2.0 * np.pi / 5.0) + float(rng.uniform(-0.25, 0.25))
-                    dist = rb * float(rng.uniform(0.55, 0.95))
-                    cr = rb * float(rng.uniform(0.42, 0.68))
-                    sub_arch = "MAP_ROCK_OBSIDIAN" if (k % 3 == 0) else "MAP_ROCK_SLATE"
-                    add_rock(bx + np.cos(ang) * dist, bz + np.sin(ang) * dist, cr, cr * float(rng.uniform(1.15, 1.75)),
+                    dist = rb * float(rng.uniform(0.58, 0.95))
+                    cr = rb * float(rng.uniform(0.46, 0.72))
+                    if k % 2 == 0:
+                        sub_arch = "MAP_ROCK_GRANITE"
+                        ch = cr * float(rng.uniform(0.75, 1.15))
+                    else:
+                        sub_arch = "MAP_ROCK_SLATE"
+                        ch = cr * float(rng.uniform(1.45, 2.05))
+                    add_rock(bx + np.cos(ang) * dist, bz + np.sin(ang) * dist, cr, ch,
                              float(rng.uniform(0, 360)), sub_arch, allow_stack=True)
 
-    # 4D. Shoreline Glacial Ice Floe Anchors & Granite Boulders
+    # 4D. Alpine Granite Boulders & Frost-Weathered Outcrops
     for _ in range(1300):
-        if len(placements) >= 370:
+        if len(placements) >= 340:
             break
         x = float(rng.uniform(18.0, width - 18.0))
         z = float(rng.uniform(18.0, depth - 18.0))
         gy, sl, tpi_v, val, is_wet = sample_cell(x, z)
-        if not val or is_wet or gy < 0.20 or sl > 32.0:
+        if not val or is_wet or gy < 0.35 or sl > 30.0:
             continue
-        r_s = float(rng.uniform(0.70, 1.75))
-        if tpi_v > 1.8 and rng.random() < 0.35:
-            arch = "MAP_ROCK_OBSIDIAN"
-            h_s = r_s * 1.32
-        elif rng.random() < 0.45:
+        r_s = float(rng.uniform(0.75, 1.80))
+        if tpi_v > 1.8 and rng.random() < 0.30:
+            arch = "MAP_ROCK_CRAG"
+            h_s = r_s * float(rng.uniform(0.56, 0.82))
+        elif rng.random() < 0.38:
             arch = "MAP_ROCK_SLATE"
-            h_s = r_s * float(rng.uniform(0.75, 1.15))
+            h_s = r_s * float(rng.uniform(1.45, 2.10))
         else:
             arch = "MAP_ROCK_GRANITE"
-            h_s = r_s * float(rng.uniform(0.65, 1.05))
+            h_s = r_s * float(rng.uniform(0.72, 1.12))
         if add_rock(x, z, r_s, h_s, float(rng.uniform(0, 360)), arch):
-            for _ in range(int(rng.integers(1, 4))):
+            for _ in range(int(rng.integers(1, 3))):
                 a = rng.uniform(0.0, 2.0 * np.pi)
-                d = r_s + float(rng.uniform(0.35, 1.35))
-                sr = float(rng.uniform(0.22, 0.50))
-                add_rock(x + np.cos(a) * d, z + np.sin(a) * d, sr, sr * 0.48, float(rng.uniform(0, 360)), "MAP_ROCK_SCREE")
+                d = r_s + float(rng.uniform(0.38, 1.35))
+                sr = float(rng.uniform(0.24, 0.52))
+                add_rock(x + np.cos(a) * d, z + np.sin(a) * d, sr, sr * 0.55, float(rng.uniform(0, 360)), "MAP_ROCK_SCREE")
 
     # Bake rock contact AO & frost-shattered slate talus aprons into debris_map.png
     rock_apron2 = np.zeros_like(rock2)
@@ -511,12 +558,12 @@ def bake_mau_son():
     debris_map2[~valid2] = 0.0
     write_png(p("debris_map.png"), np.rint(debris_map2 * 255), 6)
 
-    # Alpine snow-white -> pale glacial ice-blue -> slate permafrost tint
-    tint_r = 0.84 - 0.12 * rock2 - 0.10 * shore2
-    tint_g = 0.89 - 0.08 * rock2 - 0.03 * shore2
-    tint_b = 0.96 - 0.04 * rock2 + 0.03 * shore2
+    # Clean neutral-ivory alpine snow -> crisp slate permafrost tint (zero cyan/green bias)
+    tint_r = 0.94 - 0.14 * rock2 - 0.06 * shore2
+    tint_g = 0.95 - 0.12 * rock2 - 0.04 * shore2
+    tint_b = 0.98 - 0.08 * rock2 + 0.01 * shore2
     tint_map2 = np.stack((np.clip(tint_r, 0.0, 1.0), np.clip(tint_g, 0.0, 1.0), np.clip(tint_b, 0.0, 1.0)), axis=-1)
-    tint_map2[~valid2] = (0.45, 0.52, 0.62)
+    tint_map2[~valid2] = (0.52, 0.56, 0.64)
     write_png(p("ground_tint.png"), np.rint(tint_map2 * 255), 2)
 
     # 256x256 Alpine snow-sastrugi & permafrost relief map

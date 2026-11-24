@@ -216,17 +216,32 @@ void main() {
         rockAlbedo = mix(rockAlbedo, vec3(0.72, 0.62, 0.48), sandDustMask * 0.45 * u_rockAridMode);
     }
 
-    // Tight basal soil & root-humus collar grounding (or windblown ochre grus / volcanic ash skirt)
-    float skirtMask = (1.0 - smoothstep(-0.42, mix(-0.04, 0.08, max(u_rockAridMode, u_rockVolcanicMode)), fragLocalY)) * (1.0 - isRiverStone * 0.85);
+    // Tight basal soil & root-humus collar grounding (or windblown ochre grus / volcanic ash / alpine snow-drift skirt)
+    float skirtTop = mix(mix(-0.04, 0.08, max(u_rockAridMode, u_rockVolcanicMode)), 0.12, u_rockAlpineMode);
+    float skirtMask = (1.0 - smoothstep(-0.42, skirtTop, fragLocalY)) * (1.0 - isRiverStone * 0.85);
     vec3 skirtLoam = mix(vec3(0.13, 0.11, 0.08), vec3(0.44, 0.33, 0.22), u_rockAridMode);
     skirtLoam = mix(skirtLoam, vec3(0.16, 0.15, 0.16), u_rockVolcanicMode);
     vec3 lushSkirtMoss = mix(skirtLoam, vec3(0.15, 0.24, 0.09), clamp(worldNormal.y * 0.85 + (1.0 - fractureCavity) * 0.35, 0.0, 1.0));
     vec3 aridSkirtSand = mix(skirtLoam, vec3(0.56, 0.44, 0.30), clamp(worldNormal.y * 0.85 + detailLuma * 0.35, 0.0, 1.0));
     vec3 skirtMossAlbedo = mix(lushSkirtMoss, aridSkirtSand, u_rockAridMode);
     skirtMossAlbedo = mix(skirtMossAlbedo, vec3(0.18, 0.17, 0.18), u_rockVolcanicMode);
-    skirtMossAlbedo = mix(skirtMossAlbedo, vec3(0.78, 0.85, 0.94), u_rockAlpineMode);
-    rockAlbedo = mix(rockAlbedo, skirtMossAlbedo, skirtMask * 0.68);
-    rockAlbedo *= mix(0.68, 1.0, smoothstep(-0.36, 0.02, fragLocalY));
+    skirtMossAlbedo = mix(skirtMossAlbedo, vec3(0.86, 0.90, 0.96), u_rockAlpineMode);
+    // Keep alpine granite/slate crag flanks richly dark & weathered so rocks contrast boldly against white snow
+    if (u_rockAlpineMode > 0.5) {
+        float flankDark = 1.0 - smoothstep(0.52, 0.82, worldNormal.y);
+        rockAlbedo *= mix(vec3(1.0), vec3(0.54, 0.58, 0.66), flankDark * u_rockAlpineMode);
+    }
+    rockAlbedo = mix(rockAlbedo, skirtMossAlbedo, skirtMask * mix(0.68, 0.78, u_rockAlpineMode));
+    rockAlbedo *= mix(mix(0.68, 0.86, u_rockAlpineMode), 1.0, smoothstep(-0.36, 0.02, fragLocalY));
+
+    // Subtle windward hoarfrost & crystalline rime in deep alpine fracture crevices (preserves dark slate contrast!)
+    if (u_rockAlpineMode > 0.5) {
+        vec3 windward = normalize(vec3(0.82, 0.24, -0.52));
+        float windFace = smoothstep(0.15, 0.85, dot(worldNormal, windward));
+        float rimeBand = sin(worldPosition.x * 2.4 + worldPosition.z * 2.1 + sin(worldPosition.y * 2.8) * 1.1) * 0.5 + 0.5;
+        float rimeMask = clamp((windFace * 0.35 + (1.0 - fractureCavity) * 0.30) * (0.40 + 0.60 * rimeBand), 0.0, 0.45) * u_rockAlpineMode;
+        rockAlbedo = mix(rockAlbedo, vec3(0.84, 0.89, 0.96), rimeMask * 0.32);
+    }
 
     // Authentic water-tumbled river boulder biofilm, diatom patina & wet waterline meniscus
     float wetBase = 0.0;
@@ -249,10 +264,11 @@ void main() {
         roughness = mix(roughness, 0.22, splashHalo * 0.70);
     }
 
-    // Ground & sand contact darkening at the base of every rock (softened in arid mode so cavities & undersides stay lit by sand bounce)
+    // Ground & sand contact darkening at the base of every rock (lifted in arid/alpine modes for sand/snow bounce)
+    float highBounceMode = max(u_rockAridMode, u_rockAlpineMode);
     float skirtContact = 1.0 - smoothstep(-0.62, 0.10, fragLocalY);
-    rockAlbedo *= mix(1.0, mix(0.52, 0.78, u_rockAridMode), skirtContact * (isRiverStone > 0.5 ? 0.45 : 0.65));
-    float contactAO = clamp(mix(0.42, 0.68, u_rockAridMode) + mix(0.58, 0.32, u_rockAridMode) * smoothstep(-0.60, 0.15, fragLocalY), 0.42, 1.0);
+    rockAlbedo *= mix(1.0, mix(0.52, 0.86, highBounceMode), skirtContact * (isRiverStone > 0.5 ? 0.45 : 0.65));
+    float contactAO = clamp(mix(0.42, 0.78, highBounceMode) + mix(0.58, 0.22, highBounceMode) * smoothstep(-0.60, 0.15, fragLocalY), 0.42, 1.0);
 
     roughness = mix(roughness, 0.88, max(topMossMask, skirtMask) * 0.82);
     if (isRiverStone <= 0.5) {
@@ -280,19 +296,22 @@ void main() {
         spec = calcSpecular(normal, modelLightDir, viewDir, shininess) * specStrength;
     }
 
-    vec3 ambient = Environment_HemisphereIrradiance(worldNormal, actualAmbient);
-    // Warm meadow turf bounce (or sun-baked desert sand bounce in arid mode) into lower rock facets
+    vec3 rockHemiBounce = mix(vec3(0.55, 0.45, 0.40), vec3(0.84, 0.90, 1.02), u_rockAlpineMode);
+    vec3 ambient = Environment_HemisphereIrradianceTinted(worldNormal, actualAmbient, rockHemiBounce);
+    // Warm meadow turf bounce (or desert sand / volcanic magma / high-albedo alpine snow bounce) into lower rock facets
     vec3 bounceTint = mix(vec3(0.20, 0.32, 0.12), vec3(0.62, 0.46, 0.28), u_rockAridMode);
     bounceTint = mix(bounceTint, vec3(1.25, 0.42, 0.12), u_rockVolcanicMode);
-    vec3 turfBounce = bounceTint * max(actualAmbient, vec3(0.24)) * max(-worldNormal.y * 0.5 + 0.5, 0.0) * mix(0.45, 0.72, max(u_rockAridMode, u_rockVolcanicMode));
+    bounceTint = mix(bounceTint, vec3(0.76, 0.85, 0.98), u_rockAlpineMode);
+    float bounceStrength = mix(0.45, 0.78, max(max(u_rockAridMode, u_rockVolcanicMode), u_rockAlpineMode));
+    vec3 turfBounce = bounceTint * max(actualAmbient, vec3(0.24)) * max(-worldNormal.y * 0.5 + 0.5, 0.0) * bounceStrength;
     ambient = (ambient + turfBounce) * contactAO;
     if (isRiverStone > 0.5) {
         vec3 streamBounce = actualAmbient * vec3(0.85, 1.12, 1.20) + vec3(0.04, 0.10, 0.12);
         ambient = mix(ambient, streamBounce, 0.42 * wetBase);
     }
-    float groundAO = clamp(worldPosition.y * 0.35 + mix(0.75, 0.88, u_rockAridMode), mix(0.40, 0.72, u_rockAridMode), 1.0);
-    float skirtAO = clamp(mix(0.54, 0.76, u_rockAridMode) + mix(0.46, 0.24, u_rockAridMode) * smoothstep(-0.50, 0.12, fragLocalY), 0.54, 1.0);
-    float creviceAO = clamp((normalSample.z * 1.30 - 0.22) * mix(mix(0.62, 0.88, u_rockAridMode), 1.0, fractureCavity), mix(0.42, 0.70, u_rockAridMode), 1.0);
+    float groundAO = clamp(worldPosition.y * 0.35 + mix(0.75, 0.90, highBounceMode), mix(0.40, 0.78, highBounceMode), 1.0);
+    float skirtAO = clamp(mix(0.54, 0.82, highBounceMode) + mix(0.46, 0.18, highBounceMode) * smoothstep(-0.50, 0.12, fragLocalY), 0.54, 1.0);
+    float creviceAO = clamp((normalSample.z * 1.30 - 0.22) * mix(mix(0.62, 0.88, highBounceMode), 1.0, fractureCavity), mix(0.42, 0.74, highBounceMode), 1.0);
     float mossSSS = pow(max(dot(viewDir, -modelLightDir), 0.0), 3.0) * topMossMask * shadow * 0.22 * (1.0 - max(u_rockAridMode, u_rockVolcanicMode));
     vec3 lit = rockAlbedo * (ambient * groundAO * skirtAO * creviceAO + diff * actualLight * shadow)
              + crownMossAlbedo * actualLight * mossSSS
@@ -318,11 +337,12 @@ void main() {
 
     lit += VFXLights_Accumulate(fragPosition, normal, albedo.rgb);
 
-    // Atmospheric aerial haze for distant mountain crags (matches ground_splat.fs in arid mode)
-    float hazeStart = mix(38.0, 42.0, u_rockAridMode);
-    float hazeEnd = mix(115.0, 320.0, u_rockAridMode);
-    float haze = smoothstep(hazeStart, hazeEnd, camDist) * mix(0.30, 0.36, u_rockAridMode);
+    // Atmospheric aerial haze for distant mountain crags
+    float hazeStart = mix(38.0, 42.0, max(u_rockAridMode, u_rockAlpineMode));
+    float hazeEnd = mix(115.0, 260.0, max(u_rockAridMode, u_rockAlpineMode));
+    float haze = smoothstep(hazeStart, hazeEnd, camDist) * mix(0.30, 0.36, max(u_rockAridMode, u_rockAlpineMode));
     vec3 hazeColor = mix(actualAmbient * 1.35, actualAmbient * vec3(0.88, 0.84, 0.78) + actualLight * vec3(0.28, 0.22, 0.16), u_rockAridMode);
+    hazeColor = mix(hazeColor, actualAmbient * vec3(0.94, 1.02, 1.18) + actualLight * vec3(0.24, 0.25, 0.27), u_rockAlpineMode);
     lit = mix(lit, hazeColor, haze);
 
     finalColor = vec4(lit, albedo.a * colDiffuse.a);

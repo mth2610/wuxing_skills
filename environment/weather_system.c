@@ -1,4 +1,5 @@
 #include "environment/weather_system.h"
+#include "environment/wind/wind_system.h"
 #include "core/gfx_quality.h"
 #include "raymath.h"
 #include "rlgl.h"
@@ -170,6 +171,41 @@ typedef struct
 
 static SnowFlakeDef s_snowTable[SNOW_FLAKE_COUNT];
 static bool s_snowTableBuilt = false;
+static Texture2D s_snowFlakeTex = {0};
+
+static void Snow_EnsureSpriteTexture(void)
+{
+    if (s_snowFlakeTex.id != 0)
+        return;
+    const int R = 32;
+    Image img = GenImageColor(R, R, (Color){0, 0, 0, 0});
+    for (int y = 0; y < R; y++)
+    {
+        for (int x = 0; x < R; x++)
+        {
+            float dx = ((float)x + 0.5f - (float)R * 0.5f) / ((float)R * 0.5f);
+            float dy = ((float)y + 0.5f - (float)R * 0.5f) / ((float)R * 0.5f);
+            float r = sqrtf(dx * dx + dy * dy);
+            if (r >= 1.0f)
+                continue;
+            // Soft crystalline snowflake: bright core + subtle 6-pointed star + smooth Gaussian halo
+            float ang = atan2f(dy, dx);
+            float star = 0.82f + 0.18f * cosf(ang * 6.0f);
+            float core = expf(-r * r * 6.5f);
+            float halo = (1.0f - r) * (1.0f - r) * star * 0.58f;
+            float a = fminf(1.0f, core * 0.85f + halo);
+            unsigned char ab = (unsigned char)(a * 255.0f + 0.5f);
+            ImageDrawPixel(&img, x, y, (Color){255, 255, 255, ab});
+        }
+    }
+    s_snowFlakeTex = LoadTextureFromImage(img);
+    UnloadImage(img);
+    if (s_snowFlakeTex.id != 0)
+    {
+        SetTextureFilter(s_snowFlakeTex, TEXTURE_FILTER_BILINEAR);
+        SetTextureWrap(s_snowFlakeTex, TEXTURE_WRAP_CLAMP);
+    }
+}
 
 static void Snow_EnsureTable(void)
 {
@@ -202,6 +238,7 @@ void Weather_DrawSnow(Vector3 focus, Camera3D cam, float time)
         return;
 
     Snow_EnsureTable();
+    Snow_EnsureSpriteTexture();
 
     int count = (int)(SNOW_FLAKE_COUNT * fminf(1.0f, 0.30f + intensity * 0.55f));
     GfxQuality q = GfxQuality_Get();
@@ -220,49 +257,92 @@ void Weather_DrawSnow(Vector3 focus, Camera3D cam, float time)
     right = Vector3Scale(right, 1.0f / sqrtf(rLenSq));
     Vector3 up = Vector3CrossProduct(right, fwd);
 
-    const float fallSpeed = 2.15f + intensity * 1.15f;
-    const float windDriftX = -1.65f - intensity * 0.90f;
-    const float windDriftZ = 1.10f + intensity * 0.60f;
+    WindMacroConfig wind = Wind_GetMacro();
+    float windX = isfinite(wind.baseDirection.x) ? wind.baseDirection.x : -1.65f;
+    float windZ = isfinite(wind.baseDirection.z) ? wind.baseDirection.z : 1.10f;
+    float windLen = sqrtf(windX * windX + windZ * windZ);
+    if (windLen < 0.25f)
+    {
+        windX = -1.40f;
+        windZ = 0.90f;
+        windLen = sqrtf(windX * windX + windZ * windZ);
+    }
+    Vector3 windDir3 = {windX / windLen, 0.0f, windZ / windLen};
+
+    const float fallSpeed = 2.05f + intensity * 1.10f;
+    const float windDriftX = windX * (0.48f + intensity * 0.22f);
+    const float windDriftZ = windZ * (0.48f + intensity * 0.22f);
     const float topY = focus.y + SNOW_COLUMN_HEIGHT;
     const float cx = floorf(focus.x * 0.5f) * 2.0f;
     const float cz = floorf(focus.z * 0.5f) * 2.0f;
-    const float alphaBase = fminf(0.82f, 0.34f + intensity * 0.24f);
+    const float alphaBase = fminf(0.86f, 0.36f + intensity * 0.26f);
     const float timeFall = time * fallSpeed;
 
     rlDrawRenderBatchActive();
     rlDisableDepthMask();
     rlDisableBackfaceCulling();
     BeginBlendMode(BLEND_ALPHA);
-    rlSetTexture(0);
+    rlSetTexture(s_snowFlakeTex.id);
     rlBegin(RL_QUADS);
     for (int i = 0; i < count; i++)
     {
         const SnowFlakeDef *sf = &s_snowTable[i];
-        float fall = fmodf(sf->phaseOffset + timeFall * sf->speedJ, SNOW_COLUMN_HEIGHT);
-        float y = topY - fall;
-        float flutter = time * 1.65f + sf->swirlPhase;
-        float sFlut = sinf(flutter);
-        float cFlut = cosf(flutter);
+        bool isSpindrift = (i % 5 == 0);
+        float y, x, z;
+        float hsX, hsY;
+        Vector3 axisR = right;
+        Vector3 axisU = up;
 
-        float x = cx + fmodf(sf->dx + windDriftX * fall * 0.35f + sFlut * 0.45f + SNOW_COLUMN_RADIUS * 3.0f, SNOW_COLUMN_RADIUS * 2.0f) - SNOW_COLUMN_RADIUS;
-        float z = cz + fmodf(sf->dz + windDriftZ * fall * 0.35f + cFlut * 0.45f + SNOW_COLUMN_RADIUS * 3.0f, SNOW_COLUMN_RADIUS * 2.0f) - SNOW_COLUMN_RADIUS;
+        if (isSpindrift)
+        {
+            // Low-altitude wind-driven snow spindrift sweeping across snow ridges
+            float driftDist = time * (2.6f + windLen * 0.65f) * sf->speedJ;
+            x = cx + fmodf(sf->dx + windDir3.x * driftDist + SNOW_COLUMN_RADIUS * 6.0f, SNOW_COLUMN_RADIUS * 2.0f) - SNOW_COLUMN_RADIUS;
+            z = cz + fmodf(sf->dz + windDir3.z * driftDist + SNOW_COLUMN_RADIUS * 6.0f, SNOW_COLUMN_RADIUS * 2.0f) - SNOW_COLUMN_RADIUS;
+            float wave = sinf(time * 2.1f + sf->swirlPhase) * 0.28f;
+            y = focus.y + 0.25f + fmodf(sf->phaseOffset, 2.2f) + wave;
+            hsX = sf->size * 2.4f;
+            hsY = sf->size * 0.55f;
+            // Align spindrift streak horizontally along camera-projected wind axis
+            float projW = Vector3DotProduct(windDir3, right);
+            Vector3 wFlat = Vector3Subtract(windDir3, Vector3Scale(fwd, Vector3DotProduct(windDir3, fwd)));
+            float wFlatLen = Vector3Length(wFlat);
+            if (wFlatLen > 0.05f)
+            {
+                axisR = Vector3Scale(wFlat, (projW < 0.0f ? -1.0f : 1.0f) / wFlatLen);
+                axisU = Vector3CrossProduct(axisR, fwd);
+            }
+        }
+        else
+        {
+            float fall = fmodf(sf->phaseOffset + timeFall * sf->speedJ, SNOW_COLUMN_HEIGHT);
+            y = topY - fall;
+            float flutter = time * 1.65f + sf->swirlPhase;
+            float sFlut = sinf(flutter);
+            float cFlut = cosf(flutter);
 
-        unsigned char alpha = (unsigned char)((float)sf->alphaScale * alphaBase);
+            x = cx + fmodf(sf->dx + windDriftX * fall * 0.35f + sFlut * 0.45f + SNOW_COLUMN_RADIUS * 6.0f, SNOW_COLUMN_RADIUS * 2.0f) - SNOW_COLUMN_RADIUS;
+            z = cz + fmodf(sf->dz + windDriftZ * fall * 0.35f + cFlut * 0.45f + SNOW_COLUMN_RADIUS * 6.0f, SNOW_COLUMN_RADIUS * 2.0f) - SNOW_COLUMN_RADIUS;
+            hsX = sf->size * 0.72f;
+            hsY = sf->size * 0.72f;
+        }
+
+        unsigned char alpha = (unsigned char)((float)sf->alphaScale * alphaBase * (isSpindrift ? 0.52f : 1.0f));
         if (alpha < 6)
             continue;
 
-        float hs = sf->size * 0.5f;
-        float rx = right.x * hs, ry = right.y * hs, rz = right.z * hs;
-        float ux = up.x * hs, uy = up.y * hs, uz = up.z * hs;
+        float rx = axisR.x * hsX, ry = axisR.y * hsX, rz = axisR.z * hsX;
+        float ux = axisU.x * hsY, uy = axisU.y * hsY, uz = axisU.z * hsY;
 
-        rlColor4ub(238, 245, 255, alpha);
-        rlVertex3f(x - rx - ux, y - ry - uy, z - rz - uz);
-        rlVertex3f(x + rx - ux, y + ry - uy, z + rz - uz);
-        rlVertex3f(x + rx + ux, y + ry + uy, z + rz + uz);
-        rlVertex3f(x - rx + ux, y - ry + uy, z - rz + uz);
+        rlColor4ub(242, 248, 255, alpha);
+        rlTexCoord2f(0.0f, 0.0f); rlVertex3f(x - rx - ux, y - ry - uy, z - rz - uz);
+        rlTexCoord2f(1.0f, 0.0f); rlVertex3f(x + rx - ux, y + ry - uy, z + rz - uz);
+        rlTexCoord2f(1.0f, 1.0f); rlVertex3f(x + rx + ux, y + ry + uy, z + rz + uz);
+        rlTexCoord2f(0.0f, 1.0f); rlVertex3f(x - rx + ux, y - ry + uy, z - rz + uz);
     }
     rlEnd();
     rlDrawRenderBatchActive();
+    rlSetTexture(0);
     EndBlendMode();
     rlEnableBackfaceCulling();
     rlEnableDepthMask();

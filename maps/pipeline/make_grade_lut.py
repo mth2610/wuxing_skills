@@ -268,31 +268,32 @@ def grade_alpine_pixel(r01, g01, b01):
     g_lin = clamp01(g_lin * ((1.0 - curve_blend) + curve_blend * contrast_factor))
     b_lin = clamp01(b_lin * ((1.0 - curve_blend) + curve_blend * contrast_factor))
 
-    # Prussian-blue shadow lift preventing dark slate crags from crushing to black
-    black_lift = 0.016 * math.pow(clamp01(1.0 - luma * 2.6), 2.0)
-    r_lin += black_lift * 0.82
-    g_lin += black_lift * 0.96
-    b_lin += black_lift * 1.26
+    # Prussian-sapphire shadow lift preventing dark slate crags from crushing to black (no green/cyan cast)
+    black_lift = 0.015 * math.pow(clamp01(1.0 - luma * 2.6), 2.0)
+    r_lin += black_lift * 0.86
+    g_lin += black_lift * 0.92
+    b_lin += black_lift * 1.24
 
-    # Alpine split-toning: icy cobalt-blue shadows, crisp crystal-white / pale-gold highlights
-    shadow_weight = math.pow(clamp01(1.0 - luma * 1.7), 1.5)
-    r_lin += shadow_weight * -0.012
-    g_lin += shadow_weight * 0.004
-    b_lin += shadow_weight * 0.026
+    # Alpine Kamiagata split-toning: pure sapphire-cobalt shadows, crisp ivory-alpenglow highlights
+    shadow_weight = math.pow(clamp01(1.0 - luma * 1.75), 1.5)
+    r_lin += shadow_weight * -0.008
+    g_lin += shadow_weight * -0.002
+    b_lin += shadow_weight * 0.022
 
-    highlight_weight = math.pow(clamp01((luma - 0.48) / 0.52), 1.5)
-    r_lin += highlight_weight * 0.006
-    g_lin += highlight_weight * 0.006
-    b_lin += highlight_weight * 0.004
+    highlight_weight = math.pow(clamp01((luma - 0.54) / 0.46), 1.5)
+    r_lin += highlight_weight * 0.008
+    g_lin += highlight_weight * 0.004
+    b_lin += highlight_weight * -0.002
 
     r_srgb = clamp01(linear_to_srgb(clamp01(r_lin)))
     g_srgb = clamp01(linear_to_srgb(clamp01(g_lin)))
     b_srgb = clamp01(linear_to_srgb(clamp01(b_lin)))
 
     h, s, l = rgb_to_hsl(r_srgb, g_srgb, b_srgb)
-    # Boost glacial cyan/azure clarity (+14%)
-    is_cyan_blue = math.exp(-math.pow((h - 0.56) / 0.11, 2.0))
-    s = clamp01(s * (1.0 + 0.14 * is_cyan_blue))
+    # Refined glacial sapphire (+8%) & deep boreal evergreen (+10%) clarity without cyan/mint cast
+    is_sapphire = math.exp(-math.pow((h - 0.61) / 0.09, 2.0))
+    is_pine = math.exp(-math.pow((h - 0.38) / 0.07, 2.0))
+    s = clamp01(s * (1.0 + 0.08 * is_sapphire + 0.10 * is_pine))
 
     r_out, g_out, b_out = hsl_to_rgb(h, s, l)
     return (

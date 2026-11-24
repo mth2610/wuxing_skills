@@ -30,7 +30,7 @@ static float s_heightRange = MAU_SON_HEIGHT_RANGE;
 #define MAP_DEPTH s_mapDepth
 #define CLIFF_DEPTH (MAU_SON_CLIFF_DEPTH * s_scaleY)
 #define CLOUD_SEA_Y (-4.80f * s_scaleY)
-#define SHADOW_FOCUS_RADIUS 22.0f
+#define SHADOW_FOCUS_RADIUS 18.0f
 #define SHADOW_SNAP_STEP 0.25f
 #define SHADOW_HYSTERESIS_XZ 0.50f
 #define SHADOW_HYSTERESIS_Y 0.50f
@@ -123,16 +123,29 @@ static float MauSonFrostSedgeDensity(float x, float z, void *user)
     Vector3 groundPos, groundNormal;
     if (!MapProp_SampleGroundSurface(&s_ground, kMapCenter, x, z, &groundPos, &groundNormal))
         return 0.0f;
-    if (groundNormal.y < 0.74f || groundPos.y < 0.15f)
+    if (groundNormal.y < 0.74f || groundPos.y < 0.45f)
         return 0.0f;
 
     float waterY = 0.0f, waterDepth = 0.0f;
     if (MapDem_GetWaterInfo(&s_dem, &s_ground, x, z, &waterY, &waterDepth))
         return 0.0f;
 
-    float patch = sinf(x * 0.15f + z * 0.11f) * cosf(z * 0.18f - x * 0.13f);
-    float pocket = (patch > 0.34f) ? ((patch - 0.34f) * 0.85f) : 0.0f;
-    return fminf(0.66f, pocket);
+    // Restrict dormant alpine frost-sedge strictly to wind-scoured rocky slopes & riparian fringes
+    // (eliminates scattered speckles across smooth snow domes!)
+    bool nearRiparian = false;
+    for (int k = 0; k < 4 && !nearRiparian; k++)
+    {
+        float ang = (float)k * (PI * 0.5f);
+        if (MapDem_GetWaterInfo(&s_dem, &s_ground, x + cosf(ang) * 3.2f, z + sinf(ang) * 3.2f, &waterY, &waterDepth))
+            nearRiparian = true;
+    }
+    float rockySlopeMask = (groundNormal.y < 0.94f) ? 1.0f : 0.0f;
+    if (!nearRiparian && rockySlopeMask < 0.5f)
+        return 0.0f;
+
+    float patch = sinf(x * 0.17f + z * 0.13f) * cosf(z * 0.21f - x * 0.15f);
+    float pocket = (patch > 0.36f) ? ((patch - 0.36f) * 0.95f) : 0.0f;
+    return fminf(0.58f, pocket * (nearRiparian ? 1.0f : 0.65f));
 }
 
 static void BuildMauSonRocks(void)
@@ -367,25 +380,25 @@ static void BuildMauSonFlora(void)
         s_reedPlacements, s_reedCount,
         s_flowerPlacements, s_flowerClusters, clusterCount,
         (MapFloraStyle){
-            .grassRootColor = {68, 84, 98, 255},
-            .grassTipColor = {218, 232, 245, 255},
+            .grassRootColor = {74, 82, 96, 255},
+            .grassTipColor = {206, 218, 232, 255},
             .bladesPerClump = 5,
             .bladeSegments = 3,
-            .bladeWidthScale = 0.125f,
+            .bladeWidthScale = 0.115f,
             .lodDistance = 36.0f,
             .midLodDistance = 24.0f,
             .drawDistance = 120.0f,
             .shadowDistance = (s_scaleXZ > 1.5f) ? 18.0f : 22.0f,
-            .grassState = MAP_GRASS_STATE_DRY,
-            .dryness = 0.65f,
+            .grassState = MAP_GRASS_STATE_LUSH,
+            .dryness = 0.0f,
             .scorch = 0.0f,
-            .reedRootColor = {62, 82, 96, 255},
-            .reedTipColor = {206, 224, 238, 255},
+            .reedRootColor = {68, 78, 92, 255},
+            .reedTipColor = {212, 224, 238, 255},
             .hasReedPlumes = false,
             .botanicalVariation = 0.85f,
-            .enableCoLauPlumes = true,
-            .coLauOnReeds = true,
-            .coLauPlumeDensity = 0.85f,
+            .enableCoLauPlumes = false,
+            .coLauOnReeds = false,
+            .coLauPlumeDensity = 0.0f,
             .coLauPlumeTint = {235, 244, 255, 255},
             .grassGrowthForm = MAP_MEADOW_GROWTH_ALPINE_MAT,
             .shrubPlacements = s_shrubPlacements,
@@ -404,12 +417,12 @@ void InitMauSonMap(void)
     kMapCenter = (Vector3){s_mapWidth * 0.5f, 0.0f, s_mapDepth * 0.5f};
 
     MapManager_SetActiveMetadata(&(MapSpatialMetadata){
-        .spawnPoint = {135.0f * s_scaleXZ, 0.0f, 112.5f * s_scaleXZ},
-        .arenaCenter = {135.0f * s_scaleXZ, 0.0f, 112.5f * s_scaleXZ},
-        .arenaRadius = 140.0f * s_scaleXZ,
+        .spawnPoint = {MAU_SON_ARENA_X * s_scaleXZ, 0.0f, MAU_SON_ARENA_Z * s_scaleXZ},
+        .arenaCenter = {MAU_SON_ARENA_X * s_scaleXZ, 0.0f, MAU_SON_ARENA_Z * s_scaleXZ},
+        .arenaRadius = 115.0f * s_scaleXZ,
         .hasPlayableRect = true,
-        .minX = 8.0f * s_scaleXZ, .maxX = 292.0f * s_scaleXZ,
-        .minZ = 8.0f * s_scaleXZ, .maxZ = 217.0f * s_scaleXZ,
+        .minX = 8.0f * s_scaleXZ, .maxX = MAP_WIDTH - 8.0f * s_scaleXZ,
+        .minZ = 8.0f * s_scaleXZ, .maxZ = MAP_DEPTH - 8.0f * s_scaleXZ,
     });
     s_staticShadowCenter = kMapCenter;
     s_floraWindowCenter = (Vector3){MAU_SON_ARENA_X * s_scaleXZ, 0.0f, MAU_SON_ARENA_Z * s_scaleXZ};
@@ -435,18 +448,18 @@ void InitMauSonMap(void)
     else if (!ColorGradeLut_Load("assets/maps/mau_son/mau_son_grade.png"))
         ColorGradeLut_UseNeutral();
 
-    // 5 Alpine Time-of-Day Presets (Default: 07:30 Crisp Winter Alpine Dawn)
+    // 5 Alpine Time-of-Day Presets (Default: 07:30 Crisp Winter Golden-Alpenglow Dawn)
     static const EnvLightingPreset kMauSonToD[5] = {
         {
-            .ambientColor = {86, 114, 152, 255},
-            .sunColor = {255, 218, 186, 255},
-            .sunDirection = {0.78f, -0.28f, -0.56f},
-            .shadowColor = {42, 62, 98, 165},
-            .fog = {.enabled = true, .color = {184, 206, 232, 255}, .start = 32.0f, .end = 225.0f, .density = 0.0046f},
+            .ambientColor = {96, 124, 166, 255},
+            .sunColor = {255, 234, 212, 255},
+            .sunDirection = {0.72f, -0.40f, -0.56f},
+            .shadowColor = {44, 66, 108, 165},
+            .fog = {.enabled = true, .color = {188, 210, 236, 255}, .start = 26.0f, .end = 225.0f, .density = 0.0042f},
             .atmosphere = {
-                .color = {184, 206, 232, 255}, .start = 32.0f, .end = 225.0f, .enabled = true,
-                .optics = {.rayleighLMS = {0.0085f, 0.0135f, 0.0260f}, .mieScattering = 0.0042f, .mieAnisotropy = 0.78f, .multipleScatteringAmp = 2.0f},
-                .density = {.baseDensity = 0.0046f, .heightFalloff = 0.24f, .baseAltitude = -3.0f, .enableSigmoidLayer = false}
+                .color = {188, 210, 236, 255}, .start = 26.0f, .end = 225.0f, .enabled = true,
+                .optics = {.rayleighLMS = {0.0082f, 0.0132f, 0.0260f}, .mieScattering = 0.0044f, .mieAnisotropy = 0.76f, .multipleScatteringAmp = 2.0f},
+                .density = {.baseDensity = 0.0042f, .heightFalloff = 0.095f, .baseAltitude = 11.5f, .enableSigmoidLayer = true, .layerAltitude = -1.8f, .layerThickness = 3.2f, .layerDensity = 0.0095f}
             }
         },
         {
@@ -502,25 +515,29 @@ void InitMauSonMap(void)
     Environment_SetTimeOfDayPresets(kMauSonToD, kMauSonTimes, 5);
     Environment_SetTimeOfDay(0.28f);
     Environment_SetTimeOfDaySpeed(0.0f);
-    Environment_SetAmbientColor((Color){86, 114, 152, 255});
-    Environment_SetSunColor((Color){255, 218, 186, 255});
-    Environment_SetSunIntensity(1.65f);
-    Environment_SetSunDirection(Vector3Normalize((Vector3){0.78f, -0.28f, -0.56f}));
-    Environment_SetShadowColor((Color){42, 62, 98, 165});
+    Environment_SetAmbientColor((Color){96, 124, 166, 255});
+    Environment_SetGroundBounceTint((Vector3){0.84f, 0.90f, 1.02f});
+    Environment_SetSunColor((Color){255, 234, 212, 255});
+    Environment_SetSunIntensity(1.90f);
+    Environment_SetSunDirection(Vector3Normalize((Vector3){0.72f, -0.40f, -0.56f}));
+    Environment_SetShadowColor((Color){44, 66, 108, 165});
     if (Environment_IsNightMode())
         Environment_ApplyMoonlightNight();
 
     PostFXMapProfile postProfile = {
         .enabled = true,
-        .exposure = 0.98f,
-        .contrast = 1.08f,
-        .saturation = 1.06f,
-        .bloomIntensity = 0.22f,
-        .shadowTint = {0.82f, 0.92f, 1.12f},
-        .highlightTint = {1.02f, 1.01f, 0.98f},
-        .bloomThreshold = 1.12f,
-        .bloomKnee = 0.42f,
+        .exposure = 1.02f,
+        .contrast = 1.05f,
+        .saturation = 1.04f,
+        .bloomIntensity = 0.18f,
+        .shadowTint = {0.92f, 0.95f, 1.06f},
+        .highlightTint = {1.03f, 1.01f, 0.97f},
+        .bloomThreshold = 1.48f,
+        .bloomKnee = 0.28f,
         .hueRestore = 0.62f,
+        .gtaoStrength = 0.38f,
+        .gtaoTint = {0.64f, 0.80f, 1.08f},
+        .bloomScatter = 0.72f,
     };
     if (s_skipMask & MAP_SKIP_GRADE)
         PostFX_ClearMapProfile();
@@ -528,13 +545,16 @@ void InitMauSonMap(void)
         PostFX_SetMapProfile(postProfile);
 
     AtmosphereProfile atmos = kMauSonToD[0].atmosphere;
-    atmos.enabled = false;
+    atmos.enabled = true;
+    atmos.density.baseAltitude *= s_scaleY;
+    atmos.density.layerAltitude *= s_scaleY;
+    atmos.density.layerThickness *= s_scaleY;
     Environment_SetAtmosphereProfile(&atmos);
-    VolumetricFog_SetGodRayIntensity(1.05f);
-    VolumetricFog_SetDistantCoverage(0.58f);
+    VolumetricFog_SetGodRayIntensity(1.35f);
+    VolumetricFog_SetDistantCoverage(0.62f);
     s_prevAtmoMode = Atmosphere_GetMode();
-    Atmosphere_SetMode(ATMO_MODE_SPIRIT_SPARKS);
-    Atmosphere_Configure(s_floraWindowCenter, (Vector3){32.0f, 4.5f, 32.0f}, 340, (Color){185, 228, 255, 255});
+    Atmosphere_SetMode(ATMO_MODE_ALPINE_SPINDRIFT);
+    Atmosphere_Configure(s_floraWindowCenter, (Vector3){32.0f, 4.5f, 32.0f}, 340, (Color){224, 238, 255, 255});
     PostFX_SetHeatHaze(0.0f, 0.0f, 0.0f);
 
     EnvCloudShadowConfig cloudConfig = {
@@ -561,10 +581,10 @@ void InitMauSonMap(void)
         .scoriaColor = {0.34f, 0.14f, 0.10f},
         .sulfurColor = {0.62f, 0.50f, 0.16f},
         .alpineFactor = 1.0f,
-        .snowSparkleStrength = 1.25f,
-        .snowColor = {0.88f, 0.92f, 0.97f},
-        .permafrostColor = {0.22f, 0.26f, 0.32f},
-        .glacialIceColor = {0.36f, 0.72f, 0.86f},
+        .snowSparkleStrength = 1.35f,
+        .snowColor = {0.93f, 0.95f, 0.98f},
+        .permafrostColor = {0.26f, 0.30f, 0.36f},
+        .glacialIceColor = {0.34f, 0.66f, 0.86f},
     };
     MapProp_SetGroundBiomeProfile(&alpineBiome);
     MapProp_SetRockAridMode(0.0f);
@@ -573,7 +593,7 @@ void InitMauSonMap(void)
     MapProp_SetCliffAridMode(0.0f);
     MapProp_SetCliffVolcanicMode(0.0f);
     MapProp_SetCliffAlpineMode(1.0f);
-    MapProp_SetGrassState(MAP_GRASS_STATE_DRY, 0.0f);
+    MapProp_SetGrassState(MAP_GRASS_STATE_LUSH, 0.0f);
     MapProp_SetSnow(0.85f);
 
     if (s_ready)
@@ -628,7 +648,7 @@ void InitMauSonMap(void)
 
     s_sky = MapProp_CreateSkyDome();
     s_cloudSea = MapProp_CreateCloudSea(MAP_WIDTH + 320.0f, MAP_DEPTH + 320.0f, 52.0f);
-    MapBoundaryMistStyle rimStyle = {1.4f, 4.4f, 0.5f, 2.2f, 0.38f};
+    MapBoundaryMistStyle rimStyle = {3.6f, 11.5f, 0.8f, 3.8f, 0.68f};
     MapProp_SetCloudSeaGroundBoundary(&s_cloudSea, &s_ground, -0.35f * s_scaleY, &rimStyle);
 
     if (!(s_skipMask & MAP_SKIP_CLIFF))
@@ -670,21 +690,21 @@ void InitMauSonMap(void)
     }
     MapProp_SetWaterTerrainSource(&s_glacialWater, MauSonWaterBed, MauSonWaterSurface, NULL);
 
-    // Conformal Parallax-Cracked Glacial Ice Shelves & Floating Voronoi Ice Floes
+    // Conformal Parallax-Cracked Glacial Ice Shelves & Frozen Cascade Chutes
     s_glacialIce = MapProp_CreateTerrainIce(
         "assets/maps/mau_son/mau_son_water.obj",
         (MapIceConfig){
             .center = {MAU_SON_LAKE_X * s_scaleXZ, 0.0f, MAU_SON_LAKE_Z * s_scaleXZ},
             .radiusX = MAU_SON_LAKE_RX * s_scaleXZ,
             .radiusZ = MAU_SON_LAKE_RZ * s_scaleXZ,
-            .driftSpeed = 0.07f,
+            .driftSpeed = 0.05f,
             .driftDirection = {0.65f, 0.55f},
-            .floeCoverage = 0.34f,
-            .crackIntensity = 1.35f,
-            .snowCrustAmount = 0.68f,
-            .deepIceColor = {18, 72, 118, 255},
-            .shallowIceColor = {126, 204, 228, 255},
-            .snowRimeColor = {236, 244, 252, 255},
+            .floeCoverage = 0.76f,
+            .crackIntensity = 1.45f,
+            .snowCrustAmount = 0.58f,
+            .deepIceColor = {16, 54, 102, 255},
+            .shallowIceColor = {104, 174, 212, 255},
+            .snowRimeColor = {238, 245, 252, 255},
             .flowMapPath = "assets/maps/mau_son/mau_son_ice_flow.png",
             .mapWidth = MAP_WIDTH,
             .mapDepth = MAP_DEPTH,
@@ -717,36 +737,145 @@ void InitMauSonMap(void)
         EnvShadow_InvalidateStaticCache();
     }
 
-    // Alpine & boreal snow-laden tree grove framing spawn, frozen lake, and mountain ridges (both 1x and Open World)
+    // Validated Boreal & Alpine Snow-Laden Conifer Forest (strictly dry ground, safe slope, rock-clear)
     {
-        float spX = 135.0f * s_scaleXZ;
-        float spZ = 112.5f * s_scaleXZ;
+        #define MAU_SON_MAX_TREES 112
+        static MapTreePlacement s_treeList[MAU_SON_MAX_TREES];
+        int treeCount = 0;
+        float spX = MAU_SON_ARENA_X * s_scaleXZ;
+        float spZ = MAU_SON_ARENA_Z * s_scaleXZ;
         float lkX = MAU_SON_LAKE_X * s_scaleXZ;
         float lkZ = MAU_SON_LAKE_Z * s_scaleXZ;
-        const MapTreePlacement kMauSonTrees[] = {
-            // Immediate foreground ring around spawn (14m - 36m in physical meters)
-            {.position = {spX - 18.0f, 0.0f, spZ - 14.0f}, .scaleXZ = 1.02f, .scaleY = 1.05f, .rotationDeg = 18.0f, .phase = 0.12f, .canopyTint = {232, 242, 252, 255}, .archetype = MAP_TREE_ALPINE_SNOW_SPRUCE},
-            {.position = {spX + 20.0f, 0.0f, spZ - 16.0f}, .scaleXZ = 1.08f, .scaleY = 1.12f, .rotationDeg = 85.0f, .phase = 0.34f, .canopyTint = {228, 240, 250, 255}, .archetype = MAP_TREE_COLUMNAR_TAIGA_SPRUCE},
-            {.position = {spX - 24.0f, 0.0f, spZ + 14.0f}, .scaleXZ = 1.04f, .scaleY = 1.06f, .rotationDeg = 142.0f, .phase = 0.56f, .canopyTint = {235, 244, 254, 255}, .archetype = MAP_TREE_OLD_GROWTH_FIR},
-            {.position = {spX + 18.0f, 0.0f, spZ + 20.0f}, .scaleXZ = 0.96f, .scaleY = 1.00f, .rotationDeg = 215.0f, .phase = 0.78f, .canopyTint = {238, 246, 255, 255}, .archetype = MAP_TREE_FROSTED_BIRCH},
-            {.position = {spX - 12.0f, 0.0f, spZ - 24.0f}, .scaleXZ = 1.10f, .scaleY = 1.08f, .rotationDeg = 278.0f, .phase = 0.21f, .canopyTint = {230, 240, 250, 255}, .archetype = MAP_TREE_GNARLED_MOUNTAIN_PINE},
-            {.position = {spX + 26.0f, 0.0f, spZ + 4.0f}, .scaleXZ = 1.02f, .scaleY = 1.02f, .rotationDeg = 310.0f, .phase = 0.44f, .canopyTint = {226, 236, 246, 255}, .archetype = MAP_TREE_FROZEN_DEADWOOD},
-            // Mid-ring around spawn (38m - 62m)
-            {.position = {spX - 42.0f, 0.0f, spZ - 34.0f}, .scaleXZ = 1.18f, .scaleY = 1.22f, .rotationDeg = 24.0f, .phase = 0.19f, .canopyTint = {232, 242, 252, 255}, .archetype = MAP_TREE_ALPINE_SNOW_SPRUCE},
-            {.position = {spX + 40.0f, 0.0f, spZ - 36.0f}, .scaleXZ = 1.15f, .scaleY = 1.20f, .rotationDeg = 112.0f, .phase = 0.51f, .canopyTint = {230, 242, 252, 255}, .archetype = MAP_TREE_COLUMNAR_TAIGA_SPRUCE},
-            {.position = {spX - 44.0f, 0.0f, spZ + 32.0f}, .scaleXZ = 1.22f, .scaleY = 1.18f, .rotationDeg = 188.0f, .phase = 0.83f, .canopyTint = {228, 240, 250, 255}, .archetype = MAP_TREE_OLD_GROWTH_FIR},
-            {.position = {spX + 42.0f, 0.0f, spZ + 34.0f}, .scaleXZ = 1.10f, .scaleY = 1.12f, .rotationDeg = 295.0f, .phase = 0.42f, .canopyTint = {236, 246, 255, 255}, .archetype = MAP_TREE_FROSTED_BIRCH},
-            // Lake & ridge boreal stands (physical meters around lake)
-            {.position = {lkX - 24.0f, 0.0f, lkZ - 14.0f}, .scaleXZ = 1.15f, .scaleY = 1.18f, .rotationDeg = 42.0f, .phase = 0.15f, .canopyTint = {232, 242, 252, 255}, .archetype = MAP_TREE_ALPINE_SNOW_SPRUCE},
-            {.position = {lkX + 22.0f, 0.0f, lkZ - 14.0f}, .scaleXZ = 1.06f, .scaleY = 1.10f, .rotationDeg = 128.0f, .phase = 0.39f, .canopyTint = {236, 246, 255, 255}, .archetype = MAP_TREE_FROSTED_BIRCH},
-            {.position = {lkX - 20.0f, 0.0f, lkZ + 18.0f}, .scaleXZ = 1.18f, .scaleY = 1.20f, .rotationDeg = 195.0f, .phase = 0.63f, .canopyTint = {228, 240, 250, 255}, .archetype = MAP_TREE_OLD_GROWTH_FIR},
-            {.position = {lkX + 26.0f, 0.0f, lkZ + 16.0f}, .scaleXZ = 1.08f, .scaleY = 1.15f, .rotationDeg = 255.0f, .phase = 0.87f, .canopyTint = {230, 242, 252, 255}, .archetype = MAP_TREE_COLUMNAR_TAIGA_SPRUCE},
-            {.position = {lkX - 32.0f, 0.0f, lkZ + 4.0f}, .scaleXZ = 1.12f, .scaleY = 1.08f, .rotationDeg = 330.0f, .phase = 0.28f, .canopyTint = {232, 242, 252, 255}, .archetype = MAP_TREE_GNARLED_MOUNTAIN_PINE},
-            {.position = {lkX + 12.0f, 0.0f, lkZ + 26.0f}, .scaleXZ = 1.00f, .scaleY = 1.00f, .rotationDeg = 64.0f, .phase = 0.72f, .canopyTint = {224, 234, 246, 255}, .archetype = MAP_TREE_FROZEN_DEADWOOD},
+
+        // 1. Seeded alpine cluster centers framing spawn plateau, lake overlooks, and distant ridges
+        const Vector2 clusterCenters[] = {
+            {spX - 20.0f * s_scaleXZ, spZ - 16.0f * s_scaleXZ},
+            {spX + 22.0f * s_scaleXZ, spZ - 18.0f * s_scaleXZ},
+            {spX - 26.0f * s_scaleXZ, spZ + 14.0f * s_scaleXZ},
+            {spX + 18.0f * s_scaleXZ, spZ + 22.0f * s_scaleXZ},
+            {lkX - 24.0f * s_scaleXZ, lkZ - 18.0f * s_scaleXZ},
+            {lkX + 26.0f * s_scaleXZ, lkZ - 16.0f * s_scaleXZ},
+            {lkX - 22.0f * s_scaleXZ, lkZ + 20.0f * s_scaleXZ},
+            {lkX + 28.0f * s_scaleXZ, lkZ + 18.0f * s_scaleXZ},
+            {MAP_WIDTH * 0.24f, MAP_DEPTH * 0.34f},
+            {MAP_WIDTH * 0.32f, MAP_DEPTH * 0.68f},
+            {MAP_WIDTH * 0.72f, MAP_DEPTH * 0.32f},
+            {MAP_WIDTH * 0.78f, MAP_DEPTH * 0.66f},
+            {MAP_WIDTH * 0.56f, MAP_DEPTH * 0.24f},
+            {MAP_WIDTH * 0.44f, MAP_DEPTH * 0.76f},
         };
-        int treeCount = (int)(sizeof(kMauSonTrees) / sizeof(kMauSonTrees[0]));
-        s_trees = MapProp_CreateTreeSystem(kMauSonTrees, treeCount, &s_ground, kMapCenter, fminf(135.0f * s_scaleXZ, 195.0f));
-        MapProp_SetTreeSnowCoverage(&s_trees, 0.70f);
+        const int numClusters = (int)(sizeof(clusterCenters) / sizeof(clusterCenters[0]));
+        const MapTreeArchetype kAlpineSpecies[6] = {
+            MAP_TREE_ALPINE_SNOW_SPRUCE,
+            MAP_TREE_OLD_GROWTH_FIR,
+            MAP_TREE_ALPINE_SNOW_SPRUCE,
+            MAP_TREE_OLD_GROWTH_FIR,
+            MAP_TREE_COLUMNAR_TAIGA_SPRUCE,
+            MAP_TREE_FROSTED_BIRCH,
+        };
+        unsigned int trng = 0x50F8C1u;
+
+        for (int attempt = 0; attempt < 900 && treeCount < MAU_SON_MAX_TREES; attempt++)
+        {
+            trng = trng * 1664525u + 1013904223u;
+            float u0 = (float)((trng >> 16) & 0xFFFFu) / 65535.0f;
+            trng = trng * 1664525u + 1013904223u;
+            float u1 = (float)((trng >> 16) & 0xFFFFu) / 65535.0f;
+            trng = trng * 1664525u + 1013904223u;
+            float u2 = (float)((trng >> 16) & 0xFFFFu) / 65535.0f;
+
+            float tx, tz;
+            if (attempt < 560)
+            {
+                int ci = attempt % numClusters;
+                float ang = u0 * 2.0f * PI;
+                float rad = (2.5f + sqrtf(u1) * 18.0f) * s_scaleXZ;
+                tx = clusterCenters[ci].x + cosf(ang) * rad;
+                tz = clusterCenters[ci].y + sinf(ang) * rad;
+            }
+            else
+            {
+                tx = (18.0f + u0 * (MAU_SON_MAP_WIDTH - 36.0f)) * s_scaleXZ;
+                tz = (18.0f + u1 * (MAU_SON_MAP_DEPTH - 36.0f)) * s_scaleXZ;
+            }
+
+            if (tx < 16.0f * s_scaleXZ || tx > MAP_WIDTH - 16.0f * s_scaleXZ ||
+                tz < 16.0f * s_scaleXZ || tz > MAP_DEPTH - 16.0f * s_scaleXZ)
+                continue;
+
+            // Keep central combat arena clear
+            float dxA = tx - spX, dzA = tz - spZ;
+            if (dxA * dxA + dzA * dzA < (14.5f * s_scaleXZ) * (14.5f * s_scaleXZ))
+                continue;
+
+            // Strictly validate ground height & slope (never drop into abyss or sheer cliffs!)
+            Vector3 gp = {0}, gn = {0};
+            if (!MapProp_SampleGroundSurface(&s_ground, kMapCenter, tx, tz, &gp, &gn))
+                continue;
+            if (gp.y < 1.8f * s_scaleY || gn.y < 0.78f)
+                continue;
+
+            // Strict 2.6m dry-shore buffer around lakes & streams (zero trees in water or waterfalls!)
+            float wY = 0.0f, wD = 0.0f;
+            if (MapDem_GetWaterInfo(&s_dem, &s_ground, tx, tz, &wY, &wD))
+                continue;
+            bool nearWet = false;
+            for (int k = 0; k < 8 && !nearWet; k++)
+            {
+                float ka = (float)k * (PI * 0.25f);
+                if (MapDem_GetWaterInfo(&s_dem, &s_ground, tx + cosf(ka) * 2.6f, tz + sinf(ka) * 2.6f, &wY, &wD))
+                    nearWet = true;
+            }
+            if (nearWet)
+                continue;
+
+            // Minimum tree-to-tree spacing (natural organic grove density without trunk overlap)
+            bool tooClose = false;
+            float minTreeSep = 4.6f;
+            for (int j = 0; j < treeCount; j++)
+            {
+                float ddx = tx - s_treeList[j].position.x;
+                float ddz = tz - s_treeList[j].position.z;
+                if (ddx * ddx + ddz * ddz < minTreeSep * minTreeSep)
+                {
+                    tooClose = true;
+                    break;
+                }
+            }
+            if (tooClose)
+                continue;
+
+            // Avoid embedding trunks inside large boulders
+            for (int r = 0; r < s_rocks.count; r++)
+            {
+                float ddx = tx - s_rocks.items[r].position.x;
+                float ddz = tz - s_rocks.items[r].position.z;
+                float clearR = s_rocks.items[r].radiusScale + 1.45f;
+                if (ddx * ddx + ddz * ddz < clearR * clearR)
+                {
+                    tooClose = true;
+                    break;
+                }
+            }
+            if (tooClose)
+                continue;
+
+            MapTreeArchetype arch = kAlpineSpecies[(int)(u2 * 5.99f)];
+            float sXZ = 0.96f + u0 * 0.42f;
+            float sY = 0.98f + u1 * 0.46f;
+            s_treeList[treeCount++] = (MapTreePlacement){
+                .position = {tx, 0.0f, tz},
+                .scaleXZ = sXZ,
+                .scaleY = sY,
+                .rotationDeg = u2 * 360.0f,
+                .phase = u1,
+                .canopyTint = {234, 242, 252, 255},
+                .archetype = arch,
+            };
+        }
+
+        s_trees = MapProp_CreateTreeSystem(s_treeList, treeCount, &s_ground, kMapCenter, fminf(150.0f * s_scaleXZ, 210.0f));
+        MapProp_SetTreeSnowCoverage(&s_trees, 0.56f);
     }
     CaptureMauSonStaticShadows();
     MapManager_SetZones(s_mauSonZones, MAU_SON_ZONE_COUNT);
@@ -821,6 +950,7 @@ void UnloadMauSonMap(void)
     Atmosphere_SetMode(s_prevAtmoMode);
     ColorGradeLut_UseNeutral();
     PostFX_ClearMapProfile();
+    Environment_ResetGroundBounceTint();
     Environment_SetSunIntensity(1.0f);
     MapProp_SetGroundBiomeProfile(NULL);
     MapProp_SetRockAridMode(0.0f);

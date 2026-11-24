@@ -48,15 +48,15 @@ def generate_textures(out_dir=None, size=512):
         macro_drift * 0.44 + sastrugi_wave * 0.38 + micro_grain * 0.18,
         0.0, 1.0,
     )
-    # High-albedo crisp snow with subtle sky-blue ambient bounce in wind-scoured troughs
-    snow_luma = 0.78 + 0.16 * snow_height
-    snow_r = np.clip(snow_luma * (0.96 + 0.03 * sastrugi_wave), 0.72, 0.96)
-    snow_g = np.clip(snow_luma * (0.98 + 0.02 * sastrugi_wave), 0.75, 0.97)
-    snow_b = np.clip(snow_luma * 1.03, 0.79, 0.99)
+    # High-albedo pure crisp alpine snow (zero mint/green bias; clean ivory crests, subtle cool troughs)
+    snow_luma = 0.82 + 0.15 * snow_height
+    snow_r = np.clip(snow_luma * (0.985 + 0.020 * sastrugi_wave), 0.78, 0.98)
+    snow_g = np.clip(snow_luma * (0.990 + 0.012 * sastrugi_wave), 0.79, 0.98)
+    snow_b = np.clip(snow_luma * 1.015, 0.82, 0.995)
     snow_diffuse = np.stack((snow_r, snow_g, snow_b), axis=-1)
 
-    snow_normal = height_to_normal(snow_height, strength=2.6)
-    snow_rough = np.clip(0.62 - sastrugi_wave * 0.18 - micro_grain * 0.08, 0.34, 0.76)
+    snow_normal = height_to_normal(snow_height, strength=3.6)
+    snow_rough = np.clip(0.68 - sastrugi_wave * 0.28 - micro_grain * 0.12, 0.28, 0.72)
     snow_material = np.concatenate((snow_normal, snow_rough[..., None]), axis=-1)
 
     write_png(os.path.join(out_dir, "alpine_snow_diffuse.png"), np.rint(snow_diffuse * 255.0), 2)
@@ -90,31 +90,44 @@ def generate_textures(out_dir=None, size=512):
     write_png(os.path.join(out_dir, "frozen_tundra_diffuse.png"), np.rint(tundra_diffuse * 255.0), 2)
     write_png(os.path.join(out_dir, "frozen_tundra_material.png"), np.rint(tundra_material * 255.0), 6)
 
-    # ── 3. Glacial Ice Floe Plates + Internal Fracture Network ────────────────
-    wx = (periodic_fbm(size, [4, 8, 16], [0.55, 0.30, 0.15], rng) - 0.5) * 0.12
-    wy = (periodic_fbm(size, [4, 8, 16], [0.55, 0.30, 0.15], rng) - 0.5) * 0.12
-    f1_floe, f2_floe, floe_id = periodic_voronoi(size, 5, rng, warp_x=wx, warp_y=wy)
-    f1_crack, f2_crack, _ = periodic_voronoi(size, 15, rng, warp_x=wx * 0.65, warp_y=wy * 0.65)
+    # ── 3. Multi-Scale Fractured Glacial Ice Sheet & Internal Cleavage Network ──
+    # Broad interlocking pressure-cracked shelves (no isolated round cobblestone stepping stones!)
+    wx = (periodic_fbm(size, [4, 8, 16], [0.55, 0.30, 0.15], rng) - 0.5) * 0.16
+    wy = (periodic_fbm(size, [4, 8, 16], [0.55, 0.30, 0.15], rng) - 0.5) * 0.16
+    f1_sheet, f2_sheet, sheet_id = periodic_voronoi(size, 3, rng, warp_x=wx, warp_y=wy)
+    f1_crack, f2_crack, _ = periodic_voronoi(size, 9, rng, warp_x=wx * 0.75, warp_y=wy * 0.75)
+    f1_hair, f2_hair, _ = periodic_voronoi(size, 24, rng, warp_x=wx * 0.45, warp_y=wy * 0.45)
 
-    edge_dist = np.maximum(0.0, f2_floe - f1_floe)
-    sub_edge = np.maximum(0.0, f2_crack - f1_crack)
+    edge_sheet = np.maximum(0.0, f2_sheet - f1_sheet)
+    edge_crack = np.maximum(0.0, f2_crack - f1_crack)
+    edge_hair = np.maximum(0.0, f2_hair - f1_hair)
 
-    # R: Ice floe plate dome height (0 at lead edge, 1 at thick plate core)
-    dome = np.clip(edge_dist / 0.28, 0.0, 1.0)
-    dome = dome * dome * (3.0 - 2.0 * dome)
-    floe_height = np.clip(dome * (0.76 + 0.24 * floe_id) - 0.08 * (1.0 - np.clip(sub_edge / 0.12, 0.0, 1.0)), 0.0, 1.0)
+    # R: Broad continuous ice shelf thickness (narrow meltwater leads only along major seams)
+    lead_cut = np.clip(edge_sheet / 0.11, 0.0, 1.0)
+    lead_cut = lead_cut * lead_cut * (3.0 - 2.0 * lead_cut)
+    shelf_fbm = periodic_fbm(size, [4, 8, 16], [0.50, 0.32, 0.18], rng)
+    floe_height = np.clip(
+        lead_cut * (0.74 + 0.18 * sheet_id + 0.12 * shelf_fbm)
+        - 0.06 * (1.0 - np.clip(edge_crack / 0.06, 0.0, 1.0)),
+        0.0, 1.0,
+    )
 
-    # G: Crisp internal glacial fracture network (primary floe pressure cracks + fine radial fractures)
-    c_pri = np.clip(1.0 - edge_dist / 0.14, 0.0, 1.0)
-    c_pri = c_pri * c_pri * (3.0 - 2.0 * c_pri)
-    c_sec = np.clip(1.0 - sub_edge / 0.075, 0.0, 1.0) * 0.58
-    fracture_net = np.clip(np.maximum(c_pri, c_sec), 0.0, 1.0)
+    # G: Crisp multi-scale internal glacial fracture network (pressure ridges + spiderweb hairline fissures)
+    c_pri = np.clip(1.0 - edge_sheet / 0.075, 0.0, 1.0) ** 1.4
+    c_sec = np.clip(1.0 - edge_crack / 0.048, 0.0, 1.0) ** 1.6 * 0.78
+    c_hair = np.clip(1.0 - edge_hair / 0.032, 0.0, 1.0) ** 1.8 * 0.45
+    fracture_net = np.clip(np.maximum(np.maximum(c_pri, c_sec), c_hair), 0.0, 1.0)
 
-    # B: Deep trapped air bubbles & sub-surface glacial crystal turbidity
+    # B: Deep trapped air bubbles & milky glacial crystal turbidity clouds
     bubble_fbm = periodic_fbm(size, [8, 16, 32, 64], [0.35, 0.30, 0.22, 0.13], rng)
 
-    # A: Wind-blown snow crust & hoarfrost rime resting on thick floe interiors
-    snow_crust = np.clip((dome - 0.38) / 0.52, 0.0, 1.0) * np.clip(bubble_fbm * 1.25 - 0.15, 0.0, 1.0)
+    # A: Wind-drifted snow patches & frosted pressure-ridge rime hugging cracks and shelf interiors
+    drift_mask = periodic_fbm(size, [4, 8, 16], [0.55, 0.30, 0.15], rng)
+    snow_crust = np.clip(
+        lead_cut * np.clip((drift_mask - 0.32) / 0.48, 0.0, 1.0) * 0.85
+        + c_pri * 0.55,
+        0.0, 1.0,
+    )
 
     ice_plates = np.stack((floe_height, fracture_net, bubble_fbm, snow_crust), axis=-1)
     write_png(os.path.join(out_dir, "glacial_ice_plates.png"), np.rint(ice_plates * 255.0), 6)

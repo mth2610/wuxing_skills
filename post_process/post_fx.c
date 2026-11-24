@@ -26,6 +26,7 @@ static int rcasSharpnessLoc = -1;
 static int gtaoTexLoc = -1;
 static int gtaoEnabledLoc = -1;
 static int gtaoStrengthLoc = -1;
+static int gtaoTintLoc = -1;
 static Camera3D s_taaCamera = {0};
 
 // HDR (Đợt G) — the whole offscreen chain (scene + bloom pyramid) uses a
@@ -340,6 +341,7 @@ void PostFX_Init(int width, int height)
   gtaoTexLoc = GetShaderLocation(compositeShader, "u_gtaoTex");
   gtaoEnabledLoc = GetShaderLocation(compositeShader, "u_gtaoEnabled");
   gtaoStrengthLoc = GetShaderLocation(compositeShader, "u_gtaoStrength");
+  gtaoTintLoc = GetShaderLocation(compositeShader, "u_gtaoTint");
   radialBlurEnabledLoc = GetShaderLocation(compositeShader, "u_radialBlurEnabled");
   radialBlurCenterLoc = GetShaderLocation(compositeShader, "u_radialBlurCenter");
   radialBlurStrengthLoc = GetShaderLocation(compositeShader, "u_radialBlurStrength");
@@ -668,6 +670,8 @@ void PostFX_Draw(const PostFXConfig *config)
       local.exposure = s_mapProfile.exposure;
     if (s_mapProfile.bloomThreshold > 0.0f)
       local.bloomThreshold = s_mapProfile.bloomThreshold;
+    if (s_mapProfile.bloomScatter > 0.0f)
+      local.bloomScatter = s_mapProfile.bloomScatter;
   }
   if (PostFX_HasTransient())
     PostFX_ApplyTransient(&local);
@@ -953,13 +957,21 @@ void PostFX_Draw(const PostFXConfig *config)
   }
   if (gtaoEnabledLoc >= 0) {
     float gtaoOn = (gtaoTex.id != 0) ? 1.0f : 0.0f;
+    if (s_mapProfile.enabled && s_mapProfile.gtaoStrength < 0.0f)
+      gtaoOn = 0.0f;
     SetShaderValue(compositeShader, gtaoEnabledLoc, &gtaoOn, SHADER_UNIFORM_FLOAT);
     if (gtaoOn > 0.5f) {
       if (gtaoTexLoc >= 0)
         SetShaderValueTexture(compositeShader, gtaoTexLoc, gtaoTex);
       if (gtaoStrengthLoc >= 0) {
-        float gtaoStrength = 0.42f;
+        float gtaoStrength = (s_mapProfile.enabled && s_mapProfile.gtaoStrength > 0.0f)
+                                 ? s_mapProfile.gtaoStrength
+                                 : 0.42f;
         SetShaderValue(compositeShader, gtaoStrengthLoc, &gtaoStrength, SHADER_UNIFORM_FLOAT);
+      }
+      if (gtaoTintLoc >= 0) {
+        Vector3 gtaoTint = s_mapProfile.enabled ? s_mapProfile.gtaoTint : (Vector3){0.0f, 0.0f, 0.0f};
+        SetShaderValue(compositeShader, gtaoTintLoc, &gtaoTint, SHADER_UNIFORM_VEC3);
       }
     }
   }

@@ -29,6 +29,7 @@ uniform int       u_volumeCount;
 uniform vec4      u_volPosShape[8];     // xyz = position, w = shape
 uniform vec4      u_volExtentsDense[8]; // xyz = extents, w = density
 uniform vec4      u_volColorSoft[8];    // rgb = color, a = edgeSoftness
+uniform vec2      u_volYBounds;         // x = minY, y = maxY across active local fog volumes
 
 vec3 ReconstructRayDir(vec2 uv) {
     vec4 clip = vec4(uv * 2.0 - 1.0, 1.0, 1.0);
@@ -89,7 +90,9 @@ void main() {
     // 3. Local fog volumes
     vec3 localFogAccum = vec3(0.0);
     float localDensitySum = 0.0;
-    if (u_volumeCount > 0 && min(startPos.y, endPos.y) < 8.5) {
+    float volMinY = (u_volYBounds.y > u_volYBounds.x) ? u_volYBounds.x : -3.0;
+    float volMaxY = (u_volYBounds.y > u_volYBounds.x) ? u_volYBounds.y : 8.5;
+    if (u_volumeCount > 0 && min(startPos.y, endPos.y) <= volMaxY && max(startPos.y, endPos.y) >= volMinY) {
         for (int i = 0; i < u_volumeCount; i++) {
             vec3 center = u_volPosShape[i].xyz;
             vec3 extents = u_volExtentsDense[i].xyz;
@@ -120,9 +123,10 @@ void main() {
         opticalDepth += distantBlend * u_fogDensity * 0.65;
     }
 
-    // Subtle low-altitude river-valley mist veil along low water banks
-    if (endPos.y < 1.8 && rayDist > 8.0) {
-        float valleyFactor = smoothstep(1.8, -0.4, endPos.y) * smoothstep(8.0, 32.0, rayDist);
+    // Subtle low-altitude river-valley mist veil along low water banks (relative to baseAltitude)
+    float relEndY = endPos.y - u_baseAltitude;
+    if (relEndY < 2.2 && rayDist > 8.0) {
+        float valleyFactor = smoothstep(2.2, -0.4, relEndY) * smoothstep(8.0, 32.0, rayDist);
         opticalDepth += valleyFactor * u_fogDensity * 0.45;
     }
 

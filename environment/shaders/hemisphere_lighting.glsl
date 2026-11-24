@@ -16,4 +16,11 @@ vec3 Environment_HemisphereIrradiance(vec3 unitNormal, vec3 ambientRadiance) {
     return Environment_HemisphereIrradiance(unitNormal, sky, ground);
 }
 
+// Opt-in ground-albedo bounce tint variant (e.g. high-albedo snowfields).
+vec3 Environment_HemisphereIrradianceTinted(vec3 unitNormal, vec3 ambientRadiance, vec3 groundBounceTint) {
+    vec3 sky = clamp(ambientRadiance * vec3(1.25, 1.25, 1.35), 0.0, 1.0);
+    vec3 ground = clamp(ambientRadiance * groundBounceTint, 0.0, 1.25);
+    return Environment_HemisphereIrradiance(unitNormal, sky, ground);
+}
+
 #endif

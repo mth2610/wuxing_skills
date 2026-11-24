@@ -41,3 +41,16 @@ texel step at 3x). `song_quao` focuses a 21.6 m box, so 1024² still resolves
 **2.1 cm/texel** where a screen pixel covers ~3 cm — the map stays finer than the
 image. 512² would buy another ~1.5 ms and doubles that error again (`mean_abs 1.26`
 vs 1024); not taken.
+
+## Local fog volumes silently culled on high-elevation maps (24/11/2026)
+
+**Symptom.** `LocalFogVolume` mist volumes spawned on high-altitude maps (`mau_son`,
+lakes/arena at `Y = 13.5–24.2 m`) never appeared in either volumetric raymarch or height-fog
+modes even when `AtmosphereProfile.enabled = true`.
+
+**Cause.** Both `volumetric_fog.fs` and `height_fog.fs` hardcoded `samplePos.y <= 8.5` as an
+early-out guard around `EvaluateLocalFog`, silently skipping every volume above 8.5 m.
+
+**Rule.** Never hardcode world-Y culling constants for local fog volumes or valley mist bands.
+Upload dynamic `u_volYBounds = vec2(minY, maxY)` computed from active volumes in
+`volumetric_fog.c`, and express height-relative mist bands against `u_baseAltitude`.

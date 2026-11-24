@@ -292,13 +292,15 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
 
     float warmShift = clamp(macroPatch * 0.5 + 0.5, 0.0, 1.0);
     float tipHeightMask = FastRamp(0.24, 0.88, h);
+    // Preserve cold desaturated frost-sedge / silver-reed tones (where blue >= green) instead of forcing meadow green/gold!
+    float frostNeutral = smoothstep(0.0, 0.06, baseColor.b - baseColor.g);
     // Rich macro botanical contrast: natural jade-olive hollows vs warm sunlit amber-sage crests
     vec3 coolEmeraldTip = vec3(0.80, 0.90, 0.74);
     vec3 warmGoldenTip  = vec3(1.12, 0.98, 0.64);
     vec3 midOliveTone   = vec3(0.92, 0.94, 0.82);
     vec3 macroTone = mix(coolEmeraldTip, warmGoldenTip, warmShift);
     macroTone = mix(midOliveTone, macroTone, tipHeightMask);
-    baseColor *= mix(vec3(1.0), macroTone, FastRamp(0.12, 0.85, h));
+    baseColor *= mix(vec3(1.0), macroTone, FastRamp(0.12, 0.85, h) * (1.0 - frostNeutral));
 
     vec2 grassState = ((u_grassStateParams.x + u_grassStateParams.y) > 0.0001 || u_grassBurnZoneCount > 0)
         ? GrassEvaluateLocalState(worldPosition)

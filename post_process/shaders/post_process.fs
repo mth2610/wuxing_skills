@@ -53,6 +53,7 @@ uniform float u_rcasSharpness; // 0 = off, >0 = 5-tap RCAS sharpening in composi
 uniform sampler2D u_gtaoTex;   // Half-res denoised Ground-Truth AO
 uniform float u_gtaoEnabled;
 uniform float u_gtaoStrength;
+uniform vec3  u_gtaoTint;      // Multi-bounce occlusion tint (0 = legacy neutral black)
 
 out vec4 finalColor;
 
@@ -171,7 +172,16 @@ void main() {
     // 1c. Half-res GTAO contact darkening in linear HDR space before bloom & tonemap
     if (u_gtaoEnabled > 0.5) {
         float ao = texture(u_gtaoTex, uv).r;
-        sceneCol.rgb *= mix(1.0, ao, clamp(u_gtaoStrength, 0.0, 1.0));
+        float strength = clamp(u_gtaoStrength, 0.0, 1.0);
+        float hasTint = step(0.001, dot(u_gtaoTint, u_gtaoTint));
+        if (hasTint > 0.5) {
+            // Jimenez-style multi-bounce colored AO: snow hollows shift toward luminous sky-cobalt
+            float occ = (1.0 - ao) * strength;
+            vec3 multiBounce = mix(vec3(1.0), u_gtaoTint + (vec3(1.0) - u_gtaoTint) * ao, occ);
+            sceneCol.rgb *= clamp(multiBounce, vec3(0.0), vec3(1.05));
+        } else {
+            sceneCol.rgb *= mix(1.0, ao, strength);
+        }
     }
 
     // 2. Bloom (4 bilinear taps = 3x3 tent filter)

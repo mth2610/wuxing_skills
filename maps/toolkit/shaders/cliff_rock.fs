@@ -182,14 +182,21 @@ void main() {
     vec3 mossColor = mix(lushMossColor, aridRimColor, u_cliffAridMode);
     vec3 volcanicRimColor = mix(vec3(0.20, 0.17, 0.16), vec3(0.42, 0.24, 0.14), clamp(triAlbedo.r * 0.75 + rimSodDrape * 0.35, 0.0, 1.0));
     mossColor = mix(mossColor, volcanicRimColor, u_cliffVolcanicMode);
-    vec3 alpineRimColor = mix(vec3(0.78, 0.85, 0.94), vec3(0.92, 0.96, 1.00), clamp(triAlbedo.g * 0.75 + rimSodDrape * 0.35, 0.0, 1.0));
+    vec3 alpineRimColor = mix(vec3(0.82, 0.88, 0.96), vec3(0.95, 0.97, 1.00), clamp(triAlbedo.g * 0.75 + rimSodDrape * 0.35, 0.0, 1.0));
     mossColor = mix(mossColor, alpineRimColor, u_cliffAlpineMode);
     vec3 rockAlbedo = mix(rockBase, mossColor, mossMask * mix(0.88, 0.82, max(u_cliffAridMode, u_cliffVolcanicMode)));
+    if (u_cliffAlpineMode > 0.5) {
+        // Windward hoarfrost streaks clinging to vertical alpine cliff strata
+        float frostStreak = smoothstep(0.42, 0.82, strataMacro * 0.65 + (1.0 - triAlbedo.r) * 0.35);
+        rockAlbedo = mix(rockAlbedo, vec3(0.84, 0.89, 0.96), frostStreak * 0.38 * u_cliffAlpineMode);
+    }
 
     // ── 4. Deep Crevice Cavity Occlusion (80.lv RTGI Principle) ──
     // Intense occlusion in deep fissures and under shelf overhangs gives rock weight and depth
     float microCrevice = clamp(normX.z * triWeights.x + normY.z * triWeights.y + normZ.z * triWeights.z, 0.25, 1.0);
-    float cavityAO = clamp(fragColor.r * (0.35 + 0.65 * microCrevice), mix(0.18, 0.68, u_cliffAridMode), 1.0);
+    float cavityFloor = mix(0.18, 0.68, u_cliffAridMode);
+    cavityFloor = mix(cavityFloor, 0.56, u_cliffAlpineMode);
+    float cavityAO = clamp(fragColor.r * (0.35 + 0.65 * microCrevice), cavityFloor, 1.0);
 
     // Coastal tidal wet-rock splash zone + clinging white surf foam + turquoise sea bounce in arid/volcanic/metallic coastal mode
     float coastalMode = max(max(u_cliffAridMode, u_cliffVolcanicMode), u_cliffMetallicMode);
@@ -237,16 +244,19 @@ void main() {
         spec = min(ggx * 0.18, 1.6) * (1.0 - roughness) * 0.28 * (1.0 - mossMask * 0.85);
     }
 
-    // ── 6. Cloud Sea Up-Bounce (lush islands) or Coastal Sea + Sky Bounce (arid/volcanic coastal cliffs) ──
+    // ── 6. Cloud Sea Up-Bounce (lush/alpine islands) or Coastal Sea + Sky Bounce ──
     float cloudSeaGate = 1.0 - step(0.5, coastalMode);
     float upwardCloudBounceFactor = max(-worldNormal.y * 0.65 + 0.20, 0.0) * cloudSeaGate;
-    vec3 cloudLitColor = actualLight * vec3(0.50, 0.44, 0.36) + actualAmbient * vec3(0.85, 0.88, 0.92);
+    vec3 warmCloudLit = actualLight * vec3(0.50, 0.44, 0.36) + actualAmbient * vec3(0.85, 0.88, 0.92);
+    vec3 alpineCloudLit = actualLight * vec3(0.38, 0.42, 0.48) + actualAmbient * vec3(0.94, 0.98, 1.08);
+    vec3 cloudLitColor = mix(warmCloudLit, alpineCloudLit, u_cliffAlpineMode);
     vec3 cloudBounceLight = cloudLitColor * (upwardCloudBounceFactor * 1.45);
     vec3 seaBounce = (actualAmbient * vec3(0.55, 0.92, 0.96) + actualLight * vec3(0.24, 0.42, 0.40))
                    * max(-worldNormal.y * 0.45 + 0.42, 0.0) * (step(0.5, coastalMode) * 0.85);
 
     // Total Lighting Combination with World-Space Hemisphere Sky Irradiance
-    vec3 hemisphereAmbient = Environment_HemisphereIrradiance(worldNormal, actualAmbient);
+    vec3 cliffBounceTint = mix(vec3(0.55, 0.45, 0.40), vec3(0.84, 0.90, 1.02), u_cliffAlpineMode);
+    vec3 hemisphereAmbient = Environment_HemisphereIrradianceTinted(worldNormal, actualAmbient, cliffBounceTint);
     vec3 diffuseLight = (hemisphereAmbient + cloudBounceLight + seaBounce) * cavityAO + actualLight * (NdotL * directAtten);
     vec3 finalRgb = rockAlbedo * diffuseLight + actualLight * (spec * directAtten);
 

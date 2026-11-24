@@ -31,7 +31,8 @@ typedef enum {
     ATMO_MODE_MOONLIGHT_DUST = 0, // Bụi trôi ánh trăng dịu mát (mặc định)
     ATMO_MODE_WAR_EMBERS,         // Tàn tro than hồng rực lửa từ chiến địa (Ghost of Tsushima style)
     ATMO_MODE_SPIRIT_SPARKS,      // Đốm sáng tiên khí lấp lánh (phong cách tiên hiệp)
-    ATMO_MODE_DESERT_DUST         // Hạt cát sa mạc bay thấp theo gió (Ninh Thuận)
+    ATMO_MODE_DESERT_DUST,        // Hạt cát sa mạc bay thấp theo gió (Ninh Thuận)
+    ATMO_MODE_ALPINE_SPINDRIFT    // Tinh thể băng tuyết & bụi tuyết bay ngang theo gió núi cao (Mẫu Sơn)
 } AtmosphereMode;
 
 void Atmosphere_Init(void);

@@ -43,6 +43,12 @@ void Environment_Init(void);
 
 // Updates the environment over time (e.g. day/night cycle, moving clouds).
 void Environment_Update(float dt);
+
+// Optional per-map ground-albedo bounce multiplier (default {0.55, 0.45, 0.40};
+// snowfields use e.g. {0.84, 0.90, 1.02}). Reset on map unload.
+void Environment_SetGroundBounceTint(Vector3 rgbMultiplier);
+Vector3 Environment_GetGroundBounceTint(void);
+void Environment_ResetGroundBounceTint(void);
 ```
 
 The real directional-shadow layer can follow a large map instead of

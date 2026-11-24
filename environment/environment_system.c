@@ -21,6 +21,7 @@ static Color s_ambientColor = {50, 50, 70, 255};
 static Color s_shadowColor = {8, 8, 12, 180};
 static Color s_cachedSkyAmbient = {62, 62, 94, 255};
 static Color s_cachedGroundAmbient = {27, 22, 28, 255};
+static Vector3 s_groundBounceTint = {0.55f, 0.45f, 0.40f};
 
 static EnvFogConfig s_fogConfig = {
     .color = {30, 30, 40, 255},
@@ -117,9 +118,9 @@ static inline void EnvRefreshHemisphericAmbient(void)
         EnvClampByteF(s_ambientColor.b * 1.35f),
         255};
     s_cachedGroundAmbient = (Color){
-        EnvClampByteF(s_ambientColor.r * 0.55f),
-        EnvClampByteF(s_ambientColor.g * 0.45f),
-        EnvClampByteF(s_ambientColor.b * 0.40f),
+        EnvClampByteF(s_ambientColor.r * s_groundBounceTint.x),
+        EnvClampByteF(s_ambientColor.g * s_groundBounceTint.y),
+        EnvClampByteF(s_ambientColor.b * s_groundBounceTint.z),
         255};
 }
 
@@ -151,6 +152,30 @@ static inline bool EnvColorEq(Color a, Color b)
 static inline bool EnvVec3Eq(Vector3 a, Vector3 b)
 {
     return a.x == b.x && a.y == b.y && a.z == b.z;
+}
+
+void Environment_SetGroundBounceTint(Vector3 rgbMultiplier)
+{
+    Vector3 next = {
+        EnvCloudClamp(rgbMultiplier.x, 0.0f, 1.5f, 0.55f),
+        EnvCloudClamp(rgbMultiplier.y, 0.0f, 1.5f, 0.45f),
+        EnvCloudClamp(rgbMultiplier.z, 0.0f, 1.5f, 0.40f)
+    };
+    if (EnvVec3Eq(s_groundBounceTint, next))
+        return;
+    s_groundBounceTint = next;
+    EnvRefreshHemisphericAmbient();
+    s_lightingVersion++;
+}
+
+Vector3 Environment_GetGroundBounceTint(void)
+{
+    return s_groundBounceTint;
+}
+
+void Environment_ResetGroundBounceTint(void)
+{
+    Environment_SetGroundBounceTint((Vector3){0.55f, 0.45f, 0.40f});
 }
 
 static inline Vector3 EnvNormalizeSunOrDefault(Vector3 dir, Vector3 fallback)

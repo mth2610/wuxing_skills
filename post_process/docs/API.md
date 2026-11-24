@@ -98,6 +98,12 @@ typedef struct {
   Vector3 highlightTint;
   float   bloomIntensity;
   float   exposure;
+  float   bloomThreshold; // >0 overrides config bloomThreshold
+  float   bloomKnee;      // >0 overrides default knee
+  float   hueRestore;     // 0..1 filmic hue restore on ACES
+  float   gtaoStrength;   // >0 overrides default 0.42; <0 disables GTAO
+  Vector3 gtaoTint;       // Multi-bounce colored AO tint (0 = legacy neutral black)
+  float   bloomScatter;   // >0 overrides default 0.65 bloom pyramid spread
 } PostFXMapProfile;
 ```
 

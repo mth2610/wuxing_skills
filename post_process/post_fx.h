@@ -159,6 +159,9 @@ typedef struct {
   float   bloomThreshold; // Optional per-map override (>0.0 overrides config bloomThreshold)
   float   bloomKnee;      // Optional per-map override (>0.0 overrides default knee)
   float   hueRestore;     // Optional per-map override (0.0..1.0 filmic hue restore on ACES)
+  float   gtaoStrength;   // Optional (>0 overrides default 0.42; <0 disables GTAO)
+  Vector3 gtaoTint;       // Optional multi-bounce occlusion tint (0,0,0 = legacy neutral black)
+  float   bloomScatter;   // Optional (>0 overrides default 0.65 bloom pyramid spread)
 } PostFXMapProfile;
 
 void PostFX_SetMapProfile(PostFXMapProfile profile);

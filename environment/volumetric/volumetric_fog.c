@@ -60,6 +60,7 @@ static int s_locHfVolumeCount;
 static int s_locHfVolPosShape;
 static int s_locHfVolExtentsDense;
 static int s_locHfVolColorSoft;
+static int s_locHfVolYBounds;
 
 // Uniform locations — raymarch
 static int s_locDepthTex;
@@ -96,6 +97,7 @@ static int s_locVolumeCount;
 static int s_locVolPosShape;
 static int s_locVolExtentsDense;
 static int s_locVolColorSoft;
+static int s_locVolYBounds;
 
 // Uniform locations — composite
 static int s_locCompVolTex;
@@ -178,6 +180,7 @@ void VolumetricFog_Init(int width, int height) {
     if (s_locVolExtentsDense < 0) s_locVolExtentsDense = GetShaderLocation(s_raymarchShader, "u_volExtentsDense[0]");
     s_locVolColorSoft      = GetShaderLocation(s_raymarchShader, "u_volColorSoft");
     if (s_locVolColorSoft < 0) s_locVolColorSoft = GetShaderLocation(s_raymarchShader, "u_volColorSoft[0]");
+    s_locVolYBounds        = GetShaderLocation(s_raymarchShader, "u_volYBounds");
 
     const char *compositeFs =
 #ifdef __ANDROID__
@@ -227,6 +230,7 @@ void VolumetricFog_Init(int width, int height) {
     if (s_locHfVolExtentsDense < 0) s_locHfVolExtentsDense = GetShaderLocation(s_heightFogShader, "u_volExtentsDense[0]");
     s_locHfVolColorSoft       = GetShaderLocation(s_heightFogShader, "u_volColorSoft");
     if (s_locHfVolColorSoft < 0) s_locHfVolColorSoft = GetShaderLocation(s_heightFogShader, "u_volColorSoft[0]");
+    s_locHfVolYBounds         = GetShaderLocation(s_heightFogShader, "u_volYBounds");
 
     s_ready = true;
 }
@@ -387,6 +391,21 @@ void VolumetricFog_Render(Camera3D camera) {
         }
     }
 
+    Vector2 volYBounds = { -3.0f, 8.5f };
+    if (volCount > 0) {
+        float minY = 1e9f;
+        float maxY = -1e9f;
+        for (int i = 0; i < volCount; i++) {
+            float cy = volPosShape[i].y;
+            float ey = volExtentsDense[i].y;
+            if (ey < 0.0f) ey = -ey;
+            if (cy - ey < minY) minY = cy - ey;
+            if (cy + ey > maxY) maxY = cy + ey;
+        }
+        volYBounds.x = minY - 0.5f;
+        volYBounds.y = maxY + 0.5f;
+    }
+
     if (renderMode == FOG_MODE_HEIGHT) {
         SceneTargets_BeginVFXBody();
 
@@ -427,6 +446,7 @@ void VolumetricFog_Render(Camera3D camera) {
         if (s_locHfVolPosShape >= 0) SetShaderValueV(s_heightFogShader, s_locHfVolPosShape, volPosShape, SHADER_UNIFORM_VEC4, 8);
         if (s_locHfVolExtentsDense >= 0) SetShaderValueV(s_heightFogShader, s_locHfVolExtentsDense, volExtentsDense, SHADER_UNIFORM_VEC4, 8);
         if (s_locHfVolColorSoft >= 0) SetShaderValueV(s_heightFogShader, s_locHfVolColorSoft, volColorSoft, SHADER_UNIFORM_VEC4, 8);
+        if (s_locHfVolYBounds >= 0) SetShaderValue(s_heightFogShader, s_locHfVolYBounds, &volYBounds, SHADER_UNIFORM_VEC2);
 
         Rectangle srcRect = { 0.0f, 0.0f, (float)sceneDepth.width, -(float)sceneDepth.height };
         Rectangle dstRect = { 0.0f, 0.0f, (float)SceneTargets_GetWidth(), (float)SceneTargets_GetHeight() };
@@ -489,6 +509,7 @@ void VolumetricFog_Render(Camera3D camera) {
     if (s_locVolPosShape >= 0) SetShaderValueV(s_raymarchShader, s_locVolPosShape, volPosShape, SHADER_UNIFORM_VEC4, 8);
     if (s_locVolExtentsDense >= 0) SetShaderValueV(s_raymarchShader, s_locVolExtentsDense, volExtentsDense, SHADER_UNIFORM_VEC4, 8);
     if (s_locVolColorSoft >= 0) SetShaderValueV(s_raymarchShader, s_locVolColorSoft, volColorSoft, SHADER_UNIFORM_VEC4, 8);
+    if (s_locVolYBounds >= 0) SetShaderValue(s_raymarchShader, s_locVolYBounds, &volYBounds, SHADER_UNIFORM_VEC2);
 
     SetShaderValueTexture(s_raymarchShader, s_locDepthTex, sceneDepth);
     if (shadowEnabled > 0.5f)

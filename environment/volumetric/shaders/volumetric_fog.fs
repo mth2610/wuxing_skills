@@ -40,6 +40,7 @@ uniform int       u_volumeCount;
 uniform vec4      u_volPosShape[8];     // xyz = position, w = shape (0=box, 1=sphere, 2=cylinder)
 uniform vec4      u_volExtentsDense[8]; // xyz = extents, w = density
 uniform vec4      u_volColorSoft[8];    // rgb = color, a = edgeSoftness
+uniform vec2      u_volYBounds;         // x = minY, y = maxY across active local fog volumes
 
 // Reconstruct world-space ray direction from screen UV and inverse ViewProj
 vec3 ReconstructRayDir(vec2 uv) {
@@ -125,9 +126,11 @@ void main() {
     vec3 receiverPos = u_camPos + rayDir * rayDist;
     int steps = clamp(u_stepCount, 8, 32);
     vec3 startRayPos = u_camPos + rayDir * marchStart;
+    float volMinY = (u_volYBounds.y > u_volYBounds.x) ? u_volYBounds.x : -3.0;
+    float volMaxY = (u_volYBounds.y > u_volYBounds.x) ? u_volYBounds.y : 8.5;
     bool rayMayHitVolumes = (u_volumeCount > 0)
-        && (min(startRayPos.y, receiverPos.y) <= 8.5)
-        && (max(startRayPos.y, receiverPos.y) >= -3.0);
+        && (min(startRayPos.y, receiverPos.y) <= volMaxY)
+        && (max(startRayPos.y, receiverPos.y) >= volMinY);
 
 
     // Static ranks avoid frame-to-frame flicker without a history buffer. The
@@ -198,7 +201,7 @@ void main() {
         // 3. Local fog volumes (lake, meadow, forest hollows)
         vec3 fogColor = u_fogColor;
         float localDensity = 0.0;
-        if (rayMayHitVolumes && localFade > 0.00001 && samplePos.y <= 8.5 && samplePos.y >= -3.0) {
+        if (rayMayHitVolumes && localFade > 0.00001 && samplePos.y <= volMaxY && samplePos.y >= volMinY) {
             localDensity = EvaluateLocalFog(samplePos, fogColor);
         }
 

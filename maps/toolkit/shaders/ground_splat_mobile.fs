@@ -52,6 +52,9 @@ uniform vec4 u_lakeParams;
 uniform float u_aridBiomeFactor;
 uniform vec3 u_aridGrusColor;
 uniform vec3 u_aridHardpanColor;
+uniform float u_alpineBiomeFactor;
+uniform vec3 u_alpineSnowColor;
+uniform vec3 u_alpinePermafrostColor;
 
 out vec4 finalColor;
 
@@ -196,17 +199,18 @@ void main()
         vec3 colorGrass = textureLod(texGrass, tiledUV, mipTiled).rgb;
         float turfDetail = dot(colorGrass, vec3(0.2126, 0.7152, 0.0722));
         float detailContrast = clamp((turfDetail - 0.22) * 1.65, -0.26, 0.30);
-        vec3 turfBase = vec3(0.155, 0.228, 0.086);
+        vec3 turfBase = mix(vec3(0.155, 0.228, 0.086), u_alpineSnowColor * (0.94 + 0.10 * turfDetail), u_alpineBiomeFactor);
         vec3 litterChroma = clamp(colorGrass / max(turfDetail, 0.06), vec3(0.75), vec3(1.30));
-        vec3 grassAlbedo = turfBase * mix(vec3(1.0), litterChroma, 0.45) * (1.0 + detailContrast);
+        vec3 grassAlbedo = turfBase * mix(vec3(1.0), litterChroma, 0.45 * (1.0 - u_alpineBiomeFactor * 0.7)) * (1.0 + detailContrast * (1.0 - u_alpineBiomeFactor * 0.55));
 
         float habW1 = sin(fragWorldPos.x * 0.085 + fragWorldPos.z * 0.055) * 0.5 + 0.5;
         float habW2 = sin(fragWorldPos.x * -0.065 + fragWorldPos.z * 0.12 + 1.8) * 0.5 + 0.5;
         float analyticHabitat = habW1 * 0.60 + habW2 * 0.40;
         float habitatVal = (u_ecologyEnabled != 0) ? mix(analyticHabitat, ecology.a, 0.25) : analyticHabitat;
-        vec3 targetCanopyColor = MeadowCanopyColor(habitatVal);
+        vec3 targetCanopyColor = mix(MeadowCanopyColor(habitatVal), u_alpineSnowColor * mix(0.95, 1.02, habitatVal), u_alpineBiomeFactor);
         vec3 nearCanopy = mix(vec3(0.092, 0.156, 0.054), targetCanopyColor * 0.52, 0.52);
-        grassAlbedo = mix(grassAlbedo, nearCanopy * (1.0 + detailContrast * 0.65), 0.45);
+        nearCanopy = mix(nearCanopy, u_alpineSnowColor * (0.94 + 0.08 * detailContrast), u_alpineBiomeFactor);
+        grassAlbedo = mix(grassAlbedo, nearCanopy * (1.0 + detailContrast * 0.65 * (1.0 - u_alpineBiomeFactor * 0.6)), 0.45);
 
         if (camDistSqXZ > 64.0) {
             float camDist = sqrt(camDistSqXZ);
@@ -226,9 +230,12 @@ void main()
             vec3 desertSand = mix(u_aridHardpanColor * 1.06, u_aridGrusColor * 1.18, dMacro) * (0.88 + 0.24 * dirtDetail);
             loamColor = mix(loamColor, desertSand, u_aridBiomeFactor);
         }
+        if (u_alpineBiomeFactor > 0.05) {
+            loamColor = mix(loamColor, u_alpinePermafrostColor * (0.92 + 0.26 * dirtDetail), u_alpineBiomeFactor);
+        }
         if (wCliff > 0.01) {
             vec3 rockCol = (u_groundRockEnabled != 0)
-                ? textureLod(u_groundRock, fragWorldPos.xz * 0.35, mipTiled).rgb * vec3(0.55, 0.54, 0.50)
+                ? textureLod(u_groundRock, fragWorldPos.xz * 0.35, mipTiled).rgb * mix(vec3(0.55, 0.54, 0.50), vec3(0.66, 0.72, 0.80), u_alpineBiomeFactor)
                 : loamColor * 1.1;
             loamColor = mix(loamColor, rockCol, smoothstep(0.05, 0.55, wCliff));
         }

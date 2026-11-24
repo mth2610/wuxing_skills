@@ -437,7 +437,8 @@ void main()
 
         vec3 litterTint = mix(vec3(1.0), vec3(1.06, 1.02, 0.92), litterClasses.x);
         litterTint *= mix(vec3(1.0), mix(vec3(0.93, 1.04, 0.93), vec3(1.04, 0.96, 0.86), u_aridBiomeFactor), litterClasses.y);
-        grassAlbedo *= mix(vec3(1.0), litterTint, detailResolve * 0.32);
+        // Never apply lush-meadow green litter tint onto pure alpine snowpack
+        grassAlbedo *= mix(vec3(1.0), litterTint, detailResolve * 0.32 * (1.0 - u_alpineBiomeFactor));
 
         float habW1 = sin(fragWorldPos.x * 0.085 + fragWorldPos.z * 0.055) * 0.5 + 0.5;
         float habW2 = sin(fragWorldPos.x * -0.065 + fragWorldPos.z * 0.12 + 1.8) * 0.5 + 0.5;
@@ -459,7 +460,7 @@ void main()
                           0.56 - GS_NEAR_DETAIL_BOOST * 0.42 * detailResolve);
 
         if (u_ecologyEnabled != 0)
-            grassAlbedo *= mix(vec3(1.0), mix(vec3(0.90, 0.99, 0.92), vec3(1.04, 0.98, 0.90), u_aridBiomeFactor), ecology.b);
+            grassAlbedo *= mix(vec3(1.0), mix(vec3(0.90, 0.99, 0.92), vec3(1.04, 0.98, 0.90), u_aridBiomeFactor), ecology.b * (1.0 - u_alpineBiomeFactor));
 
         if (camDistSqXZ > 64.0) {
             float camDist = camDistSqXZ * inversesqrt(camDistSqXZ);
@@ -491,11 +492,15 @@ void main()
                 canopyColor *= mix(0.90, 1.06, tuftGrain);
 
                 float hillCrestMask = smoothstep(0.20, 0.72, hillCrestNoise);
-                canopyColor = mix(canopyColor * vec3(0.94, 1.01, 0.96), canopyColor * vec3(1.06, 1.03, 0.90), hillCrestMask * 0.35);
+                vec3 coolCrestMul = mix(vec3(0.94, 1.01, 0.96), vec3(0.94, 0.97, 1.02), u_alpineBiomeFactor);
+                vec3 warmCrestMul = mix(vec3(1.06, 1.03, 0.90), vec3(1.02, 1.00, 0.97), u_alpineBiomeFactor);
+                canopyColor = mix(canopyColor * coolCrestMul, canopyColor * warmCrestMul, hillCrestMask * 0.35);
 
                 float macroPatch = v_macroPatchAndField.x;
                 float warmShift = clamp(macroPatch * 0.5 + 0.5, 0.0, 1.0);
-                canopyColor *= mix(vec3(0.96, 1.02, 0.94), vec3(1.04, 1.03, 0.92), warmShift * 0.40);
+                vec3 macroCoolMul = mix(vec3(0.96, 1.02, 0.94), vec3(0.95, 0.97, 1.02), u_alpineBiomeFactor);
+                vec3 macroWarmMul = mix(vec3(1.04, 1.03, 0.92), vec3(1.02, 1.00, 0.98), u_alpineBiomeFactor);
+                canopyColor *= mix(macroCoolMul, macroWarmMul, warmShift * 0.40);
 
                 grassAlbedo = mix(grassAlbedo, canopyColor, distantCanopyBlend * 0.92);
             }
@@ -870,7 +875,18 @@ void main()
     float macroField = v_macroPatchAndField.y;
     float heightInfluence = clamp((fragWorldPos.y - 1.2) * 0.08, -0.20, 0.30);
     float crestWarmth = clamp(macroField + heightInfluence, 0.0, 1.0);
-    blendedAlbedo *= mix(GS_CREST_COOL, GS_CREST_WARM, crestWarmth);
+    vec3 crestCoolTone = mix(GS_CREST_COOL, vec3(0.93, 0.96, 1.03), u_alpineBiomeFactor);
+    vec3 crestWarmTone = mix(GS_CREST_WARM, vec3(1.02, 1.00, 0.97), u_alpineBiomeFactor);
+    blendedAlbedo *= mix(crestCoolTone, crestWarmTone, crestWarmth);
+
+    // Alpine snow-ledge frosting & windward rime on steep slate rock faces (prevents flat pitch-dark navy walls)
+    if (u_alpineBiomeFactor > 0.05 && wCliff > 0.05) {
+        float ledgeSnow = smoothstep(0.46, 0.80, geomWorldNormal.y) * smoothstep(0.10, 0.55, wCliff);
+        float rimeNoise = sin(fragWorldPos.x * 1.4 + fragWorldPos.z * 1.1 + sin(fragWorldPos.y * 1.8) * 0.9) * 0.5 + 0.5;
+        float windRime = smoothstep(0.35, 0.85, rimeNoise) * (1.0 - geomWorldNormal.y) * 0.34;
+        vec3 frostCol = mix(vec3(0.72, 0.78, 0.88), u_alpineSnowColor * 1.02, ledgeSnow);
+        blendedAlbedo = mix(blendedAlbedo, frostCol, clamp((ledgeSnow * 0.72 + windRime) * u_alpineBiomeFactor, 0.0, 0.82));
+    }
 
     if (u_volcanicBiomeFactor < 0.5 && camDistSqXZ > 1600.0 && fragWorldPos.y > 5.5) {
         float ridgeOutcrop = smoothstep(5.5, 11.5, fragWorldPos.y) * smoothstep(0.22, 0.52, slope);
@@ -961,6 +977,37 @@ void main()
                 blendedAlbedo *= (1.0 + g0 * 0.032 * grainFade);
             }
         }
+        // AAA Wind-Sculpted Alpine Sastrugi Snow Drifts & Scalloped Crust Normals (0..45m)
+        if (u_alpineBiomeFactor > 0.05 && camDistSqXZ < 2025.0) {
+            vec2 sDir = vec2(-0.853, 0.521); // Aligned with Mẫu Sơn monsoon wind (-3.6, 2.2)
+            vec2 sPerp = vec2(-0.521, -0.853);
+            float alongS = dot(fragWorldPos.xz, sDir);
+            float acrossS = dot(fragWorldPos.xz, sPerp);
+
+            float sWarp = sin(fragWorldPos.x * 0.14 + fragWorldPos.z * 0.19) * 1.45
+                        + cos(fragWorldPos.z * 0.31 - fragWorldPos.x * 0.23) * 0.65;
+            float sPhase1 = alongS * 2.40 + acrossS * 0.45 + sWarp * 1.55;
+            float sPhase2 = alongS * 6.80 - acrossS * 1.15 - sWarp * 1.10;
+
+            float fwS1 = fwidth(sPhase1);
+            float fwS2 = fwidth(sPhase2);
+            float aaS1 = 1.0 - smoothstep(1.4, 3.0, fwS1);
+            float aaS2 = 1.0 - smoothstep(1.4, 3.0, fwS2);
+            float distS = 1.0 - smoothstep(900.0, 2025.0, camDistSqXZ);
+
+            float sGate = wGrass * (1.0 - smoothstep(0.28, 0.56, slope)) * (1.0 - wCliff * 0.85)
+                        * (1.0 - isRiparian * 0.65) * distS * u_alpineBiomeFactor;
+
+            // Asymmetrical wind-packed snow wave profile (steep windward lip, smooth leeward tail)
+            float slope1 = (cos(sPhase1) * 0.72 + cos(2.0 * sPhase1 - 0.60) * 0.28) * aaS1;
+            float slope2 = (cos(sPhase2) * 0.68 + cos(2.0 * sPhase2 - 0.45) * 0.32) * aaS2;
+            float trough = (0.5 - 0.5 * sin(sPhase1)) * aaS1;
+
+            vec2 sGrad = sDir * (slope1 * 0.18 + slope2 * 0.085) + sPerp * (slope2 * 0.045);
+            nRaw += vec3(sGrad.x, 0.0, sGrad.y) * sGate;
+            // Subtle cobalt sky-shadow occlusion in sastrugi troughs
+            blendedAlbedo *= mix(vec3(1.0), vec3(0.955, 0.972, 1.015), trough * 0.55 * sGate);
+        }
         normal = nRaw * inversesqrt(max(dot(nRaw, nRaw), 1e-8));
     }
 
@@ -1010,7 +1057,8 @@ void main()
     float sunVisibility = (shadow > 0.001) ? shadow * Environment_CloudVisibility(u_cloudNoise, fragWorldPos) : 0.0;
 
     float ambientShadowMod = mix(mix(0.90, 0.95, wGrass), 1.0, resolvedShadow);
-    vec3 ambient = Environment_HemisphereIrradiance(normal, actualAmbient) * (cavityAO * ambientShadowMod);
+    vec3 snowBounceTint = mix(vec3(0.55, 0.45, 0.40), vec3(0.84, 0.90, 1.02), u_alpineBiomeFactor);
+    vec3 ambient = Environment_HemisphereIrradianceTinted(normal, actualAmbient, snowBounceTint) * (cavityAO * ambientShadowMod);
 
     vec3 totalLight = ambient + actualLight * effectiveNdotL * sunVisibility;
     vec3 groundLit = blendedAlbedo * totalLight;
@@ -1050,31 +1098,44 @@ void main()
     vec3 F_Schlick = F0_ground + (vec3(1.0) - F0_ground) * (omvh2 * omvh2 * omvh);
     vec3 specGGX = (D_GGX * G_Smith * F_Schlick) / (4.0 * NdotV * NdotL_clamped + 0.001);
     vec3 drySpec = actualLight * specGGX * (NdotL_clamped * sunVisibility);
-    groundLit += drySpec * (0.85 - wGrass * 0.65);
+    float grassSpecAtten = mix(0.85 - wGrass * 0.65, 0.85 - wGrass * 0.25, u_alpineBiomeFactor);
+    groundLit += drySpec * grassSpecAtten;
+    if (u_alpineBiomeFactor > 0.05 && wGrass > 0.05) {
+        // Wind-glazed snow crust grazing Fresnel sheen
+        float snowGlaze = pow(1.0 - NdotV, 4.0) * wGrass * u_alpineBiomeFactor;
+        groundLit += (actualAmbient * vec3(0.75, 0.86, 1.04) + actualLight * (0.28 * sunVisibility)) * (snowGlaze * 0.24);
+    }
 
     // Quartz / mica grain sparkle on sunlit desert grus, diamond-dust snow glint, or alluvial gold/silver flecks
     float sparkleActive = max(max(u_aridBiomeFactor, u_alpineBiomeFactor * u_snowSparkleStrength), u_metallicBiomeFactor * u_oreVeinStrength);
-    if (sparkleActive > 0.05 && sunVisibility > 0.01 && camDistSqXZ < 484.0 && NdotH > 0.68) {
-        vec2 glintUV = fragWorldPos.xz * mix(26.0, 34.0, max(u_alpineBiomeFactor, u_metallicBiomeFactor));
+    float glintMaxDistSq = mix(484.0, 1764.0, u_alpineBiomeFactor);
+    float glintMinNdotH = mix(0.68, 0.35, u_alpineBiomeFactor);
+    if (sparkleActive > 0.05 && sunVisibility > 0.01 && camDistSqXZ < glintMaxDistSq && NdotH > glintMinNdotH) {
+        vec2 glintUV = fragWorldPos.xz * mix(26.0, 22.0, u_alpineBiomeFactor);
         vec2 cell = floor(glintUV);
         vec2 cellFrac = fract(glintUV);
         vec3 q3 = fract(cell.xyx * vec3(0.1031, 0.1030, 0.0973));
         q3 += dot(q3, q3.yzx + 33.33);
         vec2 cellRand = fract((q3.xx + q3.yz) * q3.zy);
         vec2 jitterCenter = 0.18 + 0.64 * cellRand;
-        float grainRadius = 0.10 + 0.12 * fract(cellRand.x * 17.3 + cellRand.y * 31.7);
+        float grainRadius = 0.12 + 0.14 * fract(cellRand.x * 17.3 + cellRand.y * 31.7);
         float distToGrain = length(cellFrac - jitterCenter);
         float grainMask = 1.0 - smoothstep(grainRadius * 0.35, grainRadius, distToGrain);
-        float quartzHash = fract((q3.x + q3.z) * q3.y);
+        // View-dependent ice-crystal facet hash so snow sparkles gently as camera moves
+        vec2 vHash = floor(viewDir.xz * 7.0) * u_alpineBiomeFactor;
+        vec3 vq = fract((cell.xyx + vHash.xyx) * vec3(0.1031, 0.1030, 0.0973));
+        vq += dot(vq, vq.yzx + 33.33);
+        float quartzHash = mix(fract((q3.x + q3.z) * q3.y), fract((vq.x + vq.z) * vq.y), u_alpineBiomeFactor * 0.65);
         vec2 fw = fwidth(glintUV);
         float pixelFootprint = max(fw.x, fw.y);
-        float aaFade = 1.0 - smoothstep(0.35, 0.85, pixelFootprint);
-        float distFade = 1.0 - smoothstep(100.0, 484.0, camDistSqXZ);
-        float glintPow = mix(48.0, 64.0, max(u_alpineBiomeFactor, u_metallicBiomeFactor));
-        float crystalGlint = pow(NdotH, glintPow) * smoothstep(0.91, 0.995, quartzHash) * grainMask * aaFade * distFade;
-        vec3 glintTint = mix(vec3(1.0), vec3(0.88, 0.96, 1.08), u_alpineBiomeFactor);
+        float aaFade = 1.0 - smoothstep(0.35, 0.92, pixelFootprint);
+        float distFade = 1.0 - smoothstep(glintMaxDistSq * 0.22, glintMaxDistSq, camDistSqXZ);
+        float glintPow = mix(48.0, 22.0, u_alpineBiomeFactor);
+        float glintThresh = mix(0.91, 0.87, u_alpineBiomeFactor);
+        float crystalGlint = pow(NdotH, glintPow) * smoothstep(glintThresh, 0.992, quartzHash) * grainMask * aaFade * distFade;
+        vec3 glintTint = mix(vec3(1.0), vec3(0.92, 0.97, 1.08), u_alpineBiomeFactor);
         glintTint = mix(glintTint, mix(u_goldVeinColor, u_silverVeinColor, step(0.5, fract(quartzHash * 13.7))), u_metallicBiomeFactor);
-        groundLit += actualLight * glintTint * (crystalGlint * sunVisibility * sparkleActive * 0.55);
+        groundLit += actualLight * glintTint * (crystalGlint * sunVisibility * sparkleActive * mix(0.55, 0.72, u_alpineBiomeFactor));
     }
 
     // ---- 12. Capillary Wetness Mechanics (Tight meniscus waterline contact sheen) ----
@@ -1147,17 +1208,21 @@ void main()
         groundLit = mix(groundLit, cloudVeilColor, veil);
     }
 
-    // Gentle golden-hour aerial perspective over distant hills (35m..320m for MOBA & OW)
+    // Gentle aerial perspective over distant hills (golden-hour for meadows/desert, crisp azure-ivory for alpine)
     if (camDistSqXZ > 1225.0) {
         float aerialEndSq = mix(21025.0, 102400.0, u_aridBiomeFactor);
         float aerialFactor = smoothstep(1225.0, aerialEndSq, camDistSqXZ) * (1.0 - smoothstep(2.5, 11.5, fragWorldPos.y) * 0.35);
-        vec3 horizonAerial = actualAmbient * vec3(0.88, 0.84, 0.78) + actualLight * vec3(0.28, 0.22, 0.16);
-        groundLit = mix(groundLit, horizonAerial, aerialFactor * mix(0.28, 0.36, u_aridBiomeFactor));
+        vec3 warmAerial = actualAmbient * vec3(0.88, 0.84, 0.78) + actualLight * vec3(0.28, 0.22, 0.16);
+        vec3 alpineAerial = actualAmbient * vec3(0.94, 1.02, 1.18) + actualLight * vec3(0.24, 0.25, 0.27);
+        vec3 horizonAerial = mix(warmAerial, alpineAerial, u_alpineBiomeFactor);
+        groundLit = mix(groundLit, horizonAerial, aerialFactor * mix(0.28, 0.36, max(u_aridBiomeFactor, u_alpineBiomeFactor)));
     }
 
     if (u_aridBiomeFactor < 0.5 && fragWorldPos.y < -1.80) {
         float cloudImmersion = 1.0 - smoothstep(-4.80, -1.80, fragWorldPos.y);
-        vec3 cloudBaseTone = mix(vec3(0.56, 0.62, 0.72), vec3(0.95, 0.92, 0.86), 0.55);
+        vec3 warmCloudBase = mix(vec3(0.56, 0.62, 0.72), vec3(0.95, 0.92, 0.86), 0.55);
+        vec3 alpineCloudBase = mix(vec3(0.68, 0.76, 0.88), vec3(0.94, 0.96, 1.00), 0.65);
+        vec3 cloudBaseTone = mix(warmCloudBase, alpineCloudBase, u_alpineBiomeFactor);
         vec3 cloudHazeLight = actualAmbient * 0.85 + actualLight * (0.42 * max(light.y + 0.35, 0.25));
         vec3 cloudHazeTarget = cloudBaseTone * cloudHazeLight;
         groundLit = mix(groundLit, cloudHazeTarget, cloudImmersion * 0.92);

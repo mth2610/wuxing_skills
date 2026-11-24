@@ -26,7 +26,7 @@ void main()
         pos.y += bob;
     }
 
-    fragWorldPos = pos;
+    fragWorldPos = pos + vec3(0.0, 0.014, 0.0);
     fragIceDepth = depth;
     fragShoreFade = shoreFade;
 

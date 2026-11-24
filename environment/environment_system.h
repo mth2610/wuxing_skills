@@ -43,6 +43,12 @@ void Environment_SetAmbientColor(Color col);
 Color Environment_GetSkyAmbient(void);
 Color Environment_GetGroundAmbient(void);
 
+// Optional per-map ground-albedo bounce multiplier (default {0.55, 0.45, 0.40} for soil;
+// snowfields can set e.g. {0.84, 0.90, 1.02} so undersides receive cool bounced skylight).
+void Environment_SetGroundBounceTint(Vector3 rgbMultiplier);
+Vector3 Environment_GetGroundBounceTint(void);
+void Environment_ResetGroundBounceTint(void);
+
 Color Environment_GetShadowColor(void);
 void Environment_SetShadowColor(Color col);
 

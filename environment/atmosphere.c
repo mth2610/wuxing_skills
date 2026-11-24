@@ -97,6 +97,13 @@ static void SeedMote(Mote *m) {
         m->swaySpd = RandRange(0.6f, 1.4f);
         m->size    = RandRange(0.022f, 0.055f);
         m->bright  = RandRange(0.45f, 0.95f);
+    } else if (s_mode == ATMO_MODE_ALPINE_SPINDRIFT) {
+        // Tinh thể tuyết lấp lánh (diamond dust) & bụi tuyết bay thấp theo gió núi
+        m->drift   = (Vector3){ RandRange(-0.22f, -0.05f), RandRange(-0.16f, -0.03f), RandRange(0.05f, 0.22f) };
+        m->phase   = RandRange(0.0f, 6.2831853f);
+        m->swaySpd = RandRange(1.2f, 2.8f);
+        m->size    = RandRange(0.018f, 0.044f);
+        m->bright  = RandRange(0.42f, 1.15f);
     } else {
         // Bụi trôi ánh trăng (mặc định)
         m->drift   = (Vector3){ 0.0f, RandRange(-0.045f, -0.015f), 0.0f };
@@ -149,6 +156,8 @@ void Atmosphere_SetMode(AtmosphereMode mode) {
         s_tint = (Color){ 160, 255, 210, 255 }; // Sắc ngọc bích / tiên khí
     } else if (mode == ATMO_MODE_DESERT_DUST) {
         s_tint = (Color){ 242, 214, 168, 255 }; // Sắc cát vàng nắng chiều
+    } else if (mode == ATMO_MODE_ALPINE_SPINDRIFT) {
+        s_tint = (Color){ 224, 238, 255, 255 }; // Sắc băng tinh tuyết trắng ánh lam
     } else {
         s_tint = (Color){ 160, 190, 235, 255 }; // Sắc trăng lạnh
     }

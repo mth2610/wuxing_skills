@@ -61,17 +61,37 @@ void main()
             discard;
         albedo = tex.rgb * fragColor.rgb;
     } else {
-        // Procedural longitudinal bark fissures + root-collar contact AO
-        float fissure = sin(fragPosition.y * 14.0 + sin(fragPosition.x * 9.5 + fragPosition.z * 9.5) * 2.2) * 0.5 + 0.5;
-        float fineGrain = sin(fragPosition.x * 23.0 - fragPosition.z * 19.0 + fragPosition.y * 6.0) * 0.5 + 0.5;
-        albedo *= mix(0.80, 1.12, fissure * 0.72 + fineGrain * 0.28);
-        float rootAO = mix(0.46, 1.0, smoothstep(0.0, 0.65, v_localY));
-        ao = rootAO * clamp(fragTexCoord.y, 0.35, 1.0);
+        // Procedural bark: silver-white paper birch lenticels for pale birch bark, longitudinal fissures for dark bark
+        bool isPaleBirch = (albedo.r > 0.58 && albedo.b > 0.52);
+        if (isPaleBirch) {
+            float ringWave = sin(fragPosition.y * 26.0 + sin(fragPosition.x * 11.0 + fragPosition.z * 11.0) * 1.6);
+            float lenticel = smoothstep(0.74, 0.95, ringWave) * smoothstep(0.15, 0.85, Tree_Noise3D(fragPosition * 6.5));
+            float paperGrain = sin(fragPosition.y * 9.0 + fragPosition.x * 4.0) * 0.5 + 0.5;
+            albedo = mix(albedo * mix(0.92, 1.06, paperGrain), vec3(0.20, 0.19, 0.21), lenticel * 0.72);
+        } else {
+            float fissure = sin(fragPosition.y * 14.0 + sin(fragPosition.x * 9.5 + fragPosition.z * 9.5) * 2.2) * 0.5 + 0.5;
+            float fineGrain = sin(fragPosition.x * 23.0 - fragPosition.z * 19.0 + fragPosition.y * 6.0) * 0.5 + 0.5;
+            albedo *= mix(0.80, 1.12, fissure * 0.72 + fineGrain * 0.28);
+        }
+        if (u_treeSnowAmount > 0.35) {
+            float baseSnowCollar = (1.0 - smoothstep(0.05, 0.58, v_localY)) * smoothstep(0.35, 0.70, u_treeSnowAmount);
+            albedo = mix(albedo, vec3(0.88, 0.92, 0.98), baseSnowCollar * 0.88);
+            float rootAO = mix(0.82, 1.0, smoothstep(0.0, 0.65, v_localY));
+            ao = rootAO * clamp(fragTexCoord.y, 0.55, 1.0);
+        } else {
+            float rootAO = mix(0.46, 1.0, smoothstep(0.0, 0.65, v_localY));
+            ao = rootAO * clamp(fragTexCoord.y, 0.35, 1.0);
+        }
     }
 
     vec3 N = fragNormal * inversesqrt(max(dot(fragNormal, fragNormal), 1e-8));
-    // Flip normal on back-face of double-sided foliage fronds so undersides stay rich dark evergreen!
-    if (!gl_FrontFacing) N = -N;
+    // Flip normal on back-face of double-sided foliage fronds, softening straight-down normals so underside leaves never turn black!
+    if (!gl_FrontFacing) {
+        N = -N;
+        if (canopyMask > 0.5) {
+            N = normalize(mix(N, vec3(0.0, 0.30, 0.0), 0.30));
+        }
+    }
 
     // Nature_UpdateShader uploads u_lightDir pointing upward toward the sun (y > 0)
     vec3 L = u_lightDir * inversesqrt(max(dot(u_lightDir, u_lightDir), 1e-8));
@@ -89,13 +109,14 @@ void main()
         float snowSens = mix(0.55, 1.0, canopyMask);
         float slopeCut = mix(0.66, 0.48, canopyMask);
         float effectiveSnow = clamp(u_treeSnowAmount * snowSens, 0.0, 1.0);
-        float thresh = mix(1.06, slopeCut, effectiveSnow);
-        snowMask = smoothstep(thresh - 0.10, thresh + 0.10, upDot + breakup * 0.44);
+        // Crisp directional snow pillows preserving ~45% rich dark boreal evergreen needle contrast
+        float thresh = mix(1.06, slopeCut + 0.16, effectiveSnow);
+        snowMask = smoothstep(thresh - 0.10, thresh + 0.08, upDot + breakup * 0.48);
         snowMask *= smoothstep(0.02, 0.12, u_treeSnowAmount);
-        // Strict vertical guard: never bleed snow onto undersides
-        snowMask *= smoothstep(0.12, 0.38, upDot);
-        vec3 crispSnow = mix(vec3(0.86, 0.92, 0.98), vec3(0.97, 0.99, 1.0), smoothstep(0.35, 0.92, upDot));
-        albedo = mix(albedo, crispSnow, snowMask * clamp(u_treeSnowAmount * 1.15, 0.0, 0.92));
+        // Strict vertical guard: keep frond sides & undersides deep dark evergreen!
+        snowMask *= smoothstep(0.28, 0.56, upDot);
+        vec3 crispSnow = mix(vec3(0.88, 0.93, 0.99), vec3(0.98, 0.99, 1.0), smoothstep(0.45, 0.92, upDot));
+        albedo = mix(albedo, crispSnow, snowMask * clamp(u_treeSnowAmount * 0.95, 0.0, 0.72));
     }
 
     float dynCov = 0.0;
@@ -108,9 +129,10 @@ void main()
     }
     float directVis = shadow * cloudVis;
 
-    // Wrap diffuse for lush foliage fronds; crisp Lambert for woody bark
+    // Wrap diffuse for lush foliage fronds + thin-leaf diffuse transmission (prevents dark underside cutouts)
     float ndlRaw = dot(N, L);
     float ndl = mix(max(ndlRaw, 0.0), clamp((ndlRaw + 0.42) * 0.704225, 0.0, 1.0), canopyMask);
+    float leafTransmit = max(-ndlRaw, 0.0) * 0.34 * canopyMask * directVis;
 
     // Backlit Mie Subsurface Scattering through needles/leaves & snow edges
     float backDot = max(dot(V, -L), 0.0);
@@ -119,7 +141,8 @@ void main()
     float rimDot = oneMinusNV * oneMinusNV * oneMinusNV;
     vec3 sssTint = mix(albedo * vec3(1.28, 1.44, 0.80), vec3(0.68, 0.88, 1.0), snowMask);
     float sssAmt = mix(0.46 * canopyMask, 0.32, snowMask);
-    vec3 sss = u_lightColor * sssTint * ((backLit * 0.48 + rimDot * 0.16) * sssAmt * directVis);
+    vec3 sss = u_lightColor * sssTint * ((backLit * 0.48 + rimDot * 0.16) * sssAmt * directVis)
+             + albedo * u_lightColor * leafTransmit;
 
     // Sunlit snow micro-crystal sparkle glints
     vec3 sparkle = vec3(0.0);
@@ -130,7 +153,8 @@ void main()
         sparkle = u_lightColor * (spk * snowMask * sunFace * 0.55 * directVis);
     }
 
-    vec3 hemi = Environment_HemisphereIrradiance(N, u_ambientColor);
+    vec3 treeBounce = mix(vec3(0.55, 0.45, 0.40), vec3(0.82, 0.89, 1.00), smoothstep(0.25, 0.70, u_treeSnowAmount));
+    vec3 hemi = Environment_HemisphereIrradianceTinted(N, u_ambientColor, treeBounce);
     vec3 lit = albedo * (hemi + u_lightColor * (ndl * directVis)) * ao + sss + sparkle;
 
     if (distSq < 1600.0) {
