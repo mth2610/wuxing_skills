@@ -248,9 +248,10 @@ void VFX_MetalLance_Kill(int handle)
         if (s_metalLances[i].active && s_metalLances[i].id == handle) {
             if (s_metalLances[i].trailHandle >= 0) {
                 VFX_TrailSetWidth(s_metalLances[i].trailHandle, 0.0f);
-                VFX_KillTrail(s_metalLances[i].trailHandle);
+                VFX_Trail_Stop(s_metalLances[i].trailHandle);
                 s_metalLances[i].trailHandle = -1;
             }
+            VFX_CrystalShatter_Spawn(s_metalLances[i].pos, s_metalLances[i].dir, 3.2f, 5, 0.08f, VFX_CRYSTAL_STYLE_STEEL);
             s_metalLances[i].active = false;
             return;
         }
@@ -316,8 +317,7 @@ void VC_MetalSlash_Update(float dt)
             Vector3 impactPt = Vector3Add(inst->origin, Vector3Scale(inst->dir, inst->radius * 0.85f));
             impactPt.y = VFX_GroundHeightFromMap(impactPt.x, impactPt.z, NULL) + 0.04f;
             VFX_ComposeContactSparkMode(impactPt, VC_MAT_METAL, 0.75f * inst->scale, 0.85f, CONTACT_SPARK_CENTRIFUGAL);
-            VFX_ComposeFissureStreak(inst->origin, Vector3Add(inst->origin, Vector3Scale(inst->dir, inst->radius)),
-                                     0.14f * inst->scale, 0.35f, inst->elapsed);
+            VFX_ComposeDecalVariant(impactPt, VC_MAT_METAL, 1.05f * inst->scale, 0.78f, 1.0f, VFX_DECAL_VARIANT_IMPACT);
         }
         if (inst->elapsed >= inst->duration) inst->active = false;
     }
@@ -368,7 +368,8 @@ void VC_MetalSlash_Update(float dt)
             inst->snapped = true;
             Vector3 mid = Vector3Lerp(inst->startPos, inst->endPos, 0.55f);
             VFX_ComposeContactSparkMode(mid, VC_MAT_METAL, 0.90f * inst->scale, 0.95f, CONTACT_SPARK_CENTRIFUGAL);
-            VFX_ComposeShockRing(mid, (Vector3){ 0.0f, 1.0f, 0.0f }, VC_MAT_METAL, 1.5f * inst->scale, 0.15f);
+            VFX_SpawnShockRing(mid, (Vector3){ 0.0f, 1.0f, 0.0f }, VC_MAT_METAL, 1.5f * inst->scale, 0.28f);
+            ScreenDistort_Add(mid, 1.6f * inst->scale, 0.036f, 0.18f, 1.6f);
         }
         if (inst->elapsed >= inst->duration) inst->active = false;
     }
@@ -376,28 +377,92 @@ void VC_MetalSlash_Update(float dt)
 
 static void MetalSlash_DrawOneSlash(const VC_MetalSlashInst *inst, Camera3D cam)
 {
-    (void)cam;
     float t01 = Clamp(inst->elapsed / inst->duration, 0.0f, 1.0f);
-    VFX_ComposeSweepSlashEx(inst->origin, inst->dir, inst->planeNormal,
-                            VC_MAT_METAL, inst->radius * inst->scale, inst->arcRad, t01);
+    float headU = 1.0f - powf(1.0f - Clamp(t01 / 0.36f, 0.0f, 1.0f), 2.1f);
+    float tailU = Clamp((t01 - 0.14f) / 0.86f, 0.0f, 1.0f);
+    if (headU - tailU <= 0.03f) return;
+    float fade = powf(1.0f - t01, 0.70f);
+
+    static RibbonPoint bodyPts[22];
+    static RibbonPoint haloPts[22];
+    static RibbonPoint edgePts[22];
+    const int N = 22;
+    Vector3 right = Vector3Normalize(Vector3CrossProduct(inst->planeNormal, inst->dir));
+    Color steelDark = { 24, 32, 44, 255 };
+    Color steelGlow = { 145, 205, 255, 255 };
+    Color platinum  = { 245, 250, 255, 255 };
+
+    for (int k = 0; k < N; k++) {
+        float s = (float)k / (float)(N - 1);
+        float u = tailU + (headU - tailU) * s;
+        float ang = (u - 0.5f) * inst->arcRad;
+        Vector3 radial = Vector3Add(Vector3Scale(inst->dir, cosf(ang)), Vector3Scale(right, sinf(ang)));
+        Vector3 p = Vector3Add(inst->origin, Vector3Scale(radial, inst->radius * inst->scale));
+        float taper = powf(s, 0.50f) * sinf(s * PI);
+
+        bodyPts[k].position  = Vector3Subtract(p, Vector3Scale(radial, 0.10f * inst->scale));
+        bodyPts[k].halfWidth = 0.36f * inst->scale * taper;
+        bodyPts[k].tint      = ColorAlpha(steelDark, Clamp(0.88f * fade * s, 0.0f, 1.0f));
+        bodyPts[k].v         = s;
+
+        haloPts[k].position  = p;
+        haloPts[k].halfWidth = 0.24f * inst->scale * taper;
+        haloPts[k].tint      = VC_Premultiply(steelGlow, Clamp(0.62f * fade * s, 0.0f, 1.0f));
+        haloPts[k].v         = s;
+
+        edgePts[k].position  = Vector3Add(p, Vector3Scale(radial, 0.08f * inst->scale));
+        edgePts[k].halfWidth = 0.10f * inst->scale * taper;
+        edgePts[k].tint      = VC_Premultiply(platinum, Clamp(0.98f * fade * s, 0.0f, 1.0f));
+        edgePts[k].v         = s;
+    }
+    MetalSlash_DrawDualRibbon(bodyPts, edgePts, haloPts, N, cam, RIBBON_FIXED_NORMAL, inst->planeNormal);
 }
 
 static void MetalSlash_DrawOneCrescentWave(const VC_MetalCrescentInst *inst, Camera3D cam)
 {
-    (void)cam;
     float t01 = Clamp(inst->elapsed / inst->duration, 0.0f, 1.0f);
+    float fade = (t01 < 0.72f) ? 1.0f : (1.0f - (t01 - 0.72f) / 0.28f);
+    if (fade <= 0.01f) return;
+
     Vector3 up    = { 0.0f, 1.0f, 0.0f };
     Vector3 right = Vector3Normalize(Vector3CrossProduct(up, inst->dir));
     float roll    = inst->rollDeg * DEG2RAD;
     Vector3 nPlane = Vector3Normalize(Vector3Add(Vector3Scale(up, cosf(roll)), Vector3Scale(right, sinf(roll))));
+    Vector3 planeRight = Vector3Normalize(Vector3CrossProduct(nPlane, inst->dir));
 
-    /* Advance the sweep origin forward along the cone as the wave propagates */
-    float adv = fmaxf(0.0f, inst->dist - 1.4f);
-    Vector3 advOrigin = Vector3Add(inst->origin, Vector3Scale(inst->dir, adv));
-    advOrigin.y = VFX_GroundHeightFromMap(advOrigin.x, advOrigin.z, NULL) + 0.92f;
-    float signedArc = (inst->rollDeg < 0.0f) ? -inst->coneRad : inst->coneRad;
-    VFX_ComposeSweepSlashEx(advOrigin, inst->dir, nPlane,
-                            VC_MAT_METAL, 1.85f * inst->scale, signedArc * 1.45f, t01);
+    static RibbonPoint bodyPts[22];
+    static RibbonPoint haloPts[22];
+    static RibbonPoint edgePts[22];
+    const int N = 22;
+    Color steelDark = { 24, 32, 44, 255 };
+    Color steelGlow = { 135, 200, 255, 255 };
+    Color platinum  = { 245, 250, 255, 255 };
+
+    /* Full-chord advancing crescent blade: never collapses after 34% flight */
+    for (int k = 0; k < N; k++) {
+        float s = (float)k / (float)(N - 1);
+        float ang = (s - 0.5f) * inst->coneRad;
+        Vector3 radial = Vector3Add(Vector3Scale(inst->dir, cosf(ang)), Vector3Scale(planeRight, sinf(ang)));
+        Vector3 p = Vector3Add(inst->origin, Vector3Scale(radial, inst->dist));
+        p.y = VFX_GroundHeightFromMap(p.x, p.z, NULL) + 0.92f + sinf(roll) * (s - 0.5f) * 0.65f;
+        float arch = sinf(s * PI);
+
+        bodyPts[k].position  = Vector3Subtract(p, Vector3Scale(radial, 0.14f * inst->scale));
+        bodyPts[k].halfWidth = 0.34f * inst->scale * arch;
+        bodyPts[k].tint      = ColorAlpha(steelDark, Clamp(0.86f * fade * arch, 0.0f, 1.0f));
+        bodyPts[k].v         = s;
+
+        haloPts[k].position  = p;
+        haloPts[k].halfWidth = 0.24f * inst->scale * arch;
+        haloPts[k].tint      = VC_Premultiply(steelGlow, Clamp(0.60f * fade * arch, 0.0f, 1.0f));
+        haloPts[k].v         = s;
+
+        edgePts[k].position  = Vector3Add(p, Vector3Scale(radial, 0.08f * inst->scale));
+        edgePts[k].halfWidth = 0.10f * inst->scale * arch;
+        edgePts[k].tint      = VC_Premultiply(platinum, Clamp(0.98f * fade * arch, 0.0f, 1.0f));
+        edgePts[k].v         = s;
+    }
+    MetalSlash_DrawDualRibbon(bodyPts, edgePts, haloPts, N, cam, RIBBON_FIXED_NORMAL, nPlane);
 }
 
 static void MetalSlash_DrawOneSeverLine(const VC_MetalSeverInst *inst, Camera3D cam)

@@ -164,6 +164,7 @@ void UpdateTcdkLuuTinhThuSkill(float dt, Vector3 enemyPos, float enemyRadius)
                     }
                 }
                 inst->lanceHandle = VFX_MetalLance_Spawn(inst->pos, inst->dir, inst->sizeScale, 0.60f);
+                VFX_MartialShockCone_Spawn(inst->pos, inst->dir, VC_MAT_METAL, 1.9f * inst->sizeScale, 0.58f * inst->sizeScale, 0.18f);
                 Wind_SpawnGust(inst->pos, inst->dir, 1.25f * inst->sizeScale, 7.0f, 0.14f);
             }
             continue;

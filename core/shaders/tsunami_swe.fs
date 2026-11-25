@@ -121,8 +121,8 @@ void main() {
 
     // In MyBeginMode3D, fragPosition is in view space (camera at origin)
     vec3 V = normalize(-fragPosition);
-    vec3 L1 = normalize(vec3(0.45, 0.82, 0.38));
-    vec3 L2 = normalize(vec3(-0.60, 0.55, -0.45));
+    vec3 L1 = (dot(u_lightDir, u_lightDir) > 0.001) ? normalize(u_lightDir) : normalize(vec3(0.45, 0.82, 0.38));
+    vec3 L2 = normalize(vec3(-L1.x, max(L1.y * 0.65, 0.30), -L1.z));
 
     float ndv = clamp(abs(dot(N, V)), 0.0, 1.0);
     float fresnel = 0.03 + 0.97 * pow(1.0 - ndv, 3.6);

@@ -84,9 +84,11 @@ bool Combat_SubmitProjectile(int ownerAgentId, CombatElement elem,
     return true;
 }
 
-int Combat_DeflectProjectilesInRadius(Vector3 center, float radius, int deflectorAgentId) {
+int Combat_DeflectProjectilesInRadiusEx(Vector3 center, float radius, int deflectorAgentId,
+                                        int maxCount, CombatDeflectInfo *outHits, int maxOut) {
     int destroyed = 0;
     for (int i = 0; i < s_projCount; i++) {
+        if (maxCount > 0 && destroyed >= maxCount) break;
         CombatProjectile *p = &s_projs[i];
         if (p->dead) continue;
         if (deflectorAgentId >= 0 && !Entity_CanDamageTarget(deflectorAgentId, p->ownerAgentId)) continue;
@@ -95,9 +97,18 @@ int Combat_DeflectProjectilesInRadius(Vector3 center, float radius, int deflecto
         if (dx * dx + dz * dz > radius * radius) continue;
         p->dead = true;
         PushEvent(p->skillInstanceId, CLASH_B_WINS, p->pos, p->elem, -1);
+        if (outHits != NULL && destroyed < maxOut) {
+            outHits[destroyed].pos = p->pos;
+            outHits[destroyed].elem = p->elem;
+            outHits[destroyed].ownerAgentId = p->ownerAgentId;
+        }
         destroyed++;
     }
     return destroyed;
+}
+
+int Combat_DeflectProjectilesInRadius(Vector3 center, float radius, int deflectorAgentId) {
+    return Combat_DeflectProjectilesInRadiusEx(center, radius, deflectorAgentId, 0, NULL, 0);
 }
 
 void Combat_Update(float dt) {

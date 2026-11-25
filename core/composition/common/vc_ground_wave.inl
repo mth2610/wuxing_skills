@@ -351,3 +351,54 @@ void VFX_ComposeGroundWave(Vector3 center, VC_MaterialId mat, float radius,
     rlSetTexture(0);
     VFXRender_EndDraw(&emissionScope);
 }
+
+// ── Pooled one-shot wrapper so Update/Cast callers never call Draw directly ──
+#define VC_GROUND_WAVE_POOL_MAX 16
+typedef struct {
+    bool active;
+    Vector3 center;
+    VC_MaterialId mat;
+    float radius;
+    float elapsed;
+    float duration;
+} VC_GroundWavePoolSlot;
+
+static VC_GroundWavePoolSlot s_gwPool[VC_GROUND_WAVE_POOL_MAX] = {0};
+
+int VFX_SpawnGroundWave(Vector3 center, VC_MaterialId mat, float radius, float duration)
+{
+    int slot = -1;
+    for (int i = 0; i < VC_GROUND_WAVE_POOL_MAX; i++) {
+        if (!s_gwPool[i].active) { slot = i; break; }
+    }
+    if (slot < 0) slot = 0;
+    s_gwPool[slot].active = true;
+    s_gwPool[slot].center = center;
+    s_gwPool[slot].mat = mat;
+    s_gwPool[slot].radius = (radius > 0.1f) ? radius : 1.5f;
+    s_gwPool[slot].elapsed = 0.0f;
+    s_gwPool[slot].duration = (duration > 0.08f) ? duration : 0.45f;
+    return slot + 1;
+}
+
+static void VC_GroundWavePool_Update(float dt)
+{
+    for (int i = 0; i < VC_GROUND_WAVE_POOL_MAX; i++) {
+        if (!s_gwPool[i].active) continue;
+        s_gwPool[i].elapsed += dt;
+        if (s_gwPool[i].elapsed >= s_gwPool[i].duration) {
+            s_gwPool[i].active = false;
+        }
+    }
+}
+
+static void VC_GroundWavePool_Draw3D(Camera3D cam)
+{
+    (void)cam;
+    for (int i = 0; i < VC_GROUND_WAVE_POOL_MAX; i++) {
+        if (!s_gwPool[i].active) continue;
+        float t01 = Clamp(s_gwPool[i].elapsed / s_gwPool[i].duration, 0.0f, 1.0f);
+        VFX_ComposeGroundWave(s_gwPool[i].center, s_gwPool[i].mat, s_gwPool[i].radius,
+                              t01, VFX_GroundHeightFromMap, NULL);
+    }
+}

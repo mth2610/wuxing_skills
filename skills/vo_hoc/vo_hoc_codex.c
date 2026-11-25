@@ -477,6 +477,135 @@ static const VoHocSkillDef kVoHocSkills[] = {
             { VH_FX_MARK,   VH_TGT_ENEMY, 2.0f }
         },
         .fxCount = 5
+    },
+
+    /* ===== BỘ 4: LIỆT HỎA PHẦN THIÊN CƯỚC (Hệ Hỏa — 5 Đả + 2 Trợ, Cước Pháp) ===== */
+    {
+        .skillName = "LHPT_XICH_DIEM_TRAC_CUOC",
+        .displayName = "Xích Diễm Trắc Cước",
+        .setId = VH_SET_LIET_HOA_PHAN_THIEN_CUOC,
+        .element = 2,
+        .role = VH_ROLE_STRIKE,
+        .mana = 13.0f, .cooldown = 1.5f, .castSecs = 0.16f,
+        .range = VH_RANGE_MID, .hit = VH_HIT_FAST, .shape = VH_SHAPE_SINGLE,
+        .allyTeamScope = false, .uptimeEnemy = 1.0f, .uptimeAlly = 1.0f,
+        .baseDamage = 14.0f,
+        .fx = {
+            { VH_FX_DMG,  VH_TGT_ENEMY, 14.0f },
+            { VH_FX_BURN, VH_TGT_ENEMY, 7.0f },
+            { VH_FX_MARK, VH_TGT_ENEMY, 1.0f }
+        },
+        .fxCount = 3
+    },
+    {
+        .skillName = "LHPT_PHI_HOA_XUNG_CUOC",
+        .displayName = "Phi Hỏa Xung Cước",
+        .setId = VH_SET_LIET_HOA_PHAN_THIEN_CUOC,
+        .element = 2,
+        .role = VH_ROLE_STRIKE,
+        .mana = 19.0f, .cooldown = 5.0f, .castSecs = 0.20f,
+        .range = VH_RANGE_MELEE, .hit = VH_HIT_MELEE, .shape = VH_SHAPE_SMALL,
+        .allyTeamScope = false, .uptimeEnemy = 1.0f, .uptimeAlly = 1.0f,
+        .baseDamage = 21.0f,
+        .fx = {
+            { VH_FX_DMG,  VH_TGT_ENEMY, 21.0f },
+            { VH_FX_BURN, VH_TGT_ENEMY, 10.0f },
+            { VH_FX_VULN, VH_TGT_ENEMY, 0.20f * 3.0f },
+            { VH_FX_MARK, VH_TGT_ENEMY, 1.0f }
+        },
+        .fxCount = 4
+    },
+    {
+        .skillName = "LHPT_VIEM_HO_BAN_NGUYET_CUOC",
+        .displayName = "Viêm Hồ Bán Nguyệt Cước",
+        .setId = VH_SET_LIET_HOA_PHAN_THIEN_CUOC,
+        .element = 2,
+        .role = VH_ROLE_STRIKE,
+        .mana = 23.0f, .cooldown = 7.0f, .castSecs = 0.28f,
+        .range = VH_RANGE_MID, .hit = VH_HIT_WAVE, .shape = VH_SHAPE_CONE,
+        .allyTeamScope = false, .uptimeEnemy = 1.0f, .uptimeAlly = 1.0f,
+        .baseDamage = 16.0f,
+        .fx = {
+            { VH_FX_DMG,  VH_TGT_ENEMY, 16.0f },
+            { VH_FX_BURN, VH_TGT_ENEMY, 11.0f },
+            { VH_FX_KB,   VH_TGT_ENEMY, 3.2f },
+            { VH_FX_MARK, VH_TGT_ENEMY, 1.0f }
+        },
+        .fxCount = 4
+    },
+    {
+        .skillName = "LHPT_PHAN_DIA_TRAM_CUOC",
+        .displayName = "Phần Địa Trầm Cước",
+        .setId = VH_SET_LIET_HOA_PHAN_THIEN_CUOC,
+        .element = 2,
+        .role = VH_ROLE_STRIKE,
+        .mana = 24.0f, .cooldown = 7.5f, .castSecs = 0.65f,
+        .range = VH_RANGE_MID, .hit = VH_HIT_GROUND, .shape = VH_SHAPE_LARGE,
+        .allyTeamScope = false, .uptimeEnemy = 1.0f, .uptimeAlly = 1.0f,
+        .baseDamage = 24.0f,
+        .fx = {
+            { VH_FX_DMG,    VH_TGT_ENEMY, 24.0f },
+            { VH_FX_BURN,   VH_TGT_ENEMY, 18.0f },
+            { VH_FX_LAUNCH, VH_TGT_ENEMY, 0.70f },
+            { VH_FX_MARK,   VH_TGT_ENEMY, 2.0f }
+        },
+        .fxCount = 4
+    },
+    {
+        .skillName = "LHPT_PHAN_THIEN_TOAN_PHONG",
+        .displayName = "Phần Thiên Toàn Phong Cước",
+        .setId = VH_SET_LIET_HOA_PHAN_THIEN_CUOC,
+        .element = 2,
+        .role = VH_ROLE_STRIKE,
+        .mana = 24.0f, .cooldown = 7.5f, .castSecs = 0.28f,
+        .range = VH_RANGE_MELEE, .hit = VH_HIT_MELEE, .shape = VH_SHAPE_SMALL,
+        .allyTeamScope = false, .uptimeEnemy = 1.0f, .uptimeAlly = 1.0f,
+        .baseDamage = 33.0f,
+        .fx = {
+            { VH_FX_DMG,  VH_TGT_ENEMY, 33.0f },
+            { VH_FX_BURN, VH_TGT_ENEMY, 11.0f },
+            { VH_FX_STUN, VH_TGT_ENEMY, 0.55f },
+            { VH_FX_KB,   VH_TGT_ENEMY, 2.5f }
+        },
+        .fxCount = 4
+    },
+    {
+        .skillName = "LHPT_HOA_VU_HOI_PHONG_CUOC",
+        .displayName = "Hỏa Vũ Hồi Phong Cước",
+        .setId = VH_SET_LIET_HOA_PHAN_THIEN_CUOC,
+        .element = 2,
+        .role = VH_ROLE_SUPPORT,
+        .mana = 24.0f, .cooldown = 11.5f, .castSecs = 0.18f,
+        .range = VH_RANGE_SELF, .hit = VH_HIT_SELF, .shape = VH_SHAPE_NONE,
+        .allyTeamScope = false, .uptimeEnemy = 1.0f, .uptimeAlly = 1.0f,
+        .baseDamage = 0.0f,
+        .fx = {
+            { VH_FX_SHIELD,  VH_TGT_ALLY, 20.0f },
+            { VH_FX_BLOCK,   VH_TGT_ONCE, 2.0f },
+            { VH_FX_CLEANSE, VH_TGT_ONCE, 1.0f },
+            { VH_FX_SPEED,   VH_TGT_ALLY, 0.35f * 3.5f },
+            { VH_FX_MANA,    VH_TGT_ALLY, 20.0f }
+        },
+        .fxCount = 5
+    },
+    {
+        .skillName = "LHPT_CHUOC_DIA_HOA_TRAN",
+        .displayName = "Chước Địa Hỏa Trận",
+        .setId = VH_SET_LIET_HOA_PHAN_THIEN_CUOC,
+        .element = 2,
+        .role = VH_ROLE_SUPPORT,
+        .mana = 24.0f, .cooldown = 12.0f, .castSecs = 0.28f,
+        .range = VH_RANGE_SELF, .hit = VH_HIT_ZONE, .shape = VH_SHAPE_LARGE,
+        .allyTeamScope = true, .uptimeEnemy = 0.70f, .uptimeAlly = 0.80f,
+        .baseDamage = 0.0f,
+        .fx = {
+            { VH_FX_MANA,  VH_TGT_ALLY,  7.0f * 5.0f },
+            { VH_FX_SPEED, VH_TGT_ALLY,  0.25f * 5.0f },
+            { VH_FX_CDR,   VH_TGT_ALLY,  2.5f },
+            { VH_FX_VULN,  VH_TGT_ENEMY, 0.20f * 5.0f },
+            { VH_FX_MARK,  VH_TGT_ENEMY, 2.0f }
+        },
+        .fxCount = 5
     }
 };
 
@@ -502,6 +631,7 @@ const char *VoHoc_GetSetName(VoHocSetId setId) {
         case VH_SET_THUY_TRIEU_QUYEN_PHAP: return "Thủy Triều Quyền Pháp";
         case VH_SET_BAN_THACH_BAT_CUC_QUYEN: return "Bàn Thạch Bát Cực Quyền";
         case VH_SET_THIEN_CANG_DOAN_KIM_KIEM: return "Thiên Cang Đoạn Kim Kiếm Pháp";
+        case VH_SET_LIET_HOA_PHAN_THIEN_CUOC: return "Liệt Hỏa Phần Thiên Cước";
         default: return "Cơ Bản";
     }
 }

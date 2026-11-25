@@ -154,6 +154,44 @@ void VC_MetalMagneticZone_Draw3D(Camera3D cam)
         if (vis <= 0.01f) continue;
 
         float r = inst->radius;
+        float t01 = Clamp(inst->elapsed / inst->duration, 0.0f, 1.0f);
+        Vector3 gp = { inst->center.x, VFX_GroundHeightFromMap(inst->center.x, inst->center.z, NULL), inst->center.z };
+        VFX_ComposeRuneCircle(gp, (Vector3){ 0.0f, 1.0f, 0.0f }, VC_MAT_METAL, r * 0.96f, t01, 2);
+
+        /* Central planted 3D Jian + 8 low perimeter anchor hilts (y <= 0.18m, C11 compliant) */
+        MetalBlade_InitMesh();
+        if (s_bladeShader.id != 0 && s_subSteel.mesh.vertexCount > 0) {
+            s_bladeDrawMat.shader = s_bladeShader;
+            float now = TimeFX_Elapsed();
+            if (s_bladeLocTime >= 0) SetShaderValue(s_bladeShader, s_bladeLocTime, &now, SHADER_UNIFORM_FLOAT);
+            float bladeBase[4] = { 0.44f, 0.50f, 0.60f, 1.0f };
+            float bladeRim[4]  = { 0.78f, 0.90f, 1.00f, 1.0f };
+            float goldBase[4]  = { 0.85f, 0.65f, 0.22f, 1.0f };
+            float goldRim[4]   = { 1.00f, 0.88f, 0.45f, 1.0f };
+            float m0 = 0.0f, m1 = 1.0f;
+
+            /* Central planted Jian */
+            Vector3 cPos = { gp.x, gp.y + 0.52f * vis, gp.z };
+            Matrix cXf = MetalBlade_BuildTransform(cPos, (Vector3){ 0.0f, -1.0f, 0.0f }, 0.0f, 0.92f * vis);
+            if (s_bladeLocPartMode >= 0)  SetShaderValue(s_bladeShader, s_bladeLocPartMode,  &m0,       SHADER_UNIFORM_FLOAT);
+            if (s_bladeLocBaseColor >= 0) SetShaderValue(s_bladeShader, s_bladeLocBaseColor, bladeBase, SHADER_UNIFORM_VEC4);
+            if (s_bladeLocRimColor >= 0)  SetShaderValue(s_bladeShader, s_bladeLocRimColor,  bladeRim,  SHADER_UNIFORM_VEC4);
+            DrawMesh(s_subSteel.mesh, s_bladeDrawMat, cXf);
+            if (s_bladeLocPartMode >= 0)  SetShaderValue(s_bladeShader, s_bladeLocPartMode,  &m1,      SHADER_UNIFORM_FLOAT);
+            if (s_bladeLocBaseColor >= 0) SetShaderValue(s_bladeShader, s_bladeLocBaseColor, goldBase, SHADER_UNIFORM_VEC4);
+            if (s_bladeLocRimColor >= 0)  SetShaderValue(s_bladeShader, s_bladeLocRimColor,  goldRim,  SHADER_UNIFORM_VEC4);
+            DrawMesh(s_subGold.mesh, s_bladeDrawMat, cXf);
+
+            /* 8 perimeter anchor hilts */
+            for (int k = 0; k < 8; k++) {
+                float a = (float)k * (2.0f * PI / 8.0f);
+                float hx = inst->center.x + cosf(a) * r * 0.96f;
+                float hz = inst->center.z + sinf(a) * r * 0.96f;
+                float hy = VFX_GroundHeightFromMap(hx, hz, NULL) + 0.14f * vis;
+                Matrix hXf = MetalBlade_BuildTransform((Vector3){ hx, hy, hz }, (Vector3){ 0.0f, -1.0f, 0.0f }, a * RAD2DEG, 0.36f * vis);
+                DrawMesh(s_subGold.mesh, s_bladeDrawMat, hXf);
+            }
+        }
         /* Alpha strictly <= 0.30 (76/255) for C11 ground-layer compliance */
         float aPerimeter = Clamp((0.26f + 0.04f * inst->pulse01) * vis, 0.0f, 0.30f);
         float aFlux      = Clamp((0.18f + 0.08f * inst->pulse01) * vis, 0.0f, 0.28f);

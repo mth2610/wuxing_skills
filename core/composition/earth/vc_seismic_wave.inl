@@ -420,8 +420,8 @@ int VFX_ComposeSeismicWaveEx(Vector3 source, Vector3 target, const VFX_SeismicWa
     if (!cfg) cfg = VFX_SeismicWave_GetLiveConfig();
     EarthFx_InitShared();
 
-    // Register our displacement and wave param hooks with MapManager so the entire terrain deforms
-    MapManager_SetGroundDisplacementHook(VC_SeismicWave_GetGroundDisplacementAt);
+    // Register on displacement slot 0 (EarthCrack uses slot 1)
+    MapManager_RegisterGroundDisplacementHook(0, VC_SeismicWave_GetGroundDisplacementAt);
     MapManager_SetGroundWaveParamsHook(VC_SeismicWave_GetPrimaryWaveData);
 
     float distXZ = sqrtf((target.x - source.x) * (target.x - source.x) +
@@ -584,7 +584,7 @@ void VC_SeismicWave_Update(float dt)
         }
     }
 
-    MapManager_SetGroundDisplacementHook(VC_SeismicWave_GetGroundDisplacementAt);
+    MapManager_RegisterGroundDisplacementHook(0, VC_SeismicWave_GetGroundDisplacementAt);
     MapManager_SetGroundWaveParamsHook(VC_SeismicWave_GetPrimaryWaveData);
 }
 

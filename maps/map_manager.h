@@ -50,6 +50,7 @@ bool MapManager_SampleGroundSurfaceAt(float x, float z, Vector3 *outPosition, Ve
 // When registered, MapManager_GetGroundHeightAt adds this displacement to the map's base height.
 typedef float (*MapGroundDisplacementFn)(float x, float z);
 void MapManager_SetGroundDisplacementHook(MapGroundDisplacementFn fn);
+void MapManager_RegisterGroundDisplacementHook(int slotId, MapGroundDisplacementFn fn);
 
 // Primary active ground wave parameters hook (for GPU vertex shader displacement).
 // When active, writes origin/direction to outOriginDir (xy: source.xz, zw: fwdNorm.xz),

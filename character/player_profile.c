@@ -7,6 +7,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Testing mode: unlock all registered martial arts skills even on existing saves. */
+#define PROFILE_TEST_UNLOCK_ALL_SKILLS 1
+
 static PlayerProfile s_profile = {0};
 static char s_savePath[256] = PLAYER_PROFILE_DEFAULT_SAVE_PATH;
 static bool s_initialized = false;
@@ -151,6 +154,9 @@ bool PlayerProfile_LoadFromFile(PlayerProfile *out, const char *filePath) {
         snprintf(kXp, sizeof(kXp), "sk_xp_%s", name);
         int v = 0;
         if (ParseJsonInt(text, kUnl, &v)) out->skillUnlocked[i] = (v != 0);
+#if PROFILE_TEST_UNLOCK_ALL_SKILLS
+        out->skillUnlocked[i] = true;
+#endif
         if (ParseJsonInt(text, kLvl, &v)) {
             if (v < 1) v = 1;
             if (v > 10) v = 10;

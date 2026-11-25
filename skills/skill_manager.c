@@ -45,7 +45,7 @@ static float g_skillManagerTime = 0.0f;
 
 #define MAX_FLOATING_TEXTS 64
 #define MAX_TEMP_PROJECTILES 128
-#define MAX_SKILLS 32
+#define MAX_SKILLS 64
 
 typedef struct
 {

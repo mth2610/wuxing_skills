@@ -964,20 +964,28 @@ static void SWE_RunATLARoutine(LiquidSWEInstance *inst, int manifoldSlot, float 
     float mDirZ = dz / len;
     float phase = t * 7.8f;
 
-    if (t < 0.48f) {
+    float dur = fmaxf(inst->desc.duration, 0.45f);
+    float tExtractEnd = inst->desc.fastMartialStrike ? (dur * 0.08f) : 0.48f;
+    float tTravelEnd  = inst->desc.fastMartialStrike ? (dur * 0.74f) : 2.28f;
+    float tCrashEnd   = inst->desc.fastMartialStrike ? dur           : 3.55f;
+    float travelSpan  = fmaxf(0.10f, tTravelEnd - tExtractEnd);
+    float crashSpan   = fmaxf(0.10f, tCrashEnd - tTravelEnd);
+
+    if (t < tExtractEnd) {
         /* PHASE 1: Puddle Extraction from ground into swirling Tai-Chi source */
-        float p = t / 0.48f;
+        float p = t / fmaxf(0.02f, tExtractEnd);
         float grow = sinf(p * PI * 0.5f);
         SWE_AddEmitterInternal(inst, pOrig.x, pOrig.y,
                                0.95f + grow * (capR * 0.55f),
                                2.15f * pwr, 0.0f, 0.0f,
                                7.2f * pwr * swaySign,
                                2.8f * pwr * cosf(t * 8.0f));
-    } else if (t < 2.28f) {
+    } else if (t < tTravelEnd) {
         /* PHASE 2: Fold SWE puddle into 3D ATLA Waterbending Manifold & Strike */
-        float rawP = (t - 0.48f) / 1.80f;
+        float rawP = (t - tExtractEnd) / travelSpan;
         float tau = rawP * rawP * (2.65f - 1.65f * rawP);
-        float launchAlpha = fminf(1.0f, (t - 0.48f) / 0.26f);
+        float launchRamp = inst->desc.fastMartialStrike ? fminf(0.12f, travelSpan * 0.18f) : 0.26f;
+        float launchAlpha = fminf(1.0f, (t - tExtractEnd) / fmaxf(0.03f, launchRamp));
         float impactUnfold = (rawP < 0.88f) ? 1.0f : fmaxf(0.12f, 1.0f - ((rawP - 0.88f) / 0.12f) * 0.82f);
         float alpha = launchAlpha * impactUnfold;
 
@@ -1028,9 +1036,9 @@ static void SWE_RunATLARoutine(LiquidSWEInstance *inst, int manifoldSlot, float 
                                    6.0f * pwr * swaySign,
                                    17.5f * pwr * preSplash);
         }
-    } else if (t < 3.55f) {
+    } else if (t < tCrashEnd) {
         /* PHASE 3: SWE Hydraulic Impact Wave climbing & splitting around target bathymetry */
-        float crashP = (t - 2.28f) / 0.97f;
+        float crashP = (t - tTravelEnd) / crashSpan;
         if (crashP < 0.70f) {
             float pulse = sinf((crashP / 0.70f) * PI);
             SWE_AddEmitterInternal(inst, pTarget.x, pTarget.y,
@@ -1216,11 +1224,17 @@ int LiquidSWE_Spawn(const LiquidSWEDesc *desc)
     if (slot < 0) slot = oldest;
 
     LiquidSWEDesc c = desc ? *desc : LiquidSWE_DefaultDesc();
-    c.width = SWE_Clamp(c.width, 4.0f, 28.0f);
-    c.length = SWE_Clamp(c.length, 6.0f, 28.0f);
-    c.waveHeight = SWE_Clamp(c.waveHeight, 0.6f, 5.0f);
-    c.waveSpeed = SWE_Clamp(c.waveSpeed, 2.5f, 18.0f);
-    c.duration = SWE_Clamp(c.duration, 1.0f, 8.0f);
+    float minW = c.allowCompactBounds ? 1.8f : 4.0f;
+    float minL = c.allowCompactBounds ? 2.4f : 6.0f;
+    float minDur = c.allowCompactBounds ? 0.45f : 1.0f;
+    c.width = SWE_Clamp(c.width, minW, 28.0f);
+    c.length = SWE_Clamp(c.length, minL, 28.0f);
+    c.waveHeight = SWE_Clamp(c.waveHeight, 0.5f, 5.0f);
+    c.waveSpeed = SWE_Clamp(c.waveSpeed, 2.5f, 22.0f);
+    c.duration = SWE_Clamp(c.duration, minDur, 8.0f);
+    if (c.fastMartialStrike && !c.emitCrestSpray) {
+        c.emitCrestSpray = true;
+    }
     if (c.gravity <= 0.1f) c.gravity = 9.81f;
     if (c.skillPower <= 0.05f) c.skillPower = 1.0f;
 
@@ -1318,6 +1332,43 @@ void LiquidSWE_Kill(int handle)
 {
     LiquidSWEInstance *inst = SWE_FindInstance(handle);
     if (inst) inst->active = false;
+}
+
+void LiquidSWE_Stop(int handle)
+{
+    LiquidSWEInstance *inst = SWE_FindInstance(handle);
+    if (!inst) return;
+    float targetDur = inst->age + 0.25f;
+    if (targetDur < inst->desc.duration) {
+        inst->desc.duration = targetDur;
+    }
+}
+
+void LiquidSWE_SetOrigin(int handle, Vector3 origin, Vector3 forward)
+{
+    LiquidSWEInstance *inst = SWE_FindInstance(handle);
+    if (!inst) return;
+    Vector3 delta = {
+        origin.x - inst->desc.source.x,
+        origin.y - inst->desc.source.y,
+        origin.z - inst->desc.source.z
+    };
+    inst->desc.source = origin;
+    inst->desc.target = (Vector3){
+        inst->desc.target.x + delta.x,
+        inst->desc.target.y + delta.y,
+        inst->desc.target.z + delta.z
+    };
+    inst->origin = (Vector3){
+        inst->origin.x + delta.x,
+        inst->origin.y + delta.y,
+        inst->origin.z + delta.z
+    };
+    float fLen = sqrtf(forward.x * forward.x + forward.z * forward.z);
+    if (fLen > 1e-4f) {
+        inst->fwd = (Vector3){ forward.x / fLen, 0.0f, forward.z / fLen };
+        inst->right = (Vector3){ -inst->fwd.z, 0.0f, inst->fwd.x };
+    }
 }
 
 bool LiquidSWE_IsAnyActive(void)

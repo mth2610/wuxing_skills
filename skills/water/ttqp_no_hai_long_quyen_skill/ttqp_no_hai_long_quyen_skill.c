@@ -131,6 +131,8 @@ void CastTtqpNoHaiLongQuyenSkill(int agentId, Vector3 startPos, Vector3 target, 
     desc.duration = inst->duration;
     desc.deepColor = ELEMENT_COLOR_WATER;
     desc.cryoMode = 0.0f;
+    desc.fastMartialStrike = true;
+    desc.allowCompactBounds = true;
     inst->sweHandle = LiquidSWE_Spawn(&desc);
 
     PlayCastSound(EFFECT_PRESET_WATER_SPLASH);
@@ -153,8 +155,11 @@ void UpdateTtqpNoHaiLongQuyenSkill(float dt, Vector3 enemyPos, float enemyRadius
                 punchCenter = Vector3Add(owner->position, Vector3Scale(inst->dir, 1.3f));
                 inst->origin = punchCenter;
             }
-            /* Heavy SSF hydro-punch explosion at impact point */
+            /* Heavy SSF hydro-punch explosion + directional shock-cone at impact point */
             SpawnPunchSplashSSF(punchCenter, inst->dir, 1.0f, 1.35f * inst->sizeScale);
+            VFX_MartialShockCone_Spawn((Vector3){ punchCenter.x, punchCenter.y + 0.95f, punchCenter.z },
+                                       inst->dir, VC_MAT_WATER, 2.5f * inst->sizeScale, 0.95f * inst->sizeScale, 0.30f);
+            VFX_SpawnGroundWave(punchCenter, VC_MAT_WATER, 2.4f * inst->sizeScale, 0.38f);
 
             int ids[16];
             int cnt = Entity_GetNearbyTargets(punchCenter, 1.8f * inst->sizeScale, ids, 16);

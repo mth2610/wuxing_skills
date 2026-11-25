@@ -62,6 +62,24 @@ bool VoHoc_ApplyMetalMark(int casterId, int targetId, int stacks);
 bool VoHoc_OnNhatKiemConsume(int casterId, int targetId, int nhatKiemSkillIndex,
                              int luuTinhSkillIndex, float *outMult);
 
+/* Liệt Hỏa Phần Thiên Cước: adds `stacks` of Hỏa Chước Ấn (element 2, duration 4.5s).
+ * - Tương Sinh (Mộc -> Hỏa): if target has Wood mark (1) or STATUS_POISON, consumes
+ *   Wood mark (if present) for +1 Hỏa Chước Ấn and restores 5 Mana to caster.
+ * - At 3 stacks (Nhiệt Bạo): triggers 12.5 HP Burn over 3.0s (~10.6 UL), clears stacks,
+ *   sets 3.0s Kháng Hỏa Chước, spawns Shader-Puff ember detonation.
+ * - Tiểu Thành (>= 4 pieces) — Dư Hỏa Phản Lực: on 3-stack trigger, refunds 8 Mana
+ *   and grants +20% Haste for 2.0s (6s ICD).
+ * Returns true if Nhiệt Bạo triggered. */
+bool VoHoc_ApplyFireMark(int casterId, int targetId, int stacks);
+
+/* Phần Thiên Toàn Phong Cước finisher hook: consumes all Hỏa Chước Ấn on target.
+ * - Base: +12% damage multiplier per stack consumed (max +36%).
+ * - Đại Thành (7/7 pieces) — Phần Thiên Liên Hoàn Cước: if >= 3 stacks consumed,
+ *   reduces Toàn Phong cooldown by 45% (10s ICD) and resets Xích Diễm Trắc Cước cooldown.
+ * Writes damage multiplier to *outMult if non-NULL; returns true if Đại Thành triggered. */
+bool VoHoc_OnPhanThienConsume(int casterId, int targetId, int phanThienSkillIndex,
+                              int xichDiemSkillIndex, float *outMult);
+
 #ifdef __cplusplus
 }
 #endif

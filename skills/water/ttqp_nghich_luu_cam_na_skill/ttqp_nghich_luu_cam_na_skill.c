@@ -30,6 +30,8 @@ typedef struct {
     float   sizeScale;
     bool    impacted;
     int     sweHandle;
+    int     tetherHandle;
+    int     pulledTargetId;
 } NghichLuuInst;
 
 static NghichLuuInst s_inst[MAX_NLCN_INST];
@@ -52,6 +54,8 @@ static void AbortTtqpNghichLuu(int agentId) {
     for (int i = 0; i < MAX_NLCN_INST; i++) {
         if (s_inst[i].active && s_inst[i].ownerAgentId == agentId) {
             if (s_inst[i].sweHandle >= 0) LiquidSWE_Kill(s_inst[i].sweHandle);
+            if (s_inst[i].tetherHandle > 0) VFX_HydroTether_Kill(s_inst[i].tetherHandle);
+            s_inst[i].tetherHandle = 0;
             s_inst[i].active = false;
             s_inst[i].sweHandle = -1;
         }
@@ -132,7 +136,12 @@ void CastTtqpNghichLuuCamNaSkill(int agentId, Vector3 startPos, Vector3 target, 
     desc.duration = inst->duration;
     desc.deepColor = ELEMENT_COLOR_WATER;
     desc.cryoMode = 0.0f;
+    desc.fastMartialStrike = true;
     inst->sweHandle = LiquidSWE_Spawn(&desc);
+    inst->pulledTargetId = -1;
+    Vector3 castHand = { startPos.x, startPos.y + 1.05f, startPos.z };
+    Vector3 tipPos   = { inst->headPos.x, inst->headPos.y + 0.95f, inst->headPos.z };
+    inst->tetherHandle = VFX_HydroTether_Spawn(castHand, tipPos, 0.14f * scale, inst->duration);
 
     PlayCastSound(EFFECT_PRESET_WATER_SPLASH);
 }
@@ -161,6 +170,7 @@ void UpdateTtqpNghichLuuCamNaSkill(float dt, Vector3 enemyPos, float enemyRadius
                     break;
                 } else if (events[e].outcome == CLASH_HIT_AGENT) {
                     inst->impacted = true;
+                    inst->pulledTargetId = events[e].otherAgentId;
                     Skill_RequestAnim(inst->ownerAgentId, "elbow_punch", 0.30f);
                     Vector3 pullDest = inst->origin;
                     const Agent *owner = Entity_GetAgent(inst->ownerAgentId);
@@ -212,9 +222,23 @@ void UpdateTtqpNghichLuuCamNaSkill(float dt, Vector3 enemyPos, float enemyRadius
             }
         }
 
+        if (inst->tetherHandle > 0) {
+            const Agent *own = Entity_GetAgent(inst->ownerAgentId);
+            Vector3 fromP = own ? (Vector3){ own->position.x, own->position.y + 1.05f, own->position.z }
+                                : (Vector3){ inst->origin.x, inst->origin.y + 1.05f, inst->origin.z };
+            Vector3 toP = { inst->headPos.x, inst->headPos.y + 0.95f, inst->headPos.z };
+            if (inst->impacted && inst->pulledTargetId >= 0) {
+                const Agent *pt = Entity_GetAgent(inst->pulledTargetId);
+                if (pt) toP = (Vector3){ pt->position.x, pt->position.y + 0.95f, pt->position.z };
+            }
+            VFX_HydroTether_SetEndpoints(inst->tetherHandle, fromP, toP);
+        }
+
         if (inst->elapsed >= inst->duration) {
             if (inst->sweHandle >= 0) LiquidSWE_Kill(inst->sweHandle);
+            if (inst->tetherHandle > 0) VFX_HydroTether_Kill(inst->tetherHandle);
             inst->sweHandle = -1;
+            inst->tetherHandle = 0;
             inst->active = false;
         }
     }

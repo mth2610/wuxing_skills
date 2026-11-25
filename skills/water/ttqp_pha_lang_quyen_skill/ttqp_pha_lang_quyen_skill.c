@@ -136,8 +136,12 @@ void CastTtqpPhaLangQuyenSkill(int agentId, Vector3 startPos, Vector3 target, Sk
     desc.duration = inst->duration;
     desc.deepColor = ELEMENT_COLOR_WATER;
     desc.cryoMode = 0.0f;
+    desc.fastMartialStrike = true;
+    desc.allowCompactBounds = true;
     inst->sweHandle = LiquidSWE_Spawn(&desc);
 
+    Vector3 punchOrigin = { startPos.x + dir.x * 0.55f, startPos.y + 1.05f, startPos.z + dir.z * 0.55f };
+    VFX_MartialShockCone_Spawn(punchOrigin, dir, VC_MAT_WATER, 1.85f * scale, 0.62f * scale, 0.24f);
     SpawnWaterSplashSSF(Vector3Add(startPos, Vector3Scale(dir, 0.5f)), dir, 0.35f, 0.7f * scale);
     PlayCastSound(EFFECT_PRESET_WATER_SPLASH);
 }

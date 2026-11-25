@@ -297,7 +297,7 @@ void VFX_ComposeWaterRing(Vector3 center, float radius, float t01)
 {
     VFX_LiquidRingConfig *cfg = VFX_LiquidRing_GetLiveConfig();
     cfg->center = center;
-    if (cfg->radius <= 0.0f) cfg->radius = (radius <= 0.0f) ? 0.6f : radius;
+    cfg->radius = (radius > 0.0f) ? radius : 0.6f;
     t01 = Clamp(t01, 0.0f, 1.0f);
     cfg->flowSpeed = 1.8f + 1.6f * t01;
     VFX_ComposeLiquidRingEx(cfg);

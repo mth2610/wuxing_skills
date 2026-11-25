@@ -972,8 +972,8 @@ int VFX_ComposeEarthCrack(const VFX_EarthCrackConfig *cfg)
 {
     if (!cfg) return -1;
 
-    // Register displacement and wave param hooks with MapManager
-    MapManager_SetGroundDisplacementHook(VC_EarthCrack_GetGroundDisplacementAt);
+    // Register on displacement slot 1 so SeismicWave (slot 0) is never clobbered
+    MapManager_RegisterGroundDisplacementHook(1, VC_EarthCrack_GetGroundDisplacementAt);
     MapManager_SetGroundWaveParamsHook(VC_EarthCrack_GetPrimaryWaveData);
 
     int slot = -1;
@@ -1091,7 +1091,7 @@ void VC_EarthCrack_Update(float dt)
     if (dt <= 0.0f) return;
 
     // Ensure MapManager hooks remain bound
-    MapManager_SetGroundDisplacementHook(VC_EarthCrack_GetGroundDisplacementAt);
+    MapManager_RegisterGroundDisplacementHook(1, VC_EarthCrack_GetGroundDisplacementAt);
     MapManager_SetGroundWaveParamsHook(VC_EarthCrack_GetPrimaryWaveData);
 
     int activeCount = 0;

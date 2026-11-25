@@ -109,6 +109,9 @@ void CastBtbcBanThachKimCangGiapSkill(int agentId, Vector3 startPos, Vector3 tar
                                              VFX_STONE_ARMOR_FULL_BODY, scale, 4.5f);
 
     VFX_ComposeGroundDustRing(anchor, VC_MAT_EARTH, 0.75f * scale, 0.35f);
+    VFX_ComposeCleanseBurst(anchor, VC_MAT_EARTH, 1.50f * scale);
+    VFX_SpawnGroundWave(anchor, VC_MAT_EARTH, 4.5f * scale, 0.38f);
+    PlayCastSound(EFFECT_PRESET_EARTH_CRACK);
 }
 
 void UpdateBtbcBanThachKimCangGiapSkill(float dt, Vector3 enemyPos, float enemyRadius) {
@@ -142,13 +145,22 @@ void UpdateBtbcBanThachKimCangGiapSkill(float dt, Vector3 enemyPos, float enemyR
             continue;
         }
 
-        /* Deflect up to 2 enemy projectiles around caster */
+        /* Deflect up to 2 enemy projectiles around caster at exact intercept point */
         if (inst->deflectsRemaining > 0) {
-            int broken = Combat_DeflectProjectilesInRadius(owner->position, 1.85f, inst->ownerAgentId);
+            CombatDeflectInfo defs[4];
+            int broken = Combat_DeflectProjectilesInRadiusEx(owner->position, 1.85f, inst->ownerAgentId,
+                                                             inst->deflectsRemaining, defs, 4);
             if (broken > 0) {
-                inst->deflectsRemaining -= broken;
-                if (inst->deflectsRemaining < 0) inst->deflectsRemaining = 0;
-                VFX_ComposeDebrisShards(owner->position, (Vector3){ 0.0f, 2.5f, 0.0f }, VC_MAT_EARTH, 0.045f, 4);
+                for (int d = 0; d < broken && inst->deflectsRemaining > 0; d++) {
+                    inst->deflectsRemaining--;
+                    Vector3 hitPos = defs[d].pos;
+                    Vector3 nrm = Vector3Subtract(hitPos, owner->position);
+                    nrm.y = 0.0f;
+                    nrm = (Vector3Length(nrm) > 0.01f) ? Vector3Normalize(nrm) : (Vector3){ 0.0f, 1.0f, 0.0f };
+                    VFX_ComposeDeflectFlash(hitPos, nrm, VC_MAT_EARTH, 0.90f);
+                    VFX_ComposeDebrisShards(hitPos, (Vector3){ nrm.x * 2.2f, 2.5f, nrm.z * 2.2f }, VC_MAT_EARTH, 0.045f, 4);
+                }
+                PlayImpactSound(EFFECT_PRESET_EARTH_CRACK);
             }
         }
     }

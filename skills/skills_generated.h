@@ -22,6 +22,13 @@
 #include "skills/metal/tcdk_luu_tinh_thu_skill/tcdk_luu_tinh_thu_skill.h"
 #include "skills/metal/tcdk_toai_giap_tram_skill/tcdk_toai_giap_tram_skill.h"
 #include "skills/taiji/galaxy_spiral_skill/galaxy_spiral_skill.h"
+#include "skills/fire/lhpt_hoa_vu_hoi_phong_cuoc_skill/lhpt_hoa_vu_hoi_phong_cuoc_skill.h"
+#include "skills/fire/lhpt_phan_dia_tram_cuoc_skill/lhpt_phan_dia_tram_cuoc_skill.h"
+#include "skills/fire/lhpt_phan_thien_toan_phong_skill/lhpt_phan_thien_toan_phong_skill.h"
+#include "skills/fire/lhpt_phi_hoa_xung_cuoc_skill/lhpt_phi_hoa_xung_cuoc_skill.h"
+#include "skills/fire/lhpt_xich_diem_trac_cuoc_skill/lhpt_xich_diem_trac_cuoc_skill.h"
+#include "skills/fire/lhpt_chuoc_dia_hoa_tran_skill/lhpt_chuoc_dia_hoa_tran_skill.h"
+#include "skills/fire/lhpt_viem_ho_ban_nguyet_cuoc_skill/lhpt_viem_ho_ban_nguyet_cuoc_skill.h"
 #include "skills/earth/btbc_dia_liet_chan_ba_skill/btbc_dia_liet_chan_ba_skill.h"
 #include "skills/earth/earth_disc_volley_skill/earth_disc_volley_skill.h"
 #include "skills/earth/btbc_bang_son_toai_chuong_skill/btbc_bang_son_toai_chuong_skill.h"
@@ -52,6 +59,13 @@ static inline void RegisterGeneratedSkills(void) {
     RegisterSkill("TCDK_LUU_TINH_THU", ELEMENT_COLOR_METAL, InitTcdkLuuTinhThuSkill, CastTcdkLuuTinhThuSkill, UpdateTcdkLuuTinhThuSkill, DrawTcdkLuuTinhThuSkill, UnloadTcdkLuuTinhThuSkill);
     RegisterSkill("TCDK_TOAI_GIAP_TRAM", ELEMENT_COLOR_METAL, InitTcdkToaiGiapTramSkill, CastTcdkToaiGiapTramSkill, UpdateTcdkToaiGiapTramSkill, DrawTcdkToaiGiapTramSkill, UnloadTcdkToaiGiapTramSkill);
     RegisterSkill("GALAXY_SPIRAL", ELEMENT_COLOR_TAIJI, InitGalaxySpiralSkill, CastGalaxySpiralSkill, UpdateGalaxySpiralSkill, DrawGalaxySpiralSkill, UnloadGalaxySpiralSkill);
+    RegisterSkill("LHPT_HOA_VU_HOI_PHONG_CUOC", ELEMENT_COLOR_FIRE, InitLhptHoaVuHoiPhongCuocSkill, CastLhptHoaVuHoiPhongCuocSkill, UpdateLhptHoaVuHoiPhongCuocSkill, DrawLhptHoaVuHoiPhongCuocSkill, UnloadLhptHoaVuHoiPhongCuocSkill);
+    RegisterSkill("LHPT_PHAN_DIA_TRAM_CUOC", ELEMENT_COLOR_FIRE, InitLhptPhanDiaTramCuocSkill, CastLhptPhanDiaTramCuocSkill, UpdateLhptPhanDiaTramCuocSkill, DrawLhptPhanDiaTramCuocSkill, UnloadLhptPhanDiaTramCuocSkill);
+    RegisterSkill("LHPT_PHAN_THIEN_TOAN_PHONG", ELEMENT_COLOR_FIRE, InitLhptPhanThienToanPhongSkill, CastLhptPhanThienToanPhongSkill, UpdateLhptPhanThienToanPhongSkill, DrawLhptPhanThienToanPhongSkill, UnloadLhptPhanThienToanPhongSkill);
+    RegisterSkill("LHPT_PHI_HOA_XUNG_CUOC", ELEMENT_COLOR_FIRE, InitLhptPhiHoaXungCuocSkill, CastLhptPhiHoaXungCuocSkill, UpdateLhptPhiHoaXungCuocSkill, DrawLhptPhiHoaXungCuocSkill, UnloadLhptPhiHoaXungCuocSkill);
+    RegisterSkill("LHPT_XICH_DIEM_TRAC_CUOC", ELEMENT_COLOR_FIRE, InitLhptXichDiemTracCuocSkill, CastLhptXichDiemTracCuocSkill, UpdateLhptXichDiemTracCuocSkill, DrawLhptXichDiemTracCuocSkill, UnloadLhptXichDiemTracCuocSkill);
+    RegisterSkill("LHPT_CHUOC_DIA_HOA_TRAN", ELEMENT_COLOR_FIRE, InitLhptChuocDiaHoaTranSkill, CastLhptChuocDiaHoaTranSkill, UpdateLhptChuocDiaHoaTranSkill, DrawLhptChuocDiaHoaTranSkill, UnloadLhptChuocDiaHoaTranSkill);
+    RegisterSkill("LHPT_VIEM_HO_BAN_NGUYET_CUOC", ELEMENT_COLOR_FIRE, InitLhptViemHoBanNguyetCuocSkill, CastLhptViemHoBanNguyetCuocSkill, UpdateLhptViemHoBanNguyetCuocSkill, DrawLhptViemHoBanNguyetCuocSkill, UnloadLhptViemHoBanNguyetCuocSkill);
     RegisterSkill("BTBC_DIA_LIET_CHAN_BA", ELEMENT_COLOR_EARTH, InitBtbcDiaLietChanBaSkill, CastBtbcDiaLietChanBaSkill, UpdateBtbcDiaLietChanBaSkill, DrawBtbcDiaLietChanBaSkill, UnloadBtbcDiaLietChanBaSkill);
     RegisterSkill("EARTH_DISC_VOLLEY", ELEMENT_COLOR_EARTH, InitEarthDiscVolleySkill, CastEarthDiscVolleySkill, UpdateEarthDiscVolleySkill, DrawEarthDiscVolleySkill, UnloadEarthDiscVolleySkill);
     RegisterSkill("BTBC_BANG_SON_TOAI_CHUONG", ELEMENT_COLOR_EARTH, InitBtbcBangSonToaiChuongSkill, CastBtbcBangSonToaiChuongSkill, UpdateBtbcBangSonToaiChuongSkill, DrawBtbcBangSonToaiChuongSkill, UnloadBtbcBangSonToaiChuongSkill);

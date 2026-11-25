@@ -505,7 +505,7 @@ static const ColorGradient *FVol_HeatGradient(VC_MaterialId matId)
     {
         // Authored vibrant radiant fire (Ghost of Tsushima Planck Blackbody progression):
         // 900K soot/ruby -> 1600K crimson -> 2200K fiery scarlet -> 2800K cadmium orange -> 3400K golden amber -> 4200K+ incandescent white-hot core
-        ColorGradient_AddStop(g, 0.00f, (Color){45, 5, 2, 255});       // glowing deep ruby wisp / soot
+        ColorGradient_AddStop(g, 0.00f, (Color){155, 26, 5, 255});     // clean translucent scarlet-ember outer edge
         ColorGradient_AddStop(g, 0.12f, (Color){165, 15, 2, 255});     // radiant crimson tongue
         ColorGradient_AddStop(g, 0.30f, (Color){235, 50, 4, 255});     // fiery scarlet
         ColorGradient_AddStop(g, 0.55f, (Color){255, 120, 8, 255});    // vivid cadmium fiery orange
@@ -1571,15 +1571,90 @@ int VFX_Fire_GetParams(VFX_FireConfig *cfg, VFX_ParamDef *out, int max)
     return n;
 }
 
-static MotionFieldHandle s_unifiedFireFieldHandle = MOTION_FIELD_INVALID;
-static float s_unifiedFireAccum = 0.0f;
+#define VC_GUIDED_FIRE_MAX_SLOTS 16
+
+typedef struct {
+    bool active;
+    MotionFieldHandle fieldHandle;
+    float accum;
+    float lastUsedTime;
+    Vector3 anchorPos;
+    VFX_FireConfig prevCfg;
+} VC_GuidedFireSlot;
+
+static VC_GuidedFireSlot s_guidedFirePool[VC_GUIDED_FIRE_MAX_SLOTS] = {0};
+
+static VC_GuidedFireSlot *FVol_AcquireGuidedSlot(Vector3 pos, const VFX_FireConfig *cfg, float now)
+{
+    int bestSlot = -1;
+    float bestDistSq = 1.85f * 1.85f;
+    int freeSlot = -1;
+    int oldestSlot = 0;
+    float oldestTime = 1e30f;
+
+    for (int i = 0; i < VC_GUIDED_FIRE_MAX_SLOTS; i++) {
+        VC_GuidedFireSlot *sl = &s_guidedFirePool[i];
+        if (sl->active && (now - sl->lastUsedTime) > 0.35f) {
+            if (sl->fieldHandle != MOTION_FIELD_INVALID && MotionFields_IsAlive(sl->fieldHandle)) {
+                MotionFields_Stop(sl->fieldHandle);
+            }
+            sl->fieldHandle = MOTION_FIELD_INVALID;
+            sl->active = false;
+            sl->accum = 0.0f;
+        }
+        if (!sl->active) {
+            if (freeSlot < 0) freeSlot = i;
+            continue;
+        }
+        if (sl->lastUsedTime < oldestTime) {
+            oldestTime = sl->lastUsedTime;
+            oldestSlot = i;
+        }
+        if (sl->prevCfg.motionType == cfg->motionType &&
+            sl->prevCfg.attachment == cfg->attachment &&
+            sl->prevCfg.emitterShape == cfg->emitterShape) {
+            float d2 = Vector3DistanceSqr(sl->anchorPos, pos);
+            if (d2 < bestDistSq) {
+                bestDistSq = d2;
+                bestSlot = i;
+            }
+        }
+    }
+
+    int idx = (bestSlot >= 0) ? bestSlot : ((freeSlot >= 0) ? freeSlot : oldestSlot);
+    VC_GuidedFireSlot *out = &s_guidedFirePool[idx];
+    if (idx != bestSlot) {
+        if (out->active && out->fieldHandle != MOTION_FIELD_INVALID && MotionFields_IsAlive(out->fieldHandle)) {
+            MotionFields_Stop(out->fieldHandle);
+        }
+        memset(out, 0, sizeof(*out));
+        out->active = true;
+        out->fieldHandle = MOTION_FIELD_INVALID;
+        out->anchorPos = pos;
+    }
+    out->lastUsedTime = now;
+    return out;
+}
 
 void VFX_KillFire(int handle)
 {
-    (void)handle;
-    if (s_unifiedFireFieldHandle != MOTION_FIELD_INVALID) {
-        MotionFields_Stop(s_unifiedFireFieldHandle);
-        s_unifiedFireFieldHandle = MOTION_FIELD_INVALID;
+    if (handle > 0 && handle <= VC_GUIDED_FIRE_MAX_SLOTS) {
+        VC_GuidedFireSlot *sl = &s_guidedFirePool[handle - 1];
+        if (sl->fieldHandle != MOTION_FIELD_INVALID) {
+            MotionFields_Stop(sl->fieldHandle);
+            sl->fieldHandle = MOTION_FIELD_INVALID;
+        }
+        sl->active = false;
+        sl->accum = 0.0f;
+        return;
+    }
+    for (int i = 0; i < VC_GUIDED_FIRE_MAX_SLOTS; i++) {
+        if (s_guidedFirePool[i].fieldHandle != MOTION_FIELD_INVALID) {
+            MotionFields_Stop(s_guidedFirePool[i].fieldHandle);
+            s_guidedFirePool[i].fieldHandle = MOTION_FIELD_INVALID;
+        }
+        s_guidedFirePool[i].active = false;
+        s_guidedFirePool[i].accum = 0.0f;
     }
 }
 
@@ -1608,9 +1683,11 @@ int VFX_ComposeFireEx(Vector3 pos, const VFX_FireConfig *cfg)
 
     float dt = TimeFX_RawDelta();
     if (dt <= 0.0f || dt > 0.1f) dt = 0.016f;
+    float now = TimeFX_Elapsed();
 
-    static Vector3 s_anchoredEmitterPos = {0};
-    s_anchoredEmitterPos = pos;
+    VC_GuidedFireSlot *slot = FVol_AcquireGuidedSlot(pos, cfg, now);
+    Vector3 prevPos = slot->anchorPos;
+    slot->anchorPos = pos;
 
     // Detect preset changes on live config
     static VFX_FirePreset s_lastPreset = VFX_FIRE_PRESET_TORCH;
@@ -1679,43 +1756,36 @@ int VFX_ComposeFireEx(Vector3 pos, const VFX_FireConfig *cfg)
         }
     }
 
-    static VFX_FireConfig s_prevAppliedCfg;
-    static Vector3 s_prevAppliedPos = {0};
-    static bool s_hasPrevCfg = false;
+    bool recipeChanged = (slot->fieldHandle == MOTION_FIELD_INVALID) ||
+        slot->prevCfg.motionType != cfg->motionType ||
+        slot->prevCfg.fieldSpeed != cfg->fieldSpeed ||
+        slot->prevCfg.fieldRadius != cfg->fieldRadius ||
+        slot->prevCfg.swirlSpeed != cfg->swirlSpeed ||
+        slot->prevCfg.turbulenceSpeed != cfg->turbulenceSpeed ||
+        slot->prevCfg.buoyancy != cfg->buoyancy ||
+        slot->prevCfg.attachment != cfg->attachment;
 
-    bool recipeChanged = !s_hasPrevCfg ||
-        s_prevAppliedCfg.motionType != cfg->motionType ||
-        s_prevAppliedCfg.fieldSpeed != cfg->fieldSpeed ||
-        s_prevAppliedCfg.fieldRadius != cfg->fieldRadius ||
-        s_prevAppliedCfg.swirlSpeed != cfg->swirlSpeed ||
-        s_prevAppliedCfg.turbulenceSpeed != cfg->turbulenceSpeed ||
-        s_prevAppliedCfg.buoyancy != cfg->buoyancy ||
-        s_prevAppliedCfg.attachment != cfg->attachment;
-
-    bool posChanged = (Vector3Distance(s_prevAppliedPos, pos) > 0.01f);
+    bool posChanged = (Vector3Distance(prevPos, pos) > 0.01f);
 
     FieldDesc field;
     if (MotionFieldRecipe_Build(&recipe, &field)) {
         if (cfg->attachment != VFX_FIRE_ATTACH_ANCHORED && sceneWindSpeed > 0.01f) {
             field.flow.velocityMps = Vector3Add(field.flow.velocityMps, sceneWind);
         }
-        if (recipeChanged || s_unifiedFireFieldHandle == MOTION_FIELD_INVALID || !MotionFields_IsAlive(s_unifiedFireFieldHandle)) {
-            if (s_unifiedFireFieldHandle != MOTION_FIELD_INVALID && MotionFields_IsAlive(s_unifiedFireFieldHandle)) {
-                MotionFields_Stop(s_unifiedFireFieldHandle);
+        if (recipeChanged || !MotionFields_IsAlive(slot->fieldHandle)) {
+            if (slot->fieldHandle != MOTION_FIELD_INVALID && MotionFields_IsAlive(slot->fieldHandle)) {
+                MotionFields_Stop(slot->fieldHandle);
             }
-            s_unifiedFireFieldHandle = MotionFields_CreateField(&field);
-            s_prevAppliedCfg = *cfg;
-            s_prevAppliedPos = pos;
-            s_hasPrevCfg = true;
+            slot->fieldHandle = MotionFields_CreateField(&field);
+            slot->prevCfg = *cfg;
         } else if (posChanged) {
-            MotionFields_SetTransform(s_unifiedFireFieldHandle, &field.transform);
-            s_prevAppliedPos = pos;
+            MotionFields_SetTransform(slot->fieldHandle, &field.transform);
         }
     }
 
     // 2. Dynamic Lighting: Realistic warm flickering point light
     if (cfg->dynamicLight && cfg->intensity > 0.1f) {
-        float flicker = 0.82f + 0.18f * sinf(TimeFX_Elapsed() * (cfg->flickerRate > 0.1f ? cfg->flickerRate : 14.0f));
+        float flicker = 0.82f + 0.18f * sinf(now * (cfg->flickerRate > 0.1f ? cfg->flickerRate : 14.0f));
         float lightRadius = (cfg->sourceRadius * 1.5f + cfg->fieldRadius * 0.8f + 1.2f) * flicker;
         float lightLife = dt * 1.5f;
         if (lightLife < 0.04f) lightLife = 0.04f;
@@ -1723,24 +1793,31 @@ int VFX_ComposeFireEx(Vector3 pos, const VFX_FireConfig *cfg)
                        (Color){255, 145, 35, 255}, lightRadius, lightLife, VFX_PRIORITY_LOW);
     }
 
-    // 3. Emission Rate Modulation
+    // 3. Emission Rate Modulation (including true one-shot VFX_FIRE_EMIT_BURST)
     float life = cfg->lifetime > 0.1f ? cfg->lifetime : 1.5f;
     int targetCount = cfg->particleCount > 0 ? cfg->particleCount : 50;
     if (targetCount > 1000) targetCount = 1000;
 
-    float rate = (float)targetCount / life;
-    if (cfg->emissionMode == VFX_FIRE_EMIT_PULSING) {
-        float fHz = cfg->flickerRate > 0.1f ? cfg->flickerRate * 0.25f : 3.0f;
-        rate *= (1.0f + 0.45f * sinf(TimeFX_Elapsed() * fHz * 2.0f * PI));
-    } else if (cfg->emissionMode == VFX_FIRE_EMIT_SPRAY) {
-        rate *= 1.35f;
+    int spawnNow = 0;
+    if (cfg->emissionMode == VFX_FIRE_EMIT_BURST) {
+        float tierScale = (GfxQuality_Get() >= GFX_HIGH) ? 1.0f : (GfxQuality_Get() == GFX_MED ? 0.65f : 0.40f);
+        spawnNow = (int)((float)targetCount * tierScale);
+        if (spawnNow < 8) spawnNow = 8;
+        if (spawnNow > 160) spawnNow = 160;
+    } else {
+        float rate = (float)targetCount / life;
+        if (cfg->emissionMode == VFX_FIRE_EMIT_PULSING) {
+            float fHz = cfg->flickerRate > 0.1f ? cfg->flickerRate * 0.25f : 3.0f;
+            rate *= (1.0f + 0.45f * sinf(now * fHz * 2.0f * PI));
+        } else if (cfg->emissionMode == VFX_FIRE_EMIT_SPRAY) {
+            rate *= 1.35f;
+        }
+        slot->accum += dt * rate;
+        spawnNow = (int)slot->accum;
+        slot->accum -= (float)spawnNow;
+        if (spawnNow > 50) { spawnNow = 50; slot->accum = 0.0f; }
     }
-
-    s_unifiedFireAccum += dt * rate;
-    int spawnNow = (int)s_unifiedFireAccum;
-    s_unifiedFireAccum -= (float)spawnNow;
-    if (spawnNow > 50) { spawnNow = 50; s_unifiedFireAccum = 0.0f; }
-    if (spawnNow <= 0) return 0;
+    if (spawnNow <= 0) return (int)(slot - s_guidedFirePool) + 1;
 
     // Direct particle radius from user configuration (meter-scale)
     float drawRadius = (cfg->particleRadius > 0.01f) ? cfg->particleRadius : 0.22f;
@@ -1941,8 +2018,9 @@ int VFX_ComposeFireEx(Vector3 pos, const VFX_FireConfig *cfg)
         pc.velocity = vel;
         pc.radius = drawRadius * (0.85f + 0.35f * fmodf(phase * 17.3f, 1.0f));
         pc.lifetime = effectiveLife * (0.80f + 0.40f * fmodf(phase * 29.7f, 1.0f));
-        pc.colorStart = (Color){(unsigned char)fminf(255.0f, cfg->intensity * 60.0f), 0, (unsigned char)(phase * 255.0f), 255};
-        pc.colorEnd = (Color){(unsigned char)fminf(255.0f, cfg->intensity * 20.0f), 0, (unsigned char)(phase * 255.0f), 0};
+        float heatByte = fminf(255.0f, fmaxf(40.0f, cfg->coreHeat * 95.0f));
+        pc.colorStart = (Color){(unsigned char)heatByte, 0, (unsigned char)(phase * 255.0f), 255};
+        pc.colorEnd = (Color){(unsigned char)(heatByte * 0.35f), 0, (unsigned char)(phase * 255.0f), 0};
         pc.alphaCurve = &s_fvolFade;
         pc.speedCurve = &s_fvolRise;
         pc.emissiveCurve = &s_fvolCool;
@@ -1950,14 +2028,14 @@ int VFX_ComposeFireEx(Vector3 pos, const VFX_FireConfig *cfg)
         pc.facingAspect = facingAspect;
 
         if (cfg->attachment == VFX_FIRE_ATTACH_ANCHORED) {
-            pc.followTarget = &s_anchoredEmitterPos;
+            pc.followTarget = &slot->anchorPos;
             pc.followStrength = 1.0f;
             pc.followCurve = &s_anchoredFollowCurve;
             pc.windInfluence = 0.04f;
             pc.drag = 5.0f;
             pc.physics.dynamics = &s_anchoredDynamics;
         } else if (cfg->attachment == VFX_FIRE_ATTACH_SURFACE_CLING) {
-            pc.followTarget = &s_anchoredEmitterPos;
+            pc.followTarget = &slot->anchorPos;
             pc.followStrength = 0.85f;
             pc.windInfluence = 0.15f;
             pc.drag = 3.5f;
@@ -1979,7 +2057,7 @@ int VFX_ComposeFireEx(Vector3 pos, const VFX_FireConfig *cfg)
         pc.render.rampLUT = FVol_RampLUT(VC_MAT_FIRE);
         pc.render.heatGain = cfg->coreHeat * cfg->riseMultiplier;
         pc.render.smokeGain = cfg->softness;
-        pc.render.emissiveBoost = cfg->intensity * cfg->emissiveBoost;
+        pc.render.emissiveBoost = Clamp(cfg->intensity * cfg->emissiveBoost * 0.78f, 0.45f, 3.8f);
         pc.render.motionWarpScale = cfg->distortion;
         pc.render.blendMode = VFX_BLEND_PREMULTIPLIED;
 
@@ -1999,7 +2077,7 @@ int VFX_ComposeFireEx(Vector3 pos, const VFX_FireConfig *cfg)
                 float sparkSpd = 0.38f + fmodf(phase * 3.7f, 0.32f);
                 sc.velocity = (Vector3){cosf(ang) * 0.06f, sparkSpd * (cfg->riseMultiplier > 0.1f ? cfg->riseMultiplier : 1.0f), sinf(ang) * 0.06f};
                 sc.lifetime = effectiveLife * 0.60f;
-                sc.followTarget = &s_anchoredEmitterPos;
+                sc.followTarget = &slot->anchorPos;
                 sc.followStrength = 0.95f;
                 sc.windInfluence = 0.06f;
                 sc.drag = 4.0f;
@@ -2017,9 +2095,11 @@ int VFX_ComposeFireEx(Vector3 pos, const VFX_FireConfig *cfg)
                 sc.windInfluence = 1.0f;
                 sc.physics.dynamics = &s_freeDynamics;
             }
-            sc.radius = drawRadius * 0.12f;
-            sc.colorStart = (Color){255, 240, 180, 255};
-            sc.colorEnd = (Color){255, 110, 20, 0};
+            sc.radius = fminf(0.016f, drawRadius * 0.042f);
+            sc.stretchStrength = 0.25f;
+            sc.stretchMinSpeed = 0.35f;
+            sc.colorStart = (Color){255, 225, 130, 255};
+            sc.colorEnd = (Color){255, 95, 12, 0};
             sc.physics.receiveMotionFields = true;
             sc.physics.spatialMotionOnly = true;
             sc.render.blendMode = VFX_BLEND_ADDITIVE;

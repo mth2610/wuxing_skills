@@ -191,6 +191,7 @@ void CastBtbcDiaLietChanBaSkill(int agentId, Vector3 startPos, Vector3 target, S
 
     VFX_ComposeGroundDustRing(anchor, VC_MAT_EARTH, 1.05f * scale, 0.50f);
     Wind_SpawnRadialBlast(anchor, 2.0f * scale, 6.0f, 0.22f);
+    PlayCastSound(EFFECT_PRESET_EARTH_CRACK);
     CameraFX_Shake(0.28f);
 }
 
@@ -219,8 +220,16 @@ void UpdateBtbcDiaLietChanBaSkill(float dt, Vector3 enemyPos, float enemyRadius)
         if (inst->deflectsRemaining > 0) {
             Vector3 crestPos = Vector3Add(inst->origin, Vector3Scale(inst->dir, inst->frontDist));
             float crestHalfW = fmaxf(1.2f, inst->frontDist * tanf(DLCB_HALF_CONE_RAD));
-            int broken = Combat_DeflectProjectilesInRadius(crestPos, crestHalfW, inst->ownerAgentId);
-            if (broken > 0) inst->deflectsRemaining = 0;
+            CombatDeflectInfo defs[4];
+            int broken = Combat_DeflectProjectilesInRadiusEx(crestPos, crestHalfW, inst->ownerAgentId,
+                                                             inst->deflectsRemaining, defs, 4);
+            if (broken > 0) {
+                inst->deflectsRemaining = 0;
+                for (int d = 0; d < broken; d++) {
+                    VFX_ComposeDeflectFlash(defs[d].pos, inst->dir, VC_MAT_EARTH, 0.95f * inst->sizeScale);
+                }
+                PlayImpactSound(EFFECT_PRESET_EARTH_CRACK);
+            }
         }
 
         int targets[16];

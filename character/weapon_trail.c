@@ -192,6 +192,50 @@ void WeaponTrail_Draw(const WeaponTrail *trail) {
     WeaponTrail_EnsureTexture();
     if (s_trailTex.id == 0) return;
 
+    // Pass 0 (Bright-BG BODY): Dark tempered steel/ink shadow carrier so blade arcs read clearly on daylight maps
+    {
+        VFXRenderScope bodyScope = VFXRender_BeginDraw(VFX_RENDER_PASS_BODY, VFX_SURFACE_ALPHA, false);
+        rlSetTexture(s_trailTex.id);
+        rlBegin(RL_QUADS);
+        int count0 = trail->count;
+        for (int i = 0; i < count0 - 1; i++) {
+            int idx0 = (i > 0) ? (i - 1) : 0;
+            int idx1 = i;
+            int idx2 = i + 1;
+            int idx3 = (i + 2 < count0) ? (i + 2) : (count0 - 1);
+            float alpha1 = trail->points[idx1].alpha;
+            float alpha2 = trail->points[idx2].alpha;
+            for (int s = 0; s < TRAIL_SUBDIVISIONS; s++) {
+                float tA = (float)s / (float)TRAIL_SUBDIVISIONS;
+                float tB = (float)(s + 1) / (float)TRAIL_SUBDIVISIONS;
+                float globA = ((float)i + tA) / (float)(count0 - 1);
+                float globB = ((float)i + tB) / (float)(count0 - 1);
+                Vector3 sTipA  = CatmullRom_Centripetal(trail->points[idx0].tip,  trail->points[idx1].tip,  trail->points[idx2].tip,  trail->points[idx3].tip,  tA);
+                Vector3 sTipB  = CatmullRom_Centripetal(trail->points[idx0].tip,  trail->points[idx1].tip,  trail->points[idx2].tip,  trail->points[idx3].tip,  tB);
+                Vector3 sBaseA = CatmullRom_Centripetal(trail->points[idx0].base, trail->points[idx1].base, trail->points[idx2].base, trail->points[idx3].base, tA);
+                Vector3 sBaseB = CatmullRom_Centripetal(trail->points[idx0].base, trail->points[idx1].base, trail->points[idx2].base, trail->points[idx3].base, tB);
+                float headTaperA = (globA < 0.08f) ? powf(globA / 0.08f, 0.65f) : 1.0f;
+                float headTaperB = (globB < 0.08f) ? powf(globB / 0.08f, 0.65f) : 1.0f;
+                float envA = headTaperA * powf(1.0f - globA, 0.75f);
+                float envB = headTaperB * powf(1.0f - globB, 0.75f);
+                sBaseA = Vector3Lerp(sTipA, sBaseA, envA * 0.85f);
+                sBaseB = Vector3Lerp(sTipB, sBaseB, envB * 0.85f);
+                unsigned char aA = (unsigned char)(150.0f * (alpha1 + (alpha2 - alpha1) * tA) * envA);
+                unsigned char aB = (unsigned char)(150.0f * (alpha1 + (alpha2 - alpha1) * tB) * envB);
+                unsigned char dr = (unsigned char)(trail->glowColor.r * 0.14f);
+                unsigned char dg = (unsigned char)(trail->glowColor.g * 0.16f);
+                unsigned char db = (unsigned char)(trail->glowColor.b * 0.20f);
+                rlColor4ub(dr, dg, db, aA); rlTexCoord2f(0.0f, globA); rlVertex3f(sTipA.x, sTipA.y, sTipA.z);
+                rlColor4ub(dr, dg, db, aA); rlTexCoord2f(1.0f, globA); rlVertex3f(sBaseA.x, sBaseA.y, sBaseA.z);
+                rlColor4ub(dr, dg, db, aB); rlTexCoord2f(1.0f, globB); rlVertex3f(sBaseB.x, sBaseB.y, sBaseB.z);
+                rlColor4ub(dr, dg, db, aB); rlTexCoord2f(0.0f, globB); rlVertex3f(sTipB.x, sTipB.y, sTipB.z);
+            }
+        }
+        rlEnd();
+        rlSetTexture(0);
+        VFXRender_EndDraw(&bodyScope);
+    }
+
     // Use Engine VFXRenderScope for atomic blend, depth-mask, and batch flushes
     VFXRenderScope scope = VFXRender_BeginDraw(VFX_RENDER_PASS_EMISSION, VFX_SURFACE_ADDITIVE, false);
 

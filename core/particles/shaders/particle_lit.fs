@@ -374,6 +374,35 @@ vec3 CompressFlameRadiance(vec3 col, float heat)
     return col;
 }
 
+// Unified clean translucent fire shading shared across Shader Tongue (Mode 5),
+// Shader Puff (Mode 6), and Flipbook Flame Volume (Path A). Zero black soot;
+// gentle u_bgLuma-adaptive chromatic opacity prevents blue-snow washout without
+// turning low-heat wisps into opaque blood-red paint.
+vec4 ShadeTranslucentFire(vec3 rampCol, float heat, float mask, float heatBoost, float flicker)
+{
+    float bg = (u_resolution.x > 0.0) ? texture(u_bgLuma, gl_FragCoord.xy / u_resolution).r : 0.0;
+    float brightBg = smoothstep(0.12, 0.50, bg);
+
+    // Keep outer flame wisps warm tangerine-amber on snow (avoid dark blood-red paint)
+    vec3 warmRamp = mix(rampCol, vec3(1.0, 0.46, 0.06), brightBg * (1.0 - heat) * 0.35);
+    vec3 baseFlame = warmRamp * (0.62 + heatBoost * 0.85) * flicker * (0.28 + heat * 1.12);
+
+    float corePop = pow(smoothstep(0.56, 1.0, heat), 1.8);
+    vec3 hotCore  = mix(vec3(1.0, 0.80, 0.24), vec3(1.0, 0.98, 0.88), corePop)
+                  * (corePop * (1.65 + brightBg * 1.35));
+
+    vec3 col = CompressFlameRadiance((baseFlame + hotCore) * u_emissiveBoost, heat);
+
+    // Soft feathered optical opacity: airy on dark backgrounds, warm chromatic
+    // displacement on snow (max 0.56 so flames stay luminous & translucent).
+    float alphaDark   = clamp(mask * 0.30, 0.0, 0.36);
+    float alphaBright = clamp(mask * mix(0.46, 0.58, smoothstep(0.15, 0.75, heat)), 0.0, 0.58);
+    float flameAlpha  = mix(alphaDark, alphaBright, brightBg);
+
+    vec3 outRgb = min(col * mix(mask * 0.75, mask * 0.95, brightBg), vec3(6.5));
+    return vec4(max(outRgb, vec3(0.0)), flameAlpha);
+}
+
 void main()
 {
     // ── MODE 5: PROCEDURAL SHADER TONGUE (Zero-flipbook, slender rising tongue) ──
@@ -403,24 +432,26 @@ void main()
         if (field < -0.4) discard;
 
         float soft = (u_softFade > 0.0) ? SoftParticle_Factor(u_softFade) : 1.0;
-        float fade = smoothstep(0.0, 0.08, age) * (1.0 - smoothstep(0.75, 1.0, age)) * smoothstep(0.0, 0.05, y);
+        // Unwarped quad-border fade prevents domain-warped noise from clipping at square UV edges
+        float edgeMask = smoothstep(0.0, 0.18, fragTexCoord.x) * smoothstep(1.0, 0.82, fragTexCoord.x) *
+                         smoothstep(0.0, 0.16, 1.0 - y);
+        float fade = smoothstep(0.0, 0.08, age) * (1.0 - smoothstep(0.75, 1.0, age)) *
+                     smoothstep(0.0, 0.06, y) * edgeMask;
         float softVal = (u_smokeGain > 0.0) ? u_smokeGain : 0.5;
         float density = smoothstep(0.05, 0.05 + softVal * 0.5, field);
         float glow = smoothstep(-0.4, 0.1, field) * 0.18;
-        float alpha = clamp(density + glow, 0.0, 1.0) * fade * 0.35 * fragColor.a * soft;
-        if (alpha < 0.004) discard;
+        float mask = clamp(density + glow, 0.0, 1.0) * fade * 0.58 * fragColor.a * soft;
+        if (mask < 0.004) discard;
 
-        float hf = smoothstep(0.05, 1.0, field) * (1.0 - y * 0.8) + (d - 0.5) * 0.25 - age * 0.25;
-        float heat = clamp(hf, 0.0, 1.0) * smoothstep(-0.1, 0.5, field);
+        float hf = smoothstep(0.05, 0.96, field) * (1.0 - y * 0.72) + (d - 0.5) * 0.36 - age * 0.20;
+        float heat = clamp(hf, 0.0, 1.0) * smoothstep(-0.08, 0.45, field);
         float fl = 0.88 + 0.12 * sin(u_time * 14.0 + rnd * 60.0);
 
         vec3 rampCol = texture(u_rampLUT, vec2(clamp(heat, 0.0, 1.0), 0.5)).rgb;
         vec3 lutProbe = texture(u_rampLUT, vec2(0.75, 0.5)).rgb;
         if (dot(lutProbe, lutProbe) < 0.001) rampCol = calcBlackbodyNormalized(heat);
-        vec3 col = rampCol * (fragColor.r * 2.0) * fl * (0.1 + heat * heat * 1.1);
 
-        vec3 puffOut = min(col * (alpha * u_emissiveBoost), vec3(32.0));
-        finalColor = vec4(max(puffOut, vec3(0.0)), 0.0);
+        finalColor = ShadeTranslucentFire(rampCol, heat, mask, fragColor.r, fl);
         return;
     }
 
@@ -444,24 +475,25 @@ void main()
         if (field < -0.4) discard;
 
         float soft = (u_softFade > 0.0) ? SoftParticle_Factor(u_softFade) : 1.0;
-        float fade = smoothstep(0.0, 0.05, age) * (1.0 - smoothstep(0.55, 1.0, age));
+        // Unwarped radial quad-border fade prevents warped billow from clipping at square UV edges
+        float rawR = length((fragTexCoord - 0.5) * 2.0);
+        float edgeMask = smoothstep(1.0, 0.62, rawR);
+        float fade = smoothstep(0.0, 0.05, age) * (1.0 - smoothstep(0.55, 1.0, age)) * edgeMask;
         float softVal = (u_smokeGain > 0.0) ? u_smokeGain : 0.5;
         float density = smoothstep(0.05, 0.05 + softVal * 0.5, field);
         float glow = smoothstep(-0.4, 0.1, field) * 0.18;
-        float alpha = clamp(density + glow, 0.0, 1.0) * fade * 0.40 * fragColor.a * soft;
-        if (alpha < 0.004) discard;
+        float mask = clamp(density + glow, 0.0, 1.0) * fade * 0.62 * fragColor.a * soft;
+        if (mask < 0.004) discard;
 
-        float hf = smoothstep(0.1, 1.0, field) * (1.0 - age * 0.85) + (d - 0.5) * 0.25;
-        float heat = clamp(hf, 0.0, 1.0) * smoothstep(-0.1, 0.5, field);
+        float hf = smoothstep(0.06, 0.96, field) * (1.0 - age * 0.72) + (d - 0.5) * 0.36;
+        float heat = clamp(hf, 0.0, 1.0) * smoothstep(-0.08, 0.45, field);
         float fl = 0.88 + 0.12 * sin(u_time * 14.0 + rnd * 60.0);
 
         vec3 rampCol = texture(u_rampLUT, vec2(clamp(heat, 0.0, 1.0), 0.5)).rgb;
         vec3 lutProbe = texture(u_rampLUT, vec2(0.75, 0.5)).rgb;
         if (dot(lutProbe, lutProbe) < 0.001) rampCol = calcBlackbodyNormalized(heat);
-        vec3 col = rampCol * (fragColor.r * 2.0) * fl * (0.1 + heat * heat * 1.1);
 
-        vec3 puffOut = min(col * (alpha * u_emissiveBoost), vec3(32.0));
-        finalColor = vec4(max(puffOut, vec3(0.0)), 0.0);
+        finalColor = ShadeTranslucentFire(rampCol, heat, mask, fragColor.r, fl);
         return;
     }
 
@@ -694,25 +726,20 @@ void main()
             opac = texelColor.a;
         }
 
-        // PATH A: FLAME VOLUME (u_volumeSheet > 1.5)
+        // PATH A: FLAME VOLUME (u_volumeSheet > 1.5 — Flipbook Tongue & Flipbook Puff)
         if (u_volumeSheet > 1.5)
         {
-            float flameMask = smoothstep(0.015, 0.08, emis);
+            float flameMask = smoothstep(0.02, 0.14, emis);
             float fade = vtxColor.a * soft * flameMask;
             if (fade < 0.005) discard;
 
             float heat = clamp(emis * u_heatGain * fragColor.r, 0.0, 1.0);
-            float compactEmission = smoothstep(0.06, 0.75, emis);
-            float radianceGating = pow(compactEmission, 1.35) * flameMask;
-
             vec3 rampCol = texture(u_rampLUT, vec2(heat, 0.5)).rgb;
-            float corePeak = smoothstep(0.95, 1.0, heat);
-            vec3 radiantFlame = mix(rampCol, vec3(1.0, 0.98, 0.92), corePeak * 0.50);
+            vec3 lutProbe = texture(u_rampLUT, vec2(0.75, 0.5)).rgb;
+            if (dot(lutProbe, lutProbe) < 0.001) rampCol = calcBlackbodyNormalized(heat);
 
-            vec3 flame = radiantFlame * (radianceGating * u_emissiveBoost);
-            flame = CompressFlameRadiance(flame, heat);
-
-            finalColor = vec4(flame * fade, 0.0);
+            float mask = clamp(smoothstep(0.04, 0.72, emis) * fade, 0.0, 1.0);
+            finalColor = ShadeTranslucentFire(rampCol, heat, mask, fragColor.r, 1.0);
             return;
         }
 

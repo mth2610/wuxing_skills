@@ -240,44 +240,16 @@ void VC_StoneFormationZone_Draw3D(Camera3D cam) {
         }
         Material_End();
 
-        /* 2. Ground-hugging octagonal crack/rune ring & subtle earthy interior (alpha <= 0.26) */
-        float zoneVis = fminf(1.0f, inst->elapsed / 0.25f) * fade01;
-        rlDisableDepthMask();
-        BeginBlendMode(BLEND_ALPHA);
-        unsigned char innerAlpha = (unsigned char)(32.0f * zoneVis + 18.0f * inst->pulse01 * zoneVis);
-        unsigned char rimAlpha   = (unsigned char)(96.0f * zoneVis + 44.0f * inst->pulse01 * zoneVis);
-        float cy = MapManager_GetGroundHeightAt(inst->center.x, inst->center.z) + 0.022f;
-
-        rlBegin(RL_TRIANGLES);
-        for (int s = 0; s < 8; s++) {
-            float a0 = (float)s * (2.0f * PI / 8.0f);
-            float a1 = (float)(s + 1) * (2.0f * PI / 8.0f);
-            float x0 = inst->center.x + sinf(a0) * r * 0.94f;
-            float z0 = inst->center.z + cosf(a0) * r * 0.94f;
-            float x1 = inst->center.x + sinf(a1) * r * 0.94f;
-            float z1 = inst->center.z + cosf(a1) * r * 0.94f;
-            float ix0 = inst->center.x + sinf(a0) * r * 0.78f;
-            float iz0 = inst->center.z + cosf(a0) * r * 0.78f;
-            float ix1 = inst->center.x + sinf(a1) * r * 0.78f;
-            float iz1 = inst->center.z + cosf(a1) * r * 0.78f;
-
-            rlColor4ub(102, 84, 58, innerAlpha);
-            rlVertex3f(inst->center.x, cy, inst->center.z);
-            rlVertex3f(ix0, cy, iz0);
-            rlVertex3f(ix1, cy, iz1);
-
-            rlColor4ub(136, 108, 72, rimAlpha);
-            rlVertex3f(ix0, cy, iz0);
-            rlVertex3f(x0, cy, z0);
-            rlVertex3f(x1, cy, z1);
-
-            rlVertex3f(ix0, cy, iz0);
-            rlVertex3f(x1, cy, z1);
-            rlVertex3f(ix1, cy, iz1);
+        /* 2. Terrain-draped SDF Bagua/Earth Rune Seal (C11 ground-layer, y <= 0.15m) */
+        float t01 = Clamp(inst->elapsed / inst->duration, 0.0f, 1.0f);
+        Vector3 gp = { inst->center.x, MapManager_GetGroundHeightAt(inst->center.x, inst->center.z), inst->center.z };
+        VFX_ComposeRuneCircle(gp, (Vector3){ 0.0f, 1.0f, 0.0f }, VC_MAT_EARTH, r * 0.92f, t01, 2);
+        if (inst->pulse01 > 0.15f) {
+            VC_DrawDualRingBand(gp, r * (0.25f + 0.65f * (1.0f - inst->pulse01)),
+                                r * (0.31f + 0.65f * (1.0f - inst->pulse01)), 0.05f, 16,
+                                (Color){ 68, 52, 32, (unsigned char)(85.0f * inst->pulse01 * fade01) },
+                                (Color){ 225, 178, 88, (unsigned char)(90.0f * inst->pulse01 * fade01) }, 0.0f);
         }
-        rlEnd();
-        EndBlendMode();
-        rlEnableDepthMask();
     }
 }
 

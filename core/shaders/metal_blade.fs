@@ -23,10 +23,10 @@ void main() {
     float fresnel = pow(1.0 - NoV, 2.6);
     float sharpFresnel = pow(1.0 - NoV, 4.2);
 
-    // Studio dual-key reflections in view space for crisp metallic sparkle
+    // Studio dual-key reflections driven by real scene sun u_lightDir
     vec3 R = reflect(-V, N);
-    vec3 L1 = normalize(vec3(0.45, 0.78, 0.42));
-    vec3 L2 = normalize(vec3(-0.62, 0.35, 0.70));
+    vec3 L1 = (dot(u_lightDir, u_lightDir) > 0.001) ? normalize(u_lightDir) : normalize(vec3(0.45, 0.78, 0.42));
+    vec3 L2 = normalize(vec3(-L1.x, max(L1.y * 0.55, 0.25), -L1.z));
     float spec1 = pow(max(dot(R, L1), 0.0), 42.0);
     float spec2 = pow(max(dot(R, L2), 0.0), 64.0);
     float skyBand = smoothstep(-0.25, 0.65, R.y);

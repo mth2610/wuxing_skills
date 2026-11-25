@@ -13,10 +13,12 @@
 #include <stdio.h>
 #include <string.h>
 
-static bool s_modalOpen = false;
-static int  s_modalTab = 0;      // 0 = Võ Học 7 Ô, 1 = Tiệm Dã Tẩu
-static int  s_selectedSlot = 0;  // 0..6
-static bool s_joinBoxOpen = false;
+static bool  s_modalOpen = false;
+static int   s_modalTab = 0;      // 0 = Võ Học 7 Ô, 1 = Tiệm Dã Tẩu
+static int   s_selectedSlot = 0;  // 0..6
+static int   s_setFilter = -1;    // -1 = Tất cả, 0 = Cơ Bản, 1..VH_SET_COUNT-1 = Bộ Võ Học
+static float s_skillScrollY = 0.0f;
+static bool  s_joinBoxOpen = false;
 
 static const char *kRealmNames[5] = {
     "1. Hàn Thủy Đầm (Thủy)",
@@ -58,11 +60,55 @@ static const char *SkillDisplayNameVN(int skillIdx) {
     return raw;
 }
 
+static const char *VoHocFilterShortLabel(int filterId) {
+    switch (filterId) {
+        case -1: return "Tất cả";
+        case VH_SET_THUY_TRIEU_QUYEN_PHAP: return "Thủy";
+        case VH_SET_BAN_THACH_BAT_CUC_QUYEN: return "Thổ";
+        case VH_SET_THIEN_CANG_DOAN_KIM_KIEM: return "Kim";
+        case VH_SET_LIET_HOA_PHAN_THIEN_CUOC: return "Hỏa";
+        case VH_SET_NONE: return "Cơ Bản";
+        default: return "Khác";
+    }
+}
+
+static Color VoHocFilterColor(int filterId) {
+    switch (filterId) {
+        case VH_SET_THUY_TRIEU_QUYEN_PHAP: return ELEMENT_COLOR_WATER;
+        case VH_SET_BAN_THACH_BAT_CUC_QUYEN: return ELEMENT_COLOR_EARTH;
+        case VH_SET_THIEN_CANG_DOAN_KIM_KIEM: return ELEMENT_COLOR_METAL;
+        case VH_SET_LIET_HOA_PHAN_THIEN_CUOC: return ELEMENT_COLOR_FIRE;
+        case VH_SET_NONE: return WUXIA_TEXT_MUTED;
+        default: return WUXIA_GOLD;
+    }
+}
+
+static void EquipFullVoHocSet(VoHocSetId setId) {
+    if (setId <= VH_SET_NONE || setId >= VH_SET_COUNT) return;
+    int strikeSlot = 0;
+    int supportSlot = PROFILE_STRIKE_SLOTS;
+    int defCount = 0;
+    const VoHocSkillDef *defs = VoHoc_GetAllSkills(&defCount);
+    for (int i = 0; i < defCount; i++) {
+        if (defs[i].setId != setId) continue;
+        int idx = Skill_GetIndexByName(defs[i].skillName);
+        if (idx < 0) continue;
+        if (defs[i].role == VH_ROLE_STRIKE && strikeSlot < PROFILE_STRIKE_SLOTS) {
+            PlayerProfile_EquipSkillSlot(strikeSlot++, idx);
+        } else if (defs[i].role == VH_ROLE_SUPPORT && supportSlot < PROFILE_SKILL_SLOTS) {
+            PlayerProfile_EquipSkillSlot(supportSlot++, idx);
+        }
+    }
+    PlayerProfile_SaveGlobal();
+}
+
 void UI_Hub_Init(void) {
     WuxiaUI_Init();
     s_modalOpen = false;
     s_modalTab = 0;
     s_selectedSlot = 0;
+    s_setFilter = -1;
+    s_skillScrollY = 0.0f;
     s_joinBoxOpen = false;
 }
 
@@ -88,8 +134,8 @@ void UI_Hub_UpdateDrawModal(void) {
 
     DrawRectangle(0, 0, (int)sw, (int)sh, (Color){ 6, 8, 14, 215 });
 
-    float pw = fminf(920.0f, sw - 36.0f);
-    float ph = fminf(575.0f, sh - 44.0f);
+    float pw = fminf(980.0f, sw - 32.0f);
+    float ph = fminf(610.0f, sh - 36.0f);
     Rectangle p = { sw * 0.5f - pw * 0.5f, sh * 0.5f - ph * 0.5f, pw, ph };
     WuxiaUI_DrawPanel(p, WUXIA_GOLD, true);
 
@@ -128,15 +174,24 @@ void UI_Hub_UpdateDrawModal(void) {
 
     if (s_modalTab == 0) {
         // Left: 7 Equipped Slots (5 Strike [1..5] + 2 Buff/Support [6..7])
-        WuxiaUI_DrawSectionHeader(p.x + 20.0f, p.y + 104.0f, 275.0f, "7 Ô CHIÊU THỨC (5 ĐẢ + 2 TRỢ)");
+        float leftX = p.x + 20.0f;
+        float leftW = 268.0f;
+        WuxiaUI_DrawSectionHeader(leftX, p.y + 104.0f, leftW, "7 Ô CHIÊU THỨC (5 ĐẢ + 2 TRỢ)");
+
         int eqIds[PROFILE_SKILL_SLOTS];
+        float slotTop = p.y + 128.0f;
+        float slotH = 54.0f;
+        float slotGap = 7.0f;
         for (int s = 0; s < PROFILE_SKILL_SLOTS; s++) {
-            Rectangle sr = { p.x + 20.0f, p.y + 128.0f + s * 58.0f, 275.0f, 52.0f };
+            float extraGap = (s >= PROFILE_STRIKE_SLOTS) ? 8.0f : 0.0f;
+            Rectangle sr = { leftX, slotTop + s * (slotH + slotGap) + extraGap, leftW, slotH };
             bool sel = (s == s_selectedSlot);
             bool hov = CheckCollisionPointRec(ctx->pointerPos, sr);
             bool isBuffSlot = (s >= PROFILE_STRIKE_SLOTS);
             int idx = Skill_GetIndexByName(prof->equippedSkillNames[s]);
             eqIds[s] = idx;
+            const char *rawName = (idx >= 0) ? GetRegisteredSkillName(idx) : NULL;
+            const VoHocSkillDef *sdef = rawName ? VoHoc_FindByName(rawName) : NULL;
             const char *sname = SkillDisplayNameVN(idx);
             int lvl = (idx >= 0) ? prof->skillLevel[idx] : 1;
             Color sc = (idx >= 0) ? GetRegisteredSkillColor(idx) : WUXIA_TEXT_MUTED;
@@ -147,49 +202,182 @@ void UI_Hub_UpdateDrawModal(void) {
                                  sel ? WUXIA_GOLD_BRIGHT : (isBuffSlot ? ColorAlpha(WUXIA_JADE, 0.55f) : WUXIA_BORDER_SUBTLE));
             DrawRectangle((int)sr.x, (int)sr.y, 4, (int)sr.height, isBuffSlot ? WUXIA_JADE : WUXIA_GOLD);
 
-            WuxiaUI_DrawText(TextFormat("%s [%d] · PvE Lv.%d | PvP Lv.1", isBuffSlot ? "TRỢ" : "ĐẢ", s + 1, lvl),
+            const char *setShort = sdef ? VoHocFilterShortLabel((int)sdef->setId) : "Cơ Bản";
+            WuxiaUI_DrawText(TextFormat("%s [%d] · %s · Lv.%d", isBuffSlot ? "TRỢ" : "ĐẢ", s + 1, setShort, lvl),
                              sr.x + 12.0f, sr.y + 6.0f, 11.0f, isBuffSlot ? WUXIA_JADE : WUXIA_TEXT_MUTED);
             WuxiaUI_DrawText(sname, sr.x + 12.0f, sr.y + 24.0f, 14.0f, sc);
             if (hov && ctx->pointerReleased) {
-                s_selectedSlot = s;
+                if (s_selectedSlot != s) {
+                    s_selectedSlot = s;
+                    s_skillScrollY = 0.0f;
+                }
             }
         }
 
-        // Loadout balance summary
+        // Right column: Loadout Summary + Set Filter Bar + Scrollable Skill Grid
+        float rightX = leftX + leftW + 20.0f;
+        float rightW = p.x + p.width - 20.0f - rightX;
+
         VoHocLoadoutSummary sum = VoHoc_EvalLoadout(eqIds, PROFILE_SKILL_SLOTS);
         const char *tierTxt = (sum.setTier >= VO_HOC_TIER_MAJOR_COUNT) ? "Đại Thành (7/7)"
                             : ((sum.setTier >= VO_HOC_TIER_MINOR_COUNT) ? "Tiểu Thành (4/7)" : "Trộn Bộ");
-        WuxiaUI_DrawText(TextFormat("Bộ: %s  ·  Q=%.2f  ·  Công:%d  Thủ:%d  Khống:%d  Trợ:%d",
-                                    tierTxt, sum.avgQ, sum.radar[0], sum.radar[1], sum.radar[2], sum.radar[3]),
-                         p.x + 314.0f, p.y + 104.0f, 12.5f, WUXIA_JADE);
+        const char *domSet = (sum.dominantSetId > VH_SET_NONE) ? VoHoc_GetSetName((VoHocSetId)sum.dominantSetId) : "Tự Do";
+        WuxiaUI_DrawText(TextFormat("%s · %s  |  Q=%.2f  ·  Công:%d  Thủ:%d  Khống:%d  Trợ:%d",
+                                    domSet, tierTxt, sum.avgQ, sum.radar[0], sum.radar[1], sum.radar[2], sum.radar[3]),
+                         rightX, p.y + 104.0f, 12.0f, WUXIA_JADE);
 
-        bool needBuff = (s_selectedSlot >= PROFILE_STRIKE_SLOTS);
-        WuxiaUI_DrawSectionHeader(p.x + 314.0f, p.y + 124.0f, p.width - 334.0f,
-                                  needBuff ? "CHỌN CHIÊU TRỢ / BUFF (Ô 6–7)" : "CHỌN CHIÊU ĐẢ (Ô 1–5)");
+        // Set filter pills: Tất cả | Thủy | Thổ | Kim | Hỏa | Cơ Bản
+        static const int kFilters[6] = {
+            -1,
+            VH_SET_THUY_TRIEU_QUYEN_PHAP,
+            VH_SET_BAN_THACH_BAT_CUC_QUYEN,
+            VH_SET_THIEN_CANG_DOAN_KIM_KIEM,
+            VH_SET_LIET_HOA_PHAN_THIEN_CUOC,
+            VH_SET_NONE
+        };
+        float filterY = p.y + 126.0f;
+        float pillGap = 6.0f;
+        float pillW = (rightW - pillGap * 5.0f) / 6.0f;
+        for (int f = 0; f < 6; f++) {
+            Rectangle fr = { rightX + f * (pillW + pillGap), filterY, pillW, 30.0f };
+            bool active = (s_setFilter == kFilters[f]);
+            if (WuxiaUI_DrawButton(fr, VoHocFilterShortLabel(kFilters[f]),
+                                   VoHocFilterColor(kFilters[f]), active, 12.0f)) {
+                s_setFilter = kFilters[f];
+                s_skillScrollY = 0.0f;
+            }
+        }
 
-        int vis = 0;
+        // Optional 1-click "Trang bị đủ 7 chiêu" banner when a specific Võ Học set is filtered
+        float listHeaderY = filterY + 38.0f;
+        if (s_setFilter > VH_SET_NONE && s_setFilter < VH_SET_COUNT) {
+            Rectangle eqAllBtn = { rightX, listHeaderY, rightW, 32.0f };
+            const char *setFullName = VoHoc_GetSetName((VoHocSetId)s_setFilter);
+            if (WuxiaUI_DrawButton(eqAllBtn,
+                                   TextFormat("Trang bị trọn bộ 7 chiêu: %s", setFullName),
+                                   VoHocFilterColor(s_setFilter), false, 12.5f)) {
+                EquipFullVoHocSet((VoHocSetId)s_setFilter);
+            }
+            listHeaderY += 38.0f;
+        }
+
+        // Collect all compatible skills sorted by Võ Học set order (1..VH_SET_COUNT-1, then 0/legacy)
+        int filtered[MAX_PROFILE_SKILLS];
+        int filteredCount = 0;
         int total = GetRegisteredSkillCount();
-        float colW = (p.width - 346.0f) * 0.5f;
-        for (int i = 0; i < total && i < MAX_PROFILE_SKILLS; i++) {
-            if (!IsSkillSelectable(i)) continue;
-            const char *name = GetRegisteredSkillName(i);
-            if (!VoHoc_IsSkillRoleCompatibleWithSlot(name, s_selectedSlot)) continue;
-            int col = vis % 2;
-            int row = vis / 2;
-            if (row >= 7) break;
-            Rectangle kr = { p.x + 314.0f + col * (colW + 10.0f), p.y + 148.0f + row * 54.0f, colW, 46.0f };
-            bool unl = prof->skillUnlocked[i];
-            Color c = unl ? GetRegisteredSkillColor(i) : WUXIA_TEXT_MUTED;
-            const char *disp = SkillDisplayNameVN(i);
-            const char *lbl = unl ? TextFormat("%s [Lv.%d]", disp, prof->skillLevel[i])
-                                  : TextFormat("%s [Chưa Mở]", disp);
-            if (WuxiaUI_DrawButton(kr, lbl, unl ? c : (Color){ 65, 70, 82, 200 }, false, 12.5f)) {
-                if (unl) {
-                    PlayerProfile_EquipSkillSlot(s_selectedSlot, i);
-                    PlayerProfile_SaveGlobal();
+        if (total > MAX_PROFILE_SKILLS) total = MAX_PROFILE_SKILLS;
+
+        for (int pass = 1; pass <= VH_SET_COUNT; pass++) {
+            int targetSet = (pass < VH_SET_COUNT) ? pass : VH_SET_NONE;
+            if (s_setFilter >= 0 && s_setFilter != targetSet) continue;
+            for (int i = 0; i < total; i++) {
+                if (!IsSkillSelectable(i)) continue;
+                const char *name = GetRegisteredSkillName(i);
+                if (!VoHoc_IsSkillRoleCompatibleWithSlot(name, s_selectedSlot)) continue;
+                const VoHocSkillDef *def = VoHoc_FindByName(name);
+                int skillSet = def ? (int)def->setId : VH_SET_NONE;
+                if (skillSet != targetSet) continue;
+                if (filteredCount < MAX_PROFILE_SKILLS) {
+                    filtered[filteredCount++] = i;
                 }
             }
-            vis++;
+        }
+
+        bool needBuff = (s_selectedSlot >= PROFILE_STRIKE_SLOTS);
+        WuxiaUI_DrawSectionHeader(rightX, listHeaderY, rightW,
+                                  TextFormat("%s (%d chiêu)",
+                                             needBuff ? "CHIÊU TRỢ / BUFF (Ô 6–7)" : "CHIÊU ĐẢ (Ô 1–5)",
+                                             filteredCount));
+
+        // Scrollable 2-column grid viewport
+        float gridTop = listHeaderY + 24.0f;
+        float gridH   = (p.y + p.height - 18.0f) - gridTop;
+        Rectangle viewRect = { rightX, gridTop, rightW, gridH };
+        DrawRectangleRec(viewRect, (Color){ 10, 13, 20, 175 });
+        DrawRectangleLinesEx(viewRect, 1.0f, WUXIA_BORDER_SUBTLE);
+
+        float cardH   = 50.0f;
+        float rowGap  = 8.0f;
+        float pad     = 8.0f;
+        float sbW     = 6.0f;
+        float colW    = (rightW - pad * 2.0f - 10.0f - sbW - 4.0f) * 0.5f;
+        int totalRows = (filteredCount + 1) / 2;
+        float contentH = (totalRows > 0) ? (pad * 2.0f + totalRows * cardH + (totalRows - 1) * rowGap) : 0.0f;
+        float maxScroll = fmaxf(0.0f, contentH - gridH);
+
+        if (CheckCollisionPointRec(ctx->pointerPos, viewRect)) {
+            float wheel = GetMouseWheelMove();
+            if (fabsf(wheel) > 0.01f) {
+                s_skillScrollY -= wheel * 42.0f;
+            }
+        }
+        if (s_skillScrollY < 0.0f) s_skillScrollY = 0.0f;
+        if (s_skillScrollY > maxScroll) s_skillScrollY = maxScroll;
+
+        BeginScissorMode((int)viewRect.x + 1, (int)viewRect.y + 1,
+                         (int)viewRect.width - 2, (int)viewRect.height - 2);
+        for (int k = 0; k < filteredCount; k++) {
+            int i = filtered[k];
+            int col = k % 2;
+            int row = k / 2;
+            Rectangle kr = {
+                viewRect.x + pad + col * (colW + 10.0f),
+                viewRect.y + pad + row * (cardH + rowGap) - s_skillScrollY,
+                colW,
+                cardH
+            };
+            if (kr.y + kr.height < viewRect.y || kr.y > viewRect.y + viewRect.height) continue;
+
+            const char *name = GetRegisteredSkillName(i);
+            const VoHocSkillDef *def = VoHoc_FindByName(name);
+            bool unl = prof->skillUnlocked[i];
+            Color elemCol = unl ? GetRegisteredSkillColor(i) : WUXIA_TEXT_MUTED;
+            const char *disp = SkillDisplayNameVN(i);
+
+            int equippedInSlot = -1;
+            for (int s = 0; s < PROFILE_SKILL_SLOTS; s++) {
+                if (eqIds[s] == i) { equippedInSlot = s; break; }
+            }
+
+            bool hov = CheckCollisionPointRec(ctx->pointerPos, viewRect) &&
+                       CheckCollisionPointRec(ctx->pointerPos, kr);
+            DrawRectangleRec(kr, (equippedInSlot == s_selectedSlot) ? (Color){ 44, 40, 24, 245 }
+                               : (hov ? WUXIA_BG_CARD_HOV : WUXIA_BG_CARD));
+            DrawRectangleLinesEx(kr, (equippedInSlot >= 0) ? 1.5f : 1.0f,
+                                 (equippedInSlot == s_selectedSlot) ? WUXIA_GOLD_BRIGHT
+                               : ((equippedInSlot >= 0) ? ColorAlpha(elemCol, 0.85f)
+                                                        : (hov ? WUXIA_GOLD_DIM : WUXIA_BORDER_SUBTLE)));
+            DrawRectangle((int)kr.x, (int)kr.y, 4, (int)kr.height, elemCol);
+
+            WuxiaUI_DrawText(disp, kr.x + 11.0f, kr.y + 7.0f, 13.5f, unl ? elemCol : WUXIA_TEXT_MUTED);
+            const char *subTxt = def
+                ? TextFormat("%s · %.0f MP · %.1fs CD", VoHocFilterShortLabel((int)def->setId), def->mana, def->cooldown)
+                : TextFormat("Cơ Bản · Lv.%d", prof->skillLevel[i]);
+            WuxiaUI_DrawText(subTxt, kr.x + 11.0f, kr.y + 27.0f, 10.5f, WUXIA_TEXT_MUTED);
+
+            if (equippedInSlot >= 0) {
+                WuxiaUI_DrawTextRight(TextFormat("Ô %d", equippedInSlot + 1),
+                                      kr.x + kr.width - 8.0f, kr.y + 8.0f, 10.5f, WUXIA_GOLD_BRIGHT);
+            } else if (!unl) {
+                WuxiaUI_DrawTextRight("Khóa", kr.x + kr.width - 8.0f, kr.y + 8.0f, 10.5f, WUXIA_CRIMSON);
+            }
+
+            if (hov && ctx->pointerReleased && unl) {
+                PlayerProfile_EquipSkillSlot(s_selectedSlot, i);
+                PlayerProfile_SaveGlobal();
+            }
+        }
+        EndScissorMode();
+
+        // Slim vertical scrollbar when content exceeds viewport
+        if (maxScroll > 1.0f) {
+            float trackH = gridH - 12.0f;
+            float thumbH = fmaxf(28.0f, trackH * (gridH / contentH));
+            float thumbY = viewRect.y + 6.0f + (s_skillScrollY / maxScroll) * (trackH - thumbH);
+            Rectangle track = { viewRect.x + viewRect.width - sbW - 4.0f, viewRect.y + 6.0f, sbW, trackH };
+            Rectangle thumb = { track.x, thumbY, sbW, thumbH };
+            DrawRectangleRec(track, (Color){ 26, 30, 42, 180 });
+            DrawRectangleRec(thumb, WUXIA_GOLD_DIM);
         }
     } else {
         // Tab 2: Dã Tẩu Shop & Alchemy

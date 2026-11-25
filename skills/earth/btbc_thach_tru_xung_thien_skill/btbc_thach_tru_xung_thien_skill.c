@@ -122,6 +122,7 @@ void CastBtbcThachTruXungThienSkill(int agentId, Vector3 startPos, Vector3 targe
     ccfg.veinGlowIntensity = 0.28f;
     VFX_ComposeEarthCrackRadial(tgt, TTXT_RADIUS * scale, &ccfg);
     VFX_ComposeGroundDustRing(tgt, VC_MAT_EARTH, 1.35f * scale, 0.35f);
+    PlayCastSound(EFFECT_PRESET_EARTH_CRACK);
 }
 
 static void TriggerThachTruEruption(ThachTruInst *inst) {
@@ -171,7 +172,9 @@ static void TriggerThachTruEruption(ThachTruInst *inst) {
     inst->ringSpikeHandle = VFX_ComposeEarthSpikeEx(inst->targetPos, inst->targetPos, &ringCfg);
 
     CameraFX_Shake(0.45f);
+    VFX_SpawnGroundWave(inst->targetPos, VC_MAT_EARTH, r * 1.15f, 0.38f);
     Wind_SpawnRadialBlast(inst->targetPos, r * 1.35f, 8.5f, 0.35f);
+    PlayImpactSound(EFFECT_PRESET_EARTH_CRACK);
 
     /* Apply 27.5 dmg, Launch 0.85s (v_y = 4.17), Weaken 35% (2.5s), +2 Chấn Ấn */
     int targets[16];
@@ -218,7 +221,15 @@ void UpdateBtbcThachTruXungThienSkill(float dt, Vector3 enemyPos, float enemyRad
     }
 }
 
-void DrawBtbcThachTruXungThienSkill(void) { }
+void DrawBtbcThachTruXungThienSkill(void) {
+    for (int i = 0; i < MAX_TTXT_INST; i++) {
+        const ThachTruInst *inst = &s_inst[i];
+        if (!inst->active || inst->erupted) continue;
+        float prog = Clamp(inst->elapsed / TTXT_TELEGRAPH_SEC, 0.0f, 1.0f);
+        VFX_ComposeRuneCircle(inst->targetPos, (Vector3){ 0.0f, 1.0f, 0.0f },
+                              VC_MAT_EARTH, TTXT_RADIUS * inst->sizeScale, prog, 1);
+    }
+}
 
 void UnloadBtbcThachTruXungThienSkill(void) {
     for (int i = 0; i < MAX_TTXT_INST; i++) {

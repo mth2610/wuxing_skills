@@ -1310,6 +1310,7 @@ static void GuidedEarth_DrawRockFaceted(const VC_GuidedRock *rock, const VFX_Gui
             rlVertex3f(v1.x, v1.y, v1.z);
         }
         rlEnd();
+        VFXRender_EndDraw(&scope);
     }
 
     rlPopMatrix();

@@ -23,6 +23,7 @@ typedef struct {
     int   deflectsRemaining;
     int   sweHandle;
     int   shieldHandle;
+    int   mirrorHandle;
 } ThuyKinhInst;
 
 static ThuyKinhInst s_inst[MAX_TKQT_INST];
@@ -42,8 +43,9 @@ static void SpawnDeflectSplashSSF(Vector3 pos, float force01) {
 }
 
 static void KillThuyKinhHandles(ThuyKinhInst *inst) {
-    if (inst->sweHandle >= 0) { LiquidSWE_Kill(inst->sweHandle); inst->sweHandle = -1; }
+    if (inst->sweHandle >= 0) { LiquidSWE_Stop(inst->sweHandle); inst->sweHandle = -1; }
     if (inst->shieldHandle >= 0) { VFX_FlowShield_Stop(inst->shieldHandle); inst->shieldHandle = -1; }
+    if (inst->mirrorHandle > 0) { VFX_WaterMirror_Stop(inst->mirrorHandle); inst->mirrorHandle = 0; }
 }
 
 static void AbortTtqpThuyKinh(int agentId) {
@@ -124,9 +126,11 @@ void CastTtqpThuyKinhQuyenThuanSkill(int agentId, Vector3 startPos, Vector3 targ
     inst->duration = 4.0f;
     inst->deflectsRemaining = 2;
 
-    /* 3D flowing water shield dome that follows the caster */
-    Vector3 shieldCenter = { anchor.x, anchor.y + 1.0f, anchor.z };
-    inst->shieldHandle = VFX_FlowShield_Spawn(shieldCenter, VC_MAT_WATER, 1.45f * scale, 1.0f);
+    /* 3D flowing water shield dome grounded at anchor (FlowShield adds +0.5*r internally) */
+    inst->shieldHandle = VFX_FlowShield_Spawn(anchor, VC_MAT_WATER, 1.45f * scale, 1.0f);
+    inst->mirrorHandle = VFX_WaterMirror_Spawn(anchor, 1.15f * scale, 2, 4.0f);
+    VFX_ComposeCleanseBurst(anchor, VC_MAT_WATER, 1.55f * scale);
+    VFX_SpawnGroundWave(anchor, VC_MAT_WATER, 5.0f * scale, 0.42f);
 
     LiquidSWEDesc desc = LiquidSWE_DefaultDesc();
     desc.pattern = LIQUID_SWE_PATTERN_ORBITAL_CHAKRAM;
@@ -139,6 +143,7 @@ void CastTtqpThuyKinhQuyenThuanSkill(int agentId, Vector3 startPos, Vector3 targ
     desc.duration = inst->duration;
     desc.deepColor = ELEMENT_COLOR_WATER;
     desc.cryoMode = 0.15f;
+    desc.fastMartialStrike = true;
     inst->sweHandle = LiquidSWE_Spawn(&desc);
 
     SpawnDeflectSplashSSF(anchor, 0.50f);
@@ -156,17 +161,27 @@ void UpdateTtqpThuyKinhQuyenThuanSkill(float dt, Vector3 enemyPos, float enemyRa
         const Agent *owner = Entity_GetAgent(inst->ownerAgentId);
         if (owner) {
             if (inst->shieldHandle >= 0) {
-                Vector3 center = { owner->position.x, owner->position.y + 1.0f, owner->position.z };
-                VFX_FlowShield_SetTransform(inst->shieldHandle, center);
+                VFX_FlowShield_SetTransform(inst->shieldHandle, owner->position);
                 float remainFrac = 1.0f - (inst->elapsed / inst->duration);
                 VFX_FlowShield_SetIntensity(inst->shieldHandle, remainFrac > 0.2f ? 1.0f : remainFrac * 5.0f);
             }
+            if (inst->mirrorHandle > 0) {
+                VFX_WaterMirror_SetCenter(inst->mirrorHandle, owner->position);
+            }
+            if (inst->sweHandle >= 0) {
+                LiquidSWE_SetOrigin(inst->sweHandle, owner->position, (Vector3){ 0.0f, 0.0f, 1.0f });
+            }
             if (inst->deflectsRemaining > 0) {
-                int deflected = Combat_DeflectProjectilesInRadius(owner->position, 1.85f, inst->ownerAgentId);
+                CombatDeflectInfo dHits[2];
+                int deflected = Combat_DeflectProjectilesInRadiusEx(owner->position, 1.85f, inst->ownerAgentId,
+                                                                    inst->deflectsRemaining, dHits, 2);
                 if (deflected > 0) {
                     inst->deflectsRemaining -= deflected;
                     if (inst->deflectsRemaining < 0) inst->deflectsRemaining = 0;
-                    SpawnDeflectSplashSSF(owner->position, 0.85f);
+                    for (int b = 0; b < deflected; b++) {
+                        VFX_WaterMirror_ShatterOne(inst->mirrorHandle, dHits[b].pos);
+                        SpawnDeflectSplashSSF(dHits[b].pos, 0.85f);
+                    }
                     PlayImpactSound(EFFECT_PRESET_WATER_SPLASH);
                 }
             }

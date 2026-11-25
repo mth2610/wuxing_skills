@@ -170,11 +170,27 @@ void MapManager_ResolveCollision(Vector3 *pos, float agentRadius, float stepHeig
     if (fn) fn(pos, agentRadius, stepHeight, inOutGroundY);
 }
 
-static MapGroundDisplacementFn s_groundDisplacementHook = NULL;
+#define MAP_MAX_DISPLACEMENT_HOOKS 4
+static MapGroundDisplacementFn s_groundDisplacementHooks[MAP_MAX_DISPLACEMENT_HOOKS] = { NULL };
 static MapGroundWaveParamsFn s_groundWaveParamsHook = NULL;
 
+void MapManager_RegisterGroundDisplacementHook(int slotId, MapGroundDisplacementFn fn) {
+    if (slotId < 0 || slotId >= MAP_MAX_DISPLACEMENT_HOOKS) return;
+    s_groundDisplacementHooks[slotId] = fn;
+}
+
 void MapManager_SetGroundDisplacementHook(MapGroundDisplacementFn fn) {
-    s_groundDisplacementHook = fn;
+    MapManager_RegisterGroundDisplacementHook(0, fn);
+}
+
+static float MapManager_EvalGroundDisplacement(float x, float z) {
+    float total = 0.0f;
+    for (int i = 0; i < MAP_MAX_DISPLACEMENT_HOOKS; i++) {
+        if (s_groundDisplacementHooks[i]) {
+            total += s_groundDisplacementHooks[i](x, z);
+        }
+    }
+    return total;
 }
 
 void MapManager_SetGroundWaveParamsHook(MapGroundWaveParamsFn fn) {
@@ -197,8 +213,8 @@ bool MapManager_SampleGroundSurfaceAt(float x, float z, Vector3 *outPosition, Ve
     if (s_mapCount == 0) return false;
     MapGroundSurfaceSampleFn fn = s_maps[s_activeMapIndex].SampleGroundSurface;
     bool res = fn ? fn(x, z, outPosition, outNormal) : false;
-    if (res && outPosition && s_groundDisplacementHook) {
-        outPosition->y += s_groundDisplacementHook(x, z);
+    if (res && outPosition) {
+        outPosition->y += MapManager_EvalGroundDisplacement(x, z);
     }
     return res;
 }
@@ -208,9 +224,7 @@ float MapManager_GetGroundHeightAt(float x, float z) {
     if (s_mapCount > 0 && s_maps[s_activeMapIndex].GetGroundHeight) {
         baseY = s_maps[s_activeMapIndex].GetGroundHeight(x, z);
     }
-    if (s_groundDisplacementHook) {
-        baseY += s_groundDisplacementHook(x, z);
-    }
+    baseY += MapManager_EvalGroundDisplacement(x, z);
     return baseY;
 }
 

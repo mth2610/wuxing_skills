@@ -67,9 +67,13 @@ void Afterimage_Draw(void) {
         float dissolve = 1.0f - t;                    // ramp 0→1 over life
         // Tint alpha encodes opacity
         Color tint = s_pool[i].tint;
-        tint.a = (unsigned char)(tint.a * t * 0.7f);
+        tint.a = (unsigned char)(tint.a * t * 0.72f);
 
-        Material_SetFloat(&s_mat, "u_dissolve", dissolve);
+        rlDrawRenderBatchActive();
+        if (s_mat.shader.id != 0) {
+            BeginShaderMode(s_mat.shader);
+            Material_SetFloat(&s_mat, "u_dissolve", dissolve);
+        }
         for (int m = 0; m < s_pool[i].model.meshCount; m++) {
             Material mat = s_pool[i].model.materials[s_pool[i].model.meshMaterial[m]];
             if (s_mat.shader.id != 0) {
@@ -77,6 +81,10 @@ void Afterimage_Draw(void) {
                 mat.maps[MATERIAL_MAP_DIFFUSE].color = tint;
             }
             DrawMesh(s_pool[i].model.meshes[m], mat, s_pool[i].transform);
+        }
+        rlDrawRenderBatchActive();
+        if (s_mat.shader.id != 0) {
+            EndShaderMode();
         }
     }
 

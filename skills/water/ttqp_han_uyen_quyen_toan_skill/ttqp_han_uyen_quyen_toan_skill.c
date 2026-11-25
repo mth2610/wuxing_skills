@@ -143,9 +143,19 @@ void UpdateTtqpHanUyenQuyenToanSkill(float dt, Vector3 enemyPos, float enemyRadi
             desc.duration = inst->duration - HYQT_TELEGRAPH_SECS;
             desc.deepColor = ELEMENT_COLOR_WATER;
             desc.cryoMode = 1.0f; /* Flash-freeze water cyclone */
+            desc.fastMartialStrike = true;
             inst->sweHandle = LiquidSWE_Spawn(&desc);
 
             SpawnGeyserSSF(inst->center, 8.5f, 1.0f, 1.45f * inst->sizeScale);
+            VFX_SpawnGroundWave(inst->center, VC_MAT_ICE, radius, 0.44f);
+            VFX_FreezePatch_Spawn(inst->center, radius, 0.25f, 1.25f, 0.55f,
+                                  (Color){ 85, 200, 255, 225 }, (Color){ 215, 246, 255, 235 });
+            VFX_IceCrystalConfig icfg = VFX_IceCrystal_DefaultConfig();
+            VFX_IceCrystal_ApplyPreset(&icfg, VFX_ICE_PRESET_LOTUS_FROST_NOVA);
+            icfg.formationRadius = radius * 0.72f;
+            icfg.height = 1.65f * inst->sizeScale;
+            icfg.holdDuration = 0.85f;
+            VFX_ComposeIceCrystalEx(inst->center, inst->center, &icfg);
 
             int ids[24];
             int cnt = Entity_GetNearbyTargets(inst->center, radius, ids, 24);

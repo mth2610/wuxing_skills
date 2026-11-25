@@ -48,6 +48,8 @@
 // The surviving compositions. F0 (28/07/2026) deleted the rest; see
 // visual_composer.h for what remains and why.
 #include "common/common.inl"
+#include "common/vc_combat_readability.inl"
+#include "common/vc_martial_shockcone.inl"
 #include "fire/flame_volume.inl"   // F3 — reads vc_smoke_puff.inl's sheet, so it comes after it
 #include "fire/vc_fireball_burst.inl" // one-shot primary; shares FVol's owned packed-sheet assets
 
@@ -62,6 +64,9 @@
 #include "earth/vc_stone_armor.inl"
 #include "earth/vc_stone_formation_zone.inl"
 #include "metal/metal.inl"
+#include "water/vc_hydro_tether.inl"
+#include "water/vc_water_mirror.inl"
+#include "fire/vc_fire_martial.inl"
 #include "wood/wood.inl"
 #include "taiji/vc_black_hole.inl"
 
@@ -145,6 +150,7 @@ void VFX_Compose_Update(float dt)
     VC_GranularSand_Update(dt);
     VC_SandFunnel_Update(dt);
     VC_GuidedLiquid_Update(dt);
+    WaterRing_Update(dt);
     VC_WaterDragon_Update(dt);
     VC_Tsunami_Update(dt);
     VC_FreezePatch_Update(dt);
@@ -155,6 +161,12 @@ void VFX_Compose_Update(float dt)
     VC_MetalResonanceArray_Update(dt);
     VC_MetalParryGuard_Update(dt);
     VC_MetalMagneticZone_Update(dt);
+    VC_GroundWavePool_Update(dt);
+    VC_ShockRingPool_Update(dt);
+    VC_MartialShockCone_Update(dt);
+    VC_HydroTether_Update(dt);
+    VC_WaterMirror_Update(dt);
+    VC_FireMartial_Update(dt);
     /* Five-body liquid stress lab (WUXING_LIQUID_BENCH=1). The heartbeat keeps
      * the fixture alive; simulation and surface submission stay in the engine's
      * normal update/composite phases. */
@@ -217,6 +229,12 @@ void VFX_Compose_Draw3D(Camera3D cam)
     VC_MetalResonanceArray_Draw3D(cam);
     VC_MetalParryGuard_Draw3D(cam);
     VC_MetalMagneticZone_Draw3D(cam);
+    VC_GroundWavePool_Draw3D(cam);
+    VC_ShockRingPool_Draw3D(cam);
+    VC_MartialShockCone_Draw3D(cam);
+    VC_HydroTether_Draw3D(cam);
+    VC_WaterMirror_Draw3D(cam);
+    VC_FireMartial_Draw3D(cam);
 }
 
 void VFX_Compose_DrawRefraction(Camera3D cam)
@@ -231,6 +249,7 @@ void VFX_Compose_DrawRefraction(Camera3D cam)
 void VFX_Compose_SubmitScreenSpaceVFX(void)
 {
     VC_GuidedLiquid_SubmitSurface();
+    WaterRing_SubmitSurface();
     VC_Tsunami_SubmitSurface();
     if (LiquidBench_EnvEnabled()) LiquidBench_SubmitSurface();
 }

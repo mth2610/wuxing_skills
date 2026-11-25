@@ -109,6 +109,14 @@ int Combat_QueryProjectiles(CombatProjectileInfo *out, int max);
 // event so it despawns + draws its clash VFX. Call BETWEEN the skill
 // updates (submissions) and Combat_Update — i.e. from the Phong skill's own
 // Update. Returns the number of projectiles destroyed.
+typedef struct {
+    Vector3       pos;
+    CombatElement elem;
+    int           ownerAgentId;
+} CombatDeflectInfo;
+
 int Combat_DeflectProjectilesInRadius(Vector3 center, float radius, int deflectorAgentId);
+int Combat_DeflectProjectilesInRadiusEx(Vector3 center, float radius, int deflectorAgentId,
+                                        int maxCount, CombatDeflectInfo *outHits, int maxOut);
 
 #endif // COMBAT_H

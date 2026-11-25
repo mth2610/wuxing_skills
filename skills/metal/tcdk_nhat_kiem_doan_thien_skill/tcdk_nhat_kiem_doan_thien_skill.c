@@ -153,6 +153,8 @@ void UpdateTcdkNhatKiemDoanThienSkill(float dt, Vector3 enemyPos, float enemyRad
             VFX_MetalSlash_Spawn(midPos, inst->dir, slashNorm, 2.55f * inst->sizeScale, 135.0f, 0.44f, inst->sizeScale, false);
             Vector3 pB = Vector3Add(pA, Vector3Scale(inst->dir, dist));
             VFX_MetalSeverLine_Spawn(pA, pB, 0.42f, inst->sizeScale);
+            VFX_MartialShockCone_Spawn(pA, inst->dir, VC_MAT_METAL, 3.2f * inst->sizeScale, 1.05f * inst->sizeScale, 0.24f);
+            VFX_SpawnShockRing(pA, inst->dir, VC_MAT_METAL, 1.8f * inst->sizeScale, 0.26f);
             Wind_SpawnGust(pA, inst->dir, 2.0f * inst->sizeScale, 11.0f, 0.22f);
         }
 
@@ -188,6 +190,10 @@ void UpdateTcdkNhatKiemDoanThienSkill(float dt, Vector3 enemyPos, float enemyRad
                 Entity_ApplyStun(tid, 0.55f);
                 TimeFX_Hitstop(0.065f, 0.06f);
                 VFX_ComposeContactSparkMode(cur, VC_MAT_METAL, 1.0f * inst->sizeScale, 1.0f, CONTACT_SPARK_CENTRIFUGAL);
+                if (mult > 1.01f) {
+                    VFX_SpawnShockRing((Vector3){ cur.x, cur.y + 0.95f, cur.z }, (Vector3){ 0.0f, 1.0f, 0.0f }, VC_MAT_METAL, 2.4f * inst->sizeScale, 0.34f);
+                    VFX_SpawnGroundWave(cur, VC_MAT_METAL, 2.6f * inst->sizeScale, 0.36f);
+                }
                 PlayImpactSound(EFFECT_PRESET_METAL_SHARD);
                 break; /* Single-target finisher (N = 1.0) */
             }

@@ -218,9 +218,8 @@ void VFX_StoneArmor_SetActivePlates(int handle, int activePlates) {
             float l = Vector3Length(outDir);
             if (l > 0.001f) outDir = Vector3Scale(outDir, 4.4f / l);
             VFX_ComposeDebrisShards(platePos, outDir, VC_MAT_EARTH, 0.052f * inst->scale, 7);
-            VFX_ComposeImpactDustVariant(platePos, VC_MAT_EARTH, 0.45f * inst->scale, 0.38f, VFX_IMPACT_DUST_VARIANT_DUST_PUFF);
+            VFX_ComposeImpactDustVariant(platePos, VC_MAT_EARTH, 0.45f * inst->scale, 0.38f, VFX_IMPACT_DUST_VARIANT_SHADER_DUST);
         }
-        CameraFX_Shake(0.10f);
     }
     inst->activePlates = activePlates;
 }

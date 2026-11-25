@@ -75,7 +75,7 @@ static void ShatterSlabAt(Vector3 pos, Vector3 dir, float scale) {
     Vector3 vel = { -dir.x * 2.5f, 3.2f, -dir.z * 2.5f };
     VFX_ComposeDebrisShards(pos, vel, VC_MAT_EARTH, 0.058f * scale, 6);
     VFX_ComposeImpactDustVariant(pos, VC_MAT_EARTH, 0.68f * scale, 0.45f, VFX_IMPACT_DUST_VARIANT_DUST_PUFF);
-    VFX_ComposeGroundWave(pos, VC_MAT_EARTH, 1.15f * scale, 0.22f, VFX_GroundHeightFromMap, NULL);
+    VFX_SpawnGroundWave(pos, VC_MAT_EARTH, 1.15f * scale, 0.28f);
 
     VFX_EarthCrackConfig ccfg = VFX_EarthCrack_DefaultConfig();
     ccfg.spreadDuration = 0.12f;
@@ -84,6 +84,7 @@ static void ShatterSlabAt(Vector3 pos, Vector3 dir, float scale) {
     ccfg.veinGlowIntensity = 0.18f;
     VFX_ComposeEarthCrackRadial(pos, 1.05f * scale, &ccfg);
     Wind_SpawnRadialBlast(pos, 1.6f * scale, 4.0f, 0.18f);
+    PlayImpactSound(EFFECT_PRESET_EARTH_CRACK);
     CameraFX_Shake(0.18f);
 }
 
@@ -162,6 +163,7 @@ void CastBtbcKhaiSonThachDanSkill(int agentId, Vector3 startPos, Vector3 target,
     VFX_ComposeGroundDustRing(inst->pos, VC_MAT_EARTH, 0.55f * scale, 0.40f);
     VFX_ComposeDebrisShards(inst->pos, (Vector3){ 0.0f, 2.6f, 0.0f }, VC_MAT_EARTH, 0.038f * scale, 5);
     Wind_SpawnRadialBlast(inst->pos, 1.2f * scale, 3.5f, 0.15f);
+    PlayCastSound(EFFECT_PRESET_EARTH_CRACK);
 }
 
 void UpdateBtbcKhaiSonThachDanSkill(float dt, Vector3 enemyPos, float enemyRadius) {

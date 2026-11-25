@@ -105,6 +105,7 @@ void CastTcdkKimCangPhanChanSkill(int agentId, Vector3 startPos, Vector3 target,
     inst->deflectsRemaining = 2;
     inst->guardHandle       = VFX_MetalParryGuard_Spawn(anchor, inst->radius, inst->duration);
 
+    VFX_ComposeCleanseBurst(anchor, VC_MAT_METAL, 1.45f * scale);
     PlayCastSound(EFFECT_PRESET_METAL_SHARD);
 }
 
@@ -128,16 +129,22 @@ void UpdateTcdkKimCangPhanChanSkill(float dt, Vector3 enemyPos, float enemyRadiu
         Vector3 fwd = { sinf(owner->facingYaw), 0.0f, cosf(owner->facingYaw) };
         VFX_MetalParryGuard_SetTransform(inst->guardHandle, owner->position, fwd);
 
-        /* Elastic parry deflect: up to 2 enemy projectiles */
+        /* Elastic parry deflect: up to 2 enemy projectiles at exact intercept point */
         if (inst->deflectsRemaining > 0) {
-            int broken = Combat_DeflectProjectilesInRadius(owner->position, inst->radius, inst->ownerAgentId);
+            CombatDeflectInfo defs[4];
+            int broken = Combat_DeflectProjectilesInRadiusEx(owner->position, inst->radius,
+                                                             inst->ownerAgentId, inst->deflectsRemaining, defs, 4);
             if (broken > 0) {
-                inst->deflectsRemaining -= broken;
-                if (inst->deflectsRemaining < 0) inst->deflectsRemaining = 0;
                 Skill_RequestAnim(inst->ownerAgentId, "sword_and_shield_slash_2", 0.25f);
-                Vector3 hitPt = Vector3Add(owner->position, Vector3Scale(fwd, inst->radius * 0.7f));
-                hitPt.y += 1.05f;
-                VFX_MetalParryGuard_TriggerDeflect(inst->guardHandle, hitPt);
+                for (int d = 0; d < broken && inst->deflectsRemaining > 0; d++) {
+                    inst->deflectsRemaining--;
+                    Vector3 hitPt = defs[d].pos;
+                    Vector3 nrm = Vector3Subtract(hitPt, owner->position);
+                    nrm.y = 0.0f;
+                    nrm = (Vector3Length(nrm) > 0.01f) ? Vector3Normalize(nrm) : fwd;
+                    VFX_MetalParryGuard_TriggerDeflect(inst->guardHandle, hitPt);
+                    VFX_ComposeDeflectFlash(hitPt, nrm, VC_MAT_METAL, 0.95f);
+                }
                 PlayImpactSound(EFFECT_PRESET_METAL_SHARD);
             }
         }

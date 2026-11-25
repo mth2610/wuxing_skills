@@ -125,6 +125,7 @@ void CastTtqpTrieuTichLinhTuyenSkill(int agentId, Vector3 startPos, Vector3 targ
     inst->sweHandle = LiquidSWE_Spawn(&desc);
 
     SpawnSpringPulseSSF(inst->center, 0.75f, 1.25f * scale);
+    VFX_SpawnGroundWave(inst->center, VC_MAT_WATER, 4.0f * scale, 0.44f);
     VFX_ComposeMistVeilEx(inst->center, VC_MAT_WATER, 4.0f * scale, inst->duration);
     PlayCastSound(EFFECT_PRESET_WATER_SPLASH);
 }
@@ -171,7 +172,7 @@ void UpdateTtqpTrieuTichLinhTuyenSkill(float dt, Vector3 enemyPos, float enemyRa
         }
 
         if (inst->elapsed >= inst->duration) {
-            if (inst->sweHandle >= 0) LiquidSWE_Kill(inst->sweHandle);
+            if (inst->sweHandle >= 0) LiquidSWE_Stop(inst->sweHandle);
             inst->sweHandle = -1;
             inst->active = false;
         }

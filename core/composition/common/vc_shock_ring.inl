@@ -596,3 +596,56 @@ void VFX_ComposeShockRing(Vector3 center, Vector3 normal, VC_MaterialId mat,
         VFXRender_EndDraw(&renderScope);
     }
 }
+
+// ── Pooled one-shot wrapper for Update/Cast callers ──────────────────────────
+#define VC_SHOCK_RING_POOL_MAX 16
+typedef struct {
+    bool active;
+    Vector3 center;
+    Vector3 normal;
+    VC_MaterialId mat;
+    float radius;
+    float elapsed;
+    float duration;
+} VC_ShockRingPoolSlot;
+
+static VC_ShockRingPoolSlot s_srPool[VC_SHOCK_RING_POOL_MAX] = {0};
+
+int VFX_SpawnShockRing(Vector3 center, Vector3 normal, VC_MaterialId mat, float radius, float duration)
+{
+    int slot = -1;
+    for (int i = 0; i < VC_SHOCK_RING_POOL_MAX; i++) {
+        if (!s_srPool[i].active) { slot = i; break; }
+    }
+    if (slot < 0) slot = 0;
+    s_srPool[slot].active = true;
+    s_srPool[slot].center = center;
+    s_srPool[slot].normal = (Vector3LengthSqr(normal) > 1e-5f) ? Vector3Normalize(normal) : (Vector3){ 0.0f, 1.0f, 0.0f };
+    s_srPool[slot].mat = mat;
+    s_srPool[slot].radius = (radius > 0.1f) ? radius : 1.2f;
+    s_srPool[slot].elapsed = 0.0f;
+    s_srPool[slot].duration = (duration > 0.06f) ? duration : 0.35f;
+    return slot + 1;
+}
+
+static void VC_ShockRingPool_Update(float dt)
+{
+    for (int i = 0; i < VC_SHOCK_RING_POOL_MAX; i++) {
+        if (!s_srPool[i].active) continue;
+        s_srPool[i].elapsed += dt;
+        if (s_srPool[i].elapsed >= s_srPool[i].duration) {
+            s_srPool[i].active = false;
+        }
+    }
+}
+
+static void VC_ShockRingPool_Draw3D(Camera3D cam)
+{
+    (void)cam;
+    for (int i = 0; i < VC_SHOCK_RING_POOL_MAX; i++) {
+        if (!s_srPool[i].active) continue;
+        float t01 = Clamp(s_srPool[i].elapsed / s_srPool[i].duration, 0.0f, 1.0f);
+        VFX_ComposeShockRing(s_srPool[i].center, s_srPool[i].normal, s_srPool[i].mat,
+                             s_srPool[i].radius, t01);
+    }
+}

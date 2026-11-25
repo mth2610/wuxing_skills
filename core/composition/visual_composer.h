@@ -1380,6 +1380,8 @@ void VFX_ComposeCoreGlow(Vector3 center, VC_MaterialId mat, float radius, float 
 // running 0 → 1. `radius` is where the front arrives at t01 = 1, in metres.
 void VFX_ComposeShockRing(Vector3 center, Vector3 normal, VC_MaterialId mat,
                           float radius, float t01);
+int  VFX_SpawnShockRing(Vector3 center, Vector3 normal, VC_MaterialId mat,
+                        float radius, float duration);
 
 
 // ── PRIMARY. Debris shards ──────────────────────────────────────────────────
@@ -1703,6 +1705,8 @@ void VFX_KillVolumeTrail(int handle);
 // once it draws a single frame and looks like nothing happened.
 void VFX_ComposeGroundWave(Vector3 center, VC_MaterialId mat, float radius,
                            float t01, GroundHeightSampleFn heightFn, void *ud);
+int  VFX_SpawnGroundWave(Vector3 center, VC_MaterialId mat, float radius,
+                         float duration);
 // The terrain sampler almost every caller wants: the ACTIVE map's ground height.
 // Pass it as `heightFn` (with ud = NULL). Passing NULL instead gives a flat ring
 // at center.y, which looks correct on level ground and wrong on any slope.
@@ -2482,5 +2486,52 @@ void VFX_WaterRing_Stop(void);
 
 // Screen-space producers that submit SSF streams before LiquidSurface_HasPending().
 void VFX_Compose_SubmitScreenSpaceVFX(void);
+
+// ── Shared Martial Combat Readability (Clash, Deflect, Cleanse, Meditate, Marks/CC) ──
+typedef struct {
+    Vector3 position;
+    int     marks[5];    /* 0=Water, 1=Wood, 2=Fire, 3=Earth, 4=Metal (0..3 stacks) */
+    bool    frozen;
+    bool    rooted;
+    bool    silenced;
+    bool    stunned;
+    bool    vulnerable;
+    bool    weakened;
+    bool    burning;
+    bool    bleeding;
+} VFX_AgentStatusVisual;
+
+void VFX_ComposeDeflectFlash(Vector3 pos, Vector3 normal, VC_MaterialId mat, float scale);
+void VFX_ComposeClashBurst(Vector3 pos, int elemA, int elemB, int outcome);
+void VFX_ComposeCleanseBurst(Vector3 pos, VC_MaterialId mat, float radius);
+void VFX_ComposeMeditateAura(Vector3 pos, float progress01, float time);
+void VFX_DrawAgentStatusVisual(const VFX_AgentStatusVisual *v, Camera3D cam);
+
+// ── Shared Martial Shock-Cone, Water Tether/Mirror, & Fire Martial Primitives ──
+int  VFX_MartialShockCone_Spawn(Vector3 origin, Vector3 dir, VC_MaterialId mat,
+                                float length, float maxRadius, float duration);
+
+int  VFX_HydroTether_Spawn(Vector3 from, Vector3 to, float thickness, float duration);
+void VFX_HydroTether_SetEndpoints(int handle, Vector3 from, Vector3 to);
+void VFX_HydroTether_Kill(int handle);
+
+int  VFX_WaterMirror_Spawn(Vector3 center, float radius, int mirrors, float duration);
+void VFX_WaterMirror_SetCenter(int handle, Vector3 center);
+void VFX_WaterMirror_ShatterOne(int handle, Vector3 hitPos);
+void VFX_WaterMirror_Stop(int handle);
+
+int  VFX_FireKickArc_Spawn(Vector3 origin, Vector3 dir, Vector3 planeNormal,
+                           float radius, float arcDeg, float duration, float scale);
+int  VFX_FireCrescentWave_Spawn(Vector3 origin, Vector3 dir, float range,
+                                float coneDeg, float duration, float scale);
+int  VFX_FireCyclone_Spawn(Vector3 center, float radius, float height, float duration);
+void VFX_FireCyclone_SetCenter(int handle, Vector3 center);
+int  VFX_FirePhoenixWard_Spawn(Vector3 center, float radius, int featherCount, float duration);
+void VFX_FirePhoenixWard_SetCenter(int handle, Vector3 center);
+void VFX_FirePhoenixWard_ExpendFeather(int handle, Vector3 hitPos);
+void VFX_FirePhoenixWard_Stop(int handle);
+int  VFX_FireScorchFormation_Spawn(Vector3 center, float radius, float duration);
+void VFX_FireScorchFormation_SetPulse(int handle, float pulse01);
+void VFX_FireScorchFormation_Stop(int handle);
 
 #endif // VISUAL_COMPOSER_H

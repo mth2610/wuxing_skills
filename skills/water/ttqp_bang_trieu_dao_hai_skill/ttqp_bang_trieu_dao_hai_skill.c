@@ -140,6 +140,7 @@ void CastTtqpBangTrieuDaoHaiSkill(int agentId, Vector3 startPos, Vector3 target,
     desc.curlIntensity = 1.35f;
     desc.deepColor = ELEMENT_COLOR_WATER;
     desc.cryoMode = 0.25f;
+    desc.fastMartialStrike = true;
     inst->sweHandle = LiquidSWE_Spawn(&desc);
 
     PlayCastSound(EFFECT_PRESET_WATER_SPLASH);
@@ -161,15 +162,22 @@ void UpdateTtqpBangTrieuDaoHaiSkill(float dt, Vector3 enemyPos, float enemyRadiu
             if (frac > 1.0f) frac = 1.0f;
             float waveDist = frac * 6.0f * inst->sizeScale;
             Vector3 crest = Vector3Add(inst->origin, Vector3Scale(inst->dir, waveDist));
-            Combat_DeflectProjectilesInRadius(crest, 2.3f * inst->sizeScale, inst->ownerAgentId);
+            CombatDeflectInfo dHits[4];
+            int deflected = Combat_DeflectProjectilesInRadiusEx(crest, 2.3f * inst->sizeScale, inst->ownerAgentId, 4, dHits, 4);
+            for (int b = 0; b < deflected; b++) {
+                VFX_ComposeDeflectFlash(dHits[b].pos, inst->dir, VC_MAT_WATER, 0.95f * inst->sizeScale);
+            }
 
             if (!inst->splash1Done && frac >= 0.45f) {
                 inst->splash1Done = true;
                 SpawnWaveCrashSSF(crest, inst->dir, 0.80f, 1.20f * inst->sizeScale);
+                VFX_SpawnGroundWave(crest, VC_MAT_WATER, 2.2f * inst->sizeScale, 0.36f);
             }
             if (!inst->splash2Done && frac >= 0.88f) {
                 inst->splash2Done = true;
                 SpawnWaveCrashSSF(crest, inst->dir, 0.90f, 1.35f * inst->sizeScale);
+                VFX_FreezePatch_Spawn(crest, 2.1f * inst->sizeScale, 0.20f, 0.90f, 0.45f,
+                                      (Color){ 85, 195, 245, 200 }, (Color){ 210, 242, 255, 215 });
             }
 
             int ids[24];

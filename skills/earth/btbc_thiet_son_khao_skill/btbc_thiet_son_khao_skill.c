@@ -128,6 +128,7 @@ void CastBtbcThietSonKhaoSkill(int agentId, Vector3 startPos, Vector3 target, Sk
     VFX_ComposeEarthCrackAB(anchor, endPos, 0.44f * scale, &ccfg);
     VFX_ComposeGroundDustRing(anchor, VC_MAT_EARTH, 0.78f * scale, 0.50f);
     Wind_SpawnRadialBlast(anchor, 1.6f * scale, 4.5f, 0.20f);
+    PlayCastSound(EFFECT_PRESET_EARTH_CRACK);
 }
 
 static void TriggerThietSonImpact(ThietSonInst *inst, Vector3 hitPos) {
@@ -147,12 +148,15 @@ static void TriggerThietSonImpact(ThietSonInst *inst, Vector3 hitPos) {
 
     if (hitAny) TimeFX_Hitstop(0.045f, 0.08f);
     CameraFX_Shake(0.32f);
-    VFX_ComposeGroundWave(hitPos, VC_MAT_EARTH, 1.85f * inst->sizeScale, 0.28f, VFX_GroundHeightFromMap, NULL);
+    VFX_SpawnGroundWave(hitPos, VC_MAT_EARTH, 1.85f * inst->sizeScale, 0.32f);
+    VFX_MartialShockCone_Spawn((Vector3){ hitPos.x, hitPos.y + 0.95f, hitPos.z }, inst->dir,
+                               VC_MAT_EARTH, 2.5f * inst->sizeScale, 1.15f * inst->sizeScale, 0.28f);
     VFX_ComposeGroundDustRing(hitPos, VC_MAT_EARTH, 1.15f * inst->sizeScale, 0.55f);
     VFX_ComposeImpactDustVariant(hitPos, VC_MAT_EARTH, 1.10f * inst->sizeScale, 0.60f, VFX_IMPACT_DUST_VARIANT_DUST_PUFF);
     VFX_ComposeDebrisShards(hitPos, (Vector3){ inst->dir.x * 2.8f, 3.4f, inst->dir.z * 2.8f },
                             VC_MAT_EARTH, 0.058f * inst->sizeScale, 10);
     Wind_SpawnRadialBlast(hitPos, 2.4f * inst->sizeScale, 6.5f, 0.25f);
+    PlayImpactSound(EFFECT_PRESET_EARTH_CRACK);
 }
 
 void UpdateBtbcThietSonKhaoSkill(float dt, Vector3 enemyPos, float enemyRadius) {

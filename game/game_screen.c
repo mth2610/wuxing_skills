@@ -1432,6 +1432,14 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
                      evs[i].outcome == CLASH_MUTUAL_DESTROY)
             {
                 Audio_PlaySFXAt(SFX_CLASH, evs[i].clashPoint); // Đấu Pháp
+                if (evs[i].outcome == CLASH_A_WINS || evs[i].outcome == CLASH_MUTUAL_DESTROY)
+                {
+                    int selfElem = (player && Entity_GetAgent(player->agentId))
+                                       ? Entity_GetAgent(player->agentId)->currentElement
+                                       : 0;
+                    VFX_ComposeClashBurst(evs[i].clashPoint, selfElem, (int)evs[i].otherElem,
+                                          (evs[i].outcome == CLASH_A_WINS) ? 1 : 0);
+                }
                 if (evs[i].outcome == CLASH_A_WINS)
                 {
                     Entity_RestoreMana(player->agentId, 15.0f);
@@ -1767,11 +1775,15 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
         }
         if (selfAgent->parryWindowTimer > 0.23f && !Net_ClientDrivesWorld())
         {
-            int broken = Combat_DeflectProjectilesInRadius(player->position, 1.85f, player->agentId);
+            CombatDeflectInfo hits[4];
+            int broken = Combat_DeflectProjectilesInRadiusEx(player->position, 1.85f, player->agentId, 4, hits, 4);
             if (broken > 0)
             {
                 Entity_RestoreMana(player->agentId, 12.0f * (float)broken);
-                VFX_ComposeContactSparkMode(player->position, VC_MAT_METAL, 0.90f, 0.95f, CONTACT_SPARK_CENTRIFUGAL);
+                for (int b = 0; b < broken; b++) {
+                    Vector3 n = Vector3Normalize(Vector3Subtract(hits[b].pos, player->position));
+                    VFX_ComposeDeflectFlash(hits[b].pos, n, VC_MAT_METAL, 1.0f);
+                }
                 Audio_PlaySFXAt(SFX_CLASH, player->position);
                 AddFloatingText(player->position, "Hóa Giải!", GOLD, 16.0f, 0.75f);
             }
@@ -2056,19 +2068,47 @@ void GameScreen_Draw3D(const PlayerEntity *player)
                         true, player->position);
     }
 
-    // Meditation VFX component — drawn for every meditating hero (local + remote).
-    // Pure visual; gameplay cancel/regen stays in entities/control.
+    // Meditation & 3D Combat Readability (Marks 1..3, CC, Debuffs) — never inside shadow pass.
+    if (!EnvShadow_IsCapturing())
     {
         float t = (float)GetTime();
         for (int i = 0; i < MAX_AGENTS; i++)
         {
-            if (!Entity_IsMeditating(i))
-                continue;
             const Agent *a = Entity_GetAgent(i);
-            if (!a || a->archetype != ARCH_HERO)
-                continue;
-            Vector3 p = (i == player->agentId) ? player->position : a->position;
-            // VFX_ComposeMeditate(p, Entity_GetMeditateProgress(i), t);
+            if (!a) continue;
+            float dx = a->position.x - player->position.x;
+            float dz = a->position.z - player->position.z;
+            if (dx * dx + dz * dz > 28.0f * 28.0f) continue;
+
+            if (a->archetype == ARCH_HERO && Entity_IsMeditating(i))
+            {
+                Vector3 p = (i == player->agentId) ? player->position : a->position;
+                VFX_ComposeMeditateAura(p, Entity_GetMeditateProgress(i), t);
+            }
+
+            bool hasAnyStatus = (a->freezeTimer > 0.0f) || (a->rootTimer > 0.0f) ||
+                                (a->silenceTimer > 0.0f) || (a->stunTimer > 0.0f) ||
+                                Entity_HasStatus(i, STATUS_VULNERABLE) ||
+                                Entity_HasStatus(i, STATUS_WEAKEN) ||
+                                Entity_HasStatus(i, STATUS_BURN) ||
+                                Entity_HasStatus(i, STATUS_BLEED) ||
+                                (a->marks[0] > 0) || (a->marks[1] > 0) ||
+                                (a->marks[2] > 0) || (a->marks[3] > 0) || (a->marks[4] > 0);
+            if (hasAnyStatus)
+            {
+                VFX_AgentStatusVisual sv = {0};
+                sv.position = (i == player->agentId) ? player->position : a->position;
+                for (int e = 0; e < 5; e++) sv.marks[e] = a->marks[e];
+                sv.frozen     = (a->freezeTimer > 0.0f);
+                sv.rooted     = (a->rootTimer > 0.0f);
+                sv.silenced   = (a->silenceTimer > 0.0f);
+                sv.stunned    = (a->stunTimer > 0.0f);
+                sv.vulnerable = Entity_HasStatus(i, STATUS_VULNERABLE);
+                sv.weakened   = Entity_HasStatus(i, STATUS_WEAKEN);
+                sv.burning    = Entity_HasStatus(i, STATUS_BURN);
+                sv.bleeding   = Entity_HasStatus(i, STATUS_BLEED);
+                VFX_DrawAgentStatusVisual(&sv, s_hudCamera);
+            }
         }
     }
 }

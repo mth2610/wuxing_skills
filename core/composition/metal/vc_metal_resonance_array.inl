@@ -230,6 +230,7 @@ void VC_MetalResonanceArray_Update(float dt)
         if (!inst->erupted && inst->elapsed >= inst->telegraphSecs) {
             inst->erupted = true;
             VFX_ComposeContactSparkMode(inst->center, VC_MAT_METAL, 1.05f, 0.95f, CONTACT_SPARK_CENTRIFUGAL);
+            ScreenDistort_Add(inst->center, inst->radius * 1.25f, 0.042f, 0.28f, 1.6f);
             Wind_SpawnRadialBlast(inst->center, inst->radius * 1.25f, 8.5f, 0.28f);
         }
         if (inst->elapsed >= inst->telegraphSecs + inst->eruptSecs + 0.25f) {
@@ -251,6 +252,8 @@ void VC_MetalResonanceArray_Draw3D(Camera3D cam)
             ? (0.35f + 0.65f * tTele)
             : Clamp(1.0f - (inst->elapsed - inst->telegraphSecs) / (inst->eruptSecs + 0.25f), 0.0f, 1.0f);
         ResArray_DrawGroundChladni(inst->center, inst->radius, tTele, alphaGround);
+        VFX_ComposeRuneCircle(inst->center, (Vector3){ 0.0f, 1.0f, 0.0f }, VC_MAT_METAL,
+                              inst->radius * 0.96f, Clamp(inst->elapsed / total, 0.0f, 1.0f), 2);
 
         /* Draw 6 pinned 3D auxiliary Jian blades */
         if (s_bladeShader.id != 0 && s_subSteel.mesh.vertexCount > 0) {

@@ -92,6 +92,8 @@ typedef struct {
     Color crestColor;
     Color foamColor;
     float cryoMode;      /* 0.0 = pure liquid, 1.0 = progressive flash-freeze to glacial ice */
+    bool fastMartialStrike;   /* Normalize ATLA phases to desc.duration, skip 0.48s ground puddle delay */
+    bool allowCompactBounds;  /* Allow compact 1.8m x 2.4m bounds and 0.45s min duration for melee strikes */
 } LiquidSWEDesc;
 
 typedef struct {
@@ -105,6 +107,8 @@ LiquidSWEDesc LiquidSWE_DefaultDesc(void);
 
 int LiquidSWE_Spawn(const LiquidSWEDesc *desc);
 void LiquidSWE_Kill(int handle);
+void LiquidSWE_Stop(int handle);
+void LiquidSWE_SetOrigin(int handle, Vector3 origin, Vector3 forward);
 bool LiquidSWE_IsAnyActive(void);
 
 void LiquidSWE_ClearEmitters(int handle);
