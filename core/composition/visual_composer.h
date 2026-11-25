@@ -1297,17 +1297,59 @@ void VFX_FlameJet_SetIntensity(int handle, float intensity01);
 void VFX_FlameJet_Stop(int handle);
 void VFX_KillFlameJet(int handle);
 
-// ── P4. Shield shell ───────────────────────────────────────────────────────
-// Legacy surface payload retained for source compatibility. ShieldShell now
-// intentionally ignores these sheets and renders one shared glass sphere;
-// `body`, `flowMap`, and `mask` are no longer sampled by the composition.
+// ── P4. Unified Wuxia Shield (merged ShieldShell + FlowShield) ───────────────
+// 9 procedural martial/xianxia/glass presets + 4 ground-cut modes + impact ripples.
+typedef enum {
+    VFX_SHIELD_PRESET_CHANKHI = 0,  // Hộ Thể Chân Khí — swirling silky Qi currents
+    VFX_SHIELD_PRESET_BAGUA,        // Thủy Mặc Bát Quái — 8 trigrams SDF + ink + cinnabar
+    VFX_SHIELD_PRESET_KIMCHUNG,     // Kim Chung Tráo — bronze bell relief + standing wave
+    VFX_SHIELD_PRESET_NGOCTHANH,    // Ngọc Thanh Tiên Tráo — jade glass + clouds + gold veins
+    VFX_SHIELD_PRESET_LOIDINH,      // Lôi Đình Độ Kiếp — thunderclouds + lightning arcs
+    VFX_SHIELD_PRESET_XICHVIEM,     // Xích Viêm Hỏa Tráo — obsidian flame + magma + embers
+    VFX_SHIELD_PRESET_HUYENBANG,    // Huyền Băng Kính — 3D Voronoi ice crystal facets
+    VFX_SHIELD_PRESET_LUULY,        // Lưu Ly Bảo Châu — optical glass IOR 1.52 + dispersion
+    VFX_SHIELD_PRESET_PHONGTRAO,    // Thanh Phong Hộ Tráo — jade-cyan cyclone + wind blades
+    VFX_SHIELD_PRESET_COUNT
+} VFX_ShieldPreset;
+
+typedef enum {
+    VFX_SHIELD_GROUND_HEMI = 0,     // 50% hemisphere above ground
+    VFX_SHIELD_GROUND_SUNKEN,       // 75% sunken sphere above ground
+    VFX_SHIELD_GROUND_DOME30,       // 30% formation dome cap
+    VFX_SHIELD_GROUND_FULL,         // 100% full sphere (no ground cut)
+    VFX_SHIELD_GROUND_COUNT
+} VFX_ShieldGroundMode;
+
+typedef struct {
+    VFX_ShieldPreset preset;
+    VFX_ShieldGroundMode groundMode;
+    float elevation;
+    float opacity;
+    float fresnel;
+    float seam;
+    float speed;
+    float backWall;
+    float relief;
+    float emission;
+    float refraction;
+    bool  usePresetColors;          // true = authored Wuxia palette; false = VC_MaterialId tint
+} VFX_ShieldDesc;
+
+VFX_ShieldDesc VFX_Shield_DefaultDesc(VFX_ShieldPreset preset);
+const char *VFX_ShieldPreset_Name(VFX_ShieldPreset preset);
+const char *VFX_ShieldGroundMode_Name(VFX_ShieldGroundMode mode);
+int  VFX_Shield_GetParams(VFX_ShieldDesc *cfg, VFX_ParamDef *outParams, int maxParams);
+int  VFX_Shield_SpawnEx(Vector3 pos, VC_MaterialId mat, float radius, float intensity, const VFX_ShieldDesc *desc);
+void VFX_Shield_SetGroundMode(int handle, VFX_ShieldGroundMode mode);
+void VFX_Shield_SetDesc(int handle, const VFX_ShieldDesc *desc);
+void VFX_Shield_TriggerImpact(int handle, Vector3 impactWorld);
+
+// Legacy surface payload & compatibility entry points (all route to unified shield).
 typedef struct {
     Texture2D body;
     Texture2D flowMap;
     Texture2D mask;
-    /* Preferred mobile input: RG=flow vector, B=energy/soft mask. */
     Texture2D packedMap;
-    /* Optional static matcap for the outer glass shell. */
     Texture2D matcapMap;
     float flowSpeed;
     float flowStrength;
@@ -1322,17 +1364,9 @@ void VFX_ShieldShell_SetTransform(int handle, Vector3 pos);
 void VFX_ShieldShell_SetIntensity(int handle, float intensity01);
 void VFX_ShieldShell_SetSurface(int handle, const VFX_ShieldSurface *surface);
 void VFX_ShieldShell_SetImpact(int handle, Vector3 impactWorld, float timeSinceImpact);
-// Whether this shell STANDS ON terrain (default true). A ground bubble's bright
-// contact band is most of what sells it; a shell that floats has nothing to meet,
-// and the same band cuts a hard ellipse across the middle of it. Per shell, not a
-// global — a floating charge ball and a ground shield can be alive at once.
 void VFX_ShieldShell_SetGroundContact(int handle, bool onGround);
 void VFX_ShieldShell_Stop(int handle);
 void VFX_KillShieldShell(int handle);
-
-// Dedicated post-3D shell pass retained for render-order compatibility. It
-// does not sample the framebuffer; it draws the packed-texture/Fresnel shell.
-// Safe to call even when none are alive.
 void VFX_ShieldShell_DrawRefraction(Camera3D camera);
 void VFX_FlowShield_DrawRefraction(Camera3D camera);
 

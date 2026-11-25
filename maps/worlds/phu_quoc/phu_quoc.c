@@ -254,7 +254,7 @@ static bool PhuQuocFlowerExcluded(float x, float z, void *ctx)
     (void)ctx;
     Vector3 gp = {0}, gn = {0};
     float wy = 0.0f, wd = 0.0f;
-    if (!MapProp_SampleGroundSurface(&s_ground, kMapCenter, x, z, &gp, &gn))
+    if (!MapDem_SampleGroundSurface(&s_dem, &s_ground, x, z, &gp, &gn))
         return true;
     if (gn.y < 0.78f || gp.y < 0.20f)
         return true;
@@ -395,6 +395,9 @@ static void BuildPhuQuocFlora(void)
     s_flowerCount = clusterCount * flowersPerCluster;
     MapFlora_GenerateFlowerPlacements(s_flowerPlacements, s_flowerCount, s_flowerClusters, clusterCount,
                                       PhuQuocFlowerHeight, PhuQuocFlowerExcluded, NULL, 0xC49F12u);
+    // A colony with no valid samples can fall back to positions around its center.
+    s_flowerCount = MapFlora_ExcludeFlowerPlacements(s_flowerPlacements, s_flowerClusters,
+                                                    clusterCount, PhuQuocFlowerExcluded, NULL);
 
     s_flora = MapProp_CreateFloraSystem(
         s_grassPlacements, s_grassCount,
@@ -549,10 +552,10 @@ void InitPhuQuocMap(void)
         .exposure = 1.02f,
         .contrast = 1.12f,
         .saturation = 1.06f,
-        .bloomIntensity = 0.25f,
+        .bloomIntensity = 0.20f,
         .shadowTint = {0.86f, 0.90f, 1.06f},
         .highlightTint = {1.08f, 1.00f, 0.88f},
-        .bloomThreshold = 1.08f,
+        .bloomThreshold = 1.22f,
         .bloomKnee = 0.44f,
         .hueRestore = 0.62f,
     };
@@ -585,7 +588,7 @@ void InitPhuQuocMap(void)
     // Activate Metal-Element Biome Shaders
     MapGroundBiomeProfile metallicBiome = {
         .aridFactor = 0.0f,
-        .strataStrength = 0.88f,
+        .strataStrength = 0.32f,
         .grusColor = {0.58f, 0.54f, 0.46f},
         .hardpanColor = {0.36f, 0.34f, 0.32f},
         .lichenColor = {0.64f, 0.56f, 0.28f},
@@ -669,8 +672,8 @@ void InitPhuQuocMap(void)
     MapProp_SetGroundReliefMap(&s_ground, "assets/maps/phu_quoc/phu_quoc_relief.png");
     MapProp_SetGroundDebrisMap(&s_ground, "assets/maps/phu_quoc/phu_quoc_debris_map.png");
     MapProp_SetGroundRockMaps(&s_ground,
-                              "assets/textures/rocks/slate_diffuse.png",
-                              "assets/textures/rocks/slate_normal.png");
+                              "assets/textures/rocks/granite_diffuse.png",
+                              "assets/textures/rocks/granite_normal.png");
 
     s_sky = MapProp_CreateSkyDome();
     if (!(s_skipMask & MAP_SKIP_CLIFF))
@@ -703,112 +706,8 @@ void InitPhuQuocMap(void)
             .shallowColor = {24, 148, 152, 235},
             .foamColor = {248, 246, 240, 235},
         });
-    if (s_coastalSea.ready)
-    {
-        const int res = 512;
-        const float patchSpan = seaSpan;
-        const float shoreMaxDist = 24.0f * (seaSpan / 840.0f);
-        const float cell = patchSpan / (float)(res - 1);
-        const float diag = cell * 1.41421356f;
-        float *distGrid = (float *)malloc((size_t)(res * res) * sizeof(float));
-        unsigned char *rgba = (unsigned char *)malloc((size_t)(res * res * 4));
-        if (distGrid && rgba)
-        {
-            float minX = kMapCenter.x - patchSpan * 0.5f;
-            float minZ = kMapCenter.z - patchSpan * 0.5f;
-            for (int j = 0; j < res; j++)
-            {
-                float wz = minZ + (float)j * cell;
-                for (int i = 0; i < res; i++)
-                {
-                    float wx = minX + (float)i * cell;
-                    bool isLand = false;
-                    if (wx >= 0.0f && wx <= MAP_WIDTH && wz >= 0.0f && wz <= MAP_DEPTH)
-                    {
-                        Vector3 gp = {0}, gn = {0};
-                        if (MapProp_SampleGroundSurface(&s_ground, kMapCenter, wx, wz, &gp, &gn) &&
-                            gp.y > seaY + 0.05f)
-                        {
-                            isLand = true;
-                        }
-                    }
-                    distGrid[j * res + i] = isLand ? 0.0f : 1000.0f;
-                }
-            }
-            for (int j = 1; j < res - 1; j++)
-            {
-                for (int i = 1; i < res - 1; i++)
-                {
-                    int idx = j * res + i;
-                    float d = distGrid[idx];
-                    float dL = distGrid[idx - 1] + cell;
-                    float dU = distGrid[idx - res] + cell;
-                    float dUL = distGrid[idx - res - 1] + diag;
-                    float dUR = distGrid[idx - res + 1] + diag;
-                    if (dL < d) d = dL;
-                    if (dU < d) d = dU;
-                    if (dUL < d) d = dUL;
-                    if (dUR < d) d = dUR;
-                    distGrid[idx] = d;
-                }
-            }
-            for (int j = res - 2; j >= 1; j--)
-            {
-                for (int i = res - 2; i >= 1; i--)
-                {
-                    int idx = j * res + i;
-                    float d = distGrid[idx];
-                    float dR = distGrid[idx + 1] + cell;
-                    float dD = distGrid[idx + res] + cell;
-                    float dDL = distGrid[idx + res - 1] + diag;
-                    float dDR = distGrid[idx + res + 1] + diag;
-                    if (dR < d) d = dR;
-                    if (dD < d) d = dD;
-                    if (dDL < d) d = dDL;
-                    if (dDR < d) d = dDR;
-                    distGrid[idx] = d;
-                }
-            }
-            for (int j = 0; j < res; j++)
-            {
-                int j0 = (j > 0) ? j - 1 : 0;
-                int j1 = (j < res - 1) ? j + 1 : res - 1;
-                for (int i = 0; i < res; i++)
-                {
-                    int i0 = (i > 0) ? i - 1 : 0;
-                    int i1 = (i < res - 1) ? i + 1 : res - 1;
-                    int idx = j * res + i;
-                    float gx = distGrid[j * res + i0] - distGrid[j * res + i1];
-                    float gz = distGrid[j0 * res + i] - distGrid[j1 * res + i];
-                    float len = sqrtf(gx * gx + gz * gz);
-                    float nx = (len > 1e-4f) ? (gx / len) : 0.0f;
-                    float nz = (len > 1e-4f) ? (gz / len) : 0.0f;
-                    float normDist = distGrid[idx] / shoreMaxDist;
-                    if (normDist > 1.0f) normDist = 1.0f;
-                    rgba[idx * 4 + 0] = (unsigned char)((nx * 0.5f + 0.5f) * 255.0f + 0.5f);
-                    rgba[idx * 4 + 1] = (unsigned char)((nz * 0.5f + 0.5f) * 255.0f + 0.5f);
-                    rgba[idx * 4 + 2] = (unsigned char)(normDist * 255.0f + 0.5f);
-                    rgba[idx * 4 + 3] = 255;
-                }
-            }
-            Image shoreImg = {
-                .data = rgba,
-                .width = res,
-                .height = res,
-                .mipmaps = 1,
-                .format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8,
-            };
-            s_coastalSea.flowFieldTex = LoadTextureFromImage(shoreImg);
-            if (s_coastalSea.flowFieldTex.id > 0)
-            {
-                SetTextureFilter(s_coastalSea.flowFieldTex, TEXTURE_FILTER_BILINEAR);
-                SetTextureWrap(s_coastalSea.flowFieldTex, TEXTURE_WRAP_CLAMP);
-                s_coastalSea.hydrologyReady = true;
-            }
-        }
-        free(distGrid);
-        free(rgba);
-    }
+    MapProp_BuildOceanShoreField(&s_coastalSea, &s_ground, &s_cliff, kMapCenter,
+                                MAP_WIDTH, MAP_DEPTH, seaY, seaSpan);
     MapProp_SetWaterTerrainSource(&s_coastalSea, PhuQuocCoastalBed, PhuQuocCoastalSurface, NULL);
 
     // Interior Placer-Gold Streams & Quarry Tarns (Suối Đá Bàn / Kim Tinh Đàm / Bạch Ngân Hồ)

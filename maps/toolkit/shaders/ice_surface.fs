@@ -51,7 +51,6 @@ void main()
     float edgeNoiseB = textureGrad(texture0, fragWorldPos.xz * 1.35 - vec2(2.8, 1.1), xzDx * 1.35, xzDy * 1.35).r;
     float shoreWarp = (edgeNoiseA - 0.5) * 0.024 + (edgeNoiseB - 0.5) * 0.012 + 0.008;
     float warpedDepth = max(fragIceDepth - shoreWarp, 0.0);
-    if (warpedDepth < 0.018 && cascadeMask < 0.18) discard;
 
     float t = mod(u_time, 6283.185307);
 
@@ -69,6 +68,10 @@ void main()
         freezeWeight = fSample.b;
         lakeMask = smoothstep(0.20, 0.75, fSample.a);
     }
+    // The coarse water mesh has sloped triangles at tarn margins. Use the
+    // baked lake classification to keep them from shading as waterfalls.
+    cascadeMask *= 1.0 - lakeMask;
+    if (warpedDepth < mix(0.018, 0.045, lakeMask) && cascadeMask < 0.18) discard;
     vec2 flowPerp = vec2(-flowDir.y, flowDir.x);
 
     // Shore-fast ice shelf + semi-continuous fractured glacial pack-ice (no cartoon cobblestones)
@@ -97,7 +100,7 @@ void main()
     float hR = textureGrad(u_plateTex, baseUV + dOff.xy, xzDx * plateScale, xzDy * plateScale).r;
     float hU = textureGrad(u_plateTex, baseUV + dOff.yx, xzDx * plateScale, xzDy * plateScale).r;
     vec3 sheetPerturb = vec3((plates.r - hR) * 1.85, 0.0, (plates.r - hU) * 1.85) * (1.0 - cascadeMask * 0.7);
-    vec3 iceNormal = normalize(geomN + sheetPerturb);
+    vec3 iceNormal = normalize(mix(geomN, vec3(0.0, 1.0, 0.0), lakeMask * 0.85) + sheetPerturb);
 
     vec3 viewVec = u_viewPos - fragWorldPos;
     float camDistSq = max(dot(viewVec, viewVec), 1e-6);

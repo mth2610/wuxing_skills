@@ -4,6 +4,7 @@ in vec3 vertexPosition;
 in vec2 vertexTexCoord;
 
 uniform mat4 mvp;
+uniform mat4 matModel;
 uniform float u_time;
 uniform vec2 u_driftDirection;
 uniform float u_driftSpeed;
@@ -26,7 +27,7 @@ void main()
         pos.y += bob;
     }
 
-    fragWorldPos = pos + vec3(0.0, 0.014, 0.0);
+    fragWorldPos = (matModel * vec4(pos, 1.0)).xyz;
     fragIceDepth = depth;
     fragShoreFade = shoreFade;
 

@@ -526,7 +526,7 @@ void InitMauSonMap(void)
 
     PostFXMapProfile postProfile = {
         .enabled = true,
-        .exposure = 1.02f,
+        .exposure = 0.98f,
         .contrast = 1.05f,
         .saturation = 1.04f,
         .bloomIntensity = 0.18f,
@@ -643,8 +643,8 @@ void InitMauSonMap(void)
     MapProp_SetGroundReliefMap(&s_ground, "assets/maps/mau_son/mau_son_relief.png");
     MapProp_SetGroundDebrisMap(&s_ground, "assets/maps/mau_son/mau_son_debris_map.png");
     MapProp_SetGroundRockMaps(&s_ground,
-                              "assets/textures/rocks/slate_diffuse.png",
-                              "assets/textures/rocks/slate_normal.png");
+                              "assets/textures/rocks/granite_diffuse.png",
+                              "assets/textures/rocks/granite_normal.png");
 
     s_sky = MapProp_CreateSkyDome();
     s_cloudSea = MapProp_CreateCloudSea(MAP_WIDTH + 320.0f, MAP_DEPTH + 320.0f, 52.0f);
@@ -662,7 +662,7 @@ void InitMauSonMap(void)
             .center = {MAU_SON_LAKE_X * s_scaleXZ, 0.0f, MAU_SON_LAKE_Z * s_scaleXZ},
             .radiusX = MAU_SON_LAKE_RX * s_scaleXZ,
             .radiusZ = MAU_SON_LAKE_RZ * s_scaleXZ,
-            .waveHeight = 0.012f,
+            .waveHeight = 0.003f,
             .waveScale = 1.25f,
             .waveSpeed = 0.55f,
             .flowVelocity = {0.16f, 0.14f},
@@ -700,7 +700,7 @@ void InitMauSonMap(void)
             .driftSpeed = 0.05f,
             .driftDirection = {0.65f, 0.55f},
             .floeCoverage = 0.76f,
-            .crackIntensity = 1.45f,
+            .crackIntensity = 1.12f,
             .snowCrustAmount = 0.58f,
             .deepIceColor = {16, 54, 102, 255},
             .shallowIceColor = {104, 174, 212, 255},

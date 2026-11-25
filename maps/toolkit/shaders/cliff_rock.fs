@@ -160,8 +160,12 @@ void main() {
     }
     if (u_cliffMetallicMode > 0.5) {
         // Hydrothermal gold & silver seams embedded in coastal slate/quartz strata
-        float seamWave = abs(sin(strataCoord * 3.1 + strataWarp * 1.4));
-        float seamMask = (1.0 - smoothstep(0.02, 0.14, seamWave)) * u_cliffMetallicMode;
+        float seamPhase = strataCoord * 3.1 + strataWarp * 1.4;
+        float seamWave = abs(sin(seamPhase));
+        float hostRock = smoothstep(0.35, 0.65, triAlbedo.r);
+        float deposit = sin(worldPosition.x * 0.19 - worldPosition.z * 0.23 + strataWarp) * 0.5 + 0.5;
+        float seamMask = (1.0 - smoothstep(0.02, 0.14, seamWave))
+                       * mix(0.15, 1.0, smoothstep(0.38, 0.78, deposit * 0.7 + hostRock * 0.3));
         vec3 seamCol = mix(vec3(1.00, 0.78, 0.24), vec3(0.92, 0.95, 0.99), step(0.5, fract(strataMacro * 3.7)));
         rockBase = mix(rockBase * vec3(0.84, 0.87, 0.92), seamCol, seamMask * 0.78);
         roughness = mix(roughness, 0.20, seamMask * 0.80);

@@ -1,6 +1,7 @@
 #include "maps/map_manager.h"
 #include "maps/toolkit/map_props.h"
 #include "environment/environment_system.h"
+#include "post_process/post_fx.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -284,6 +285,11 @@ void MapManager_SetActiveIndex(int index) {
         // and global biome/grass state before Init so legacy maps cannot
         // inherit another map's HDR sun, arid biome, or grass dryness.
         Environment_SetSunIntensity(1.0f);
+        Environment_ResetGroundBounceTint();
+        Environment_SetCloudShadowConfig(NULL);
+        Environment_SetTimeOfDayPresets(NULL, NULL, 0);
+        Environment_SetTimeOfDaySpeed(0.0f);
+        PostFX_ClearMapProfile();
         MapProp_SetGroundBiomeProfile(NULL);
         MapProp_SetRockAridMode(0.0f);
         MapProp_SetRockVolcanicMode(0.0f);

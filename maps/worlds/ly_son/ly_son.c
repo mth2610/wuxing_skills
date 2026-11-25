@@ -434,7 +434,7 @@ void InitLySonMap(void)
     Environment_SetTimeOfDayPresets(kLySonToD, kLySonTimes, 5);
     Environment_SetTimeOfDay(0.68f);
     Environment_SetTimeOfDaySpeed(0.0f);
-    Environment_SetAmbientColor((Color){64, 78, 104, 255});
+    Environment_SetAmbientColor((Color){76, 84, 104, 255});
     Environment_SetSunColor((Color){255, 166, 94, 255});
     Environment_SetSunIntensity(1.95f);
     Environment_SetSunDirection(Vector3Normalize((Vector3){0.68f, -0.34f, -0.65f}));
@@ -447,10 +447,10 @@ void InitLySonMap(void)
         .exposure = 1.04f,
         .contrast = 1.14f,
         .saturation = 1.08f,
-        .bloomIntensity = 0.26f,
+        .bloomIntensity = 0.18f,
         .shadowTint = {0.88f, 0.90f, 1.06f},
         .highlightTint = {1.10f, 0.96f, 0.84f},
-        .bloomThreshold = 1.05f,
+        .bloomThreshold = 1.30f,
         .bloomKnee = 0.44f,
         .hueRestore = 0.62f,
     };
@@ -587,112 +587,8 @@ void InitLySonMap(void)
             .shallowColor = {20, 118, 126, 235},
             .foamColor = {246, 240, 232, 235},
         });
-    if (s_coastalSea.ready)
-    {
-        const int res = 512;
-        const float patchSpan = seaSpan;
-        const float shoreMaxDist = 24.0f * (seaSpan / 840.0f);
-        const float cell = patchSpan / (float)(res - 1);
-        const float diag = cell * 1.41421356f;
-        float *distGrid = (float *)malloc((size_t)(res * res) * sizeof(float));
-        unsigned char *rgba = (unsigned char *)malloc((size_t)(res * res * 4));
-        if (distGrid && rgba)
-        {
-            float minX = kMapCenter.x - patchSpan * 0.5f;
-            float minZ = kMapCenter.z - patchSpan * 0.5f;
-            for (int j = 0; j < res; j++)
-            {
-                float wz = minZ + (float)j * cell;
-                for (int i = 0; i < res; i++)
-                {
-                    float wx = minX + (float)i * cell;
-                    bool isLand = false;
-                    if (wx >= 0.0f && wx <= MAP_WIDTH && wz >= 0.0f && wz <= MAP_DEPTH)
-                    {
-                        Vector3 gp = {0}, gn = {0};
-                        if (MapProp_SampleGroundSurface(&s_ground, kMapCenter, wx, wz, &gp, &gn) &&
-                            gp.y > seaY + 0.05f)
-                        {
-                            isLand = true;
-                        }
-                    }
-                    distGrid[j * res + i] = isLand ? 0.0f : 1000.0f;
-                }
-            }
-            for (int j = 1; j < res - 1; j++)
-            {
-                for (int i = 1; i < res - 1; i++)
-                {
-                    int idx = j * res + i;
-                    float d = distGrid[idx];
-                    float dL = distGrid[idx - 1] + cell;
-                    float dU = distGrid[idx - res] + cell;
-                    float dUL = distGrid[idx - res - 1] + diag;
-                    float dUR = distGrid[idx - res + 1] + diag;
-                    if (dL < d) d = dL;
-                    if (dU < d) d = dU;
-                    if (dUL < d) d = dUL;
-                    if (dUR < d) d = dUR;
-                    distGrid[idx] = d;
-                }
-            }
-            for (int j = res - 2; j >= 1; j--)
-            {
-                for (int i = res - 2; i >= 1; i--)
-                {
-                    int idx = j * res + i;
-                    float d = distGrid[idx];
-                    float dR = distGrid[idx + 1] + cell;
-                    float dD = distGrid[idx + res] + cell;
-                    float dDL = distGrid[idx + res - 1] + diag;
-                    float dDR = distGrid[idx + res + 1] + diag;
-                    if (dR < d) d = dR;
-                    if (dD < d) d = dD;
-                    if (dDL < d) d = dDL;
-                    if (dDR < d) d = dDR;
-                    distGrid[idx] = d;
-                }
-            }
-            for (int j = 0; j < res; j++)
-            {
-                int j0 = (j > 0) ? j - 1 : 0;
-                int j1 = (j < res - 1) ? j + 1 : res - 1;
-                for (int i = 0; i < res; i++)
-                {
-                    int i0 = (i > 0) ? i - 1 : 0;
-                    int i1 = (i < res - 1) ? i + 1 : res - 1;
-                    int idx = j * res + i;
-                    float gx = distGrid[j * res + i0] - distGrid[j * res + i1];
-                    float gz = distGrid[j0 * res + i] - distGrid[j1 * res + i];
-                    float len = sqrtf(gx * gx + gz * gz);
-                    float nx = (len > 1e-4f) ? (gx / len) : 0.0f;
-                    float nz = (len > 1e-4f) ? (gz / len) : 0.0f;
-                    float normDist = distGrid[idx] / shoreMaxDist;
-                    if (normDist > 1.0f) normDist = 1.0f;
-                    rgba[idx * 4 + 0] = (unsigned char)((nx * 0.5f + 0.5f) * 255.0f + 0.5f);
-                    rgba[idx * 4 + 1] = (unsigned char)((nz * 0.5f + 0.5f) * 255.0f + 0.5f);
-                    rgba[idx * 4 + 2] = (unsigned char)(normDist * 255.0f + 0.5f);
-                    rgba[idx * 4 + 3] = 255;
-                }
-            }
-            Image shoreImg = {
-                .data = rgba,
-                .width = res,
-                .height = res,
-                .mipmaps = 1,
-                .format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8,
-            };
-            s_coastalSea.flowFieldTex = LoadTextureFromImage(shoreImg);
-            if (s_coastalSea.flowFieldTex.id > 0)
-            {
-                SetTextureFilter(s_coastalSea.flowFieldTex, TEXTURE_FILTER_BILINEAR);
-                SetTextureWrap(s_coastalSea.flowFieldTex, TEXTURE_WRAP_CLAMP);
-                s_coastalSea.hydrologyReady = true;
-            }
-        }
-        free(distGrid);
-        free(rgba);
-    }
+    MapProp_BuildOceanShoreField(&s_coastalSea, &s_ground, &s_cliff, kMapCenter,
+                                MAP_WIDTH, MAP_DEPTH, seaY, seaSpan);
     MapProp_SetWaterTerrainSource(&s_coastalSea, LySonCoastalBed, LySonCoastalSurface, NULL);
 
     // Conformal Molten Magma Lakes & Radial Lava Rivers
@@ -704,7 +600,7 @@ void InitLySonMap(void)
                                              .flowSpeed = 0.30f,
                                              .flowDirection = {-0.65f, 0.75f},
                                              .crustCoverage = 0.62f,
-                                             .glowIntensity = 2.60f,
+                                             .glowIntensity = 1.92f,
                                              .pulseSpeed = 0.90f,
                                              .waveHeight = 0.025f,
                                              .coreColor = {255, 228, 122, 255},

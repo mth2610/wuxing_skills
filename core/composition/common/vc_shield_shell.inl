@@ -1,49 +1,29 @@
-// ShieldShell — glass-like force-field volume. The scene colour comes from the
-// safe post-3D snapshot (never from the live render target), while the packed
-// field and additive crest provide the authored magical identity.
+// ── Unified Wuxia Shield (merged ShieldShell + FlowShield) ──────────────────
+// 9 procedural martial/xianxia/glass presets + 4 ground-cut modes + impact ripples.
+// Far wall first (RL_CULL_FACE_FRONT) then near wall (RL_CULL_FACE_BACK),
+// dual-pass BODY (VFX_SURFACE_ALPHA) + EMISSION (VFX_SURFACE_PREMULTIPLIED).
+
 #include "core/tuning.h"
 #include "core/gfx_quality.h"
 
 #define VFX_SHIELD_SHELL_MAX 8
-// TESSELLATION: TWO budgets, and they are not the same budget.
-//
-// 14x14 = 392 triangles was chosen for the 200-400 mobile force-field budget, and it
-// holds that budget — but at a normal gameplay apparent size a 14-slice sphere does not
-// read as a sphere: its silhouette is a visible 14-sided polygon, which is the first
-// thing the eye finds on a bright background (measured capture:
-// autotest_output/vfx_matrix/idx21/white_w90.png). A shell whose outline is a polygon
-// is not glass at any coverage.
-//
-//   PER-SHELL, mobile: 200-400 triangles. This is what 14x14 = 392 was chosen for, and
-//   LOW is capped there and never scales up — on mobile the constraint binds per shell.
-//   AGGREGATE: SHIELD_MAX * rings * slices * 2 <= 6400, which core/tests/shield_shell_test.c
-//   guards. That is a budget for EIGHT simultaneous shields; one shield alone leaves seven
-//   eighths of it unspent, and a lone shell is exactly when it is large on screen and its
-//   facets show. So above LOW the tier sets a ceiling and the LIVE COUNT spends what the
-//   budget actually has, clamping back down as shields multiply. The eight-shield worst
-//   case is unchanged.
 #define SHIELD_SHELL_TRI_BUDGET 6400
-#define SHIELD_SHELL_RINGS_LOW 14      /* hard cap: the mobile per-shell budget */
+#define SHIELD_SHELL_RINGS_LOW 14
 #define SHIELD_SHELL_RINGS_MED 24
 #define SHIELD_SHELL_RINGS_HIGH 40
+#define SHIELD_MAX_IMPACTS 4
 
-// The 6400-triangle cap is a budget for EIGHT simultaneous shields. One shield alone
-// leaves seven eighths of it unspent, and a lone shell is exactly when its silhouette is
-// large on screen and its facets are most visible. So the tier sets a ceiling and the
-// live count spends what the budget actually has:
-//
-//     activeCount * rings * rings * 2 <= 6400
-//
-// The worst case is therefore identical to before (8 shields -> 20x20 at HIGH, 14x14 at
-// LOW), while a single shell gets a round outline for free. Floored at the LOW value so
-// no configuration is ever coarser than what already shipped.
+#ifndef SHIELD_BURIED_LIFT
+#define SHIELD_BURIED_LIFT 0.5f
+#endif
+
 static int ShieldShell_Rings(int activeCount)
 {
     GfxQuality q = GfxQuality_Get();
     int ceiling = (q >= GFX_HIGH) ? SHIELD_SHELL_RINGS_HIGH
                 : (q >= GFX_MED)  ? SHIELD_SHELL_RINGS_MED
                                   : SHIELD_SHELL_RINGS_LOW;
-    if (q <= GFX_LOW) return SHIELD_SHELL_RINGS_LOW;   /* mobile: per-shell budget binds */
+    if (q <= GFX_LOW) return SHIELD_SHELL_RINGS_LOW;
     if (activeCount < 1) activeCount = 1;
     int rings = SHIELD_SHELL_RINGS_LOW;
     while (rings + 2 <= ceiling &&
@@ -53,183 +33,407 @@ static int ShieldShell_Rings(int activeCount)
 }
 
 typedef struct {
+    const char *name;
+    Vector3 primary;
+    Vector3 rim;
+    float opacity;
+    float fresnel;
+    float seam;
+    float speed;
+    float backWall;
+    float relief;
+    float emission;
+    float refraction;
+} WuxiaShieldPresetDef;
+
+static const WuxiaShieldPresetDef k_shieldPresets[VFX_SHIELD_PRESET_COUNT] = {
+    // 0: Hộ Thể Chân Khí
+    { "CHAN KHI",   { 0.620f, 0.851f, 0.796f }, { 0.941f, 0.984f, 0.969f }, 0.88f, 1.15f, 1.05f, 0.95f, 0.40f, 1.00f, 1.05f, 0.010f },
+    // 1: Thủy Mặc Bát Quái
+    { "BAGUA",      { 0.847f, 0.812f, 0.753f }, { 0.961f, 0.929f, 0.878f }, 0.94f, 1.12f, 1.10f, 0.85f, 0.42f, 1.00f, 1.15f, 0.008f },
+    // 2: Kim Chung Tráo
+    { "KIM CHUNG",  { 0.949f, 0.639f, 0.161f }, { 1.000f, 0.941f, 0.761f }, 0.92f, 1.22f, 1.10f, 0.85f, 0.38f, 1.00f, 1.35f, 0.012f },
+    // 3: Ngọc Thanh Tiên Tráo
+    { "NGOC THANH", { 0.149f, 0.702f, 0.553f }, { 0.698f, 0.980f, 0.886f }, 0.90f, 1.20f, 1.08f, 0.80f, 0.42f, 1.00f, 1.25f, 0.014f },
+    // 4: Lôi Đình Độ Kiếp
+    { "LOI DINH",   { 0.427f, 0.365f, 0.988f }, { 0.549f, 0.925f, 1.000f }, 0.94f, 1.28f, 1.15f, 1.15f, 0.40f, 1.00f, 1.65f, 0.012f },
+    // 5: Xích Viêm Hỏa Tráo
+    { "XICH VIEM",  { 0.878f, 0.282f, 0.098f }, { 1.000f, 0.820f, 0.478f }, 0.92f, 1.24f, 1.18f, 1.05f, 0.40f, 1.00f, 1.55f, 0.012f },
+    // 6: Huyền Băng Kính
+    { "HUYEN BANG", { 0.431f, 0.796f, 0.961f }, { 0.929f, 0.980f, 1.000f }, 0.90f, 1.20f, 1.10f, 0.75f, 0.42f, 1.00f, 1.20f, 0.018f },
+    // 7: Lưu Ly Bảo Châu
+    { "LUU LY",     { 0.784f, 0.925f, 1.000f }, { 1.000f, 1.000f, 1.000f }, 0.90f, 1.18f, 1.10f, 0.85f, 0.45f, 1.00f, 1.00f, 0.024f },
+    // 8: Thanh Phong Hộ Tráo
+    { "PHONG TRAO", { 0.341f, 0.890f, 0.761f }, { 0.918f, 1.000f, 0.980f }, 0.90f, 1.22f, 1.12f, 1.15f, 0.38f, 1.05f, 1.25f, 0.016f },
+};
+
+static const char *k_shieldPresetNames[VFX_SHIELD_PRESET_COUNT] = {
+    "CHAN KHI", "BAGUA", "KIM CHUNG", "NGOC THANH", "LOI DINH",
+    "XICH VIEM", "HUYEN BANG", "LUU LY", "PHONG TRAO"
+};
+
+static const char *k_shieldGroundModeNames[VFX_SHIELD_GROUND_COUNT] = {
+    "Hemi (50%)", "Sunken (75%)", "Dome (30%)", "Full (100%)"
+};
+
+typedef struct {
     bool active, stopping;
     Vector3 pos;
     VC_MaterialId mat;
-    Texture2D packedMap;
-    Texture2D flowMap;
-    Texture2D matcapMap;
-    Vector3 impactWorld;
-    float impactAge;
     float radius, target, level, elapsed;
-    /* Does this shell STAND ON something? A bubble around a character's feet
-     * does, and the bright band where the sphere meets the terrain is most of
-     * what sells it. A shell that FLOATS — a charge ball held in the air — does
-     * not, and the band then cuts a hard ellipse across the middle of it with no
-     * surface to justify it. Per shell, because both kinds are alive at once. */
-    bool groundContact;
+    VFX_ShieldDesc desc;
+    Vector3 impactDir[SHIELD_MAX_IMPACTS];
+    float   impactTime[SHIELD_MAX_IMPACTS];
+    int     nextImpactSlot;
 } VC_ShieldShell;
 
 typedef struct {
     Shader shader;
-    int bodyColor, rimColor, opacity, rimStrength, rimPower, emissionOnly;
-    int bodyOpacity, emissionGain;
-    int lightDirView, packedTex, hasPacked, flowTex, hasFlow, matcapTex, hasMatcap;
-    int depthTex, hasDepth, depthEnabled, depthLod;
-    int sceneTex, hasScene;
-    int noiseScale, noiseSpeed;
-    int impactView, impactAge, rippleFrequency, rippleSpeed;
-    int flowStrength, flowSpeed, parallaxDepth, innerDepth;
-    int contactStrength, contactColor, contactThickness;
-    int baseAlpha, fresnelAlpha, contactAlpha;
+    int camPos, camRight, camUp, camForward;
+    int shellCenter, shellRadius;
+    int shieldTime, speed, preset;
+    int groundEnabled, groundY;
+    int hasImpacts, impacts;
+    int primaryColor, rimColor;
+    int opacity, fresnel, seamIntensity, backWall, passSide, relief, refraction, emissionGain, premultiply;
+    int noiseTex, sceneTex, hasScene, depthTex, hasDepth, depthClip;
 } VC_ShieldShader;
+
+typedef struct {
+    Shader shader;
+    int preset, primaryColor, rimColor;
+    int opacity, seamIntensity, speed, shieldTime, emissionGain, premultiply;
+    int rcut, quadHalf, noiseTex;
+} VC_ShieldGroundShader;
 
 static VC_ShieldShell s_shieldShells[VFX_SHIELD_SHELL_MAX];
 static VC_ShieldShader s_shieldShader = {0};
+static VC_ShieldGroundShader s_shieldGroundShader = {0};
+static Texture2D s_shieldNoiseTex = {0};
 static bool s_shieldInit = false;
-static float s_shieldOpacity = 1.0f;
-static float s_shieldRim = 2.0f;
-static float s_shieldRimPower = 8.0f;   // exponent on (1-|N.V|) — the rim band's WIDTH
-// Refraction + contact payload (recipe):
-//   distortion = noise * strength | alpha = base + fresnel*A + contact*B
-static float s_shieldNoiseScale = 28.0f;
-static float s_shieldNoiseSpeed = 2.2f;       // noise scroll speed
-static float s_shieldContact = 1.0f;          // contact glow strength
-static float s_shieldContactThickness = 0.35f; // meters of depth gap = "touching"
-static float s_shieldBaseAlpha = 0.025f;
-static float s_shieldFresnelAlpha = 0.18f;
-static float s_shieldContactAlpha = 0.42f;
-// ON by default since 17/08/2026. It was off because the feature did not work — the
-// depth region was requested from the post-3D draw, where SceneTargets_Begin() had
-// already cleared the validity flag, so the snapshot never ran and depthContact()
-// returned 0 for every fragment. With the request moved into the 3D pass it draws the
-// shell's real ground intersection, which is the whole point of a shield that sits on
-// terrain. Set `shield_shell_depth_enabled = 0` in tuning.cfg to go back.
 static float s_shieldDepthEnabled = 1.0f;
-static float s_shieldDepthLod = 0.5f;
-static float s_shieldRippleFrequency = 18.0f;
-static float s_shieldRippleSpeed = 8.0f;
-static float s_shieldFlowStrength = 0.08f;
-static float s_shieldFlowSpeed = 0.35f;
-static float s_shieldParallaxDepth = 0.045f;
-static float s_shieldInnerDepth = 0.70f;
-static Vector3 s_shieldCameraPosition;
-static Vector3 s_shieldCameraRight, s_shieldCameraUp, s_shieldCameraForward;
 
-static float ShieldShell_Clamp01(float value)
-{ return value < 0.0f ? 0.0f : (value > 1.0f ? 1.0f : value); }
+static float ShieldShell_Clamp01(float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
+
+static float Shield_ElevationForMode(VFX_ShieldGroundMode mode)
+{
+    switch (mode) {
+    case VFX_SHIELD_GROUND_HEMI:   return  0.00f;
+    case VFX_SHIELD_GROUND_SUNKEN: return  0.50f;
+    case VFX_SHIELD_GROUND_DOME30: return -0.40f;
+    case VFX_SHIELD_GROUND_FULL:
+    default:                       return  1.02f;
+    }
+}
+
+static Vector3 Shield_CenterForDesc(Vector3 groundPos, float radius, const VFX_ShieldDesc *d)
+{
+    if (!d) return groundPos;
+    // Airborne FULL shields with elevation==0 (e.g. RiftBolt) stay centered at pos.
+    if (d->groundMode == VFX_SHIELD_GROUND_FULL && fabsf(d->elevation) < 0.001f)
+        return groundPos;
+    return (Vector3){ groundPos.x, groundPos.y + radius * d->elevation, groundPos.z };
+}
+
+static bool Shield_IntersectsGround(const VFX_ShieldDesc *d)
+{
+    if (!d) return false;
+    if (d->groundMode == VFX_SHIELD_GROUND_FULL && fabsf(d->elevation) < 0.001f)
+        return false;
+    return (d->elevation > -0.995f && d->elevation < 0.995f);
+}
+
+static float Shield_TileHash(int ix, int iy, int period, float seed)
+{
+    int x = ((ix % period) + period) % period;
+    int y = ((iy % period) + period) % period;
+    double n = sin((double)x * 127.1 + (double)y * 311.7 + (double)seed * 74.7) * 43758.5453123;
+    return (float)(n - floor(n));
+}
+
+static float Shield_TileNoise(float u, float v, int period, float seed)
+{
+    float x = u * (float)period;
+    float y = v * (float)period;
+    int ix = (int)floorf(x);
+    int iy = (int)floorf(y);
+    float fx = x - (float)ix;
+    float fy = y - (float)iy;
+    float ux = fx * fx * (3.0f - 2.0f * fx);
+    float uy = fy * fy * (3.0f - 2.0f * fy);
+
+    float a = Shield_TileHash(ix,     iy,     period, seed);
+    float b = Shield_TileHash(ix + 1, iy,     period, seed);
+    float c = Shield_TileHash(ix,     iy + 1, period, seed);
+    float d = Shield_TileHash(ix + 1, iy + 1, period, seed);
+    float ab = a + (b - a) * ux;
+    float cd = c + (d - c) * ux;
+    return ab + (cd - ab) * uy;
+}
+
+static float Shield_TileFbm(float u, float v, int basePeriod, float seed)
+{
+    float sum = 0.0f, amp = 0.56f;
+    int p = basePeriod;
+    for (int o = 0; o < 3; ++o) {
+        sum += amp * Shield_TileNoise(u, v, p, seed + (float)o * 13.7f);
+        p *= 2;
+        amp *= 0.5f;
+    }
+    return ShieldShell_Clamp01(sum / 0.98f);
+}
+
+static float Shield_TileRidged(float u, float v, int basePeriod, float seed)
+{
+    float sum = 0.0f, amp = 0.62f;
+    int p = basePeriod;
+    for (int o = 0; o < 3; ++o) {
+        float n = Shield_TileNoise(u, v, p, seed + (float)o * 19.3f);
+        float ridge = 1.0f - fabsf(n * 2.0f - 1.0f);
+        sum += amp * ridge * ridge;
+        p *= 2;
+        amp *= 0.48f;
+    }
+    return ShieldShell_Clamp01(sum / 1.06f);
+}
+
+static Texture2D Shield_CreateProceduralNoiseTexture(void)
+{
+    enum { NSIZE = 256 };
+    static unsigned char pixels[NSIZE * NSIZE * 4];
+    int ptr = 0;
+    for (int y = 0; y < NSIZE; ++y) {
+        float v = (float)y / (float)NSIZE;
+        for (int x = 0; x < NSIZE; ++x) {
+            float u = (float)x / (float)NSIZE;
+            pixels[ptr++] = (unsigned char)(Shield_TileFbm(u, v, 4, 1.7f) * 255.0f + 0.5f);
+            pixels[ptr++] = (unsigned char)(Shield_TileFbm(u, v, 5, 11.3f) * 255.0f + 0.5f);
+            pixels[ptr++] = (unsigned char)(Shield_TileRidged(u, v, 6, 29.1f) * 255.0f + 0.5f);
+            pixels[ptr++] = (unsigned char)(Shield_TileRidged(u, v, 12, 47.9f) * 255.0f + 0.5f);
+        }
+    }
+    Image img = {
+        .data = pixels,
+        .width = NSIZE,
+        .height = NSIZE,
+        .mipmaps = 1,
+        .format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8
+    };
+    Texture2D tex = LoadTextureFromImage(img);
+    if (tex.id != 0) {
+        SetTextureWrap(tex, TEXTURE_WRAP_REPEAT);
+        SetTextureFilter(tex, TEXTURE_FILTER_BILINEAR);
+    }
+    return tex;
+}
 
 static void ShieldShell_InitShared(void)
 {
     if (s_shieldInit) return;
+    s_shieldShader.shader = ResourceManager_LoadShader("core/shaders/glass_shell.vs", "core/shaders/wuxia_shield.fs");
+    s_shieldNoiseTex = Shield_CreateProceduralNoiseTexture();
 
-    s_shieldShader.shader = ResourceManager_LoadShader(
-        "core/shaders/glass_shell.vs", "core/shaders/glass_shell.fs");
-    TraceLog(LOG_INFO, "SHIELDSHELL_RENDER rev=glass-volume-alpha35-rear45-body135");
-    s_shieldShader.bodyColor = GetShaderLocation(s_shieldShader.shader, "u_bodyColor");
-    s_shieldShader.rimColor = GetShaderLocation(s_shieldShader.shader, "u_rimColor");
-    s_shieldShader.opacity = GetShaderLocation(s_shieldShader.shader, "u_opacity");
-    s_shieldShader.rimStrength = GetShaderLocation(s_shieldShader.shader, "u_rimStrength");
-    s_shieldShader.rimPower = GetShaderLocation(s_shieldShader.shader, "u_rimPower");
-    s_shieldShader.bodyOpacity = GetShaderLocation(s_shieldShader.shader, "u_bodyOpacity");
-    s_shieldShader.emissionGain = GetShaderLocation(s_shieldShader.shader, "u_emissionGain");
-    s_shieldShader.emissionOnly = GetShaderLocation(s_shieldShader.shader, "u_emissionOnly");
-    s_shieldShader.lightDirView = GetShaderLocation(s_shieldShader.shader, "u_lightDirView");
-    s_shieldShader.packedTex = GetShaderLocation(s_shieldShader.shader, "u_packedTex");
-    s_shieldShader.hasPacked = GetShaderLocation(s_shieldShader.shader, "u_hasPacked");
-    s_shieldShader.flowTex = GetShaderLocation(s_shieldShader.shader, "u_flowTex");
-    s_shieldShader.hasFlow = GetShaderLocation(s_shieldShader.shader, "u_hasFlow");
-    s_shieldShader.matcapTex = GetShaderLocation(s_shieldShader.shader, "u_matcapTex");
-    s_shieldShader.hasMatcap = GetShaderLocation(s_shieldShader.shader, "u_hasMatcap");
-    s_shieldShader.depthTex = GetShaderLocation(s_shieldShader.shader, "u_depthTex");
-    s_shieldShader.hasDepth = GetShaderLocation(s_shieldShader.shader, "u_hasDepth");
-    s_shieldShader.depthEnabled = GetShaderLocation(s_shieldShader.shader, "u_depthEnabled");
-    s_shieldShader.depthLod = GetShaderLocation(s_shieldShader.shader, "u_depthLod");
-    s_shieldShader.noiseScale = GetShaderLocation(s_shieldShader.shader, "u_noiseScale");
-    s_shieldShader.noiseSpeed = GetShaderLocation(s_shieldShader.shader, "u_noiseSpeed");
-    s_shieldShader.contactStrength = GetShaderLocation(s_shieldShader.shader, "u_contactStrength");
-    s_shieldShader.contactColor = GetShaderLocation(s_shieldShader.shader, "u_contactColor");
-    s_shieldShader.contactThickness = GetShaderLocation(s_shieldShader.shader, "u_contactThickness");
-    s_shieldShader.baseAlpha = GetShaderLocation(s_shieldShader.shader, "u_baseAlpha");
-    s_shieldShader.fresnelAlpha = GetShaderLocation(s_shieldShader.shader, "u_fresnelAlpha");
-    s_shieldShader.contactAlpha = GetShaderLocation(s_shieldShader.shader, "u_contactAlpha");
-    s_shieldShader.impactView = GetShaderLocation(s_shieldShader.shader, "u_impactView");
-    s_shieldShader.impactAge = GetShaderLocation(s_shieldShader.shader, "u_impactAge");
-    s_shieldShader.rippleFrequency = GetShaderLocation(s_shieldShader.shader, "u_rippleFrequency");
-    s_shieldShader.rippleSpeed = GetShaderLocation(s_shieldShader.shader, "u_rippleSpeed");
-    s_shieldShader.flowStrength = GetShaderLocation(s_shieldShader.shader, "u_flowStrength");
-    s_shieldShader.flowSpeed = GetShaderLocation(s_shieldShader.shader, "u_flowSpeed");
-    s_shieldShader.parallaxDepth = GetShaderLocation(s_shieldShader.shader, "u_parallaxDepth");
-    s_shieldShader.innerDepth = GetShaderLocation(s_shieldShader.shader, "u_innerDepth");
-    s_shieldShader.sceneTex = GetShaderLocation(s_shieldShader.shader, "u_sceneTex");
-    s_shieldShader.hasScene = GetShaderLocation(s_shieldShader.shader, "u_hasScene");
+    Shader sh = s_shieldShader.shader;
+    if (sh.id != 0) {
+        s_shieldShader.camPos        = GetShaderLocation(sh, "u_camPos");
+        s_shieldShader.camRight      = GetShaderLocation(sh, "u_camRight");
+        s_shieldShader.camUp         = GetShaderLocation(sh, "u_camUp");
+        s_shieldShader.camForward    = GetShaderLocation(sh, "u_camForward");
+        s_shieldShader.shellCenter   = GetShaderLocation(sh, "u_shellCenter");
+        s_shieldShader.shellRadius   = GetShaderLocation(sh, "u_shellRadius");
+        s_shieldShader.shieldTime    = GetShaderLocation(sh, "u_shieldTime");
+        s_shieldShader.speed         = GetShaderLocation(sh, "u_speed");
+        s_shieldShader.preset        = GetShaderLocation(sh, "u_preset");
+        s_shieldShader.groundEnabled = GetShaderLocation(sh, "u_groundEnabled");
+        s_shieldShader.groundY       = GetShaderLocation(sh, "u_groundY");
+        s_shieldShader.hasImpacts    = GetShaderLocation(sh, "u_hasImpacts");
+        s_shieldShader.impacts       = GetShaderLocation(sh, "u_impacts");
+        s_shieldShader.primaryColor  = GetShaderLocation(sh, "u_primaryColor");
+        s_shieldShader.rimColor      = GetShaderLocation(sh, "u_rimColor");
+        s_shieldShader.opacity       = GetShaderLocation(sh, "u_opacity");
+        s_shieldShader.fresnel       = GetShaderLocation(sh, "u_fresnel");
+        s_shieldShader.seamIntensity = GetShaderLocation(sh, "u_seamIntensity");
+        s_shieldShader.backWall      = GetShaderLocation(sh, "u_backWall");
+        s_shieldShader.passSide      = GetShaderLocation(sh, "u_passSide");
+        s_shieldShader.relief        = GetShaderLocation(sh, "u_relief");
+        s_shieldShader.refraction    = GetShaderLocation(sh, "u_refraction");
+        s_shieldShader.emissionGain  = GetShaderLocation(sh, "u_emissionGain");
+        s_shieldShader.premultiply   = GetShaderLocation(sh, "u_premultiply");
+        s_shieldShader.noiseTex      = GetShaderLocation(sh, "u_noiseTex");
+        s_shieldShader.sceneTex      = GetShaderLocation(sh, "u_sceneTex");
+        s_shieldShader.hasScene      = GetShaderLocation(sh, "u_hasScene");
+        s_shieldShader.depthTex      = GetShaderLocation(sh, "u_depthTex");
+        s_shieldShader.hasDepth      = GetShaderLocation(sh, "u_hasDepth");
+        s_shieldShader.depthClip     = GetShaderLocation(sh, "u_depthClip");
+    }
 
-    /* ShieldShell is a translucent carrier: keep its mass below the bright
-     * background while letting the rim/emission carry the silhouette. */
-    Tuning_RegisterFloat("shield_shell_opacity", &s_shieldOpacity, 0.78f);
-    /* 2.15 -> 2.0, chosen by measurement alongside rim_power: at this pair the silhouette
-       band and the ground-contact line come out the same width (9 px each) with the
-       silhouette a little brighter (peak 247 vs 228), which is the ordering the shapes
-       should have. It went to 3.0 briefly to compensate for a narrower band, back down
-       once the white core returned to `wallDensity` and stopped costing luminance. */
-    Tuning_RegisterFloat("shield_shell_rim", &s_shieldRim, 2.0f);
-    /* Rim WIDTH, the counterpart of shield_shell_contact_thickness. Higher = narrower.
-       The default is measured, not chosen: it is the exponent at which the silhouette
-       band's screen width matches the ground-contact line's. */
-    Tuning_RegisterFloat("shield_shell_rim_power", &s_shieldRimPower, 8.0f);
-    Tuning_RegisterFloat("shield_shell_noise_scale", &s_shieldNoiseScale, 28.0f);
-    Tuning_RegisterFloat("shield_shell_noise_speed", &s_shieldNoiseSpeed, 2.2f);
-    Tuning_RegisterFloat("shield_shell_contact", &s_shieldContact, 1.0f);
-    Tuning_RegisterFloat("shield_shell_contact_thickness", &s_shieldContactThickness, 0.35f);
-    Tuning_RegisterFloat("shield_shell_base_alpha", &s_shieldBaseAlpha, 0.025f);
-    Tuning_RegisterFloat("shield_shell_fresnel_alpha", &s_shieldFresnelAlpha, 0.34f);
-    Tuning_RegisterFloat("shield_shell_contact_alpha", &s_shieldContactAlpha, 0.70f);
-    /* Registration is what actually sets the runtime value (Tuning_RegisterFloat assigns
-       the default), so this number, not the static initialiser above, is the shipped one. */
+    s_shieldGroundShader.shader = ResourceManager_LoadShader("core/shaders/wuxia_shield_ground.vs", "core/shaders/wuxia_shield_ground.fs");
+    Shader gsh = s_shieldGroundShader.shader;
+    if (gsh.id != 0) {
+        s_shieldGroundShader.preset        = GetShaderLocation(gsh, "u_preset");
+        s_shieldGroundShader.primaryColor  = GetShaderLocation(gsh, "u_primaryColor");
+        s_shieldGroundShader.rimColor      = GetShaderLocation(gsh, "u_rimColor");
+        s_shieldGroundShader.opacity       = GetShaderLocation(gsh, "u_opacity");
+        s_shieldGroundShader.seamIntensity = GetShaderLocation(gsh, "u_seamIntensity");
+        s_shieldGroundShader.speed         = GetShaderLocation(gsh, "u_speed");
+        s_shieldGroundShader.shieldTime    = GetShaderLocation(gsh, "u_shieldTime");
+        s_shieldGroundShader.emissionGain  = GetShaderLocation(gsh, "u_emissionGain");
+        s_shieldGroundShader.premultiply   = GetShaderLocation(gsh, "u_premultiply");
+        s_shieldGroundShader.rcut          = GetShaderLocation(gsh, "u_rcut");
+        s_shieldGroundShader.quadHalf      = GetShaderLocation(gsh, "u_quadHalf");
+        s_shieldGroundShader.noiseTex      = GetShaderLocation(gsh, "u_noiseTex");
+    }
     Tuning_RegisterFloat("shield_shell_depth_enabled", &s_shieldDepthEnabled, 1.0f);
-    Tuning_RegisterFloat("shield_shell_depth_lod", &s_shieldDepthLod, 0.5f);
-    Tuning_RegisterFloat("shield_shell_ripple_frequency", &s_shieldRippleFrequency, 18.0f);
-    Tuning_RegisterFloat("shield_shell_ripple_speed", &s_shieldRippleSpeed, 8.0f);
-    Tuning_RegisterFloat("shield_shell_flow_strength", &s_shieldFlowStrength, 0.08f);
-    Tuning_RegisterFloat("shield_shell_flow_speed", &s_shieldFlowSpeed, 0.35f);
-    Tuning_RegisterFloat("shield_shell_parallax_depth", &s_shieldParallaxDepth, 0.045f);
-    Tuning_RegisterFloat("shield_shell_inner_depth", &s_shieldInnerDepth, 0.70f);
     s_shieldInit = true;
 }
 
-int VFX_ShieldShell_SpawnEx(Vector3 pos, VC_MaterialId mat, float radius,
-                             float intensity, const VFX_ShieldSurface *surface)
+VFX_ShieldDesc VFX_Shield_DefaultDesc(VFX_ShieldPreset preset)
+{
+    if (preset < 0 || preset >= VFX_SHIELD_PRESET_COUNT) preset = VFX_SHIELD_PRESET_CHANKHI;
+    const WuxiaShieldPresetDef *p = &k_shieldPresets[preset];
+    VFX_ShieldDesc d = {0};
+    d.preset          = preset;
+    d.groundMode      = VFX_SHIELD_GROUND_HEMI;
+    d.elevation       = Shield_ElevationForMode(VFX_SHIELD_GROUND_HEMI);
+    d.opacity         = p->opacity;
+    d.fresnel         = p->fresnel;
+    d.seam            = p->seam;
+    d.speed           = p->speed;
+    d.backWall        = p->backWall;
+    d.relief          = p->relief;
+    d.emission        = p->emission;
+    d.refraction      = p->refraction;
+    d.usePresetColors = true;
+    return d;
+}
+
+const char *VFX_ShieldPreset_Name(VFX_ShieldPreset preset)
+{
+    if (preset < 0 || preset >= VFX_SHIELD_PRESET_COUNT) return "CHAN KHI";
+    return k_shieldPresetNames[preset];
+}
+
+const char *VFX_ShieldGroundMode_Name(VFX_ShieldGroundMode mode)
+{
+    if (mode < 0 || mode >= VFX_SHIELD_GROUND_COUNT) return "Hemi (50%)";
+    return k_shieldGroundModeNames[mode];
+}
+
+int VFX_Shield_GetParams(VFX_ShieldDesc *cfg, VFX_ParamDef *out, int max)
+{
+    if (!cfg || !out || max <= 0) return 0;
+    int n = 0;
+
+    if (n < max) out[n++] = (VFX_ParamDef){
+        .name = "Preset", .group = "Wuxia Shield", .type = VFX_PARAM_ENUM,
+        .valPtr = (void *)&cfg->preset,
+        .enumNames = k_shieldPresetNames, .enumCount = VFX_SHIELD_PRESET_COUNT,
+        .minInt = 0, .maxInt = VFX_SHIELD_PRESET_COUNT - 1, .stepFloat = 1.0f
+    };
+    if (n < max) out[n++] = (VFX_ParamDef){
+        .name = "Ground Cut", .group = "Wuxia Shield", .type = VFX_PARAM_ENUM,
+        .valPtr = (void *)&cfg->groundMode,
+        .enumNames = k_shieldGroundModeNames, .enumCount = VFX_SHIELD_GROUND_COUNT,
+        .minInt = 0, .maxInt = VFX_SHIELD_GROUND_COUNT - 1, .stepFloat = 1.0f
+    };
+    if (n < max) out[n++] = (VFX_ParamDef){
+        .name = "Elevation", .group = "Wuxia Shield", .type = VFX_PARAM_FLOAT,
+        .valPtr = (void *)&cfg->elevation, .minFloat = -0.85f, .maxFloat = 1.25f, .stepFloat = 0.05f
+    };
+    if (n < max) out[n++] = (VFX_ParamDef){
+        .name = "Opacity", .group = "Wuxia Shield", .type = VFX_PARAM_FLOAT,
+        .valPtr = (void *)&cfg->opacity, .minFloat = 0.1f, .maxFloat = 1.5f, .stepFloat = 0.05f
+    };
+    if (n < max) out[n++] = (VFX_ParamDef){
+        .name = "Fresnel", .group = "Wuxia Shield", .type = VFX_PARAM_FLOAT,
+        .valPtr = (void *)&cfg->fresnel, .minFloat = 0.2f, .maxFloat = 2.5f, .stepFloat = 0.05f
+    };
+    if (n < max) out[n++] = (VFX_ParamDef){
+        .name = "Seam Glow", .group = "Wuxia Shield", .type = VFX_PARAM_FLOAT,
+        .valPtr = (void *)&cfg->seam, .minFloat = 0.0f, .maxFloat = 2.5f, .stepFloat = 0.05f
+    };
+    if (n < max) out[n++] = (VFX_ParamDef){
+        .name = "Speed", .group = "Wuxia Shield", .type = VFX_PARAM_FLOAT,
+        .valPtr = (void *)&cfg->speed, .minFloat = 0.1f, .maxFloat = 2.5f, .stepFloat = 0.05f
+    };
+    if (n < max) out[n++] = (VFX_ParamDef){
+        .name = "Back Wall", .group = "Wuxia Shield", .type = VFX_PARAM_FLOAT,
+        .valPtr = (void *)&cfg->backWall, .minFloat = 0.0f, .maxFloat = 1.0f, .stepFloat = 0.05f
+    };
+    if (n < max) out[n++] = (VFX_ParamDef){
+        .name = "Relief", .group = "Wuxia Shield", .type = VFX_PARAM_FLOAT,
+        .valPtr = (void *)&cfg->relief, .minFloat = 0.25f, .maxFloat = 2.0f, .stepFloat = 0.05f
+    };
+    if (n < max) out[n++] = (VFX_ParamDef){
+        .name = "Emission", .group = "Wuxia Shield", .type = VFX_PARAM_FLOAT,
+        .valPtr = (void *)&cfg->emission, .minFloat = 0.5f, .maxFloat = 8.0f, .stepFloat = 0.2f
+    };
+    if (n < max) out[n++] = (VFX_ParamDef){
+        .name = "Preset Colors", .group = "Wuxia Shield", .type = VFX_PARAM_BOOL,
+        .valPtr = (void *)&cfg->usePresetColors
+    };
+
+    return n;
+}
+
+int VFX_Shield_SpawnEx(Vector3 pos, VC_MaterialId mat, float radius, float intensity, const VFX_ShieldDesc *desc)
 {
     ShieldShell_InitShared();
-    for (int i = 0; i < VFX_SHIELD_SHELL_MAX; ++i)
-    {
+    for (int i = 0; i < VFX_SHIELD_SHELL_MAX; ++i) {
         if (s_shieldShells[i].active) continue;
-        s_shieldShells[i] = (VC_ShieldShell){
-            .active = true, .stopping = false, .pos = pos, .mat = mat,
-            .radius = radius > 0.0f ? radius : 0.9f,
-            .target = ShieldShell_Clamp01(intensity), .level = 0.0f, .elapsed = 0.0f,
-            .packedMap = surface ? (surface->packedMap.id ? surface->packedMap : surface->body) : (Texture2D){0},
-            .flowMap = surface ? surface->flowMap : (Texture2D){0},
-            .matcapMap = surface ? surface->matcapMap : (Texture2D){0},
-            .impactAge = 1000000.0f,
-            /* Default ON: every caller before 28/08/2026 was a ground bubble,
-             * and a new field must not change what they already look like. */
-            .groundContact = true
-        };
+        VC_ShieldShell *sh = &s_shieldShells[i];
+        *sh = (VC_ShieldShell){0};
+        sh->active  = true;
+        sh->pos     = pos;
+        sh->mat     = mat;
+        sh->radius  = (radius > 0.0f) ? radius : 1.0f;
+        sh->target  = ShieldShell_Clamp01(intensity);
+        sh->desc    = desc ? *desc : VFX_Shield_DefaultDesc(VFX_SHIELD_PRESET_CHANKHI);
+        for (int k = 0; k < SHIELD_MAX_IMPACTS; ++k) sh->impactTime[k] = -10.0f;
         return i;
     }
     return -1;
 }
 
+void VFX_Shield_SetGroundMode(int handle, VFX_ShieldGroundMode mode)
+{
+    if (handle >= 0 && handle < VFX_SHIELD_SHELL_MAX && s_shieldShells[handle].active) {
+        s_shieldShells[handle].desc.groundMode = mode;
+        s_shieldShells[handle].desc.elevation  = (mode == VFX_SHIELD_GROUND_FULL) ? 0.0f : Shield_ElevationForMode(mode);
+    }
+}
+
+void VFX_Shield_SetDesc(int handle, const VFX_ShieldDesc *desc)
+{
+    if (desc && handle >= 0 && handle < VFX_SHIELD_SHELL_MAX && s_shieldShells[handle].active)
+        s_shieldShells[handle].desc = *desc;
+}
+
+void VFX_Shield_TriggerImpact(int handle, Vector3 impactWorld)
+{
+    if (handle < 0 || handle >= VFX_SHIELD_SHELL_MAX || !s_shieldShells[handle].active) return;
+    VC_ShieldShell *sh = &s_shieldShells[handle];
+    Vector3 center = Shield_CenterForDesc(sh->pos, sh->radius, &sh->desc);
+    Vector3 d = Vector3Subtract(impactWorld, center);
+    if (Vector3LengthSqr(d) < 1e-5f) d = (Vector3){ 0.0f, 0.5f, 0.866f };
+    sh->impactDir[sh->nextImpactSlot]  = Vector3Normalize(d);
+    sh->impactTime[sh->nextImpactSlot] = sh->elapsed;
+    sh->nextImpactSlot = (sh->nextImpactSlot + 1) % SHIELD_MAX_IMPACTS;
+}
+
+// ── Compatibility wrappers (ShieldShell & FlowShield) ────────────────────────
+
+int VFX_ShieldShell_SpawnEx(Vector3 pos, VC_MaterialId mat, float radius,
+                            float intensity, const VFX_ShieldSurface *surface)
+{
+    (void)surface;
+    VFX_ShieldDesc d = VFX_Shield_DefaultDesc(VFX_SHIELD_PRESET_CHANKHI);
+    d.groundMode = VFX_SHIELD_GROUND_SUNKEN;
+    return VFX_Shield_SpawnEx(pos, mat, radius, intensity, &d);
+}
+
 int VFX_ShieldShell_Spawn(Vector3 pos, VC_MaterialId mat, float radius, float intensity)
 { return VFX_ShieldShell_SpawnEx(pos, mat, radius, intensity, NULL); }
-
-void VFX_ShieldShell_SetGroundContact(int handle, bool onGround)
-{
-    if (handle < 0 || handle >= VFX_SHIELD_SHELL_MAX) return;
-    if (!s_shieldShells[handle].active) return;
-    s_shieldShells[handle].groundContact = onGround;
-}
 
 int VFX_ComposeShieldShell(Vector3 pos, VC_MaterialId mat, float radius, float intensity)
 { return VFX_ShieldShell_Spawn(pos, mat, radius, intensity); }
@@ -242,35 +446,29 @@ void VFX_ShieldShell_SetTransform(int handle, Vector3 pos)
 
 void VFX_ShieldShell_SetIntensity(int handle, float intensity01)
 {
-    if (handle >= 0 && handle < VFX_SHIELD_SHELL_MAX && s_shieldShells[handle].active)
-    {
+    if (handle >= 0 && handle < VFX_SHIELD_SHELL_MAX && s_shieldShells[handle].active) {
         s_shieldShells[handle].target = ShieldShell_Clamp01(intensity01);
         s_shieldShells[handle].stopping = false;
     }
 }
 
 void VFX_ShieldShell_SetSurface(int handle, const VFX_ShieldSurface *surface)
-{
-    if (handle >= 0 && handle < VFX_SHIELD_SHELL_MAX && s_shieldShells[handle].active && surface)
-    {
-        s_shieldShells[handle].packedMap = surface->packedMap.id ? surface->packedMap : surface->body;
-        s_shieldShells[handle].flowMap = surface->flowMap;
-        s_shieldShells[handle].matcapMap = surface->matcapMap;
-    }
-}
+{ (void)handle; (void)surface; }
 
 void VFX_ShieldShell_SetImpact(int handle, Vector3 impactWorld, float timeSinceImpact)
 {
-    if (handle >= 0 && handle < VFX_SHIELD_SHELL_MAX && s_shieldShells[handle].active) {
-        s_shieldShells[handle].impactWorld = impactWorld;
-        s_shieldShells[handle].impactAge = timeSinceImpact < 0.0f ? 0.0f : timeSinceImpact;
-    }
+    (void)timeSinceImpact;
+    VFX_Shield_TriggerImpact(handle, impactWorld);
+}
+
+void VFX_ShieldShell_SetGroundContact(int handle, bool onGround)
+{
+    VFX_Shield_SetGroundMode(handle, onGround ? VFX_SHIELD_GROUND_SUNKEN : VFX_SHIELD_GROUND_FULL);
 }
 
 void VFX_ShieldShell_Stop(int handle)
 {
-    if (handle >= 0 && handle < VFX_SHIELD_SHELL_MAX && s_shieldShells[handle].active)
-    {
+    if (handle >= 0 && handle < VFX_SHIELD_SHELL_MAX && s_shieldShells[handle].active) {
         s_shieldShells[handle].stopping = true;
         s_shieldShells[handle].target = 0.0f;
     }
@@ -279,359 +477,276 @@ void VFX_ShieldShell_Stop(int handle)
 void VFX_KillShieldShell(int handle)
 { if (handle >= 0 && handle < VFX_SHIELD_SHELL_MAX) s_shieldShells[handle].active = false; }
 
+// FlowShield compatibility routes to unified shield (NGOCTHANH / CHANKHI)
+int VFX_FlowShield_Spawn(Vector3 pos, VC_MaterialId mat, float radius, float intensity)
+{
+    VFX_ShieldDesc d = VFX_Shield_DefaultDesc(VFX_SHIELD_PRESET_NGOCTHANH);
+    d.groundMode = VFX_SHIELD_GROUND_SUNKEN;
+    d.usePresetColors = (mat == VC_MAT_WATER);
+    return VFX_Shield_SpawnEx(pos, mat, radius, intensity, &d);
+}
+
+int VFX_ComposeFlowShield(Vector3 pos, VC_MaterialId mat, float radius, float intensity)
+{ return VFX_FlowShield_Spawn(pos, mat, radius, intensity); }
+
+void VFX_FlowShield_SetTransform(int handle, Vector3 pos) { VFX_ShieldShell_SetTransform(handle, pos); }
+void VFX_FlowShield_SetIntensity(int handle, float intensity01) { VFX_ShieldShell_SetIntensity(handle, intensity01); }
+void VFX_FlowShield_Stop(int handle) { VFX_ShieldShell_Stop(handle); }
+void VFX_KillFlowShield(int handle) { VFX_KillShieldShell(handle); }
+void VFX_FlowShield_DrawRefraction(Camera3D cam) { (void)cam; }
+
+// ── Update & Draw ────────────────────────────────────────────────────────────
+
 static void VC_ShieldShell_Update(float dt)
 {
     bool anyActive = false;
-    for (int i = 0; i < VFX_SHIELD_SHELL_MAX; ++i)
-    {
-        VC_ShieldShell *shield = &s_shieldShells[i];
-        if (!shield->active) continue;
+    for (int i = 0; i < VFX_SHIELD_SHELL_MAX; ++i) {
+        VC_ShieldShell *sh = &s_shieldShells[i];
+        if (!sh->active) continue;
         anyActive = true;
-        shield->elapsed += dt;
-        shield->level += (shield->target - shield->level) * (1.0f - expf(-dt * 7.0f));
-        if (shield->stopping && shield->level < 0.004f)
-        {
-            shield->active = false;
-            continue;
+        if (!s_shieldInit) ShieldShell_InitShared();
+        sh->elapsed += dt;
+        sh->level += (sh->target - sh->level) * (1.0f - expf(-dt * 7.0f));
+        if (sh->stopping && sh->level < 0.004f) {
+            sh->active = false;
         }
     }
     if (anyActive) SceneTargets_RequestSceneSnapshot();
 }
 
-// Bind the refraction payload once per pass (inside BeginShaderMode): the
-// sample-safe scene copy and the previous-frame linear depth. When a source
-// is missing (first frame, no depth-texture path) the matching u_has* gate
-// turns the term off in the shader, so nothing samples garbage.
-static void ShieldShell_BindInputs(Camera3D cam)
+static void ShieldShell_BindSharedInputs(Camera3D cam, Vector3 right, Vector3 up, Vector3 fwd)
 {
+    Shader sh = s_shieldShader.shader;
+    if (s_shieldShader.camPos >= 0)     SetShaderValue(sh, s_shieldShader.camPos,     &cam.position, SHADER_UNIFORM_VEC3);
+    if (s_shieldShader.camRight >= 0)   SetShaderValue(sh, s_shieldShader.camRight,   &right,        SHADER_UNIFORM_VEC3);
+    if (s_shieldShader.camUp >= 0)      SetShaderValue(sh, s_shieldShader.camUp,      &up,           SHADER_UNIFORM_VEC3);
+    if (s_shieldShader.camForward >= 0) SetShaderValue(sh, s_shieldShader.camForward, &fwd,          SHADER_UNIFORM_VEC3);
+
+    if (s_shieldShader.noiseTex >= 0 && s_shieldNoiseTex.id != 0)
+        SetShaderValueTexture(sh, s_shieldShader.noiseTex, s_shieldNoiseTex);
+
     Texture2D sceneTex = SceneTargets_GetSceneSnapshotTexture();
-    int hasScene = sceneTex.id != 0 ? 1 : 0;
-    SetShaderValue(s_shieldShader.shader, s_shieldShader.hasScene,
-                   &hasScene, SHADER_UNIFORM_INT);
-    if (hasScene && s_shieldShader.sceneTex >= 0)
-        SetShaderValueTexture(s_shieldShader.shader, s_shieldShader.sceneTex, sceneTex);
+    int hasScene = (sceneTex.id != 0) ? 1 : 0;
+    if (s_shieldShader.hasScene >= 0) SetShaderValue(sh, s_shieldShader.hasScene, &hasScene, SHADER_UNIFORM_INT);
+    if (hasScene && s_shieldShader.sceneTex >= 0) SetShaderValueTexture(sh, s_shieldShader.sceneTex, sceneTex);
+
     Texture2D depthTex = SceneTargets_GetDepthTexture();
     int hasDepth = (depthTex.id != 0 && s_shieldDepthEnabled > 0.5f) ? 1 : 0;
-    SetShaderValue(s_shieldShader.shader, s_shieldShader.hasDepth, &hasDepth, SHADER_UNIFORM_INT);
-    if (hasDepth && s_shieldShader.depthTex >= 0)
-        SetShaderValueTexture(s_shieldShader.shader, s_shieldShader.depthTex, depthTex);
-    SetShaderValue(s_shieldShader.shader, s_shieldShader.depthEnabled, &s_shieldDepthEnabled, SHADER_UNIFORM_FLOAT);
-    SetShaderValue(s_shieldShader.shader, s_shieldShader.depthLod, &s_shieldDepthLod, SHADER_UNIFORM_FLOAT);
+    if (s_shieldShader.hasDepth >= 0) SetShaderValue(sh, s_shieldShader.hasDepth, &hasDepth, SHADER_UNIFORM_INT);
+    if (hasDepth && s_shieldShader.depthTex >= 0) SetShaderValueTexture(sh, s_shieldShader.depthTex, depthTex);
+
+    Vector2 clip = { 0.1f, 200.0f };
+    if (s_shieldShader.depthClip >= 0) SetShaderValue(sh, s_shieldShader.depthClip, &clip, SHADER_UNIFORM_VEC2);
 }
 
-/* `pos` is the shell's GROUND POINT, not its centre: the sphere is lifted by half
- * its radius, which leaves three quarters of it above the plane through `pos` and
- * one quarter buried.
- *
- * The arithmetic, so the next change to it is not guesswork: for radius r and
- * centre height h the fraction above ground is (h + r) / 2r. Setting that to 3/4
- * gives h = r/2, and the lowest point lands at -r/2 — a quarter of the sphere's
- * 2r height. A full-radius lift (h = r) is the tangent case, 100% above.
- *
- * It used to be the centre, and every caller passed a character's feet — so half
- * the bubble was underground. The shell draws after the 3D pass, against a depth
- * buffer that already holds the floor, so the floor correctly rejected the FAR
- * wall's lower half while the NEAR wall's lower half (in front of the floor)
- * survived. What that renders as is a dome with a hard bright ellipse across the
- * middle: the ellipse is the sphere meeting the floor, and the missing far wall
- * is why the lower body looked hollow. Bisected by forcing alpha to 1 and drawing
- * the far wall alone — still a crescent, so neither the shader nor draw order nor
- * winding was responsible.
- *
- * Resolved here rather than at the call site because a caller that forgets the
- * lift reproduces exactly this, and nothing about the result says "you passed the
- * wrong height". */
-/* Centre height as a multiple of the radius: 0.5 => three quarters above
- * ground. 1.0 would make the sphere tangent to it. */
-/* Both shells live in the same translation unit (visual_composer.c pulls every
- * .inl in), so this is guarded rather than defined twice. */
-#ifndef SHIELD_BURIED_LIFT
-#define SHIELD_BURIED_LIFT 0.5f
-#endif
-
-static Vector3 ShieldCentre(Vector3 groundPos, float radius)
-{
-    groundPos.y += radius * SHIELD_BURIED_LIFT;
-    return groundPos;
-}
-
-static void ShieldShell_DrawPass(bool emissionOnly)
+static void ShieldShell_DrawPass(bool emissionPass, float passSide)
 {
     int activeCount = 0;
     for (int i = 0; i < VFX_SHIELD_SHELL_MAX; ++i)
         if (s_shieldShells[i].active) activeCount++;
-    const int rings = ShieldShell_Rings(activeCount);
-    for (int i = 0; i < VFX_SHIELD_SHELL_MAX; ++i)
-    {
-        VC_ShieldShell *shield = &s_shieldShells[i];
-        if (!shield->active || shield->level <= 0.004f) continue;
+    int rings = ShieldShell_Rings(activeCount);
+    Shader sh = s_shieldShader.shader;
+    float premul = emissionPass ? 1.0f : 0.0f;
 
-        const VFX_ElementMaterial *material = VFX_Material(shield->mat);
-        Vector4 bodyColor = ColorNormalize(material->body);
-        Vector4 rimColor = ColorNormalize(material->glow);
-        float pulse = VC_Breathe(shield->elapsed, 1.15f, 0.012f);
-        float radius = shield->radius * (0.99f + 0.01f * pulse);
-        VFXResolvedAppearance appearance = VFXAppearance_Resolve(
-            VFX_APPEARANCE_MAGIC,
-            (VFXResolvedAppearance){ VFX_SURFACE_ALPHA, VFX_CONTRAST_MAGIC,
-                                     1.0f, 1.0f, 0.78f, true });
-        /* The glass centre is made transparent by its spatial coverage, not
-         * by starving the complete carrier.  This preserves a readable
-         * membrane through the middle-to-edge gradient. */
-        float bodyCoverage = appearance.bodyOpacity * 4.0f;
-        float opacity = ShieldShell_Clamp01(
-            shield->level * s_shieldOpacity *
-            (emissionOnly ? appearance.emissionIntensity : bodyCoverage));
-        int emission = emissionOnly ? 1 : 0;
-        int hasPacked = shield->packedMap.id != 0 ? 1 : 0;
-        int hasFlow = shield->flowMap.id != 0 ? 1 : 0;
-        int hasMatcap = shield->matcapMap.id != 0 ? 1 : 0;
-        Vector3 delta = Vector3Subtract(shield->impactWorld, s_shieldCameraPosition);
-        Vector3 impactView = { Vector3DotProduct(delta, s_shieldCameraRight),
-                               Vector3DotProduct(delta, s_shieldCameraUp),
-                               -Vector3DotProduct(delta, s_shieldCameraForward) };
+    for (int i = 0; i < VFX_SHIELD_SHELL_MAX; ++i) {
+        const VC_ShieldShell *shObj = &s_shieldShells[i];
+        if (!shObj->active || shObj->level <= 0.004f) continue;
 
-        SetShaderValue(s_shieldShader.shader, s_shieldShader.bodyColor,
-                       &bodyColor, SHADER_UNIFORM_VEC4);
-        SetShaderValue(s_shieldShader.shader, s_shieldShader.rimColor,
-                       &rimColor, SHADER_UNIFORM_VEC4);
-        SetShaderValue(s_shieldShader.shader, s_shieldShader.opacity,
-                       &opacity, SHADER_UNIFORM_FLOAT);
-        SetShaderValue(s_shieldShader.shader, s_shieldShader.hasPacked,
-                       &hasPacked, SHADER_UNIFORM_INT);
-        if (hasPacked) SetShaderValueTexture(s_shieldShader.shader,
-                                             s_shieldShader.packedTex, shield->packedMap);
-        SetShaderValue(s_shieldShader.shader, s_shieldShader.hasFlow,
-                       &hasFlow, SHADER_UNIFORM_INT);
-        if (hasFlow) SetShaderValueTexture(s_shieldShader.shader,
-                                            s_shieldShader.flowTex, shield->flowMap);
-        SetShaderValue(s_shieldShader.shader, s_shieldShader.hasMatcap,
-                       &hasMatcap, SHADER_UNIFORM_INT);
-        if (hasMatcap) SetShaderValueTexture(s_shieldShader.shader,
-                                              s_shieldShader.matcapTex, shield->matcapMap);
-        SetShaderValue(s_shieldShader.shader, s_shieldShader.rimStrength,
-                       &s_shieldRim, SHADER_UNIFORM_FLOAT);
-        SetShaderValue(s_shieldShader.shader, s_shieldShader.rimPower,
-                       &s_shieldRimPower, SHADER_UNIFORM_FLOAT);
-        float bodyOpacity = emissionOnly ? 0.0f : bodyCoverage;
-        float emissionGain = emissionOnly ? appearance.emissionIntensity : 0.0f;
-        SetShaderValue(s_shieldShader.shader, s_shieldShader.bodyOpacity,
-                       &bodyOpacity, SHADER_UNIFORM_FLOAT);
-        SetShaderValue(s_shieldShader.shader, s_shieldShader.emissionGain,
-                       &emissionGain, SHADER_UNIFORM_FLOAT);
-        SetShaderValue(s_shieldShader.shader, s_shieldShader.emissionOnly,
-                       &emission, SHADER_UNIFORM_INT);
-        SetShaderValue(s_shieldShader.shader, s_shieldShader.noiseScale,
-                       &s_shieldNoiseScale, SHADER_UNIFORM_FLOAT);
-        SetShaderValue(s_shieldShader.shader, s_shieldShader.noiseSpeed,
-                       &s_shieldNoiseSpeed, SHADER_UNIFORM_FLOAT);
-        /* A floating shell has no terrain to meet, so its contact band is
-         * switched off HERE rather than by the global tunable: both kinds can be
-         * on screen at once, and shield_shell_depth_enabled would take the band
-         * away from the ground bubbles too. */
-        float contactStrength = shield->groundContact ? s_shieldContact : 0.0f;
-        float contactAlpha    = shield->groundContact ? s_shieldContactAlpha : 0.0f;
-        /* The depth term does two things, and a floating shell wants NEITHER:
-         * it draws the contact band, and it rejects the far wall wherever the
-         * scene is nearer — which on a ground bubble correctly hides the buried
-         * half, and on a ball in mid-air leaves a hard horizontal seam across
-         * the glass with nothing to explain it. Written per shell, so the global
-         * shield_shell_depth_enabled still governs the ground bubbles. */
-        float depthEnabled = shield->groundContact ? s_shieldDepthEnabled : 0.0f;
-        SetShaderValue(s_shieldShader.shader, s_shieldShader.depthEnabled,
-                       &depthEnabled, SHADER_UNIFORM_FLOAT);
-        SetShaderValue(s_shieldShader.shader, s_shieldShader.contactStrength,
-                       &contactStrength, SHADER_UNIFORM_FLOAT);
-        SetShaderValue(s_shieldShader.shader, s_shieldShader.contactThickness,
-                       &s_shieldContactThickness, SHADER_UNIFORM_FLOAT);
-        SetShaderValue(s_shieldShader.shader, s_shieldShader.baseAlpha,
-                       &s_shieldBaseAlpha, SHADER_UNIFORM_FLOAT);
-        SetShaderValue(s_shieldShader.shader, s_shieldShader.fresnelAlpha,
-                       &s_shieldFresnelAlpha, SHADER_UNIFORM_FLOAT);
-        SetShaderValue(s_shieldShader.shader, s_shieldShader.contactAlpha,
-                       &contactAlpha, SHADER_UNIFORM_FLOAT);
-        SetShaderValue(s_shieldShader.shader, s_shieldShader.impactView,
-                       &impactView, SHADER_UNIFORM_VEC3);
-        SetShaderValue(s_shieldShader.shader, s_shieldShader.impactAge,
-                       &shield->impactAge, SHADER_UNIFORM_FLOAT);
-        SetShaderValue(s_shieldShader.shader, s_shieldShader.rippleFrequency,
-                       &s_shieldRippleFrequency, SHADER_UNIFORM_FLOAT);
-        SetShaderValue(s_shieldShader.shader, s_shieldShader.rippleSpeed,
-                       &s_shieldRippleSpeed, SHADER_UNIFORM_FLOAT);
-        SetShaderValue(s_shieldShader.shader, s_shieldShader.flowStrength,
-                       &s_shieldFlowStrength, SHADER_UNIFORM_FLOAT);
-        SetShaderValue(s_shieldShader.shader, s_shieldShader.flowSpeed,
-                       &s_shieldFlowSpeed, SHADER_UNIFORM_FLOAT);
-        SetShaderValue(s_shieldShader.shader, s_shieldShader.parallaxDepth,
-                       &s_shieldParallaxDepth, SHADER_UNIFORM_FLOAT);
-        SetShaderValue(s_shieldShader.shader, s_shieldShader.innerDepth,
-                       &s_shieldInnerDepth, SHADER_UNIFORM_FLOAT);
-        // Contact glow reads as a hotter, near-white band of the element hue.
-        Vector4 contactColor = {
-            rimColor.x + (1.0f - rimColor.x) * 0.30f,
-            rimColor.y + (1.0f - rimColor.y) * 0.30f,
-            rimColor.z + (1.0f - rimColor.z) * 0.30f,
-            1.0f
-        };
-        SetShaderValue(s_shieldShader.shader, s_shieldShader.contactColor,
-                       &contactColor, SHADER_UNIFORM_VEC4);
+        float radius = shObj->radius * (0.38f + 0.62f * shObj->level);
+        if (radius <= 0.01f) continue;
 
-        DrawCoreSphere(ShieldCentre(shield->pos, radius), radius, rings, rings, WHITE);
+        const VFX_ShieldDesc *d = &shObj->desc;
+        int presetIdx = (d->preset >= 0 && d->preset < VFX_SHIELD_PRESET_COUNT) ? (int)d->preset : 0;
+        const WuxiaShieldPresetDef *pdef = &k_shieldPresets[presetIdx];
+
+        Vector3 center = Shield_CenterForDesc(shObj->pos, radius, d);
+        float groundEnabled = Shield_IntersectsGround(d) ? 1.0f : 0.0f;
+        float groundY = shObj->pos.y;
+
+        Vector3 primaryCol = pdef->primary;
+        Vector3 rimCol     = pdef->rim;
+        if (!d->usePresetColors) {
+            const VFX_ElementMaterial *m = VFX_Material(shObj->mat);
+            Vector4 bc = ColorNormalize(m->body);
+            Vector4 gc = ColorNormalize(m->glow);
+            primaryCol = (Vector3){ bc.x, bc.y, bc.z };
+            rimCol     = (Vector3){ gc.x, gc.y, gc.z };
+        }
+
+        Vector4 impVecs[SHIELD_MAX_IMPACTS];
+        float hasImp = 0.0f;
+        for (int k = 0; k < SHIELD_MAX_IMPACTS; ++k) {
+            float age = shObj->elapsed - shObj->impactTime[k];
+            if (shObj->impactTime[k] >= 0.0f && age >= 0.0f && age < 2.6f) {
+                impVecs[k] = (Vector4){ shObj->impactDir[k].x, shObj->impactDir[k].y, shObj->impactDir[k].z, age };
+                hasImp = 1.0f;
+            } else {
+                impVecs[k] = (Vector4){ 0.0f, 1.0f, 0.0f, -1.0f };
+            }
+        }
+
+        float opacity = d->opacity * shObj->level;
+        if (s_shieldShader.shellCenter >= 0)   SetShaderValue(sh, s_shieldShader.shellCenter,   &center,        SHADER_UNIFORM_VEC3);
+        if (s_shieldShader.shellRadius >= 0)   SetShaderValue(sh, s_shieldShader.shellRadius,   &radius,        SHADER_UNIFORM_FLOAT);
+        if (s_shieldShader.shieldTime >= 0)    SetShaderValue(sh, s_shieldShader.shieldTime,    &shObj->elapsed, SHADER_UNIFORM_FLOAT);
+        if (s_shieldShader.speed >= 0)         SetShaderValue(sh, s_shieldShader.speed,         &d->speed,      SHADER_UNIFORM_FLOAT);
+        if (s_shieldShader.preset >= 0)        SetShaderValue(sh, s_shieldShader.preset,        &presetIdx,     SHADER_UNIFORM_INT);
+        if (s_shieldShader.groundEnabled >= 0) SetShaderValue(sh, s_shieldShader.groundEnabled, &groundEnabled, SHADER_UNIFORM_FLOAT);
+        if (s_shieldShader.groundY >= 0)       SetShaderValue(sh, s_shieldShader.groundY,       &groundY,       SHADER_UNIFORM_FLOAT);
+        if (s_shieldShader.hasImpacts >= 0)    SetShaderValue(sh, s_shieldShader.hasImpacts,    &hasImp,        SHADER_UNIFORM_FLOAT);
+        if (s_shieldShader.impacts >= 0)       SetShaderValueV(sh, s_shieldShader.impacts,      impVecs,        SHADER_UNIFORM_VEC4, SHIELD_MAX_IMPACTS);
+        if (s_shieldShader.primaryColor >= 0)  SetShaderValue(sh, s_shieldShader.primaryColor,  &primaryCol,    SHADER_UNIFORM_VEC3);
+        if (s_shieldShader.rimColor >= 0)      SetShaderValue(sh, s_shieldShader.rimColor,      &rimCol,        SHADER_UNIFORM_VEC3);
+        if (s_shieldShader.opacity >= 0)       SetShaderValue(sh, s_shieldShader.opacity,       &opacity,       SHADER_UNIFORM_FLOAT);
+        if (s_shieldShader.fresnel >= 0)       SetShaderValue(sh, s_shieldShader.fresnel,       &d->fresnel,    SHADER_UNIFORM_FLOAT);
+        if (s_shieldShader.seamIntensity >= 0) SetShaderValue(sh, s_shieldShader.seamIntensity, &d->seam,       SHADER_UNIFORM_FLOAT);
+        if (s_shieldShader.backWall >= 0)      SetShaderValue(sh, s_shieldShader.backWall,      &d->backWall,   SHADER_UNIFORM_FLOAT);
+        if (s_shieldShader.passSide >= 0)      SetShaderValue(sh, s_shieldShader.passSide,      &passSide,      SHADER_UNIFORM_FLOAT);
+        if (s_shieldShader.relief >= 0)        SetShaderValue(sh, s_shieldShader.relief,        &d->relief,     SHADER_UNIFORM_FLOAT);
+        if (s_shieldShader.refraction >= 0)    SetShaderValue(sh, s_shieldShader.refraction,    &d->refraction, SHADER_UNIFORM_FLOAT);
+        if (s_shieldShader.emissionGain >= 0)  SetShaderValue(sh, s_shieldShader.emissionGain,  &d->emission,   SHADER_UNIFORM_FLOAT);
+        if (s_shieldShader.premultiply >= 0)   SetShaderValue(sh, s_shieldShader.premultiply,   &premul,        SHADER_UNIFORM_FLOAT);
+
+        rlSetTexture(s_shieldNoiseTex.id);
+        DrawCoreSphere(center, radius, rings, rings, WHITE);
+        rlDrawRenderBatchActive();
+        rlSetTexture(0);
     }
 }
 
-/* Compatibility entry point. The shell no longer samples the framebuffer,
- * but keeps both optical interfaces for a volumetric glass look. */
+static void ShieldShell_DrawGroundPass(bool emissionPass)
+{
+    Shader gsh = s_shieldGroundShader.shader;
+    if (gsh.id == 0) return;
+
+    float premul = emissionPass ? 1.0f : 0.0f;
+    bool started = false;
+
+    for (int i = 0; i < VFX_SHIELD_SHELL_MAX; ++i) {
+        const VC_ShieldShell *shObj = &s_shieldShells[i];
+        if (!shObj->active || shObj->level <= 0.004f) continue;
+        const VFX_ShieldDesc *d = &shObj->desc;
+        if (!Shield_IntersectsGround(d)) continue;
+
+        float radius = shObj->radius * (0.38f + 0.62f * shObj->level);
+        if (radius <= 0.01f) continue;
+
+        Vector3 center = Shield_CenterForDesc(shObj->pos, radius, d);
+        float dy = shObj->pos.y - center.y;
+        float rcutSq = radius * radius - dy * dy;
+        if (rcutSq <= 0.002f) continue;
+        float rcut = sqrtf(rcutSq);
+        float quadHalf = rcut * 2.40f;
+
+        if (!started) {
+            SkillManager_BeginShader(gsh);
+            if (s_shieldGroundShader.noiseTex >= 0 && s_shieldNoiseTex.id != 0)
+                SetShaderValueTexture(gsh, s_shieldGroundShader.noiseTex, s_shieldNoiseTex);
+            rlDisableBackfaceCulling();
+            started = true;
+        }
+
+        int presetIdx = (d->preset >= 0 && d->preset < VFX_SHIELD_PRESET_COUNT) ? (int)d->preset : 0;
+        const WuxiaShieldPresetDef *pdef = &k_shieldPresets[presetIdx];
+        Vector3 primaryCol = pdef->primary;
+        Vector3 rimCol     = pdef->rim;
+        if (!d->usePresetColors) {
+            const VFX_ElementMaterial *m = VFX_Material(shObj->mat);
+            Vector4 bc = ColorNormalize(m->body);
+            Vector4 gc = ColorNormalize(m->glow);
+            primaryCol = (Vector3){ bc.x, bc.y, bc.z };
+            rimCol     = (Vector3){ gc.x, gc.y, gc.z };
+        }
+
+        float opacity = d->opacity * shObj->level;
+        if (s_shieldGroundShader.preset >= 0)        SetShaderValue(gsh, s_shieldGroundShader.preset,        &presetIdx,     SHADER_UNIFORM_INT);
+        if (s_shieldGroundShader.primaryColor >= 0)  SetShaderValue(gsh, s_shieldGroundShader.primaryColor,  &primaryCol,    SHADER_UNIFORM_VEC3);
+        if (s_shieldGroundShader.rimColor >= 0)      SetShaderValue(gsh, s_shieldGroundShader.rimColor,      &rimCol,        SHADER_UNIFORM_VEC3);
+        if (s_shieldGroundShader.opacity >= 0)       SetShaderValue(gsh, s_shieldGroundShader.opacity,       &opacity,       SHADER_UNIFORM_FLOAT);
+        if (s_shieldGroundShader.seamIntensity >= 0) SetShaderValue(gsh, s_shieldGroundShader.seamIntensity, &d->seam,       SHADER_UNIFORM_FLOAT);
+        if (s_shieldGroundShader.speed >= 0)         SetShaderValue(gsh, s_shieldGroundShader.speed,         &d->speed,      SHADER_UNIFORM_FLOAT);
+        if (s_shieldGroundShader.shieldTime >= 0)    SetShaderValue(gsh, s_shieldGroundShader.shieldTime,    &shObj->elapsed, SHADER_UNIFORM_FLOAT);
+        if (s_shieldGroundShader.emissionGain >= 0)  SetShaderValue(gsh, s_shieldGroundShader.emissionGain,  &d->emission,   SHADER_UNIFORM_FLOAT);
+        if (s_shieldGroundShader.premultiply >= 0)   SetShaderValue(gsh, s_shieldGroundShader.premultiply,   &premul,        SHADER_UNIFORM_FLOAT);
+        if (s_shieldGroundShader.rcut >= 0)          SetShaderValue(gsh, s_shieldGroundShader.rcut,          &rcut,          SHADER_UNIFORM_FLOAT);
+        if (s_shieldGroundShader.quadHalf >= 0)      SetShaderValue(gsh, s_shieldGroundShader.quadHalf,      &quadHalf,      SHADER_UNIFORM_FLOAT);
+
+        float y = shObj->pos.y + 0.018f;
+        rlSetTexture(s_shieldNoiseTex.id);
+        rlBegin(RL_QUADS);
+            rlColor4ub(255, 255, 255, 255);
+            rlTexCoord2f(0.0f, 0.0f); rlVertex3f(center.x - quadHalf, y, center.z - quadHalf);
+            rlTexCoord2f(0.0f, 1.0f); rlVertex3f(center.x - quadHalf, y, center.z + quadHalf);
+            rlTexCoord2f(1.0f, 1.0f); rlVertex3f(center.x + quadHalf, y, center.z + quadHalf);
+            rlTexCoord2f(1.0f, 0.0f); rlVertex3f(center.x + quadHalf, y, center.z - quadHalf);
+        rlEnd();
+        rlDrawRenderBatchActive();
+        rlSetTexture(0);
+    }
+
+    if (started) {
+        SkillManager_EndShader();
+        rlEnableBackfaceCulling();
+        rlDrawRenderBatchActive();
+    }
+}
+
 void VFX_ShieldShell_DrawRefraction(Camera3D cam)
 {
     ShieldShell_InitShared();
+    if (s_shieldShader.shader.id == 0) return;
 
-    // Immediate-mode sphere normals are view-space. Convert the environment
-    // key light once per draw so the glass highlight follows the actual camera
-    // orientation instead of dotting a world-space light with view-space N.
+    bool anyActive = false;
+    for (int i = 0; i < VFX_SHIELD_SHELL_MAX; ++i)
+        if (s_shieldShells[i].active && s_shieldShells[i].level > 0.004f) { anyActive = true; break; }
+    if (!anyActive) return;
+
     Vector3 forward = Vector3Normalize(Vector3Subtract(cam.target, cam.position));
-    Vector3 right = Vector3Normalize(Vector3CrossProduct(forward, cam.up));
-    Vector3 camUp = Vector3CrossProduct(right, forward);
-    s_shieldCameraPosition = cam.position;
-    s_shieldCameraRight = right;
-    s_shieldCameraUp = camUp;
-    s_shieldCameraForward = forward;
-    Vector3 lightWorld = Vector3Negate(Environment_GetSunDirection());
-    Vector3 lightView = {
-        Vector3DotProduct(lightWorld, right),
-        Vector3DotProduct(lightWorld, camUp),
-        -Vector3DotProduct(lightWorld, forward)
-    };
-    lightView = Vector3Normalize(lightView);
+    Vector3 right   = Vector3Normalize(Vector3CrossProduct(forward, cam.up));
+    Vector3 camUp   = Vector3CrossProduct(right, forward);
 
-    VFXResolvedAppearance shieldAppearance;
-    VFXResolvedAppearance shieldLegacy = {
-        VFX_SURFACE_ALPHA, VFX_CONTRAST_MAGIC, 1.0f, 3.0f, 0.78f, true
-    };
-    VFXRenderScope body = VFXRender_BeginAppearance(
-        VFX_RENDER_PASS_BODY, VFX_APPEARANCE_MAGIC, shieldLegacy, false,
-        &shieldAppearance);
-    rlDrawRenderBatchActive();
-    SkillManager_BeginShader(s_shieldShader.shader);
-    ShieldShell_BindInputs(cam);
-    if (s_shieldShader.lightDirView >= 0)
-        SetShaderValue(s_shieldShader.shader, s_shieldShader.lightDirView,
-                       &lightView, SHADER_UNIFORM_VEC3);
-    /* This is a closed transparent volume, so both windings must reach BOTH
-     * optical passes.  Culling a wall by render state is fragile: a later
-     * pass can inherit the previous cull face and leave the far wall with
-     * coverage but no radiance.  The fragment shader classifies the face via
-     * gl_FrontFacing instead, which makes the two interfaces inseparable from
-     * the one submission that draws them. */
-    /* FAR WALL FIRST, THEN NEAR — two culled submissions, not one unculled one.
-     *
-     * This used to be a single rlDisableBackfaceCulling() draw, with the shader
-     * classifying each fragment by gl_FrontFacing. That gives both walls into one
-     * submission, but it gives them NO ORDER: a closed transparent volume has two
-     * surfaces over almost every pixel, and with depth-write off the winner is
-     * whichever the mesh happened to emit last. Measured by colouring
-     * gl_FrontFacing and sign(normal.y) into two channels, the sphere came out in
-     * three bands — far-upper, near-upper, near-lower — and the FAR-LOWER wall
-     * never appeared at all. The band boundary is where the emission order flips,
-     * which on a sphere projects to an ellipse: the hard seam across the middle.
-     *
-     * Culling per pass restores the order. The old comment here warned that
-     * "culling a wall by render state is fragile: a later pass can inherit the
-     * previous cull face" — true, and the answer is to SET the face explicitly on
-     * every pass rather than to avoid culling. Both passes still flush around the
-     * state change: ENGINE_LANDMINES says the batch-flush rule covers cull face,
-     * not just depth. */
-    rlEnableBackfaceCulling();
-    rlSetCullFace(RL_CULL_FACE_FRONT);   /* keep back faces: the FAR wall */
-    rlDrawRenderBatchActive();
-    ShieldShell_DrawPass(false);
-    rlDrawRenderBatchActive();
-    rlSetCullFace(RL_CULL_FACE_BACK);    /* keep front faces: the NEAR wall */
-    rlDrawRenderBatchActive();
-    ShieldShell_DrawPass(false);
-    rlDrawRenderBatchActive();
-    SkillManager_EndShader();
-    rlEnableBackfaceCulling();
-    rlDrawRenderBatchActive();
-    VFXRender_EndDraw(&body);
+    for (int pass = 0; pass < 2; pass++) {
+        bool isEmission = (pass == 1);
+        VFXRenderScope scope = VFXRender_BeginDraw(
+            isEmission ? VFX_RENDER_PASS_EMISSION : VFX_RENDER_PASS_BODY,
+            isEmission ? VFX_SURFACE_PREMULTIPLIED : VFX_SURFACE_ALPHA, false);
+        rlDrawRenderBatchActive();
+        ShieldShell_DrawGroundPass(isEmission);
+        SkillManager_BeginShader(s_shieldShader.shader);
+        ShieldShell_BindSharedInputs(cam, right, camUp, forward);
 
-    VFXRenderScope emission = VFXRender_BeginAppearance(
-        VFX_RENDER_PASS_EMISSION, VFX_APPEARANCE_MAGIC, shieldLegacy, false,
-        &shieldAppearance);
-    rlDrawRenderBatchActive();
-    SkillManager_BeginShader(s_shieldShader.shader);
-    ShieldShell_BindInputs(cam);
-    if (s_shieldShader.lightDirView >= 0)
-        SetShaderValue(s_shieldShader.shader, s_shieldShader.lightDirView,
-                       &lightView, SHADER_UNIFORM_VEC3);
-    /* Mirror the body submission: the far interface owns half of the ground
-     * contact line, so it must emit in the same draw that gives it coverage. */
-    /* FAR WALL FIRST, THEN NEAR — two culled submissions, not one unculled one.
-     *
-     * This used to be a single rlDisableBackfaceCulling() draw, with the shader
-     * classifying each fragment by gl_FrontFacing. That gives both walls into one
-     * submission, but it gives them NO ORDER: a closed transparent volume has two
-     * surfaces over almost every pixel, and with depth-write off the winner is
-     * whichever the mesh happened to emit last. Measured by colouring
-     * gl_FrontFacing and sign(normal.y) into two channels, the sphere came out in
-     * three bands — far-upper, near-upper, near-lower — and the FAR-LOWER wall
-     * never appeared at all. The band boundary is where the emission order flips,
-     * which on a sphere projects to an ellipse: the hard seam across the middle.
-     *
-     * Culling per pass restores the order. The old comment here warned that
-     * "culling a wall by render state is fragile: a later pass can inherit the
-     * previous cull face" — true, and the answer is to SET the face explicitly on
-     * every pass rather than to avoid culling. Both passes still flush around the
-     * state change: ENGINE_LANDMINES says the batch-flush rule covers cull face,
-     * not just depth. */
-    rlEnableBackfaceCulling();
-    rlSetCullFace(RL_CULL_FACE_FRONT);   /* keep back faces: the FAR wall */
-    rlDrawRenderBatchActive();
-    ShieldShell_DrawPass(true);
-    rlDrawRenderBatchActive();
-    rlSetCullFace(RL_CULL_FACE_BACK);    /* keep front faces: the NEAR wall */
-    rlDrawRenderBatchActive();
-    ShieldShell_DrawPass(true);
-    rlDrawRenderBatchActive();
-    SkillManager_EndShader();
-    rlEnableBackfaceCulling();
-    rlDrawRenderBatchActive();
-    VFXRender_EndDraw(&emission);
+        rlEnableBackfaceCulling();
+        rlDrawRenderBatchActive();
+        rlSetCullFace(RL_CULL_FACE_FRONT);
+        ShieldShell_DrawPass(isEmission, -1.0f);
+        rlDrawRenderBatchActive();
+
+        rlSetCullFace(RL_CULL_FACE_BACK);
+        ShieldShell_DrawPass(isEmission, 1.0f);
+        rlDrawRenderBatchActive();
+        SkillManager_EndShader();
+        rlEnableBackfaceCulling();
+        rlDrawRenderBatchActive();
+        VFXRender_EndDraw(&scope);
+    }
 }
 
-/* Archetype pair kept for sync_vfx_test.py — the generated dispatch inside
- * VFX_Compose_Draw3D calls this during the 3D pass. The shield must NOT draw
- * here: its refraction samples a scene snapshot that does not exist until the
- * whole 3D pass completed, so the real draw is VFX_ShieldShell_DrawRefraction
- * in main.c's post-3D post-pass. */
 static void VC_ShieldShell_Draw3D(Camera3D cam)
 {
-    // The shell itself draws after the 3D pass (see the note above), but its DEPTH
-    // REGION REQUEST has to happen INSIDE it. SceneTargets_Begin() clears
-    // s_softDepthRegionValid, so that flag's lifetime is exactly the 3D pass:
-    //
-    //     Begin -> valid=false ... 3D pass ... End -> SnapshotDepth reads the flag
-    //
-    // A request made from the post-3D draw lands after SnapshotDepth has already run and
-    // is wiped by the next Begin, so the shell could never arm the snapshot from where it
-    // draws — `depthContact()` read zeros forever and toggling shield_shell_depth_enabled
-    // changed 0.000% of pixels. This stub already runs in the right place and already has
-    // the camera, which is why it is worth having rather than deleting.
     if (s_shieldDepthEnabled <= 0.5f) return;
     const float screenH = (float)GetScreenHeight();
     const float halfFovy = cam.fovy * 0.5f * DEG2RAD;
     bool hasBounds = false;
     Rectangle bounds = {0};
-    for (int i = 0; i < VFX_SHIELD_SHELL_MAX; ++i)
-    {
+    for (int i = 0; i < VFX_SHIELD_SHELL_MAX; ++i) {
         const VC_ShieldShell *sh = &s_shieldShells[i];
         if (!sh->active) continue;
-        Vector3 centrePos = ShieldCentre(sh->pos, sh->radius);
+        Vector3 centrePos = Shield_CenterForDesc(sh->pos, sh->radius, &sh->desc);
         float distance = Vector3Length(Vector3Subtract(centrePos, cam.position));
         if (distance <= 0.001f) continue;
         Vector2 centre = GetWorldToScreen(centrePos, cam);
         float radiusPx = sh->radius * screenH / (2.0f * distance * tanf(halfFovy));
-        Rectangle r = {centre.x - radiusPx, centre.y - radiusPx, radiusPx * 2.0f, radiusPx * 2.0f};
+        Rectangle r = { centre.x - radiusPx, centre.y - radiusPx, radiusPx * 2.0f, radiusPx * 2.0f };
         if (!hasBounds) { bounds = r; hasBounds = true; }
         else {
             float x1 = fmaxf(bounds.x + bounds.width, r.x + r.width);
@@ -640,8 +755,5 @@ static void VC_ShieldShell_Draw3D(Camera3D cam)
             bounds.width = x1 - bounds.x; bounds.height = y1 - bounds.y;
         }
     }
-    /* bounds is GetWorldToScreen output (window px); the depth capture lives in
-       the scene target, which the render scale may make smaller. */
-    if (hasBounds) SceneTargets_RequestSoftDepthRegion(
-        SceneTargets_WindowRectToTarget(bounds));
+    if (hasBounds) SceneTargets_RequestSoftDepthRegion(SceneTargets_WindowRectToTarget(bounds));
 }

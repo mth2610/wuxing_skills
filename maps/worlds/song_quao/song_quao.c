@@ -645,7 +645,7 @@ void InitSongQuaoMap(void)
             .atmosphere = {
                 .color = {236, 228, 218, 255}, .start = 18.0f, .end = 165.0f, .enabled = true,
                 .optics = {.rayleighLMS = {0.0088f, 0.0152f, 0.0285f}, .mieScattering = 0.0042f, .mieAnisotropy = 0.80f, .multipleScatteringAmp = 2.25f},
-                .density = {.baseDensity = 0.0112f, .heightFalloff = 0.26f, .baseAltitude = -1.5f, .enableSigmoidLayer = true, .layerAltitude = 2.4f, .layerThickness = 3.4f, .layerDensity = 0.0052f}
+                .density = {.baseDensity = 0.0112f, .heightFalloff = 0.26f, .baseAltitude = -1.5f, .enableSigmoidLayer = true, .layerAltitude = 2.4f, .layerThickness = 3.4f, .layerDensity = 0.0040f}
             }
         },
         // 18:30 Crimson Sunset: deep orange-red horizon sun, slate-blue shadows
@@ -690,12 +690,12 @@ void InitSongQuaoMap(void)
     PostFXMapProfile postProfile = {
         .enabled = true,
         .exposure = 1.04f,
-        .contrast = 1.12f,
-        .saturation = 1.10f,
+        .contrast = 1.07f,
+        .saturation = 1.02f,
         .bloomIntensity = 0.20f,
         .shadowTint = {0.92f, 0.96f, 1.05f},    // Cool jade-slate shadows
         .highlightTint = {1.06f, 1.01f, 0.91f}, // Warm golden amber sun highlights
-        .bloomThreshold = 1.06f,                // Catches water glints, cloud crests & grass SSS
+        .bloomThreshold = 1.28f,                // Catches water glints, cloud crests & grass SSS
         .bloomKnee = 0.42f,
         .hueRestore = 0.65f,                    // Filmic hue restore: prevents neon lime skew under ACES
     };
@@ -973,7 +973,7 @@ void InitSongQuaoMap(void)
         s_flowerPlacements, s_scaledFlowerClusters, SONG_QUAO_FLOWER_CLUSTER_COUNT,
         (MapFloraStyle){
             .grassRootColor = {35, 54, 20, 255},  // Deep velvety moss-jade root matching ground_splat.fs
-            .grassTipColor = {102, 142, 50, 255}, // Natural sunlit olive-jade tips
+            .grassTipColor = {98, 132, 62, 255}, // Muted olive tips let reed plumes read against the meadow.
             .bladesPerClump = 6,
             .bladeSegments = 4,
             .bladeWidthScale = 0.060f,

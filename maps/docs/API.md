@@ -402,6 +402,10 @@ Texture-blend hybrid ground material (grassBase + grassDetail + dirt, blended vi
 
 ### `MapDemIsland` & Reusable DEM Island Architecture
 
+`MapProp_RasterizeCliffShore` slices a generated cliff skirt at a world-space sea level, skipping the buried top collar. It writes zero for land and the supplied maximum distance for water into a square XZ grid whose origin is the first texel center. Callers can run a distance transform on this seed grid. If the function returns false, regenerate the entire grid from a fallback source.
+
+`MapProp_BuildOceanShoreField` initializes a water patch's owned coastal texture from this cliff slice or the ground surface if the cliff slice is unavailable. The shader reads shore direction from RG and normalized coast distance from B.
+
 For maps built from DEM GeoTIFF data (`dem_pipeline.py`) across all 5 elements (Metal, Wood, Water, Fire, Earth), the generic terrain/hydrology queries and placement algorithms live in `maps/toolkit/`:
 
 ```c

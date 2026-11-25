@@ -327,6 +327,7 @@ int VFX_ComposeRiftBolt(const Matrix *followTransform, VC_MaterialId mat, float 
         // copy is deleted rather than kept behind a flag.
         b->shield = VFX_FlowShield_Spawn(RiftBolt_ShieldAnchor(b), mat,
                                          b->radius, 1.0f);
+        VFX_Shield_SetGroundMode(b->shield, VFX_SHIELD_GROUND_FULL);
 
         // Each strand follows its OWN transform, not the caller's, because each
         // one is on a different point of the helix. The skill still owns only

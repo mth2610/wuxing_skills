@@ -2379,3 +2379,130 @@ void MapProp_UnloadWaterSurface(MapWaterSurface *water)
         MemFree(water->waveUploadedPixels);
     *water = (MapWaterSurface){0};
 }
+
+void MapProp_BuildOceanShoreField(MapWaterSurface *water, const MapGroundSurface *ground,
+                                 const MapCliffSkirt *cliff, Vector3 center,
+                                 float width, float depth, float seaY, float seaSpan)
+{
+    if (water && water->ready && !water->flowFieldTex.id && ground && seaSpan > 0.0f)
+    {
+        // The ocean patch is much wider than the island. Keep shoreline texels
+        // below one metre at MOBA scale so the surf can follow small headlands.
+        const int res = 1024;
+        const float patchSpan = seaSpan;
+        const float shoreMaxDist = 24.0f * (seaSpan / 840.0f);
+        const float cell = patchSpan / (float)res;
+        const float diag = cell * 1.41421356f;
+        float *distGrid = (float *)malloc((size_t)(res * res) * sizeof(float));
+        unsigned char *rgba = (unsigned char *)malloc((size_t)(res * res * 4));
+        if (distGrid && rgba)
+        {
+            // Sample at the centers used by the shader's normalized texture coordinates.
+            float minX = center.x - (patchSpan - cell) * 0.5f;
+            float minZ = center.z - (patchSpan - cell) * 0.5f;
+            bool cliffShore = MapProp_RasterizeCliffShore(cliff, distGrid, res, minX, minZ,
+                                                         cell, seaY, shoreMaxDist);
+            TraceLog(LOG_INFO, "MapProp: ocean shoreline source=%s", cliffShore ? "cliff" : "terrain");
+            for (int j = 0; !cliffShore && j < res; j++)
+            {
+                float wz = minZ + (float)j * cell;
+                for (int i = 0; i < res; i++)
+                {
+                    float wx = minX + (float)i * cell;
+                    float distance = shoreMaxDist;
+                    if (wx >= 0.0f && wx <= width && wz >= 0.0f && wz <= depth)
+                    {
+                        Vector3 gp = {0}, gn = {0};
+                        if (MapProp_SampleGroundSurface(ground, center, wx, wz, &gp, &gn))
+                        {
+                            if (gp.y >= seaY)
+                                distance = 0.0f;
+                            else
+                            {
+                                // Seed the distance transform from the locally
+                                // interpolated waterline within this texel.
+                                float slope = hypotf(gn.x, gn.z);
+                                float rise = (seaY - gp.y) * gn.y;
+                                if (slope > 0.001f && rise <= cell * slope)
+                                    distance = rise / slope;
+                            }
+                        }
+                    }
+                    distGrid[j * res + i] = distance;
+                }
+            }
+            for (int j = 1; j < res - 1; j++)
+            {
+                for (int i = 1; i < res - 1; i++)
+                {
+                    int idx = j * res + i;
+                    float d = distGrid[idx];
+                    float dL = distGrid[idx - 1] + cell;
+                    float dU = distGrid[idx - res] + cell;
+                    float dUL = distGrid[idx - res - 1] + diag;
+                    float dUR = distGrid[idx - res + 1] + diag;
+                    if (dL < d) d = dL;
+                    if (dU < d) d = dU;
+                    if (dUL < d) d = dUL;
+                    if (dUR < d) d = dUR;
+                    distGrid[idx] = d;
+                }
+            }
+            for (int j = res - 2; j >= 1; j--)
+            {
+                for (int i = res - 2; i >= 1; i--)
+                {
+                    int idx = j * res + i;
+                    float d = distGrid[idx];
+                    float dR = distGrid[idx + 1] + cell;
+                    float dD = distGrid[idx + res] + cell;
+                    float dDL = distGrid[idx + res - 1] + diag;
+                    float dDR = distGrid[idx + res + 1] + diag;
+                    if (dR < d) d = dR;
+                    if (dD < d) d = dD;
+                    if (dDL < d) d = dDL;
+                    if (dDR < d) d = dDR;
+                    distGrid[idx] = d;
+                }
+            }
+            for (int j = 0; j < res; j++)
+            {
+                int j0 = (j > 0) ? j - 1 : 0;
+                int j1 = (j < res - 1) ? j + 1 : res - 1;
+                for (int i = 0; i < res; i++)
+                {
+                    int i0 = (i > 0) ? i - 1 : 0;
+                    int i1 = (i < res - 1) ? i + 1 : res - 1;
+                    int idx = j * res + i;
+                    float gx = distGrid[j * res + i0] - distGrid[j * res + i1];
+                    float gz = distGrid[j0 * res + i] - distGrid[j1 * res + i];
+                    float len = sqrtf(gx * gx + gz * gz);
+                    float nx = (len > 1e-4f) ? (gx / len) : 0.0f;
+                    float nz = (len > 1e-4f) ? (gz / len) : 0.0f;
+                    float normDist = distGrid[idx] / shoreMaxDist;
+                    if (normDist > 1.0f) normDist = 1.0f;
+                    rgba[idx * 4 + 0] = (unsigned char)((nx * 0.5f + 0.5f) * 255.0f + 0.5f);
+                    rgba[idx * 4 + 1] = (unsigned char)((nz * 0.5f + 0.5f) * 255.0f + 0.5f);
+                    rgba[idx * 4 + 2] = (unsigned char)(normDist * 255.0f + 0.5f);
+                    rgba[idx * 4 + 3] = 255;
+                }
+            }
+            Image shoreImg = {
+                .data = rgba,
+                .width = res,
+                .height = res,
+                .mipmaps = 1,
+                .format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8,
+            };
+            water->flowFieldTex = LoadTextureFromImage(shoreImg);
+            if (water->flowFieldTex.id > 0)
+            {
+                SetTextureFilter(water->flowFieldTex, TEXTURE_FILTER_BILINEAR);
+                SetTextureWrap(water->flowFieldTex, TEXTURE_WRAP_CLAMP);
+                water->hydrologyReady = true;
+            }
+        }
+        free(distGrid);
+        free(rgba);
+    }
+}

@@ -1117,6 +1117,8 @@ void Environment_SetTimeOfDayPresets(const EnvLightingPreset *presets, const flo
     if (!presets || !timePoints || count <= 0)
     {
         s_todCount = 0;
+        s_todEvalPending = false;
+        s_todEvalAccum = 0.0f;
         return;
     }
     if (count > MAX_TIME_OF_DAY_PRESETS)

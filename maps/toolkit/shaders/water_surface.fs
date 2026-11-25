@@ -275,6 +275,7 @@ void main()
     slope += detailSlope * (u_detailStrength * 0.45 * shoreFade * detailDistFade);
 
     float oceanShoreDist = 24.0;
+    float fineOceanShore = 0.0;
     vec2 oceanShoreDir = vec2(0.0);
     float oceanSurfCrest = 0.0;
     if (isOcean) {
@@ -282,7 +283,12 @@ void main()
         if (u_flowFieldEnabled > 0) {
             vec4 shoreData = textureGrad(u_flowFieldTex, fragLakeCoord * 0.5 + 0.5, lakeDx, lakeDy);
             if (shoreData.b <= 0.0015) discard;
-            oceanShoreDist = max(0.0, shoreData.b * (24.0 * owShoreScale) - 1.2 * owShoreScale);
+            // Legacy fields use a 512-texel grid. Scale the half-cell
+            // correction with texture resolution so fine fields keep thin surf.
+            float shoreResolution = float(textureSize(u_flowFieldTex, 0).x);
+            fineOceanShore = step(1024.0, shoreResolution);
+            float cellCorrection = mix(1.2, 0.45, fineOceanShore) * owShoreScale * 512.0 / shoreResolution;
+            oceanShoreDist = max(0.0, shoreData.b * (24.0 * owShoreScale) - cellCorrection);
             vec2 rawToShore = shoreData.rg * 2.0 - 1.0;
             float sLen = length(rawToShore);
             oceanShoreDir = (sLen > 0.05) ? (rawToShore / sLen) : vec2(0.0);
@@ -702,7 +708,8 @@ void main()
 
         float surfWarp = (fMacro - 0.5) * 2.8 + sin(fragWorldXZ.x * 0.14 + fragWorldXZ.y * 0.11) * 1.1;
         // 1. Crisp thin white shoreline ribbon right where water meets the cliff rock
-        float solidEdge = exp(-oceanShoreDist * 1.35) * smoothstep(0.18, 0.65, fMacro + 0.32);
+        float solidEdge = exp(-oceanShoreDist * mix(1.35, 2.2, fineOceanShore))
+                        * smoothstep(0.18, 0.65, fMacro + mix(0.32, 0.16, fineOceanShore));
         // 2. Smooth breaking surf rollers approaching the cliff
         float surfRoller = pow(max(0.0, sin(oceanShoreDist * 0.65 - t * 2.15 + surfWarp)), 3.2)
                          * exp(-oceanShoreDist * 0.11) * bubbleWeb;

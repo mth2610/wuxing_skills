@@ -88,6 +88,7 @@ void PostFX_SetMapProfile(PostFXMapProfile profile) { s_mapProfile = profile; }
 void PostFX_ClearMapProfile(void) {
   s_mapProfile = (PostFXMapProfile){0};
   s_heatHazeConfig = (Vector3){0.0f, 0.48f, 0.92f};
+  TAA_InvalidateHistory();
 }
 void PostFX_SetHeatHaze(float strength, float bandStartY, float bandEndY) {
   s_heatHazeConfig = (Vector3){strength > 0.0f ? strength : 0.0f, bandStartY, bandEndY};

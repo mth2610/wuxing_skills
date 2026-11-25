@@ -1257,9 +1257,38 @@ MapCliffSkirt MapProp_CreateCliffSkirt(const MapGroundSurface *ground, Vector3 m
             Vector2 rimTan = {-rimNorm[i].y, rimNorm[i].x};
             float lateralShear = (Cliff_Noise1(s * 0.10f + (float)r * 0.75f, 137) - 0.5f) * 0.56f * rp->noise * bayDamp;
 
+            if (s_cliffMetallicMode > 0.5f)
+            {
+                // Retain fracture relief away from the surf, where it reads
+                // as rock instead of a sawtooth waterline.
+                float seaDistance = fabsf(rimY[i] - depth - s_cliffSeaLevel);
+                float surfBlend = fmaxf(0.0f, 1.0f - seaDistance / (2.0f * depthScale));
+                relief *= 1.0f - 0.55f * surfBlend;
+                lateralShear *= 1.0f - 0.55f * surfBlend;
+            }
+
             float outTotal = d + relief + rp->out * bayDamp;
             if (r >= 1 && r <= 7 && outTotal < 0.08f)
                 outTotal = 0.08f;
+
+            if (s_cliffMetallicMode > 0.5f && ground->lookup.hfPacked16 && r >= 1)
+            {
+                // Tiled heightfields retain their original coast wall. Walk
+                // the visible skirt out past that wall at this row's height.
+                const float clearance = 0.20f;
+                const float step = 0.5f;
+                const float rowY = rimY[i] - depth;
+                for (int probe = 0; probe < 24; probe++)
+                {
+                    float probeX = rimPos[i].x + rimNorm[i].x * outTotal + rimTan.x * lateralShear;
+                    float probeZ = rimPos[i].z + rimNorm[i].y * outTotal + rimTan.y * lateralShear;
+                    Vector3 groundPoint;
+                    if (!MapProp_SampleGroundSurface(ground, mapCenter, probeX, probeZ, &groundPoint, NULL) ||
+                        groundPoint.y < rowY - clearance)
+                        break;
+                    outTotal += step;
+                }
+            }
 
             Vector3 vPos = {
                 rimPos[i].x + rimNorm[i].x * outTotal + rimTan.x * lateralShear,
@@ -1316,6 +1345,33 @@ MapCliffSkirt MapProp_CreateCliffSkirt(const MapGroundSurface *ground, Vector3 m
     MemFree(rowArc);
 
     // Finite-difference normals & orthogonalized tangents
+    if (s_cliffMetallicMode > 0.5f && ground->lookup.hfPacked16)
+    {
+        // Spread isolated clearance peaks along the coast without moving
+        // any vertex inward through the retained heightfield wall.
+        for (int r = 1; r < CLIFF_ROW_COUNT; r++)
+        {
+            Vector3 *row = gridPos + r * M;
+            for (int i = 0; i < M; i++)
+                rowArc[i] = (row[i].x - rimPos[i].x) * rimNorm[i].x +
+                            (row[i].z - rimPos[i].z) * rimNorm[i].y;
+
+            for (int i = 0; i < M; i++)
+            {
+                float envelope = rowArc[i];
+                for (int delta = -4; delta <= 4; delta++)
+                {
+                    int neighbor = (i + delta + M) % M;
+                    float distance = fabsf((float)delta) * colStep;
+                    envelope = fmaxf(envelope, rowArc[neighbor] - distance * 0.45f);
+                }
+                float extra = envelope - rowArc[i];
+                row[i].x += rimNorm[i].x * extra;
+                row[i].z += rimNorm[i].y * extra;
+            }
+        }
+    }
+
     Vector3 *gridNorm = MemAlloc((size_t)(M * CLIFF_ROW_COUNT) * sizeof(Vector3));
     Vector4 *gridTan = MemAlloc((size_t)(M * CLIFF_ROW_COUNT) * sizeof(Vector4));
     if (!gridNorm || !gridTan)
@@ -1624,6 +1680,83 @@ MapCliffSkirt MapProp_CreateCliffSkirt(const MapGroundSurface *ground, Vector3 m
     MemFree(gridTan);
 
     return cliff;
+}
+
+// Rasterize the sea-level slice of the rendered cliff by toggling scanline
+// parity at each triangle crossing. The grid samples are ocean texel centers.
+bool MapProp_RasterizeCliffShore(const MapCliffSkirt *cliff, float *grid, int res,
+                                float minX, float minZ, float cell, float seaY, float maxDistance)
+{
+    if (!cliff || !cliff->ready || !grid || res <= 0 || cell <= 0.0f)
+        return false;
+
+    memset(grid, 0, (size_t)res * (size_t)res * sizeof(*grid));
+    int crossingCount = 0;
+    for (int c = 0; c < cliff->chunkCount; c++)
+    {
+        const MapCliffChunk *chunk = &cliff->chunks[c];
+        if (!chunk->ready || chunk->model.meshCount < 1)
+            return false;
+        const Mesh *mesh = &chunk->model.meshes[0];
+        if (!mesh->vertices || !mesh->indices)
+            return false;
+        // The buried top collar follows terrain and can cross sea level.
+        int collarTriangles = 2 * (mesh->vertexCount / CLIFF_ROW_COUNT - 1);
+        for (int t = collarTriangles; t < mesh->triangleCount; t++)
+        {
+            Vector2 cut[2];
+            int count = 0;
+            for (int e = 0; e < 3; e++)
+            {
+                const float *a = &mesh->vertices[3 * mesh->indices[3 * t + e]];
+                const float *b = &mesh->vertices[3 * mesh->indices[3 * t + (e + 1) % 3]];
+                if ((a[1] >= seaY) == (b[1] >= seaY))
+                    continue;
+                if (a[1] > b[1])
+                {
+                    const float *swap = a;
+                    a = b;
+                    b = swap;
+                }
+                float u = (seaY - a[1]) / (b[1] - a[1]);
+                cut[count++] = (Vector2){a[0] + u * (b[0] - a[0]), a[2] + u * (b[2] - a[2])};
+            }
+            if (count != 2 || cut[0].y == cut[1].y)
+                continue;
+            int first = (int)ceilf((fminf(cut[0].y, cut[1].y) - minZ) / cell);
+            int end = (int)ceilf((fmaxf(cut[0].y, cut[1].y) - minZ) / cell);
+            if (first < 0 || end > res)
+                return false;
+            for (int z = first; z < end; z++)
+            {
+                float u = (minZ + z * cell - cut[0].y) / (cut[1].y - cut[0].y);
+                float x = cut[0].x + u * (cut[1].x - cut[0].x);
+                int col = (int)ceilf((x - minX) / cell);
+                if (col < 0 || col >= res)
+                    return false;
+                float *event = &grid[z * res + col];
+                *event = 1.0f - *event;
+                crossingCount++;
+            }
+        }
+    }
+    if (crossingCount == 0)
+        return false;
+
+    for (int z = 0; z < res; z++)
+    {
+        bool inside = false;
+        for (int x = 0; x < res; x++)
+        {
+            float *sample = &grid[z * res + x];
+            if (*sample > 0.0f)
+                inside = !inside;
+            *sample = inside ? 0.0f : maxDistance;
+        }
+        if (inside)
+            return false;
+    }
+    return true;
 }
 
 void MapProp_DrawCliffSkirt(const MapCliffSkirt *cliff, Camera3D cam)

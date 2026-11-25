@@ -15,7 +15,8 @@ Documents the **Post-Processing** module (`post_process/post_fx.h` and `post_pro
 | `PostFX_Draw(config)` | `post_process/post_fx.h` | Executes the complete post-fx pipeline (Bloom $\to$ Composite $\to$ FXAA) onto the active framebuffer. |
 | `PostFX_SetMonochrome(intensity)` | `post_process/post_fx.h` | Overrides saturation towards greyscale (used for Cảnh Giới Thái Cực). |
 | `PostFXMapProfile` | `post_process/post_fx.h` | Optional per-map artistic color-grade, split-toning, bloom, and exposure profile. |
-| `PostFX_SetMapProfile(profile)` / `PostFX_ClearMapProfile()` | `post_process/post_fx.h` | Activates or clears a map-scoped post-processing profile without mutating global `PostFXConfig`. |
+| `PostFX_SetMapProfile(profile)` / `PostFX_ClearMapProfile()` | `post_process/post_fx.h` | Activates or clears a map-scoped post-processing profile without mutating global `PostFXConfig`. Clearing the profile also invalidates temporal AA history. |
+| `TAA_NextFrame(camera, width, height)` | `post_process/taa.h` | Advances subpixel jitter and rejects history on abrupt camera or projection changes. |
 | `PostFX_RadialBurst(pos, str, dur)` | `post_process/post_fx.h` | Triggers a transient screen-space burst/shockwave centered at a 3D world position. |
 | `PostFX_UpdateTransient(cam, dt)` | `post_process/post_fx.h` | Decays active bursts and projects world positions to screen UV coordinates. |
 | `ColorGradeLut_Init()` | `post_process/color_grade_lut.h` | Builds and binds the default neutral 16x16 strip LUT. |

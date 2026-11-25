@@ -10,6 +10,7 @@ void TAA_Resize(int width, int height);
 void TAA_Shutdown(void);
 
 void TAA_SetEnabled(bool enabled);
+void TAA_InvalidateHistory(void);
 bool TAA_IsEnabled(void);
 
 // Call once per frame before the first MyBeginMode3D() to advance the Halton sequence

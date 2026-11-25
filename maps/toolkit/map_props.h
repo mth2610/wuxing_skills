@@ -346,6 +346,10 @@ typedef struct
 } MapCliffSkirt;
 
 MapCliffSkirt MapProp_CreateCliffSkirt(const MapGroundSurface *ground, Vector3 mapCenter, float sliceHeight, float bottomY);
+// Writes zero inside the sea-level cliff contour and maxDistance outside.
+// Returns false for an unusable contour. The caller must then replace the grid.
+bool MapProp_RasterizeCliffShore(const MapCliffSkirt *cliff, float *grid, int res,
+                                float minX, float minZ, float cell, float seaY, float maxDistance);
 void MapProp_DrawCliffSkirt(const MapCliffSkirt *cliff, Camera3D cam);
 void MapProp_UnloadCliffSkirt(MapCliffSkirt *cliff);
 
@@ -827,6 +831,9 @@ int MapFlora_GenerateMeadowPlacements(
     Vector3 groundCenter,
     MapFloraMeadowConfig config);
 
+// Compacts generated cluster ranges against the placement exclusion rule.
+int MapFlora_ExcludeFlowerPlacements(MapFlowerPlacement *placements, MapFloraFlowerCluster *clusters,
+                                     int clusterCount, bool (*isExcluded)(float, float, void *), void *ctx);
 void MapFlora_GenerateFlowerPlacements(
     MapFlowerPlacement *outPlacements,
     int totalFlowerCount,
@@ -1115,6 +1122,10 @@ void MapProp_AddWaterRipple(MapWaterSurface *water, Vector3 position, float radi
 void MapProp_AddWaterObstacle(MapWaterSurface *water, Vector3 position, float radius, float strength);
 // Bind a terrain-water SWE grid to the real DEM: bed height + steady water-surface elevation.
 // Without this the grid stays a flat-bed ripple field (legacy behaviour).
+// Builds the coastal surf texture from the cliff's sea-level slice or ground.
+void MapProp_BuildOceanShoreField(MapWaterSurface *water, const MapGroundSurface *ground,
+                                 const MapCliffSkirt *cliff, Vector3 center,
+                                 float width, float depth, float seaY, float seaSpan);
 void MapProp_SetWaterTerrainSource(MapWaterSurface *water,
                                    float (*sampleBed)(float x, float z, void *ctx),
                                    float (*sampleSurface)(float x, float z, void *ctx),

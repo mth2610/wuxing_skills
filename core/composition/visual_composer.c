@@ -79,7 +79,6 @@
 #include "common/vc_volume_trail.inl"
 #include "common/vc_debris_shards.inl"
 #include "common/vc_shield_shell.inl"
-#include "common/vc_flow_shield.inl"
 #include "common/vc_smoke_column.inl"
 #include "common/vc_rift_bolt.inl"
 #include "common/vc_gas_plume.inl"
@@ -117,7 +116,6 @@ void VFX_Compose_Update(float dt)
     VC_VolumeTrail_Update(dt);
     VC_DebrisShards_Update(dt);
     VC_ShieldShell_Update(dt);
-    VC_FlowShield_Update(dt);
     VC_SmokeColumn_Update(dt);
     VC_RiftBolt_Update(dt);
     VC_GasPlume_Update(dt);
@@ -195,7 +193,6 @@ void VFX_Compose_Draw3D(Camera3D cam)
     VC_VolumeTrail_Draw3D(cam);
     VC_DebrisShards_Draw3D(cam);
     VC_ShieldShell_Draw3D(cam);
-    VC_FlowShield_Draw3D(cam);
     VC_SmokeColumn_Draw3D(cam);
     VC_RiftBolt_Draw3D(cam);
     VC_GasPlume_Draw3D(cam);

@@ -2,7 +2,7 @@
   "player_id": "Player_1",
   "equipped": {
     "base_body": "human_body",
-    "torso": "ao_tien_hiep",
+    "torso": "ao_giao_linh_2",
     "legs": "",
     "boots": "chien_hai_van_du",
     "bracers": "",
@@ -11,7 +11,7 @@
     "hair": "",
     "waist": "",
     "back": "",
-    "weapon_r": "kiem_thuan_thien",
+    "weapon_r": "",
     "weapon_l": "",
     "full_outfit": ""
   },

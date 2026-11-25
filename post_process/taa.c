@@ -23,6 +23,7 @@ static int s_writeIdx = 0;
 static int s_frameIdx = 0;
 static bool s_enabled = true;
 static bool s_historyValid = false;
+static Camera3D s_previousCamera;
 static float s_jitterX = 0.0f;
 static float s_jitterY = 0.0f;
 static Matrix s_currViewProj = {0};
@@ -159,6 +160,13 @@ void TAA_Shutdown(void)
     s_hasViewProj = false;
 }
 
+void TAA_InvalidateHistory(void)
+{
+    s_historyValid = false;
+    s_hasViewProj = false;
+    s_frameIdx = 0;
+}
+
 void TAA_SetEnabled(bool enabled)
 {
     const char *env = getenv("WUXING_TAA");
@@ -167,7 +175,7 @@ void TAA_SetEnabled(bool enabled)
     if (s_enabled != enabled)
     {
         s_enabled = enabled;
-        s_historyValid = false;
+        TAA_InvalidateHistory();
     }
 }
 
@@ -184,6 +192,19 @@ void TAA_NextFrame(Camera3D camera, int width, int height)
         s_jitterY = 0.0f;
         return;
     }
+    if (s_hasViewProj)
+    {
+        Vector3 previousView = Vector3Subtract(s_previousCamera.target, s_previousCamera.position);
+        Vector3 currentView = Vector3Subtract(camera.target, camera.position);
+        float viewRadius = fmaxf(Vector3Length(previousView), 1.0f);
+        float travel = Vector3Distance(camera.position, s_previousCamera.position);
+        float facing = Vector3DotProduct(Vector3Normalize(previousView), Vector3Normalize(currentView));
+        if (camera.projection != s_previousCamera.projection ||
+            fabsf(camera.fovy - s_previousCamera.fovy) > 8.0f ||
+            travel > viewRadius * 0.65f || facing < 0.5f)
+            TAA_InvalidateHistory();
+    }
+    s_previousCamera = camera;
     if (s_hasViewProj)
         s_prevViewProj = s_currViewProj;
     s_currViewProj = ComputeUnjitteredViewProj(camera, width, height);

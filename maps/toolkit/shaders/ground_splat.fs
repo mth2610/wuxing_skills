@@ -675,6 +675,11 @@ void main()
             // GPU Gems 3 Ch. 1 Pre-Warped Stepped Horizontal Fracture Ledges & Exfoliation Shelves
             float shelfPhase = fragWorldPos.y * 2.80 + strikeCoord * 0.25 + strataWarp * 0.65;
             float shelfNormMod = (sin(shelfPhase) * 0.28 + sin(shelfPhase * 2.4) * 0.12 * u_strataStrength) * (1.0 + u_strataStrength * 1.15);
+            // Keep subpixel shelves from turning into bands on steep metallic terrain.
+            float shelfFootprint = abs(wpDx3.y * 2.80 + dot(wpDx, strikeDir) * 0.25)
+                                 + abs(wpDy3.y * 2.80 + dot(wpDy, strikeDir) * 0.25);
+            shelfNormMod *= mix(1.0, 0.38 * (1.0 - smoothstep(0.22, 0.85, shelfFootprint)),
+                                u_metallicBiomeFactor);
             rawCliffN.y += shelfNormMod * (1.0 - absWN.y);
             cliffTriNormal = rawCliffN * inversesqrt(max(dot(rawCliffN, rawCliffN), 1e-8));
 

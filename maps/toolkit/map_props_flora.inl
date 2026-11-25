@@ -85,6 +85,26 @@ static inline void MapFlora_GetClusterEpicentersNorm(int clusterIndex, Vector2 o
     }
 }
 
+int MapFlora_ExcludeFlowerPlacements(MapFlowerPlacement *placements, MapFloraFlowerCluster *clusters,
+                                     int clusterCount, bool (*isExcluded)(float, float, void *), void *ctx)
+{
+    int read = 0;
+    int write = 0;
+    for (int c = 0; c < clusterCount; c++)
+    {
+        int end = read + clusters[c].flowerCount;
+        int start = write;
+        for (; read < end; read++)
+        {
+            MapFlowerPlacement flower = placements[read];
+            if (!isExcluded(flower.position.x, flower.position.z, ctx))
+                placements[write++] = flower;
+        }
+        clusters[c].flowerCount = write - start;
+    }
+    return write;
+}
+
 void MapFlora_GenerateFlowerPlacements(
     MapFlowerPlacement *outPlacements,
     int totalFlowerCount,

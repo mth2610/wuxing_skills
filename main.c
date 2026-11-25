@@ -2122,7 +2122,6 @@ int main(int argc, char **argv) {
        too large and shifted off the cast point at any render scale < 1.0. */
     SceneTargets_BeginWorldRefraction();
     VFX_ShieldShell_DrawRefraction(camera);
-    VFX_FlowShield_DrawRefraction(camera);
     VFX_Compose_DrawRefraction(camera);
     VFXTest_DrawRefraction(camera);
     if (LiquidMetaball3D_HasBlobs()) {

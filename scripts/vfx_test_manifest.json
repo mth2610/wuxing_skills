@@ -8,7 +8,7 @@
     "$CONTROL2": "second elevated Bezier control point",
     "$VELOCITY": "default launch velocity",
     "$TIME": "running fixture time",
-    "$PROG": "looping normalized progress (0→1 over 2 seconds)",
+    "$PROG": "looping normalized progress (0\u21921 over 2 seconds)",
     "$SEED": "position-derived deterministic seed",
     "$XFORM": "stable transform for follower effects"
   },
@@ -96,18 +96,6 @@
       "_auto": true,
       "type": "oneshot",
       "trigger_call": "VFX_ComposeFlameJet($SOURCE, $TARGET, VC_MAT_FIRE, NULL)"
-    },
-    {
-      "source": "common/vc_flow_shield.inl",
-      "fn": "VFX_ComposeFlowShield",
-      "label": "FLOW SHIELD",
-      "category": "common",
-      "fixture": "persistent",
-      "lifecycle": "emitter",
-      "_auto": true,
-      "type": "persistent",
-      "spawn_call": "VFX_FlowShield_Spawn($POS, VC_MAT_WATER, 1.5f, 1.0f)",
-      "kill_fn": "VFX_KillFlowShield"
     },
     {
       "source": "common/vc_gas_material_lab.inl",
@@ -363,7 +351,7 @@
       "lifecycle": "emitter",
       "_auto": true,
       "type": "persistent",
-      "spawn_call": "VFX_ShieldShell_Spawn($POS, VC_MAT_WATER, 1.5f, 1.0f)",
+      "spawn_call": "VFX_Shield_SpawnEx($POS, VC_MAT_WATER, 1.5f, 1.0f, VFXTest_GetShieldDesc())",
       "kill_fn": "VFX_KillShieldShell"
     },
     {

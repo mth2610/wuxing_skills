@@ -413,3 +413,9 @@
 
 
 
+### Floating flower colonies and striped coastal rock
+
+- **Symptom** — Flower clusters appear over open water and parallel stripes follow the terrain rim.
+- **Cause** — The flower generator can fall back to the cluster center when all samples are excluded. The flora builder reads cluster counts to partition the placement array. Phú Quốc's original ground rock texture contained evenly spaced high-contrast strata.
+- **Rule** — Revalidate fallback flower placements and update each cluster's count when compacting. Inspect the source diffuse and normal maps and capture the ground with the skirt and water disabled to isolate coastal material bands.
+
