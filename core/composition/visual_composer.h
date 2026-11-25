@@ -1383,6 +1383,35 @@ void VFX_ComposeShockRing(Vector3 center, Vector3 normal, VC_MaterialId mat,
 int  VFX_SpawnShockRing(Vector3 center, Vector3 normal, VC_MaterialId mat,
                         float radius, float duration);
 
+// Shockwave presets — all share the single swept bell mesh + shock_ring.fs.
+typedef enum {
+    VFX_SHOCK_RING_IMPACT = 0,   // Razor leading edge + torn Wuxia wake (default)
+    VFX_SHOCK_RING_PARRY,        // Crisp deflect rim, minimal wake, tight envelope
+    VFX_SHOCK_RING_SONIC,        // Cool-white vapour rim + dark pressure-drop trough
+    VFX_SHOCK_RING_PULSE,        // Soft feathered Qi wave, low emission
+    VFX_SHOCK_RING_CONCUSSIVE,   // Heavy blast, strong soot occlusion, deep streaks
+    VFX_SHOCK_RING_SHATTER,      // Sharp angular fracture arcs + spiky shatter streaks
+    VFX_SHOCK_RING_VARIANT_COUNT
+} VFX_ShockRingVariant;
+
+typedef struct {
+    VFX_ShockRingVariant variant;
+    float intensity;     // 1.0f = authored; scales body + emission
+    float thickness;     // 1.0f = authored; scales bell/section
+    float arcSpan;       // radians; >= 2*PI (default) = full ring
+    Vector3 arcForward;  // arc centre direction, projected into ring plane
+    bool inward;         // false = expand outward, true = contract inward (implosion)
+    unsigned int seed;   // 0 = auto (position hash + pool salt)
+} VFX_ShockRingDesc;
+
+VFX_ShockRingDesc VFX_ShockRing_DefaultDesc(VFX_ShockRingVariant variant);
+const char *VFX_ShockRingVariant_Name(VFX_ShockRingVariant variant);
+int  VFX_ShockRing_GetParams(VFX_ShockRingDesc *cfg, VFX_ParamDef *outParams, int maxParams);
+void VFX_ComposeShockRingEx(Vector3 center, Vector3 normal, VC_MaterialId mat,
+                            float radius, float t01, const VFX_ShockRingDesc *desc);
+int  VFX_SpawnShockRingEx(Vector3 center, Vector3 normal, VC_MaterialId mat,
+                          float radius, float duration, const VFX_ShockRingDesc *desc);
+
 
 // ── PRIMARY. Debris shards ──────────────────────────────────────────────────
 // Angular chips thrown off an impact or a break. NOT sprites, and that is the

@@ -183,6 +183,16 @@ static float MotionRibbonFixtureLifetime(TrailPresetId preset);
 static float MotionRibbonFixtureWidth(TrailPresetId preset);
 static Vector3 MotionRibbon_EvaluateTrajectory(TrailPresetId preset, float t, Vector3 origin);
 static VFX_FlameStyle s_ambientFireFixtureStyle = VFX_FLAME_STYLE_NIAGARA_ROIL;
+static VFX_ShockRingDesc s_shockRingFixtureDesc;
+static bool s_shockRingFixtureDescInit = false;
+static VFX_ShockRingDesc *VFXTest_GetShockRingDesc(void)
+{
+    if (!s_shockRingFixtureDescInit) {
+        s_shockRingFixtureDesc = VFX_ShockRing_DefaultDesc(VFX_SHOCK_RING_IMPACT);
+        s_shockRingFixtureDescInit = true;
+    }
+    return &s_shockRingFixtureDesc;
+}
 static VFX_WoodVineConfig   s_liveWoodVineConfig;
 static VFX_WoodLeavesConfig s_liveWoodLeavesConfig;
 static VFX_WoodFlowerConfig s_liveWoodFlowerConfig;
@@ -786,6 +796,10 @@ static void VFXTest_RefreshInspectorParams(bool force)
     else if (VFXTest_IsNewFxNamed("GUIDED FIRE"))
     {
         s_inspectorParamCount = VFX_Fire_GetParams(VFX_Fire_GetLiveConfig(), s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
+    }
+    else if (VFXTest_IsNewFxNamed("SHOCK RING"))
+    {
+        s_inspectorParamCount = VFX_ShockRing_GetParams(VFXTest_GetShockRingDesc(), s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
     }
     else if (VFXTest_IsNewFxNamed("GUIDED EARTH"))
     {
@@ -2209,6 +2223,7 @@ static const char *VFXTest_UIActiveVariant(void)
     if (VFXTest_IsNewFxNamed("SURFACE PARTICLE RING")) return VFX_SurfaceParticleRingVariant_Name(s_surfaceParticleRingFixtureVariant);
     if (VFXTest_IsNewFxNamed("IMPACT DUST")) return VFX_ImpactDustVariant_Name(s_impactDustFixtureVariant);
     if (VFXTest_IsNewFxNamed("GUIDED FIRE")) return VFX_FirePreset_Name(VFX_Fire_GetLiveConfig()->preset);
+    if (VFXTest_IsNewFxNamed("SHOCK RING")) return VFX_ShockRingVariant_Name(VFXTest_GetShockRingDesc()->variant);
     if (VFXTest_IsNewFxNamed("GUIDED EARTH")) return VFX_GuidedEarthPreset_Name(VFX_GuidedEarth_GetLiveConfig()->preset);
     if (VFXTest_IsNewFxNamed("GRANULAR SAND")) return VFX_GranularSandPreset_Name(VFX_GranularSand_GetLiveConfig()->preset);
     if (VFXTest_IsNewFxNamed("GUIDED LIQUID")) return VFX_GuidedLiquidPreset_Name(VFX_GuidedLiquid_GetLiveConfig()->preset);
@@ -3197,6 +3212,17 @@ void VFXTest_Draw3D(void)
                     1.5f, 1.0f, s_impactDustFixtureVariant);
             }
         }
+        else if (VFXTest_IsNewFxNamed("SHOCK RING"))
+        {
+            int direction = IsKeyPressed(KEY_PERIOD) ? 1 : (IsKeyPressed(KEY_COMMA) ? -1 : 0);
+            if (direction != 0)
+            {
+                VFX_ShockRingDesc *sd = VFXTest_GetShockRingDesc();
+                sd->variant = (VFX_ShockRingVariant)(((int)sd->variant + direction + VFX_SHOCK_RING_VARIANT_COUNT) % VFX_SHOCK_RING_VARIANT_COUNT);
+                VFXTest_RefreshInspectorParams(true);
+                TraceLog(LOG_INFO, "SHOCK RING preset: %s (>, next; <, previous)", VFX_ShockRingVariant_Name(sd->variant));
+            }
+        }
         else if (VFXTest_IsNewFxNamed("GUIDED FIRE"))
         {
             if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))
@@ -3503,7 +3529,7 @@ void VFXTest_Draw3D(void)
                   break;
               }
               case 27: VFX_ComposeRuneCircle(s_prefabStartPos, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.5f, progress, 5); break;
-              case 29: VFX_ComposeShockRing(s_prefabStartPos, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.5f, progress); break;
+              case 29: VFX_ComposeShockRingEx(s_prefabStartPos, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.5f, progress, VFXTest_GetShockRingDesc()); break;
               case 30:
               {
                   if (s_meshTime < s_vfxFixtureLastTime[30] && s_vfxFixtureHandle[30] >= 0)
@@ -3808,6 +3834,20 @@ void VFXTest_SetRenderTarget(int newfxIndex, Vector3 spawnPos)
     if (envSpikeP && *envSpikeP) {
         int ep = (atoi(envSpikeP) % VFX_EARTH_SPIKE_PRESET_COUNT + VFX_EARTH_SPIKE_PRESET_COUNT) % VFX_EARTH_SPIKE_PRESET_COUNT;
         VFX_EarthSpike_ApplyPreset(VFX_EarthSpike_GetLiveConfig(), (VFX_EarthSpikePreset)ep);
+    }
+
+    const char *envShockP = getenv("WUXING_SHOCK_RING_PRESET");
+    if (envShockP && *envShockP) {
+        int srp = (atoi(envShockP) % VFX_SHOCK_RING_VARIANT_COUNT + VFX_SHOCK_RING_VARIANT_COUNT) % VFX_SHOCK_RING_VARIANT_COUNT;
+        VFXTest_GetShockRingDesc()->variant = (VFX_ShockRingVariant)srp;
+    }
+    const char *envShockArc = getenv("WUXING_SHOCK_RING_ARC");
+    if (envShockArc && *envShockArc) {
+        VFXTest_GetShockRingDesc()->arcSpan = strtof(envShockArc, NULL);
+    }
+    const char *envShockIn = getenv("WUXING_SHOCK_RING_INWARD");
+    if (envShockIn && *envShockIn) {
+        VFXTest_GetShockRingDesc()->inward = (atoi(envShockIn) != 0);
     }
 
     const char *envCrackP = getenv("WUXING_EARTH_CRACK_PRESET");

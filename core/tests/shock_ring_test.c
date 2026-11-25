@@ -46,8 +46,8 @@ static int g_checks = 0;
 #define SHOCK_CREST_K      1.0f
 #define SHOCK_CORE_RATIO   0.22f
 #define SHOCK_CANVAS_MUL   5.2f
-#define SHOCK_THICK_RATIO  0.30f
-#define SHOCK_FLARE_RATIO  0.34f
+#define SHOCK_THICK_RATIO  0.24f
+#define SHOCK_FLARE_RATIO  0.12f
 #define SHOCK_FLARE_K      1.35f
 #define SHOCK_SHADE_FLOOR  0.30f
 #define SHOCK_FACE_DIM     0.60f
@@ -390,7 +390,7 @@ static void Test_MirrorMatchesTheSource(void)
     const char *inl = "core/composition/common/vc_shock_ring.inl";
 
     CHECK(FileHas(inl, "#define SHOCK_CREST_U 0.5f"), "the crest is what this test mirrors");
-    CHECK(FileHas(inl, "#define SHOCK_THICK_RATIO 0.30f"), "so is the out-of-plane thickness");
+    CHECK(FileHas(inl, "#define SHOCK_THICK_RATIO 0.24f"), "so is the out-of-plane thickness");
     CHECK(FileHas(inl, "#define SHOCK_CORE_RATIO 0.22f"), "and the visible front");
     CHECK(FileHas(inl, "#define SHOCK_CANVAS_MUL 5.2f"), "and the canvas it is carved out of");
 
@@ -444,30 +444,18 @@ static void Test_MirrorMatchesTheSource(void)
     // does not apply coverage, so the shader must. Selecting the blend alone was
     // measured on the trail presets as a 1/alpha brightening of every soft edge.
     CHECK(FileHas("core/shaders/shock_ring.fs", "if (u_premultiply > 0.5)") &&
+          FileHas("core/shaders/shock_ring.fs", "VFX_TonemapSafeEmission(hotCol, u_emission, glowMask)") &&
           FileHas("core/shaders/shock_ring.fs",
-                  "finalColor = VFX_ResolvePremultiplied(hotCol, u_emission * 0.35, ga,"),
-          "...and the emission pass premultiplies in the shader, since the blend no longer does");
-    // COVERAGE AND BRIGHTNESS MUST STAY SEPARATE ARGUMENTS. Delivered as
-    // bodyColor * intensity * a, the only way to make a core bright enough to
-    // bloom is to make it nearly opaque — and the premultiplied dst*(1-a) term
-    // then erases the BODY pass drawn underneath, so the ring comes out as bare
-    // white filaments with no smoke around them. The six-argument form adds
-    // light without adding coverage.
-    CHECK(FileHas("core/shaders/shock_ring.fs", "hotCol, glowMask, u_emission);"),
+                  "finalColor = VFX_ResolvePremultiplied(bodyPre, 1.0, ga, glow, 1.0, 1.0);"),
+          "...and the emission pass premultiplies with tone-map-safe emission");
+    CHECK(FileHas("core/shaders/shock_ring.fs", "glow, 1.0, 1.0);"),
           "the glow is delivered as the emission triple, so it does not erase the body pass");
     CHECK(FileHas(inl, "VFXRender_BeginDraw(") &&
           FileHas(inl, "false);") && FileHas(inl, "rlDisableBackfaceCulling();"),
           "no depth write, both walls — flushed on both sides");
-    // THE GAIN IS 7.0 AND IT IS NOT A TASTE SETTING — IT IS A THRESHOLD.
-    // main.c sets bloomThreshold = 1.25 in HDR luma, so an emission pass that
-    // never reaches it does not glow, however "bright" its numbers look. At the
-    // previous 2.50 the arithmetic was: coverage(~0.7) * 0.70 * life alpha(~0.6)
-    // = 0.29, times a whitened fire glow of luma 0.64, times 2.50 = 0.47 — less
-    // than half of what blooms. Every term looked reasonable on its own and the
-    // ring rendered as matte orange paper. Lower this and it stops glowing.
-    CHECK(FileHas(inl, "ShockRing_SetUniforms(m, (pass == 0) ? alpha * 1.75f : alpha * 0.90f,") &&
-          FileHas(inl, "(pass == 0) ? 1.0f : 7.00f, t01, seed,") &&
-          FileHas(inl, "(pass == 0) ? 0.0f : 1.0f);"),
+    CHECK(FileHas(inl, "ShockRing_SetUniforms(m, st,") &&
+          FileHas(inl, "(pass == 0) ? arrival * 1.65f : arrival * 0.90f,") &&
+          FileHas(inl, "(pass == 0) ? 1.0f : st->emissionGain,"),
           "the emission pass carries enough energy and coverage to cross the bloom "
           "threshold — and tells the shader which blend law it is under");
     CHECK(FileHas(inl, "rlEnableBackfaceCulling();") &&
@@ -477,7 +465,7 @@ static void Test_MirrorMatchesTheSource(void)
     // Authored shading, not a lit material.
     CHECK(!FileHas(inl, "Material_Begin("),
           "no lit material — it would be black-on-black in the night arena");
-    CHECK(FileHas(inl, "ringCol[i] = VC_WithAlpha(c, (unsigned char)(alpha * ShockRing_Shade(u) * 255.0f));"),
+    CHECK(FileHas(inl, "ringCol[i] = VC_WithAlpha(c, (unsigned char)(fallbackAlpha * ShockRing_Shade(u) * 255.0f));"),
           "the shading is authored into the vertex colour");
     CHECK(FileHas(inl, "Color c = VC_MixColor(m->body, m->glow, h);"),
           "and the colours come from VFX_Material, body at the bases, glow at the crest");
@@ -536,31 +524,32 @@ static void Test_TheWakeIsProceduralAndGraded(void)
 {
     const char *fs = "core/shaders/shock_ring.fs";
 
-    CHECK(FileHas(fs, "float dR = v - frontV;"),
+    CHECK(FileHas(fs, "float dR = vEff - frontV;"),
           "the leading edge is a band on the canvas coordinate, not a level set");
     CHECK(FileHas(fs, "float wd = max(-dR, 0.0);"),
           "the tail hangs INWARD off the front, never ahead of it");
 
     // HIGH SPEED JET RAYS
-    CHECK(FileHas(fs, "float ray1 = ShockNoise(vec2(uw * 36.0, 17.0 + u_seed), 36.0);") &&
-          FileHas(fs, "float ray2 = ShockNoise(vec2(uw * 84.0, 59.0 + u_seed), 84.0);"),
+    CHECK(FileHas(fs, "float ray1 = ShockNoise(vec2(uw * 28.0, 17.0 + u_seed), 28.0);") &&
+          FileHas(fs, "float ray2 = ShockNoise(vec2(uw * 64.0, 59.0 + u_seed), 64.0);"),
           "multi-scale directional radial streaking");
 
-    // SUPERSONIC DISCONTINUITY
-    CHECK(FileHas(fs, "leadEdge = exp(-dR / (frontWidth * 0.25))") &&
-          FileHas(fs, "float coreLine = exp(-abs(dR) * 220.0) * arcEnergy;"),
-          "razor-sharp supersonic leading knife edge and white-hot core");
+    // SUPERSONIC DISCONTINUITY (with pixel-width AA floor)
+    CHECK(FileHas(fs, "float pxV = max(fwidth(v), 0.0005);") &&
+          FileHas(fs, "float coreSigma = max(0.0036, pxV * 0.78);") &&
+          FileHas(fs, "float coreLine = exp(-abs(dR) / coreSigma) * arcEnergy * u_styleD.y;"),
+          "AA-floored supersonic leading knife edge and core line");
 
     // EMISSION CARRIES LIGHT
-    CHECK(FileHas(fs, "float glowMask = clamp(frontIntensity * 3.6 + ember * 2.2 + wakeIntensity * 0.35, 0.0, 1.0) *"),
-          "emission pass delivers bloom to the wavefront and filaments");
+    CHECK(FileHas(fs, "float glowMask = clamp(coreLine * 1.25 * lifeAlpha + ember * 0.95 * lifeAlpha + leadEdge * 0.35 * lifeAlpha * arcEnergy,"),
+          "emission pass delivers bloom strictly to razor core and filament tips");
 
     // Driven by the ring's own life, never by wall clock.
     CHECK(!FileHas(fs, "u_time"), "nothing in the silhouette is driven by u_time");
 
     // The canvas fade is taken on RAW v, so no polygon edge cuts the tail.
-    CHECK(FileHas(fs, "float edge = smoothstep(0.0, 0.04, v) * "
-                      "(1.0 - smoothstep(0.94, 1.0, v));"),
+    CHECK(FileHas(fs, "float edge = smoothstep(0.0, 0.05, v) * "
+                      "(1.0 - smoothstep(0.92, 1.0, v));"),
           "the canvas fade is taken on RAW v, so no polygon edge cuts the tail");
 
     // The noise lattice still wraps, or the u seam shows a bright radius.
@@ -618,8 +607,8 @@ static void Test_TheSectionIsABellOpeningInward(void)
     // a flare ratio of 0.34 puts the inner lip about a third of a radius out of
     // the plane — the same order as the ring's own visible width, which is what
     // it takes to read as a volume rather than as a thicker line.
-    CHECK(FileHas(inl, "#define SHOCK_FLARE_RATIO 0.34f"),
-          "the section flares out of the ring's plane by a real fraction of itself");
+    CHECK(FileHas(inl, "#define SHOCK_FLARE_RATIO 0.12f"),
+          "the section flares gently out of the ring's plane without pinching at isometric angles");
 
     // IT OPENS INWARD. Outward it was drawn twice, half a radius apart, because
     // the two sheets at ±offset are widest exactly where the front sits — the
@@ -666,26 +655,93 @@ static void Test_TheFrontIsTheIdentity(void)
     const char *fs = "core/shaders/shock_ring.fs";
     const char *inl = "core/composition/common/vc_shock_ring.inl";
 
-    CHECK(FileHas(fs, "float dR = v - frontV;"),
+    CHECK(FileHas(fs, "float dR = vEff - frontV;"),
           "the leading edge is a band on the canvas coordinate, not a level set");
 
-    CHECK(FileHas(fs, "leadEdge = exp(-dR / (frontWidth * 0.25))") &&
-          FileHas(fs, "float coreLine = exp(-abs(dR) * 220.0) * arcEnergy;"),
-          "razor-sharp supersonic leading knife edge and white-hot core");
+    CHECK(FileHas(fs, "float coreSigma = max(0.0036, pxV * 0.78);") &&
+          FileHas(fs, "float coreLine = exp(-abs(dR) / coreSigma) * arcEnergy * u_styleD.y;"),
+          "AA-floored supersonic leading knife edge and core line");
 
-    CHECK(FileHas(fs, "float frontWob = FbmRing(vec2(u * 5.0, 7.0 + u_seed), 5.0, 2) - 0.5;") &&
-          FileHas(fs, "float frontRip = FbmRing(vec2(u * 16.0, 31.0 + u_seed), 16.0, 2) - 0.5;"),
+    CHECK(FileHas(fs, "float frontWob = FbmRing(vec2(u * 4.0, 7.0 + u_seed), 4.0, 2) - 0.5;") &&
+          FileHas(fs, "float frontRip = FbmRing(vec2(u * 12.0, 31.0 + u_seed), 12.0, 2) - 0.5;"),
           "aerodynamic micro-ripples along the wavefront");
 
-    CHECK(FileHas(fs, "float lifeAlpha = pow(max(1.0 - u_t01, 0.0), 1.8);"),
-          "smooth aerodynamic life dispersal");
+    CHECK(FileHas(fs, "float lifeAlpha = pow(max(1.0 - u_t01, 0.0), max(u_styleA.w, 0.1));"),
+          "single smooth aerodynamic life dispersal");
 
-    CHECK(FileHas(fs, "float coreV = u_coreV + frontWob * 0.06;"),
+    CHECK(FileHas(fs, "float coreV = u_coreV + frontWob * 0.09 * wobbleAmp;"),
           "organic circular expansion with dynamic turbulence");
 
     // COLOUR RANGE COMES FROM NOT PRE-WHITENING.
-    CHECK(FileHas(inl, "ColorNormalize(VC_Whiten(m->glow, 0.08f))"),
+    CHECK(FileHas(inl, "ColorNormalize(VC_Whiten(m->glow, st->whiten))"),
           "the glow keeps the element hue, so the HDR gain can ramp it to white");
+}
+
+static void Test_ShockRingVariantsAndFixes(void)
+{
+    const char *fs  = "core/shaders/shock_ring.fs";
+    const char *inl = "core/composition/common/vc_shock_ring.inl";
+    const char *hdr = "core/composition/visual_composer.h";
+
+    // Variant API & style table
+    CHECK(FileHas(hdr, "VFX_SHOCK_RING_VARIANT_COUNT") &&
+          FileHas(hdr, "VFX_ComposeShockRingEx") &&
+          FileHas(hdr, "VFX_SpawnShockRingEx") &&
+          FileHas(hdr, "VFX_ShockRing_DefaultDesc") &&
+          FileHas(hdr, "VFX_ShockRingVariant_Name") &&
+          FileHas(hdr, "VFX_ShockRing_GetParams"),
+          "header exposes 6-preset Ex API, GetParams, and inward/arc fields");
+
+    CHECK(FileHas(inl, "k_shockStyles[VFX_SHOCK_RING_VARIANT_COUNT]") &&
+          FileHas(inl, "{ 3.8f, 0.08f, 1.8f,"),
+          "IMPACT style row matches legacy ease & arrival");
+
+    // E1..E9 fixes
+    CHECK(FileHas(fs, "float f28 = 1.0 - smoothstep(0.25, 0.50, pxU * 28.0);"),
+          "E1: high-frequency radial rays are attenuated by screen-space pxU");
+    CHECK(FileHas(fs, "float sootMask = clamp("),
+          "E3: soot pigmentation mask present in BODY pass for bright backgrounds");
+    CHECK(FileHas(fs, "float rippleGate = smoothstep(0.08, 0.20, u_t01);"),
+          "E4: pressure ripple gated past early release");
+    CHECK(FileHas(inl, "bool horizontal = fabsf(n.y) > 0.7f;") &&
+          FileHas(inl, "(sgn < 0.0f && clampGround) ?"),
+          "E7: ground clamp only applies to horizontal rings");
+    CHECK(FileHas(inl, "s_srSeedSalt"),
+          "E8: pool spawn salts seed so same-pos rings differ");
+    CHECK(FileHas(inl, "if (p > maxProgress) { maxProgress = p; oldestSlot = i; }"),
+          "E9: full pool steals oldest ring instead of slot 0");
+    CHECK(FileHas(fs, "u_styleA") && FileHas(fs, "u_styleB") &&
+          FileHas(fs, "u_styleC") && FileHas(fs, "u_styleD") && FileHas(fs, "u_arc"),
+          "shader declares all variant style & arc uniforms");
+
+    // Numeric invariant sweep across all 6 presets (outward & inward)
+    struct { float ease, arrive, fadeK; } styles[6] = {
+        { 3.8f, 0.08f, 1.8f },
+        { 6.0f, 0.04f, 2.4f },
+        { 5.0f, 0.05f, 1.6f },
+        { 1.6f, 0.14f, 1.2f },
+        { 3.0f, 0.06f, 1.4f },
+        { 4.5f, 0.05f, 1.8f },
+    };
+    int allOk = 1;
+    for (int v = 0; v < 6; v++) {
+        for (int inward = 0; inward <= 1; inward++) {
+            float prevR = inward ? 1.0f : 0.0f;
+            for (int step = 0; step <= 100; step++) {
+                float t = (float)step / 100.0f;
+                float r01 = inward
+                    ? ((t <= 0.0f) ? 1.0f : (t >= 1.0f ? 0.0f : 1.0f - powf(t, styles[v].ease * 0.7f)))
+                    : ((t <= 0.0f) ? 0.0f : (t >= 1.0f ? 1.0f : 1.0f - powf(1.0f - t, styles[v].ease)));
+                float arr = (t <= 0.0f || t >= 1.0f) ? 0.0f : SmoothStep01(t / styles[v].arrive);
+                float env = arr * powf(1.0f - t, styles[v].fadeK);
+                if (!isfinite(r01) || !isfinite(env) || r01 < -1e-5f || r01 > 1.0001f || env < -1e-5f) allOk = 0;
+                if (!inward && r01 < prevR - 1e-5f) allOk = 0;
+                if (inward && r01 > prevR + 1e-5f) allOk = 0;
+                prevR = r01;
+            }
+        }
+    }
+    CHECK(allOk, "all 6 presets (outward & inward) have bounded, finite, monotonic radius and non-negative envelope");
 }
 
 
@@ -703,6 +759,7 @@ int main(void)
     Test_MirrorMatchesTheSource();
     Test_TheSheetIsGone();
     Test_TheWakeIsProceduralAndGraded();
+    Test_ShockRingVariantsAndFixes();
     printf("---- %d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }

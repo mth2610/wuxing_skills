@@ -431,3 +431,20 @@ vc_black_hole.inl
 `scripts/vfx_test_manifest.json` is the source of truth for the NEWFX tab.
 Run `python3 scripts/sync_vfx_test.py` after every `VFX_Compose*` add/remove.
 `--check` flag for dry-run (no writes).
+
+---
+
+## Shock Ring Variants (`core/composition/common/vc_shock_ring.inl`)
+`VFX_ComposeShockRing` / `VFX_SpawnShockRing` remain unchanged and default to `VFX_SHOCK_RING_IMPACT`.
+Use `VFX_ComposeShockRingEx` / `VFX_SpawnShockRingEx` with `VFX_ShockRingDesc` (from `VFX_ShockRing_DefaultDesc(variant)`) for:
+
+| Variant | Use case | Character |
+|---|---|---|
+| `VFX_SHOCK_RING_IMPACT` | Normal hits, mid-air explosions | Razor leading edge + crisp torn Wuxia wake + soot body |
+| `VFX_SHOCK_RING_PARRY` | Block, parry, deflect | Ultra-crisp deflect rim, minimal wake, tight envelope |
+| `VFX_SHOCK_RING_SONIC` | Dash start, Mach punch, sword-qi | Cool-white vapour rim + dark pressure-drop trough |
+| `VFX_SHOCK_RING_PULSE` | Buff, cleanse, heal, Thiền Định | Soft feathered Qi wave, low emission |
+| `VFX_SHOCK_RING_CONCUSSIVE` | Heavy hits, boss slams, finishers | Heavy blast, strong soot occlusion, deep torn streaks |
+| `VFX_SHOCK_RING_SHATTER` | Guard/armour break, stagger | Sharp angular fracture arcs + spiky shatter streaks |
+
+Orthogonal `VFX_ShockRingDesc` fields: `intensity`, `thickness`, `arcSpan` + `arcForward` (directional crescent arc), `inward` (contract `R -> 0` implosion), `seed` (`0` = auto).
