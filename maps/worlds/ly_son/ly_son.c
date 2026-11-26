@@ -50,6 +50,7 @@ static MapVolcanoVentSystem s_vents = {0};
 static MapRockSystem s_rocks = {0};
 static MapDebrisSystem s_debris = {0};
 static MapFloraSystem s_flora = {0};
+static MapTreeSystem s_trees = {0};
 
 static WindMacroConfig s_prevWindMacro = {0};
 static AtmosphereMode s_prevAtmoMode = ATMO_MODE_MOONLIGHT_DUST;
@@ -85,6 +86,7 @@ static void DrawLySonShadowCasters(Shader depthShader, void *user)
     s_lySonShadowCtx.flora = &s_flora;
     s_lySonShadowCtx.rocks = &s_rocks;
     s_lySonShadowCtx.ores = NULL;
+    s_lySonShadowCtx.trees = s_trees.ready ? &s_trees : NULL;
     s_lySonShadowCtx.skipMask = s_skipMask;
     MapDem_DefaultShadowCasterCallback(depthShader, &s_lySonShadowCtx);
 }
@@ -624,6 +626,88 @@ void InitLySonMap(void)
     BuildLySonDebris();
     BuildLySonFlora();
 
+    // Volcanic scorched bare snags near caldera ridges & wind-sheared parched coastal pines
+    {
+        enum { LY_SON_MAX_TREES = 32 };
+        static MapTreePlacement s_lsTrees[LY_SON_MAX_TREES];
+        int treeCount = 0;
+        unsigned int trng = 0x7A2F19u;
+        float spX = LY_SON_ARENA_X * s_scaleXZ;
+        float spZ = LY_SON_ARENA_Z * s_scaleXZ;
+        float calX = LY_SON_CALDERA_X * s_scaleXZ;
+        float calZ = LY_SON_CALDERA_Z * s_scaleXZ;
+        float minX = 16.0f * s_scaleXZ;
+        float maxX = MAP_WIDTH - 16.0f * s_scaleXZ;
+        float minZ = 16.0f * s_scaleXZ;
+        float maxZ = MAP_DEPTH - 16.0f * s_scaleXZ;
+
+        for (int attempt = 0; attempt < 580 && treeCount < LY_SON_MAX_TREES; attempt++)
+        {
+            trng = trng * 1664525u + 1013904223u;
+            float u0 = (float)((trng >> 16) & 0xFFFFu) / 65535.0f;
+            trng = trng * 1664525u + 1013904223u;
+            float u1 = (float)((trng >> 16) & 0xFFFFu) / 65535.0f;
+            trng = trng * 1664525u + 1013904223u;
+            float u2 = (float)((trng >> 16) & 0xFFFFu) / 65535.0f;
+
+            float tx = minX + u0 * (maxX - minX);
+            float tz = minZ + u1 * (maxZ - minZ);
+            float dxA = tx - spX, dzA = tz - spZ;
+            if (dxA * dxA + dzA * dzA < (14.5f * s_scaleXZ) * (14.5f * s_scaleXZ))
+                continue;
+
+            Vector3 gp = {0}, gn = {0};
+            if (!MapProp_SampleGroundSurface(&s_ground, kMapCenter, tx, tz, &gp, &gn))
+                continue;
+            if (gp.y < seaY + 1.4f || gn.y < 0.78f)
+                continue;
+
+            float wY = 0.0f, wD = 0.0f;
+            if (MapDem_GetWaterInfo(&s_dem, &s_ground, tx, tz, &wY, &wD))
+                continue;
+
+            bool blocked = false;
+            for (int j = 0; j < treeCount && !blocked; j++)
+            {
+                float ddx = tx - s_lsTrees[j].position.x;
+                float ddz = tz - s_lsTrees[j].position.z;
+                if (ddx * ddx + ddz * ddz < 9.0f * 9.0f)
+                    blocked = true;
+            }
+            for (int r = 0; r < s_rocks.count && !blocked; r++)
+            {
+                float ddx = tx - s_rocks.items[r].position.x;
+                float ddz = tz - s_rocks.items[r].position.z;
+                float clearR = s_rocks.items[r].radiusScale + 1.5f;
+                if (ddx * ddx + ddz * ddz < clearR * clearR)
+                    blocked = true;
+            }
+            if (blocked)
+                continue;
+
+            float dCal = sqrtf((tx - calX) * (tx - calX) + (tz - calZ) * (tz - calZ)) / fmaxf(s_scaleXZ, 0.5f);
+            bool nearCaldera = (dCal < 68.0f || u2 > 0.45f);
+            MapTreeArchetype arch = nearCaldera
+                ? ((u0 > 0.5f) ? MAP_TREE_MEADOW_OAK : MAP_TREE_ANCIENT_PINE)
+                : MAP_TREE_COASTAL_PINE;
+            float dryness = nearCaldera ? 1.0f : (0.52f + u2 * 0.38f);
+            float scorch = nearCaldera ? (0.62f + u1 * 0.34f) : (0.10f + u0 * 0.18f);
+
+            s_lsTrees[treeCount++] = (MapTreePlacement){
+                .position = {tx, 0.0f, tz},
+                .scaleXZ = 0.88f + u0 * 0.38f,
+                .scaleY = 0.86f + u1 * 0.38f,
+                .rotationDeg = u2 * 360.0f,
+                .phase = u1,
+                .canopyTint = {216, 204, 178, 255},
+                .archetype = arch,
+                .dryness = dryness,
+                .scorch = scorch,
+            };
+        }
+        s_trees = MapProp_CreateTreeSystem(s_lsTrees, treeCount, &s_ground, kMapCenter, fminf(150.0f * s_scaleXZ, 210.0f));
+    }
+
     FogVolume_ClearAll();
     if (!(s_skipMask & MAP_SKIP_FOGVOLUMES))
     {
@@ -677,6 +761,8 @@ void DrawLySonMap(void)
     }
     if (!(s_skipMask & MAP_SKIP_FLORA))
         MapProp_DrawFloraSystem(&s_flora);
+    if (s_trees.ready)
+        MapProp_DrawTreeSystem(&s_trees, s_flora.time, s_flora.windDirection, s_flora.windStrength);
     if (!(s_skipMask & MAP_SKIP_SKY))
         MapProp_DrawSkyDome(&s_sky);
 }
@@ -698,6 +784,8 @@ void UpdateLySonMap(float dt)
         return;
 
     MapProp_UpdateFloraSystem(&s_flora, camera.target, dt);
+    if (s_trees.ready)
+        MapProp_PrepareTreeSystem(&s_trees, camera);
     MapProp_UpdateWaterSurface(&s_coastalSea, dt);
     MapProp_UpdateVolcanoVentSystem(&s_vents, camera.target, dt);
 
@@ -736,6 +824,7 @@ void UnloadLySonMap(void)
     MapProp_UnloadLavaSurface(&s_lava);
     MapProp_UnloadWaterSurface(&s_coastalSea);
     MapProp_UnloadFloraSystem(&s_flora);
+    MapProp_UnloadTreeSystem(&s_trees);
     MapProp_UnloadDebrisSystem(&s_debris);
     MapProp_UnloadRockSystem(&s_rocks);
     if (s_cliff.ready)
@@ -799,4 +888,6 @@ void ResolveCollisionLySonMap(Vector3 *pos, float agentRadius, float stepHeight,
     if (!s_ready)
         return;
     MapProp_ResolveRockSystemCollision(&s_rocks, pos, agentRadius, stepHeight, inOutGroundY);
+    if (s_trees.ready && pos)
+        *pos = MapProp_ResolveTreeSystemCollision(&s_trees, *pos, agentRadius);
 }

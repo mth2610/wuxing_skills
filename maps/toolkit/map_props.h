@@ -1388,6 +1388,15 @@ typedef enum
     MAP_TREE_ARCHETYPE_COUNT
 } MapTreeArchetype;
 
+typedef enum
+{
+    MAP_TREE_STATE_LUSH = 0,     // Full canopy, rich chlorophyll / blossom palette
+    MAP_TREE_STATE_AUTUMN = 1,   // Senescent amber/gold/russet shift, ~15% outer tip shedding
+    MAP_TREE_STATE_WITHERED = 2, // Parched olive-ochre, turgor droop, ~55% leaf shedding
+    MAP_TREE_STATE_DRY_BARE = 3, // 100% leafless weathered deadwood skeleton
+    MAP_TREE_STATE_SCORCHED = 4  // Leafless charred carbon bark with subtle tip embers
+} MapTreeState;
+
 typedef struct
 {
     Vector3 position;
@@ -1397,6 +1406,8 @@ typedef struct
     float phase;
     Color canopyTint;
     MapTreeArchetype archetype;
+    float dryness; // 0.0 = lush healthy, 0.35 = autumn, 0.70 = parched sparse, 1.0 = bare dry tree
+    float scorch;  // 0.0 = unburned, 1.0 = charred volcanic/fire-scorched bark & tip embers
 } MapTreePlacement;
 
 typedef struct MapTreeSystem
@@ -1417,7 +1428,9 @@ typedef struct MapTreeSystem
     float drawDistance;
     float lod0Distance;
     float lod1Distance;
-    float snowCoverage; // -1.0 = auto per-archetype; 0.0..1.0 = explicit snow coverage ratio
+    float snowCoverage;  // -1.0 = auto per-archetype; 0.0..1.0 = explicit snow coverage ratio
+    float globalDryness; // 0.0..1.0 global minimum dryness override (zero mesh rebuild)
+    float globalScorch;  // 0.0..1.0 global minimum scorch override (zero mesh rebuild)
     bool preparedThisFrame;
     bool ready;
 } MapTreeSystem;
@@ -1426,6 +1439,8 @@ MapTreeSystem MapProp_CreateTreeSystem(const MapTreePlacement *placements, int c
                                        const MapGroundSurface *ground, Vector3 worldCenter,
                                        float drawDistance);
 void MapProp_SetTreeSnowCoverage(MapTreeSystem *sys, float coverage);
+void MapProp_SetTreeCondition(MapTreeSystem *sys, float globalDryness, float globalScorch);
+void MapProp_SetTreeState(MapTreeSystem *sys, MapTreeState state);
 void MapProp_PrepareTreeSystem(MapTreeSystem *sys, Camera3D camera);
 void MapProp_DrawTreeSystem(const MapTreeSystem *sys, float time, Vector2 windDirection, float windStrength);
 void MapProp_DrawTreeSystemShadowCasters(const MapTreeSystem *sys, Shader depthShader,

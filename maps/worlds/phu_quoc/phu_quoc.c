@@ -50,6 +50,7 @@ static MapRockSystem s_rocks = {0};
 static MapOreSystem s_ores = {0};
 static MapDebrisSystem s_debris = {0};
 static MapFloraSystem s_flora = {0};
+static MapTreeSystem s_trees = {0};
 
 static WindMacroConfig s_prevWindMacro = {0};
 static AtmosphereMode s_prevAtmoMode = ATMO_MODE_MOONLIGHT_DUST;
@@ -98,6 +99,7 @@ static void DrawPhuQuocShadowCasters(Shader depthShader, void *user)
     s_phuQuocShadowCtx.flora = &s_flora;
     s_phuQuocShadowCtx.rocks = &s_rocks;
     s_phuQuocShadowCtx.ores = s_ores.ready ? &s_ores : NULL;
+    s_phuQuocShadowCtx.trees = s_trees.ready ? &s_trees : NULL;
     s_phuQuocShadowCtx.skipMask = s_skipMask;
     MapDem_DefaultShadowCasterCallback(depthShader, &s_phuQuocShadowCtx);
 }
@@ -750,6 +752,100 @@ void InitPhuQuocMap(void)
     BuildPhuQuocDebris();
     BuildPhuQuocFlora();
 
+    // Wind-sheared coastal pines, golden autumn ridge birches, and weathered mineral-ridge snags
+    {
+        enum { PHU_QUOC_MAX_TREES = 40 };
+        static MapTreePlacement s_pqTrees[PHU_QUOC_MAX_TREES];
+        int treeCount = 0;
+        unsigned int trng = 0x3C81B5u;
+        float spX = PHU_QUOC_ARENA_X * s_scaleXZ;
+        float spZ = PHU_QUOC_ARENA_Z * s_scaleXZ;
+        float minX = 18.0f * s_scaleXZ;
+        float maxX = MAP_WIDTH - 18.0f * s_scaleXZ;
+        float minZ = 18.0f * s_scaleXZ;
+        float maxZ = MAP_DEPTH - 18.0f * s_scaleXZ;
+
+        for (int attempt = 0; attempt < 620 && treeCount < PHU_QUOC_MAX_TREES; attempt++)
+        {
+            trng = trng * 1664525u + 1013904223u;
+            float u0 = (float)((trng >> 16) & 0xFFFFu) / 65535.0f;
+            trng = trng * 1664525u + 1013904223u;
+            float u1 = (float)((trng >> 16) & 0xFFFFu) / 65535.0f;
+            trng = trng * 1664525u + 1013904223u;
+            float u2 = (float)((trng >> 16) & 0xFFFFu) / 65535.0f;
+
+            float tx = minX + u0 * (maxX - minX);
+            float tz = minZ + u1 * (maxZ - minZ);
+            float dxA = tx - spX, dzA = tz - spZ;
+            if (dxA * dxA + dzA * dzA < (15.0f * s_scaleXZ) * (15.0f * s_scaleXZ))
+                continue;
+
+            Vector3 gp = {0}, gn = {0};
+            if (!MapProp_SampleGroundSurface(&s_ground, kMapCenter, tx, tz, &gp, &gn))
+                continue;
+            if (gp.y < seaY + 1.2f || gn.y < 0.78f)
+                continue;
+
+            float wY = 0.0f, wD = 0.0f;
+            if (MapDem_GetWaterInfo(&s_dem, &s_ground, tx, tz, &wY, &wD))
+                continue;
+
+            bool blocked = false;
+            for (int j = 0; j < treeCount && !blocked; j++)
+            {
+                float ddx = tx - s_pqTrees[j].position.x;
+                float ddz = tz - s_pqTrees[j].position.z;
+                if (ddx * ddx + ddz * ddz < 9.0f * 9.0f)
+                    blocked = true;
+            }
+            for (int r = 0; r < s_rocks.count && !blocked; r++)
+            {
+                float ddx = tx - s_rocks.items[r].position.x;
+                float ddz = tz - s_rocks.items[r].position.z;
+                float clearR = s_rocks.items[r].radiusScale + 1.5f;
+                if (ddx * ddx + ddz * ddz < clearR * clearR)
+                    blocked = true;
+            }
+            if (blocked)
+                continue;
+
+            MapTreeArchetype arch;
+            float dryness;
+            Color tint;
+            if (u2 < 0.45f)
+            {
+                arch = MAP_TREE_COASTAL_PINE;
+                dryness = 0.14f + u0 * 0.34f;
+                tint = (Color){222, 234, 198, 255};
+            }
+            else if (u2 < 0.80f)
+            {
+                arch = MAP_TREE_MEADOW_BIRCH;
+                dryness = 0.32f + u1 * 0.30f; // Golden autumn birch harmonizing with gold/silver veins
+                tint = (Color){248, 224, 158, 255};
+            }
+            else
+            {
+                arch = MAP_TREE_MEADOW_OAK;
+                dryness = 0.92f + u0 * 0.08f; // Sun-bleached bare mineral-ridge snag
+                tint = (Color){224, 214, 188, 255};
+            }
+
+            s_pqTrees[treeCount++] = (MapTreePlacement){
+                .position = {tx, 0.0f, tz},
+                .scaleXZ = 0.92f + u0 * 0.40f,
+                .scaleY = 0.90f + u1 * 0.40f,
+                .rotationDeg = u2 * 360.0f,
+                .phase = u1,
+                .canopyTint = tint,
+                .archetype = arch,
+                .dryness = dryness,
+                .scorch = 0.0f,
+            };
+        }
+        s_trees = MapProp_CreateTreeSystem(s_pqTrees, treeCount, &s_ground, kMapCenter, fminf(150.0f * s_scaleXZ, 210.0f));
+    }
+
     if (s_skipMask & MAP_SKIP_FOGVOLUMES)
         FogVolume_ClearAll();
     else
@@ -792,6 +888,8 @@ void DrawPhuQuocMap(void)
         MapProp_DrawCliffSkirt(&s_cliff, camera);
     if (!(s_skipMask & MAP_SKIP_FLORA))
         MapProp_DrawFloraSystem(&s_flora);
+    if (s_trees.ready)
+        MapProp_DrawTreeSystem(&s_trees, s_flora.time, s_flora.windDirection, s_flora.windStrength);
     if (!(s_skipMask & MAP_SKIP_SKY))
         MapProp_DrawSkyDome(&s_sky);
 }
@@ -814,6 +912,8 @@ void UpdatePhuQuocMap(float dt)
         return;
 
     MapProp_UpdateFloraSystem(&s_flora, camera.target, dt);
+    if (s_trees.ready)
+        MapProp_PrepareTreeSystem(&s_trees, camera);
     MapProp_UpdateWaterSurface(&s_coastalSea, dt);
     MapProp_UpdateWaterSurface(&s_mineralWater, dt);
 
@@ -854,6 +954,7 @@ void UnloadPhuQuocMap(void)
     MapProp_UnloadWaterSurface(&s_mineralWater);
     MapProp_UnloadWaterSurface(&s_coastalSea);
     MapProp_UnloadFloraSystem(&s_flora);
+    MapProp_UnloadTreeSystem(&s_trees);
     MapProp_UnloadDebrisSystem(&s_debris);
     MapProp_UnloadOreSystem(&s_ores);
     MapProp_UnloadRockSystem(&s_rocks);
@@ -913,4 +1014,6 @@ void ResolveCollisionPhuQuocMap(Vector3 *pos, float agentRadius, float stepHeigh
     if (!s_ready)
         return;
     MapProp_ResolveRockSystemCollision(&s_rocks, pos, agentRadius, stepHeight, inOutGroundY);
+    if (s_trees.ready && pos)
+        *pos = MapProp_ResolveTreeSystemCollision(&s_trees, *pos, agentRadius);
 }

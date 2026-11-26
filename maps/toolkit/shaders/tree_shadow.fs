@@ -8,7 +8,7 @@ void main()
 {
     if (fragTexCoord.x >= 0.0) {
         float a = texture(u_treeFoliageAtlas, fragTexCoord).a;
-        if (a < 0.42)
+        if (a < 0.36)
             discard;
     }
     finalColor = vec4(gl_FragCoord.z, 0.0, 0.0, 1.0);

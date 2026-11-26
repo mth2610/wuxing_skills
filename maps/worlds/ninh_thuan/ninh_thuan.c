@@ -49,6 +49,7 @@ static MapCliffSkirt s_cliff = {0};
 static MapWaterSurface s_oasis = {0};
 static MapRockSystem s_rocks = {0};
 static MapFloraSystem s_flora = {0};
+static MapTreeSystem s_trees = {0};
 
 #define NINH_THUAN_SEA_Y -1.25f
 
@@ -101,6 +102,7 @@ static void DrawNinhThuanShadowCasters(Shader depthShader, void *user)
     s_ninhThuanShadowCtx.flora = &s_flora;
     s_ninhThuanShadowCtx.rocks = &s_rocks;
     s_ninhThuanShadowCtx.ores = NULL;
+    s_ninhThuanShadowCtx.trees = s_trees.ready ? &s_trees : NULL;
     s_ninhThuanShadowCtx.skipMask = s_skipMask;
     MapDem_DefaultShadowCasterCallback(depthShader, &s_ninhThuanShadowCtx);
 }
@@ -740,6 +742,83 @@ void InitNinhThuanMap(void)
                               : kMapCenter;
     BuildNinhThuanFlora();
 
+    // Arid Acacia & sun-bleached dry deadwood trees across desert ridges and oasis perimeter
+    {
+        enum { NINH_THUAN_MAX_TREES = 44 };
+        static MapTreePlacement s_ntTrees[NINH_THUAN_MAX_TREES];
+        int treeCount = 0;
+        unsigned int trng = 0x91E43Bu;
+        float spX = 160.0f * s_scaleXZ;
+        float spZ = 222.0f * s_scaleXZ;
+        float minX = 18.0f * s_scaleXZ;
+        float maxX = MAP_WIDTH - 18.0f * s_scaleXZ;
+        float minZ = 18.0f * s_scaleXZ;
+        float maxZ = MAP_DEPTH - 18.0f * s_scaleXZ;
+
+        for (int attempt = 0; attempt < 640 && treeCount < NINH_THUAN_MAX_TREES; attempt++)
+        {
+            trng = trng * 1664525u + 1013904223u;
+            float u0 = (float)((trng >> 16) & 0xFFFFu) / 65535.0f;
+            trng = trng * 1664525u + 1013904223u;
+            float u1 = (float)((trng >> 16) & 0xFFFFu) / 65535.0f;
+            trng = trng * 1664525u + 1013904223u;
+            float u2 = (float)((trng >> 16) & 0xFFFFu) / 65535.0f;
+
+            float tx = minX + u0 * (maxX - minX);
+            float tz = minZ + u1 * (maxZ - minZ);
+            float dxA = tx - spX, dzA = tz - spZ;
+            if (dxA * dxA + dzA * dzA < (15.0f * s_scaleXZ) * (15.0f * s_scaleXZ))
+                continue;
+
+            Vector3 gp = {0}, gn = {0};
+            if (!MapProp_SampleGroundSurface(&s_ground, kMapCenter, tx, tz, &gp, &gn))
+                continue;
+            if (gp.y < seaY + 1.2f || gn.y < 0.80f)
+                continue;
+
+            float wY = 0.0f, wD = 0.0f;
+            if (MapDem_GetWaterInfo(&s_dem, &s_ground, tx, tz, &wY, &wD))
+                continue;
+
+            bool blocked = false;
+            for (int j = 0; j < treeCount && !blocked; j++)
+            {
+                float ddx = tx - s_ntTrees[j].position.x;
+                float ddz = tz - s_ntTrees[j].position.z;
+                if (ddx * ddx + ddz * ddz < 9.5f * 9.5f)
+                    blocked = true;
+            }
+            for (int r = 0; r < s_rocks.count && !blocked; r++)
+            {
+                float ddx = tx - s_rocks.items[r].position.x;
+                float ddz = tz - s_rocks.items[r].position.z;
+                float clearR = s_rocks.items[r].radiusScale + 1.6f;
+                if (ddx * ddx + ddz * ddz < clearR * clearR)
+                    blocked = true;
+            }
+            if (blocked)
+                continue;
+
+            bool isDeadSnag = (u2 > 0.72f);
+            MapTreeArchetype arch = isDeadSnag
+                ? ((u0 > 0.5f) ? MAP_TREE_ANCIENT_PINE : MAP_TREE_MEADOW_OAK)
+                : MAP_TREE_ARID_ACACIA;
+            float dryness = isDeadSnag ? (0.94f + u1 * 0.06f) : (0.28f + u2 * 0.52f);
+            s_ntTrees[treeCount++] = (MapTreePlacement){
+                .position = {tx, 0.0f, tz},
+                .scaleXZ = 0.90f + u0 * 0.42f,
+                .scaleY = 0.88f + u1 * 0.36f,
+                .rotationDeg = u2 * 360.0f,
+                .phase = u1,
+                .canopyTint = {234, 224, 186, 255},
+                .archetype = arch,
+                .dryness = dryness,
+                .scorch = 0.0f,
+            };
+        }
+        s_trees = MapProp_CreateTreeSystem(s_ntTrees, treeCount, &s_ground, kMapCenter, fminf(150.0f * s_scaleXZ, 210.0f));
+    }
+
     // Seed interactive arid granular debris bed (warm loess & gravel only, no black twig specks)
 #ifndef __ANDROID__
     {
@@ -814,6 +893,8 @@ void DrawNinhThuanMap(void)
         MapProp_DrawCliffSkirt(&s_cliff, camera);
     if (!(s_skipMask & MAP_SKIP_FLORA))
         MapProp_DrawFloraSystem(&s_flora);
+    if (s_trees.ready)
+        MapProp_DrawTreeSystem(&s_trees, s_flora.time, s_flora.windDirection, s_flora.windStrength);
 
     /* s_coastalSea sits over s_cliff / deep abyss, so DrawWaterBed is redundant here */
     if (!(s_skipMask & MAP_SKIP_SKY))
@@ -838,6 +919,8 @@ void UpdateNinhThuanMap(float dt)
         return;
 
     MapProp_UpdateFloraSystem(&s_flora, camera.target, dt);
+    if (s_trees.ready)
+        MapProp_PrepareTreeSystem(&s_trees, camera);
     MapProp_UpdateWaterSurface(&s_coastalSea, dt);
     MapProp_UpdateWaterSurface(&s_oasis, dt);
 
@@ -883,6 +966,7 @@ void UnloadNinhThuanMap(void)
     MapProp_UnloadWaterSurface(&s_oasis);
     MapProp_UnloadWaterSurface(&s_coastalSea);
     MapProp_UnloadFloraSystem(&s_flora);
+    MapProp_UnloadTreeSystem(&s_trees);
     GranularSim_ClearMapBed();
     MapProp_UnloadRockSystem(&s_rocks);
     if (s_cliff.ready)
@@ -946,5 +1030,7 @@ void ResolveCollisionNinhThuanMap(Vector3 *pos, float agentRadius, float stepHei
     if (!s_ready)
         return;
     MapProp_ResolveRockSystemCollision(&s_rocks, pos, agentRadius, stepHeight, inOutGroundY);
+    if (s_trees.ready && pos)
+        *pos = MapProp_ResolveTreeSystemCollision(&s_trees, *pos, agentRadius);
 }
 

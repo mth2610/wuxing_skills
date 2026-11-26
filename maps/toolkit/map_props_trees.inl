@@ -1,5 +1,10 @@
-// Procedural 3D Xianxia & Alpine AAA Trees System (GPU-Instanced, 3-LOD, Indexed, 1024x1024 Procedural Frond Atlas)
-// Ported from WebGL2 AAA Showcase into C99 / Vulkan (rlvk) — Included into map_props.c.
+// Procedural 3D Xianxia & Alpine AAA Trees System (GPU-Instanced, 3-LOD, Indexed)
+// Decoupled 3-Stage Botanical Pipeline:
+//   Stage 1: TreeSkeleton  (Bishop Parallel-Transport Spline Sweep, Root Buttresses, Pipe-Model Order 0..3)
+//   Stage 2: TreeCanopy    (Species Ellipsoidal Cloud Lobes, Spherized Normals, 3D Volumetric AO, Drop Rank)
+//   Stage 3: TreeLeaf      (2048x1024 8-Cell Dilated Botanical Sprig Atlas + 3D Cupped Cross-Tufts)
+// Zero-Rebuild GPU Lush -> Autumn -> Withered -> Bare Dry / Scorched transitions.
+// Included into map_props.c — not a standalone compilation unit.
 
 #include "raylib.h"
 #include "raymath.h"
@@ -221,16 +226,6 @@ static Mesh TreeBuilder_ToMesh(TreeMeshBuilder *b)
     return m;
 }
 
-static float Tree_Hash(unsigned int x)
-{
-    x ^= x >> 16;
-    x *= 0x7feb352du;
-    x ^= x >> 15;
-    x *= 0x846ca68bu;
-    x ^= x >> 16;
-    return (float)(x & 0x00ffffffu) / 16777216.0f;
-}
-
 static float Tree_NextRand(unsigned int *state)
 {
     *state = (*state * 1664525u + 1013904223u);
@@ -249,13 +244,60 @@ static unsigned int Tree_HashBytes(const void *data, size_t len)
     return h;
 }
 
+static Color Tree_LerpColor(Color a, Color b, float t)
+{
+    float u = fminf(1.0f, fmaxf(0.0f, t));
+    return (Color){
+        (unsigned char)((float)a.r + ((float)b.r - (float)a.r) * u),
+        (unsigned char)((float)a.g + ((float)b.g - (float)a.g) * u),
+        (unsigned char)((float)a.b + ((float)b.b - (float)a.b) * u),
+        (unsigned char)((float)a.a + ((float)b.a - (float)a.a) * u)
+    };
+}
+
+// Bit-exact 24-bit float32 instance state packing:
+// bits [0..7]   phaseQ  (0..255)
+// bits [8..15]  dryQ    (0..255)
+// bits [16..19] scorchQ (0..15)
+// bits [20..23] frostQ  (0..15)
+static float Tree_PackInstanceState(float phase, float dryness, float scorch, float frost)
+{
+    float pFrac = phase - floorf(phase);
+    unsigned int pQ = (unsigned int)fminf(255.0f, fmaxf(0.0f, floorf(pFrac * 255.0f + 0.5f)));
+    unsigned int dQ = (unsigned int)fminf(255.0f, fmaxf(0.0f, floorf(dryness * 255.0f + 0.5f)));
+    unsigned int sQ = (unsigned int)fminf(15.0f, fmaxf(0.0f, floorf(scorch * 15.0f + 0.5f)));
+    unsigned int fQ = (unsigned int)fminf(15.0f, fmaxf(0.0f, floorf(frost * 15.0f + 0.5f)));
+    unsigned int packed = pQ | (dQ << 8) | (sQ << 16) | (fQ << 20);
+    return (float)packed;
+}
+
 // =========================================================================
-// PROCEDURAL 1024x1024 (2x2) BOTANICAL FROND ATLAS BAKERY (C99)
-// Q0 (0..511, 0..511): Pine/Spruce Bough Frond (~650 needles)
-// Q1 (512..1023, 0..511): Cedar/Taiga Drooping Scale-Foliage Spray
-// Q2 (0..511, 512..1023): Birch/Broadleaf Twigs & Leaves (neutral tintable)
-// Q3 (512..1023, 512..1023): Willow / Bamboo Lanceolate Frond Spray
+// STAGE 3a: PROCEDURAL 2048x1024 (4x2 = 8-CELL) BOTANICAL SPRIG ATLAS
+//   Cell 0 (0,   0):   Alpine Spruce / Fir Bough (preserved for mau_son)
+//   Cell 1 (512, 0):   Columnar Taiga / Cedar Scale-Foliage (preserved)
+//   Cell 2 (1024,0):   Huangshan / Coastal Pine Star-Fascicle Rosettes
+//   Cell 3 (1536,0):   Xianxia Peach Blossom 5-Petal Twig Spray
+//   Cell 4 (0,   512): Broadleaf Oak / Banyan Airy Lobed Twig Cluster
+//   Cell 5 (512, 512): Birch / Poplar Dainty Diamond-Leaf Sprig
+//   Cell 6 (1024,512): Bamboo Radiating Hand-Fan Rosette (Mac Truc)
+//   Cell 7 (1536,512): Weeping Willow / Acacia Pendulous Feather Spray
 // =========================================================================
+
+#define TREE_ATLAS_W 2048
+#define TREE_ATLAS_H 1024
+#define TREE_CELL_SZ 512
+
+typedef enum
+{
+    TREE_CELL_SPRUCE = 0,
+    TREE_CELL_CEDAR = 1,
+    TREE_CELL_PINE_ROSETTE = 2,
+    TREE_CELL_PEACH_BLOSSOM = 3,
+    TREE_CELL_OAK_BROADLEAF = 4,
+    TREE_CELL_BIRCH_SPRIG = 5,
+    TREE_CELL_BAMBOO_FAN = 6,
+    TREE_CELL_WILLOW_WHIP = 7
+} TreeAtlasCell;
 
 static void TreeAtlas_BlendPixel(unsigned char *px, int w, int h, int x, int y,
                                  unsigned char r, unsigned char g, unsigned char b, float alpha)
@@ -276,18 +318,15 @@ static void TreeAtlas_BlendPixel(unsigned char *px, int w, int h, int x, int y,
     }
 }
 
-static void TreeAtlas_DrawStroke(unsigned char *px, int atlasW, int ox, int oy,
+static void TreeAtlas_DrawStroke(unsigned char *px, int atlasW, int atlasH, int ox, int oy,
                                  float x0, float y0, float x1, float y1,
                                  float rad0, float rad1, Color c0, Color c1)
 {
-    float minX = fminf(x0, x1) - fmaxf(rad0, rad1) - 1.5f;
-    float maxX = fmaxf(x0, x1) + fmaxf(rad0, rad1) + 1.5f;
-    float minY = fminf(y0, y1) - fmaxf(rad0, rad1) - 1.5f;
-    float maxY = fmaxf(y0, y1) + fmaxf(rad0, rad1) + 1.5f;
-    int ix0 = (int)fmaxf(0.0f, floorf(minX));
-    int ix1 = (int)fminf(511.0f, ceilf(maxX));
-    int iy0 = (int)fmaxf(0.0f, floorf(minY));
-    int iy1 = (int)fminf(511.0f, ceilf(maxY));
+    float pad = fmaxf(rad0, rad1) + 1.5f;
+    int ix0 = (int)fmaxf(12.0f, floorf(fminf(x0, x1) - pad));
+    int ix1 = (int)fminf(499.0f, ceilf(fmaxf(x0, x1) + pad));
+    int iy0 = (int)fmaxf(12.0f, floorf(fminf(y0, y1) - pad));
+    int iy1 = (int)fminf(499.0f, ceilf(fmaxf(y0, y1) + pad));
 
     float dx = x1 - x0;
     float dy = y1 - y0;
@@ -310,21 +349,22 @@ static void TreeAtlas_DrawStroke(unsigned char *px, int atlasW, int ox, int oy,
                 unsigned char r = (unsigned char)(c0.r + (c1.r - c0.r) * t);
                 unsigned char g = (unsigned char)(c0.g + (c1.g - c0.g) * t);
                 unsigned char b = (unsigned char)(c0.b + (c1.b - c0.b) * t);
-                TreeAtlas_BlendPixel(px, atlasW, atlasW, ox + x, oy + y, r, g, b, cov);
+                TreeAtlas_BlendPixel(px, atlasW, atlasH, ox + x, oy + y, r, g, b, cov);
             }
         }
     }
 }
 
-static void TreeAtlas_DrawLeaf(unsigned char *px, int atlasW, int ox, int oy,
-                               float cx, float cy, float ang, float len, float wid, Color cBase, Color cTip)
+static void TreeAtlas_DrawLeaf(unsigned char *px, int atlasW, int atlasH, int ox, int oy,
+                               float cx, float cy, float ang, float len, float wid,
+                               float lobeFreq, float lobeAmp, Color cBase, Color cTip)
 {
     float ca = cosf(ang), sa = sinf(ang);
-    float rad = fmaxf(len, wid) + 2.0f;
-    int ix0 = (int)fmaxf(0.0f, floorf(cx - rad));
-    int ix1 = (int)fminf(511.0f, ceilf(cx + rad));
-    int iy0 = (int)fmaxf(0.0f, floorf(cy - rad));
-    int iy1 = (int)fminf(511.0f, ceilf(cy + rad));
+    float rad = fmaxf(len, wid) + 2.5f;
+    int ix0 = (int)fmaxf(12.0f, floorf(cx - rad));
+    int ix1 = (int)fminf(499.0f, ceilf(cx + rad));
+    int iy0 = (int)fmaxf(12.0f, floorf(cy - rad));
+    int iy1 = (int)fminf(499.0f, ceilf(cy + rad));
 
     for (int y = iy0; y <= iy1; y++)
     {
@@ -337,21 +377,70 @@ static void TreeAtlas_DrawLeaf(unsigned char *px, int atlasW, int ox, int oy,
             float u = lx / fmaxf(len, 1.0f);
             if (u < 0.0f || u > 1.0f)
                 continue;
-            float maxW = wid * sinf(u * PI);
+            float env = powf(sinf(u * PI), 0.78f);
+            if (lobeAmp > 0.001f)
+                env *= (1.0f + lobeAmp * sinf(u * lobeFreq * PI));
+            float maxW = wid * env;
             float ad = fabsf(ly);
             if (ad < maxW + 1.0f)
             {
-                float cov = fminf(1.0f, fmaxf(0.0f, maxW + 0.7f - ad));
-                unsigned char r = (unsigned char)(cBase.r + (cTip.r - cBase.r) * u);
-                unsigned char g = (unsigned char)(cBase.g + (cTip.g - cBase.g) * u);
-                unsigned char b = (unsigned char)(cBase.b + (cTip.b - cBase.b) * u);
-                TreeAtlas_BlendPixel(px, atlasW, atlasW, ox + x, oy + y, r, g, b, cov);
+                float cov = fminf(1.0f, fmaxf(0.0f, maxW + 0.75f - ad));
+                // Subtle midrib crease and bilateral bevel so individual leaves read crisply
+                float rib = (ad < 1.35f) ? 0.86f : 1.0f;
+                float edgeLight = 0.94f + 0.10f * (ad / fmaxf(maxW, 1.0f));
+                float shade = rib * edgeLight;
+                unsigned char r = (unsigned char)fminf(255.0f, ((float)cBase.r + ((float)cTip.r - (float)cBase.r) * u) * shade);
+                unsigned char g = (unsigned char)fminf(255.0f, ((float)cBase.g + ((float)cTip.g - (float)cBase.g) * u) * shade);
+                unsigned char b = (unsigned char)fminf(255.0f, ((float)cBase.b + ((float)cTip.b - (float)cBase.b) * u) * shade);
+                TreeAtlas_BlendPixel(px, atlasW, atlasH, ox + x, oy + y, r, g, b, cov);
             }
         }
     }
 }
 
-static void TreeAtlas_BakePineQuadrant(unsigned char *px, int atlasW, int ox, int oy)
+static void TreeAtlas_DrawDisc(unsigned char *px, int atlasW, int atlasH, int ox, int oy,
+                               float cx, float cy, float rad, Color cCenter, Color cEdge)
+{
+    int ix0 = (int)fmaxf(12.0f, floorf(cx - rad - 1.5f));
+    int ix1 = (int)fminf(499.0f, ceilf(cx + rad + 1.5f));
+    int iy0 = (int)fmaxf(12.0f, floorf(cy - rad - 1.5f));
+    int iy1 = (int)fminf(499.0f, ceilf(cy + rad + 1.5f));
+    for (int y = iy0; y <= iy1; y++)
+    {
+        for (int x = ix0; x <= ix1; x++)
+        {
+            float d = sqrtf(((float)x - cx) * ((float)x - cx) + ((float)y - cy) * ((float)y - cy));
+            if (d < rad + 1.0f)
+            {
+                float cov = fminf(1.0f, fmaxf(0.0f, rad + 0.7f - d));
+                float t = fminf(1.0f, d / fmaxf(rad, 1.0f));
+                Color c = Tree_LerpColor(cCenter, cEdge, t);
+                TreeAtlas_BlendPixel(px, atlasW, atlasH, ox + x, oy + y, c.r, c.g, c.b, cov);
+            }
+        }
+    }
+}
+
+static void TreeAtlas_DrawBlossom(unsigned char *px, int atlasW, int atlasH, int ox, int oy,
+                                  float cx, float cy, float radius, float rot,
+                                  Color petalCore, Color petalTip, Color stamenCol)
+{
+    // 5 distinct rounded-oval peach petals with subtle notch separation & radiant center-to-tip gradient
+    for (int p = 0; p < 5; p++)
+    {
+        float a = rot + (float)p * (2.0f * PI / 5.0f);
+        float px0 = cx + cosf(a) * (radius * 0.16f);
+        float py0 = cy + sinf(a) * (radius * 0.16f);
+        TreeAtlas_DrawLeaf(px, atlasW, atlasH, ox, oy, px0, py0, a,
+                           radius * 0.96f, radius * 0.44f, 0.0f, 0.0f, petalCore, petalTip);
+    }
+    // Deep crimson-magenta calyx/heart + tiny warm pollen center
+    TreeAtlas_DrawDisc(px, atlasW, atlasH, ox, oy, cx, cy, radius * 0.28f, stamenCol, petalCore);
+    TreeAtlas_DrawDisc(px, atlasW, atlasH, ox, oy, cx, cy, radius * 0.11f, (Color){248, 214, 132, 255}, stamenCol);
+}
+
+// Cell 0: Alpine Spruce / Fir Bough (preserved for mau_son snow conifers)
+static void TreeAtlas_BakeSpruceCell(unsigned char *px, int w, int h, int ox, int oy)
 {
     unsigned int rng = 4401u;
     const Color pal[6] = {
@@ -364,14 +453,14 @@ static void TreeAtlas_BakePineQuadrant(unsigned char *px, int atlasW, int ox, in
 
     typedef struct { float t; int side; float len; float ang; } SideShoot;
     const SideShoot shoots[10] = {
-        {0.14f, -1, 165.0f, -0.78f}, {0.17f,  1, 160.0f,  0.76f},
-        {0.30f, -1, 185.0f, -0.70f}, {0.33f,  1, 182.0f,  0.68f},
-        {0.48f, -1, 158.0f, -0.62f}, {0.51f,  1, 156.0f,  0.60f},
-        {0.65f, -1, 122.0f, -0.54f}, {0.68f,  1, 120.0f,  0.52f},
+        {0.14f, -1, 162.0f, -0.78f}, {0.17f,  1, 158.0f,  0.76f},
+        {0.30f, -1, 180.0f, -0.70f}, {0.33f,  1, 178.0f,  0.68f},
+        {0.48f, -1, 154.0f, -0.62f}, {0.51f,  1, 152.0f,  0.60f},
+        {0.65f, -1, 120.0f, -0.54f}, {0.68f,  1, 118.0f,  0.52f},
         {0.80f, -1,  84.0f, -0.46f}, {0.83f,  1,  82.0f,  0.44f}
     };
 
-    float sx0 = 256.0f, sy0 = 502.0f, sx1 = 256.0f, sy1 = 34.0f;
+    float sx0 = 256.0f, sy0 = 492.0f, sx1 = 256.0f, sy1 = 36.0f;
     for (int s = 0; s < 10; s++)
     {
         float bx = sx0 + (sx1 - sx0) * shoots[s].t;
@@ -379,7 +468,7 @@ static void TreeAtlas_BakePineQuadrant(unsigned char *px, int atlasW, int ox, in
         float angle = -PI * 0.5f + shoots[s].ang;
         float ex = bx + cosf(angle) * shoots[s].len;
         float ey = by + sinf(angle) * shoots[s].len;
-        TreeAtlas_DrawStroke(px, atlasW, ox, oy, bx, by, ex, ey, 3.8f * (1.0f - shoots[s].t * 0.5f), 1.2f, stemC0, stemC1);
+        TreeAtlas_DrawStroke(px, w, h, ox, oy, bx, by, ex, ey, 3.8f * (1.0f - shoots[s].t * 0.5f), 1.2f, stemC0, stemC1);
 
         int nCount = (int)(shoots[s].len * 0.48f);
         for (int i = 0; i < nCount; i++)
@@ -392,12 +481,10 @@ static void TreeAtlas_BakePineQuadrant(unsigned char *px, int atlasW, int ox, in
             float nlen = (54.0f * (1.0f - shoots[s].t * 0.22f)) * (1.0f - t * 0.36f) * (0.78f + Tree_NextRand(&rng) * 0.44f);
             int ci = (int)(Tree_NextRand(&rng) * 5.99f);
             Color tipC = (Tree_NextRand(&rng) > 0.84f) ? frostTip : pal[ci < 5 ? ci + 1 : 5];
-            // Fuller needle strokes (3.0 -> 1.7px) preserve lush evergreen bough silhouettes across mipmaps
-            TreeAtlas_DrawStroke(px, atlasW, ox, oy, nx, ny, nx + cosf(nang) * nlen, ny + sinf(nang) * nlen, 3.0f, 1.7f, pal[0], tipC);
+            TreeAtlas_DrawStroke(px, w, h, ox, oy, nx, ny, nx + cosf(nang) * nlen, ny + sinf(nang) * nlen, 3.0f, 1.7f, pal[0], tipC);
         }
     }
-    // Central spine & lush central needles
-    TreeAtlas_DrawStroke(px, atlasW, ox, oy, sx0, sy0, sx1, sy1, 6.2f, 1.8f, stemC0, stemC1);
+    TreeAtlas_DrawStroke(px, w, h, ox, oy, sx0, sy0, sx1, sy1, 6.2f, 1.8f, stemC0, stemC1);
     for (int i = 0; i < 115; i++)
     {
         float t = (float)i / 114.0f;
@@ -407,25 +494,26 @@ static void TreeAtlas_BakePineQuadrant(unsigned char *px, int atlasW, int ox, in
         float nang = -PI * 0.5f + side * (0.32f + Tree_NextRand(&rng) * 0.50f);
         float nlen = 56.0f * (1.0f - t * 0.32f) * (0.78f + Tree_NextRand(&rng) * 0.44f);
         int ci = 1 + (int)(Tree_NextRand(&rng) * 4.99f);
-        TreeAtlas_DrawStroke(px, atlasW, ox, oy, nx, ny, nx + cosf(nang) * nlen, ny + sinf(nang) * nlen, 3.2f, 1.8f, pal[0], pal[ci]);
+        TreeAtlas_DrawStroke(px, w, h, ox, oy, nx, ny, nx + cosf(nang) * nlen, ny + sinf(nang) * nlen, 3.2f, 1.8f, pal[0], pal[ci]);
     }
 }
 
-static void TreeAtlas_BakeCedarQuadrant(unsigned char *px, int atlasW, int ox, int oy)
+// Cell 1: Cedar / Taiga Scale-Foliage Spray (preserved)
+static void TreeAtlas_BakeCedarCell(unsigned char *px, int w, int h, int ox, int oy)
 {
     unsigned int rng = 5502u;
     const Color pal[5] = {
         {13, 36, 28, 255}, {18, 47, 37, 255}, {23, 58, 45, 255}, {30, 72, 56, 255}, {44, 96, 78, 255}
     };
     const float rayAngs[7] = {-0.56f, -0.34f, -0.14f, 0.02f, 0.18f, 0.38f, 0.58f};
-    const float rayLens[7] = {285.0f, 360.0f, 425.0f, 450.0f, 415.0f, 345.0f, 270.0f};
+    const float rayLens[7] = {280.0f, 352.0f, 415.0f, 440.0f, 405.0f, 338.0f, 264.0f};
     for (int r = 0; r < 7; r++)
     {
         float ang = -PI * 0.5f + rayAngs[r];
-        float bx = 256.0f, by = 496.0f;
+        float bx = 256.0f, by = 488.0f;
         float ex = bx + cosf(ang) * rayLens[r];
         float ey = by + sinf(ang) * rayLens[r];
-        TreeAtlas_DrawStroke(px, atlasW, ox, oy, bx, by, ex, ey, 3.2f, 1.2f, (Color){45, 32, 24, 255}, pal[1]);
+        TreeAtlas_DrawStroke(px, w, h, ox, oy, bx, by, ex, ey, 3.2f, 1.2f, (Color){45, 32, 24, 255}, pal[1]);
         for (int i = 0; i < 32; i++)
         {
             float t = (float)i / 31.0f;
@@ -436,94 +524,368 @@ static void TreeAtlas_BakeCedarQuadrant(unsigned char *px, int atlasW, int ox, i
                 float nang = ang + (float)sd * (0.38f + Tree_NextRand(&rng) * 0.42f);
                 float nlen = (38.0f + Tree_NextRand(&rng) * 24.0f) * (1.0f - t * 0.42f);
                 int ci = (int)(Tree_NextRand(&rng) * 4.99f);
-                TreeAtlas_DrawStroke(px, atlasW, ox, oy, sx, sy, sx + cosf(nang) * nlen, sy + sinf(nang) * nlen, 3.4f, 1.8f, pal[0], pal[ci]);
+                TreeAtlas_DrawStroke(px, w, h, ox, oy, sx, sy, sx + cosf(nang) * nlen, sy + sinf(nang) * nlen, 3.4f, 1.8f, pal[0], pal[ci]);
             }
         }
     }
 }
 
-static void TreeAtlas_BakeBroadleafQuadrant(unsigned char *px, int atlasW, int ox, int oy)
+// Cell 2: Huangshan / Coastal Pine Star-Fascicle Rosettes (Tung Chum Kim)
+static void TreeAtlas_BakePineRosetteCell(unsigned char *px, int w, int h, int ox, int oy)
 {
-    unsigned int rng = 6603u;
-    // Neutral bright-albedo leaf spray so per-archetype vertex colors tint cleanly
-    // (Frosted Birch amber, Meadow Oak/Birch spring-jade, Peach Blossom rose-ivory, Acacia olive)
-    Color twigC = {96, 82, 70, 255};
-    Color leafCore = {148, 152, 138, 255};
-    Color leafMid  = {198, 204, 190, 255};
-    Color leafTip  = {248, 250, 244, 255};
+    unsigned int rng = 6109u;
+    Color twigA = {68, 46, 32, 255};
+    Color twigB = {86, 62, 44, 255};
+    Color nDark = {24, 54, 34, 255};
+    Color nMid  = {46, 94, 52, 255};
+    Color nTip  = {88, 146, 76, 255};
 
-    float sx0 = 256.0f, sy0 = 496.0f, sx1 = 256.0f, sy1 = 36.0f;
-    TreeAtlas_DrawStroke(px, atlasW, ox, oy, sx0, sy0, sx1, sy1, 4.4f, 1.2f, twigC, twigC);
+    // Crooked forked pine twig supporting 6 distinct star-burst needle fascicles
+    float bx = 256.0f, by = 486.0f;
+    float mx = 248.0f, my = 328.0f;
+    TreeAtlas_DrawStroke(px, w, h, ox, oy, bx, by, mx, my, 5.5f, 3.6f, twigA, twigB);
 
-    for (int b = 0; b < 12; b++)
+    const float centers[6][3] = {
+        {138.0f, 325.0f, 84.0f},
+        {374.0f, 318.0f, 82.0f},
+        {158.0f, 198.0f, 92.0f},
+        {354.0f, 192.0f, 90.0f},
+        {256.0f, 244.0f, 88.0f},
+        {256.0f, 128.0f, 96.0f},
+    };
+    for (int k = 0; k < 6; k++)
     {
-        float t = 0.12f + 0.78f * ((float)b / 11.0f);
-        float side = (b & 1) ? 1.0f : -1.0f;
-        float bx = sx0 + (Tree_NextRand(&rng) - 0.5f) * 6.0f;
-        float by = sy0 + (sy1 - sy0) * t;
-        float ang = -PI * 0.5f + side * (0.42f + Tree_NextRand(&rng) * 0.48f);
-        float blen = 195.0f * (1.0f - t * 0.38f) * (0.85f + Tree_NextRand(&rng) * 0.28f);
-        float mx = bx + cosf(ang) * blen * 0.52f;
-        float my = by + sinf(ang) * blen * 0.52f;
-        float ang2 = ang + side * (0.14f + Tree_NextRand(&rng) * 0.18f);
-        float ex = mx + cosf(ang2) * blen * 0.50f;
-        float ey = my + sinf(ang2) * blen * 0.50f;
-        TreeAtlas_DrawStroke(px, atlasW, ox, oy, bx, by, mx, my, 2.6f, 1.6f, twigC, twigC);
-        TreeAtlas_DrawStroke(px, atlasW, ox, oy, mx, my, ex, ey, 1.6f, 0.9f, twigC, twigC);
+        float cx = centers[k][0];
+        float cy = centers[k][1];
+        float rad = centers[k][2];
+        TreeAtlas_DrawStroke(px, w, h, ox, oy, mx, my, cx, cy, 3.0f, 1.8f, twigA, twigB);
 
-        int leaves = 20;
-        for (int l = 0; l < leaves; l++)
+        // Radiating pine needle fascicles (half-fan to full star pom-pom)
+        int needles = 34;
+        for (int n = 0; n < needles; n++)
         {
-            float lt = 0.08f + 0.92f * ((float)l / (float)(leaves - 1));
-            float lx = (lt < 0.5f)
-                ? (bx + (mx - bx) * (lt * 2.0f))
-                : (mx + (ex - mx) * ((lt - 0.5f) * 2.0f));
-            float ly = (lt < 0.5f)
-                ? (by + (my - by) * (lt * 2.0f))
-                : (my + (ey - my) * ((lt - 0.5f) * 2.0f));
-            lx += (Tree_NextRand(&rng) - 0.5f) * 22.0f;
-            ly += (Tree_NextRand(&rng) - 0.5f) * 22.0f;
-            float baseAng = (lt < 0.5f) ? ang : ang2;
-            float lang = baseAng + ((l & 1) ? 0.62f : -0.62f) + (Tree_NextRand(&rng) - 0.5f) * 0.55f;
-            float llen = 30.0f + Tree_NextRand(&rng) * 26.0f;
-            float lwid = 15.0f + Tree_NextRand(&rng) * 12.0f;
-            Color cA = (lt < 0.35f) ? leafCore : leafMid;
-            TreeAtlas_DrawLeaf(px, atlasW, ox, oy, lx, ly, lang, llen, lwid, cA, leafTip);
+            float a = (float)n * (2.0f * PI / (float)needles) + (Tree_NextRand(&rng) - 0.5f) * 0.16f;
+            float nlen = rad * (0.74f + Tree_NextRand(&rng) * 0.34f);
+            Color tipC = (Tree_NextRand(&rng) > 0.35f) ? nTip : nMid;
+            TreeAtlas_DrawStroke(px, w, h, ox, oy, cx, cy,
+                                 cx + cosf(a) * nlen, cy + sinf(a) * nlen,
+                                 3.1f, 1.7f, nDark, tipC);
         }
-    }
-    // Dense organic crown tip cluster
-    for (int l = 0; l < 32; l++)
-    {
-        float ang = -PI * 0.5f + (Tree_NextRand(&rng) - 0.5f) * 2.2f;
-        float dist = sqrtf(Tree_NextRand(&rng)) * 78.0f;
-        float llen = 32.0f + Tree_NextRand(&rng) * 24.0f;
-        float lwid = 16.0f + Tree_NextRand(&rng) * 11.0f;
-        Color cA = (dist < 32.0f) ? leafCore : leafMid;
-        TreeAtlas_DrawLeaf(px, atlasW, ox, oy, sx1 + cosf(ang) * dist, sy1 + 32.0f + sinf(ang) * dist,
-                           ang + (Tree_NextRand(&rng) - 0.5f) * 0.5f, llen, lwid, cA, leafTip);
+        TreeAtlas_DrawDisc(px, w, h, ox, oy, cx, cy, 9.0f, twigA, nDark);
     }
 }
 
-static void TreeAtlas_BakeWillowBambooQuadrant(unsigned char *px, int atlasW, int ox, int oy)
+// Cell 3: Xianxia Peach Blossom 5-Petal Bouquet Spray (Dao Hoa / Mai Hoa)
+// Rich multi-tone sakura/peach petals (deep crimson hearts -> rose-peach -> blush-ivory tips) + tender green loc non buds.
+static void TreeAtlas_BakePeachBlossomCell(unsigned char *px, int w, int h, int ox, int oy)
 {
-    unsigned int rng = 7704u;
-    Color stemC = {104, 134, 68, 255};
-    Color leafBase = {152, 196, 108, 255};
-    Color leafTip  = {224, 242, 162, 255};
-    // 5 slender draping / lanceolate shoots
-    for (int s = 0; s < 5; s++)
+    unsigned int rng = 6617u;
+    Color twigA     = {72, 46, 48, 255};
+    Color twigB     = {96, 62, 64, 255};
+    Color petalCore = {232, 110, 152, 255};
+    Color petalMid  = {248, 166, 196, 255};
+    Color petalTip  = {255, 246, 250, 255};
+    Color stamenCol = {158, 30, 74, 255};
+    Color budCore   = {192, 44, 92, 255};
+    Color budTip    = {244, 138, 174, 255};
+    Color leafBase  = {92, 146, 58, 255};
+    Color leafTip   = {156, 204, 96, 255};
+
+    // Slender crooked dark-plum twigs hidden gently inside the floral bouquet
+    float p0x = 256.0f, p0y = 480.0f;
+    float p1x = 244.0f, p1y = 338.0f;
+    float p2x = 266.0f, p2y = 204.0f;
+    float p3x = 254.0f, p3y = 92.0f;
+    TreeAtlas_DrawStroke(px, w, h, ox, oy, p0x, p0y, p1x, p1y, 4.2f, 3.0f, twigA, twigB);
+    TreeAtlas_DrawStroke(px, w, h, ox, oy, p1x, p1y, p2x, p2y, 3.0f, 2.0f, twigA, twigB);
+    TreeAtlas_DrawStroke(px, w, h, ox, oy, p2x, p2y, p3x, p3y, 2.0f, 1.1f, twigB, twigB);
+
+    const float branches[4][4] = {
+        {246.0f, 356.0f, 114.0f, 282.0f},
+        {254.0f, 326.0f, 396.0f, 266.0f},
+        {262.0f, 224.0f, 128.0f, 154.0f},
+        {262.0f, 206.0f, 384.0f, 142.0f},
+    };
+    for (int b = 0; b < 4; b++)
+        TreeAtlas_DrawStroke(px, w, h, ox, oy, branches[b][0], branches[b][1], branches[b][2], branches[b][3], 2.4f, 1.1f, twigA, twigB);
+
+    // 7 delicate tender spring-jade young leaf shoots (loc non) peeking organically around the twigs
+    const float shoots[7][4] = {
+        {178.0f, 320.0f, -2.35f, 44.0f},
+        {332.0f, 296.0f, -0.72f, 42.0f},
+        {192.0f, 198.0f, -2.10f, 38.0f},
+        {322.0f, 182.0f, -0.95f, 40.0f},
+        {248.0f, 392.0f, -1.95f, 44.0f},
+        {268.0f, 378.0f, -1.12f, 40.0f},
+        {256.0f, 126.0f, -1.55f, 36.0f},
+    };
+    for (int s = 0; s < 7; s++)
+        TreeAtlas_DrawLeaf(px, w, h, ox, oy, shoots[s][0], shoots[s][1], shoots[s][2], shoots[s][3], 12.0f, 0.0f, 0.0f, leafBase, leafTip);
+
+    // 44 rich clustered 5-petal peach blossoms forming a lush, scalloped organic floral cloud (zero Swiss-cheese slabs!)
+    const float clusterCenters[7][3] = {
+        {148.0f, 294.0f, 76.0f},
+        {362.0f, 276.0f, 76.0f},
+        {164.0f, 174.0f, 74.0f},
+        {348.0f, 162.0f, 74.0f},
+        {256.0f, 114.0f, 78.0f},
+        {256.0f, 232.0f, 84.0f},
+        {252.0f, 354.0f, 68.0f},
+    };
+    for (int c = 0; c < 7; c++)
     {
-        float xOff = 96.0f + (float)s * 80.0f + (Tree_NextRand(&rng) - 0.5f) * 18.0f;
-        TreeAtlas_DrawStroke(px, atlasW, ox, oy, xOff, 20.0f, xOff + (Tree_NextRand(&rng) - 0.5f) * 32.0f, 492.0f, 2.0f, 0.8f, stemC, stemC);
-        for (int l = 0; l < 18; l++)
+        float cx = clusterCenters[c][0];
+        float cy = clusterCenters[c][1];
+        float spread = clusterCenters[c][2];
+        int perCluster = (c == 5) ? 8 : 6;
+        for (int k = 0; k < perCluster; k++)
         {
-            float t = (float)l / 17.0f;
-            float ly = 32.0f + t * 440.0f;
-            float side = (l & 1) ? 1.0f : -1.0f;
-            float lang = PI * 0.5f + side * (0.35f + Tree_NextRand(&rng) * 0.35f);
-            TreeAtlas_DrawLeaf(px, atlasW, ox, oy, xOff, ly, lang, 52.0f + Tree_NextRand(&rng) * 24.0f, 7.5f + Tree_NextRand(&rng) * 3.0f, leafBase, leafTip);
+            float ang = (float)k * (2.0f * PI / (float)perCluster) + (Tree_NextRand(&rng) - 0.5f) * 0.55f;
+            float dist = (k == 0) ? (Tree_NextRand(&rng) * 12.0f) : (spread * (0.34f + 0.58f * Tree_NextRand(&rng)));
+            float fx = cx + cosf(ang) * dist;
+            float fy = cy + sinf(ang) * dist;
+            float rad = 20.0f + Tree_NextRand(&rng) * 14.0f;
+            float rot = Tree_NextRand(&rng) * 2.0f * PI;
+            Color pCore = (Tree_NextRand(&rng) > 0.42f) ? petalCore : petalMid;
+            TreeAtlas_DrawBlossom(px, w, h, ox, oy, fx, fy, rad, rot, pCore, petalTip, stamenCol);
         }
     }
+
+    // 16 deep-crimson unopened blossom buds accentuating bouquet margins
+    for (int i = 0; i < 16; i++)
+    {
+        int ci = i % 7;
+        float a = Tree_NextRand(&rng) * 2.0f * PI;
+        float d = clusterCenters[ci][2] * (0.65f + 0.42f * Tree_NextRand(&rng));
+        float bx = clusterCenters[ci][0] + cosf(a) * d;
+        float by = clusterCenters[ci][1] + sinf(a) * d;
+        TreeAtlas_DrawDisc(px, w, h, ox, oy, bx, by, 7.5f + Tree_NextRand(&rng) * 4.5f, budCore, budTip);
+    }
+}
+
+// Cell 4: Broadleaf Oak / Banyan Airy Lobed Twig Cluster (neutral tintable)
+static void TreeAtlas_BakeOakBroadleafCell(unsigned char *px, int w, int h, int ox, int oy)
+{
+    unsigned int rng = 6603u;
+    Color twigC = {94, 80, 68, 255};
+    Color leafCore = {152, 162, 144, 255};
+    Color leafMid  = {206, 214, 196, 255};
+    Color leafTip  = {248, 252, 242, 255};
+
+    float sx0 = 256.0f, sy0 = 486.0f, sx1 = 256.0f, sy1 = 68.0f;
+    TreeAtlas_DrawStroke(px, w, h, ox, oy, sx0, sy0, sx1, sy1, 4.4f, 1.4f, twigC, twigC);
+
+    // 6 alternating airy side-twigs with well-separated lobed leaves (45% open sky holes!)
+    for (int b = 0; b < 6; b++)
+    {
+        float t = 0.16f + 0.74f * ((float)b / 5.0f);
+        float side = (b & 1) ? 1.0f : -1.0f;
+        float bx = sx0 + (Tree_NextRand(&rng) - 0.5f) * 6.0f;
+        float by = sy0 + (sy1 - sy0) * t;
+        float ang = -PI * 0.5f + side * (0.52f + Tree_NextRand(&rng) * 0.34f);
+        float blen = 158.0f * (1.0f - t * 0.32f) * (0.88f + Tree_NextRand(&rng) * 0.22f);
+        float ex = bx + cosf(ang) * blen;
+        float ey = by + sinf(ang) * blen;
+        TreeAtlas_DrawStroke(px, w, h, ox, oy, bx, by, ex, ey, 2.6f, 1.1f, twigC, twigC);
+
+        for (int l = 0; l < 5; l++)
+        {
+            float lt = 0.22f + 0.78f * ((float)l / 4.0f);
+            float lx = bx + (ex - bx) * lt;
+            float ly = by + (ey - by) * lt;
+            float lside = (l == 4) ? 0.0f : ((l & 1) ? 1.0f : -1.0f);
+            float lang = ang + lside * (0.68f + (Tree_NextRand(&rng) - 0.5f) * 0.24f);
+            float llen = 48.0f + Tree_NextRand(&rng) * 20.0f;
+            float lwid = 22.0f + Tree_NextRand(&rng) * 9.0f;
+            Color cA = (lt < 0.45f) ? leafCore : leafMid;
+            TreeAtlas_DrawLeaf(px, w, h, ox, oy, lx, ly, lang, llen, lwid, 5.0f, 0.14f, cA, leafTip);
+        }
+    }
+    // Terminal 5-leaf rosette at apex
+    for (int l = 0; l < 5; l++)
+    {
+        float lang = -PI * 0.5f + ((float)l - 2.0f) * 0.48f;
+        TreeAtlas_DrawLeaf(px, w, h, ox, oy, sx1, sy1 + 14.0f, lang, 54.0f, 24.0f, 5.0f, 0.14f, leafMid, leafTip);
+    }
+}
+
+// Cell 5: Birch / Poplar Dainty Serrated Diamond-Leaf Sprig (very airy)
+static void TreeAtlas_BakeBirchSprigCell(unsigned char *px, int w, int h, int ox, int oy)
+{
+    unsigned int rng = 7105u;
+    Color twigC = {82, 74, 70, 255};
+    Color leafCore = {166, 174, 152, 255};
+    Color leafTip  = {250, 252, 240, 255};
+
+    float sx0 = 256.0f, sy0 = 486.0f, sx1 = 248.0f, sy1 = 56.0f;
+    TreeAtlas_DrawStroke(px, w, h, ox, oy, sx0, sy0, sx1, sy1, 3.2f, 1.0f, twigC, twigC);
+
+    for (int b = 0; b < 8; b++)
+    {
+        float t = 0.12f + 0.80f * ((float)b / 7.0f);
+        float side = (b & 1) ? 1.0f : -1.0f;
+        float bx = sx0 + (sx1 - sx0) * t;
+        float by = sy0 + (sy1 - sy0) * t;
+        float ang = -PI * 0.5f + side * (0.48f + Tree_NextRand(&rng) * 0.36f);
+        float blen = 148.0f * (1.0f - t * 0.35f);
+        float ex = bx + cosf(ang) * blen;
+        float ey = by + sinf(ang) * blen;
+        TreeAtlas_DrawStroke(px, w, h, ox, oy, bx, by, ex, ey, 1.8f, 0.9f, twigC, twigC);
+
+        for (int l = 0; l < 4; l++)
+        {
+            float lt = 0.28f + 0.72f * ((float)l / 3.0f);
+            float lx = bx + (ex - bx) * lt;
+            float ly = by + (ey - by) * lt;
+            float lside = (l == 3) ? 0.0f : ((l & 1) ? 1.0f : -1.0f);
+            float lang = ang + lside * 0.58f + (Tree_NextRand(&rng) - 0.5f) * 0.25f;
+            TreeAtlas_DrawLeaf(px, w, h, ox, oy, lx, ly, lang, 38.0f + Tree_NextRand(&rng) * 14.0f,
+                               17.0f + Tree_NextRand(&rng) * 6.0f, 7.0f, 0.08f, leafCore, leafTip);
+        }
+    }
+}
+
+// Cell 6: Bamboo Slender Lanceolate Leaf Spray (Mac Truc — separated sword-like blades, zero webbed blobs!)
+static void TreeAtlas_BakeBambooFanCell(unsigned char *px, int w, int h, int ox, int oy)
+{
+    unsigned int rng = 7704u;
+    Color twigA    = {52, 78, 38, 255};
+    Color twigB    = {72, 102, 50, 255};
+    Color leafBase = {92, 134, 68, 255};
+    Color leafTip  = {178, 208, 128, 255};
+
+    // Sturdy central bamboo shoot & 4 alternating side branchlets (thick enough to never clip away in mipmaps)
+    float p0x = 256.0f, p0y = 486.0f;
+    float p1x = 248.0f, p1y = 336.0f;
+    float p2x = 262.0f, p2y = 198.0f;
+    float p3x = 254.0f, p3y = 92.0f;
+    TreeAtlas_DrawStroke(px, w, h, ox, oy, p0x, p0y, p1x, p1y, 4.4f, 3.2f, twigA, twigB);
+    TreeAtlas_DrawStroke(px, w, h, ox, oy, p1x, p1y, p2x, p2y, 3.2f, 2.4f, twigA, twigB);
+    TreeAtlas_DrawStroke(px, w, h, ox, oy, p2x, p2y, p3x, p3y, 2.4f, 1.6f, twigB, twigB);
+
+    // 5 well-spaced nodal clusters, each with 3 cleanly separated slender lanceolate bamboo blades (>= 32 deg apart)
+    typedef struct { float sx, sy, ex, ey; float baseAng; } BambooShoot;
+    const BambooShoot shoots[5] = {
+        {249.0f, 354.0f, 146.0f, 326.0f, -2.55f},
+        {254.0f, 314.0f, 366.0f, 286.0f, -0.58f},
+        {258.0f, 224.0f, 152.0f, 196.0f, -2.42f},
+        {260.0f, 192.0f, 360.0f, 168.0f, -0.70f},
+        {254.0f,  98.0f, 254.0f,  92.0f, -1.57f},
+    };
+    const float bladeOffs[3] = {-0.62f, 0.0f, 0.62f};
+    const float bladeLens[3] = {122.0f, 146.0f, 118.0f};
+
+    for (int s = 0; s < 5; s++)
+    {
+        if (s < 4)
+            TreeAtlas_DrawStroke(px, w, h, ox, oy, shoots[s].sx, shoots[s].sy, shoots[s].ex, shoots[s].ey, 2.8f, 1.8f, twigA, twigB);
+        for (int l = 0; l < 3; l++)
+        {
+            float ang = shoots[s].baseAng + bladeOffs[l] + (Tree_NextRand(&rng) - 0.5f) * 0.10f;
+            float len = bladeLens[l] * (0.90f + Tree_NextRand(&rng) * 0.16f);
+            // Slender 1:8 lanceolate bamboo blade (half-width 8.5..10px -> crisp sword silhouette, never webbed!)
+            float halfW = 8.2f + Tree_NextRand(&rng) * 2.0f;
+            float bx = shoots[s].ex + cosf(ang) * 8.0f;
+            float by = shoots[s].ey + sinf(ang) * 8.0f;
+            TreeAtlas_DrawLeaf(px, w, h, ox, oy, bx, by, ang, len, halfW, 0.0f, 0.0f, leafBase, leafTip);
+        }
+    }
+}
+
+// Cell 7: Weeping Willow / Acacia Pendulous Feather Spray
+static void TreeAtlas_BakeWillowWhipCell(unsigned char *px, int w, int h, int ox, int oy)
+{
+    unsigned int rng = 8211u;
+    Color stemC = {98, 126, 62, 255};
+    Color leafBase = {148, 186, 104, 255};
+    Color leafTip  = {224, 240, 168, 255};
+
+    // 3 gracefully curved pendulous willow whips with fuller mip-safe alternating leaves
+    const float startX[3] = {144.0f, 256.0f, 368.0f};
+    for (int s = 0; s < 3; s++)
+    {
+        float x0 = startX[s];
+        float x1 = x0 + (Tree_NextRand(&rng) - 0.5f) * 44.0f;
+        TreeAtlas_DrawStroke(px, w, h, ox, oy, x0, 26.0f, x1, 486.0f, 2.6f, 1.1f, stemC, stemC);
+        for (int l = 0; l < 16; l++)
+        {
+            float t = (float)l / 15.0f;
+            float lx = x0 + (x1 - x0) * t;
+            float ly = 36.0f + t * 430.0f;
+            float side = (l & 1) ? 1.0f : -1.0f;
+            float lang = PI * 0.5f + side * (0.38f + Tree_NextRand(&rng) * 0.28f);
+            TreeAtlas_DrawLeaf(px, w, h, ox, oy, lx, ly, lang,
+                               58.0f + Tree_NextRand(&rng) * 20.0f,
+                               11.0f + Tree_NextRand(&rng) * 3.5f,
+                               0.0f, 0.0f, leafBase, leafTip);
+        }
+    }
+}
+
+// 5-pass RGB border dilation into alpha==0 texels (AGENT_CODE_STANDARD.md §3)
+// Prevents dark (0,0,0) halos around pink blossoms & bright leaves under trilinear mipmapping.
+static void TreeAtlas_DilateTransparentRGB(unsigned char *px, int w, int h, int passes)
+{
+    size_t nBytes = (size_t)w * (size_t)h * 4u;
+    unsigned char *tmp = (unsigned char *)MemAlloc((unsigned int)nBytes);
+    if (!tmp)
+        return;
+
+    // Seed an occupancy mask (1 = has valid RGB) so dilation propagates outward per pass
+    unsigned char *valid = (unsigned char *)MemAlloc((unsigned int)((size_t)w * (size_t)h));
+    if (!valid)
+    {
+        MemFree(tmp);
+        return;
+    }
+    for (int i = 0; i < w * h; i++)
+        valid[i] = (px[i * 4 + 3] > 8) ? 1u : 0u;
+
+    for (int pass = 0; pass < passes; pass++)
+    {
+        memcpy(tmp, px, nBytes);
+        for (int y = 1; y < h - 1; y++)
+        {
+            for (int x = 1; x < w - 1; x++)
+            {
+                int idx = y * w + x;
+                if (valid[idx])
+                    continue;
+                int sr = 0, sg = 0, sb = 0, cnt = 0;
+                const int offs[4] = {-1, 1, -w, w};
+                for (int k = 0; k < 4; k++)
+                {
+                    int nIdx = idx + offs[k];
+                    if (valid[nIdx])
+                    {
+                        sr += px[nIdx * 4 + 0];
+                        sg += px[nIdx * 4 + 1];
+                        sb += px[nIdx * 4 + 2];
+                        cnt++;
+                    }
+                }
+                if (cnt > 0)
+                {
+                    tmp[idx * 4 + 0] = (unsigned char)(sr / cnt);
+                    tmp[idx * 4 + 1] = (unsigned char)(sg / cnt);
+                    tmp[idx * 4 + 2] = (unsigned char)(sb / cnt);
+                }
+            }
+        }
+        memcpy(px, tmp, nBytes);
+        for (int y = 1; y < h - 1; y++)
+        {
+            for (int x = 1; x < w - 1; x++)
+            {
+                int idx = y * w + x;
+                if (!valid[idx] && (px[idx * 4 + 0] | px[idx * 4 + 1] | px[idx * 4 + 2]) != 0)
+                    valid[idx] = 1u;
+            }
+        }
+    }
+
+    MemFree(valid);
+    MemFree(tmp);
 }
 
 static Texture2D s_treeFoliageAtlas = {0};
@@ -533,21 +895,26 @@ static Texture2D Tree_GetFoliageAtlas(void)
     if (s_treeFoliageAtlas.id != 0)
         return s_treeFoliageAtlas;
 
-    const int W = 1024;
-    unsigned char *px = (unsigned char *)MemAlloc((unsigned int)(W * W * 4));
+    unsigned char *px = (unsigned char *)MemAlloc((unsigned int)(TREE_ATLAS_W * TREE_ATLAS_H * 4));
     if (!px)
         return (Texture2D){0};
-    memset(px, 0, (size_t)W * (size_t)W * 4u);
+    memset(px, 0, (size_t)TREE_ATLAS_W * (size_t)TREE_ATLAS_H * 4u);
 
-    TreeAtlas_BakePineQuadrant(px, W, 0, 0);
-    TreeAtlas_BakeCedarQuadrant(px, W, 512, 0);
-    TreeAtlas_BakeBroadleafQuadrant(px, W, 0, 512);
-    TreeAtlas_BakeWillowBambooQuadrant(px, W, 512, 512);
+    TreeAtlas_BakeSpruceCell(px, TREE_ATLAS_W, TREE_ATLAS_H, 0, 0);
+    TreeAtlas_BakeCedarCell(px, TREE_ATLAS_W, TREE_ATLAS_H, 512, 0);
+    TreeAtlas_BakePineRosetteCell(px, TREE_ATLAS_W, TREE_ATLAS_H, 1024, 0);
+    TreeAtlas_BakePeachBlossomCell(px, TREE_ATLAS_W, TREE_ATLAS_H, 1536, 0);
+    TreeAtlas_BakeOakBroadleafCell(px, TREE_ATLAS_W, TREE_ATLAS_H, 0, 512);
+    TreeAtlas_BakeBirchSprigCell(px, TREE_ATLAS_W, TREE_ATLAS_H, 512, 512);
+    TreeAtlas_BakeBambooFanCell(px, TREE_ATLAS_W, TREE_ATLAS_H, 1024, 512);
+    TreeAtlas_BakeWillowWhipCell(px, TREE_ATLAS_W, TREE_ATLAS_H, 1536, 512);
+
+    TreeAtlas_DilateTransparentRGB(px, TREE_ATLAS_W, TREE_ATLAS_H, 5);
 
     Image img = {
         .data = px,
-        .width = W,
-        .height = W,
+        .width = TREE_ATLAS_W,
+        .height = TREE_ATLAS_H,
         .mipmaps = 1,
         .format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8,
     };
@@ -563,8 +930,89 @@ static Texture2D Tree_GetFoliageAtlas(void)
 }
 
 // =========================================================================
-// BOTANICAL GEOMETRY PRIMITIVES (PORTED FROM WEBGL2 AAA SHOWCASE)
+// STAGE 1: TRUNK & MULTI-ORDER BRANCH SKELETON GENERATOR (TreeSkeleton)
+//   - Bishop Parallel-Transport continuous swept spline tubes (zero banding!)
+//   - Exponential root buttress flare & grounding root spurs
+//   - Da Vinci pipe-model multi-order branching (Order 0..3)
 // =========================================================================
+
+#define TREE_MAX_TWIG_ANCHORS 384
+#define TREE_MAX_CANOPY_LOBES 32
+
+typedef struct
+{
+    Vector3 pos;
+    Vector3 dir;
+    Vector3 up;
+    float radius;
+    float crownHeight01;
+    float compliance;
+    int order;
+    int lobeGroup;
+} TreeTwigAnchor;
+
+typedef struct
+{
+    Vector3 center;
+    float rx;
+    float ry;
+    float rz;
+    float normalBlend;
+    int cell;
+    Color colCore;
+    Color colTip;
+} TreeCanopyLobe;
+
+typedef struct
+{
+    TreeTwigAnchor anchors[TREE_MAX_TWIG_ANCHORS];
+    int anchorCount;
+    TreeCanopyLobe lobes[TREE_MAX_CANOPY_LOBES];
+    int lobeCount;
+    Vector3 crownCenter;
+    float crownHeight;
+} TreeSkeleton;
+
+static void TreeSkeleton_AddAnchor(TreeSkeleton *sk, Vector3 pos, Vector3 dir,
+                                   float radius, float crownH01, float compliance,
+                                   int order, int lobeGroup)
+{
+    if (!sk || sk->anchorCount >= TREE_MAX_TWIG_ANCHORS)
+        return;
+    Vector3 d = Vector3LengthSqr(dir) > 1e-6f ? Vector3Normalize(dir) : (Vector3){0.0f, 1.0f, 0.0f};
+    Vector3 ref = (fabsf(d.y) < 0.92f) ? (Vector3){0.0f, 1.0f, 0.0f} : (Vector3){1.0f, 0.0f, 0.0f};
+    Vector3 right = Vector3Normalize(Vector3CrossProduct(ref, d));
+    Vector3 up = Vector3CrossProduct(d, right);
+    sk->anchors[sk->anchorCount++] = (TreeTwigAnchor){
+        .pos = pos,
+        .dir = d,
+        .up = up,
+        .radius = radius,
+        .crownHeight01 = fminf(1.0f, fmaxf(0.0f, crownH01)),
+        .compliance = fminf(1.0f, fmaxf(0.0f, compliance)),
+        .order = order,
+        .lobeGroup = lobeGroup
+    };
+}
+
+static int TreeSkeleton_AddLobe(TreeSkeleton *sk, Vector3 center, float rx, float ry, float rz,
+                                float normalBlend, int cell, Color colCore, Color colTip)
+{
+    if (!sk || sk->lobeCount >= TREE_MAX_CANOPY_LOBES)
+        return (sk && sk->lobeCount > 0) ? (sk->lobeCount - 1) : 0;
+    int idx = sk->lobeCount++;
+    sk->lobes[idx] = (TreeCanopyLobe){
+        .center = center,
+        .rx = fmaxf(0.25f, rx),
+        .ry = fmaxf(0.25f, ry),
+        .rz = fmaxf(0.25f, rz),
+        .normalBlend = fminf(1.0f, fmaxf(0.0f, normalBlend)),
+        .cell = cell,
+        .colCore = colCore,
+        .colTip = colTip
+    };
+    return idx;
+}
 
 static void Tree_BasisFromDir(Vector3 dir, Vector3 *outRight, Vector3 *outFwd)
 {
@@ -574,60 +1022,207 @@ static void Tree_BasisFromDir(Vector3 dir, Vector3 *outRight, Vector3 *outFwd)
     *outFwd = Vector3CrossProduct(up, *outRight);
 }
 
-// Bark tube: uv.x = -1.0 (bark sentinel), uv.y = baked AO
-static void Tree_AddTube(TreeMeshBuilder *b, Vector3 a, Vector3 c, float rA, float rC,
-                         int sides, Color colA, Color colC, float compA, float compC,
-                         float rootFlare)
+// Minimal-twist Bishop parallel transport of (right, fwd) from oldT to newT
+static void Tree_TransportFrame(Vector3 oldT, Vector3 newT, Vector3 *ioRight, Vector3 *ioFwd)
 {
-    Vector3 dir = Vector3Subtract(c, a);
-    if (Vector3LengthSqr(dir) < 1e-6f)
-        return;
-    Vector3 right, fwd;
-    Tree_BasisFromDir(dir, &right, &fwd);
-
-    Color ca = {colA.r, colA.g, colA.b, (unsigned char)fminf(255.0f, fmaxf(0.0f, compA * 255.0f))};
-    Color cc = {colC.r, colC.g, colC.b, (unsigned char)fminf(255.0f, fmaxf(0.0f, compC * 255.0f))};
-    Vector2 uvA = {-1.0f, 0.68f};
-    Vector2 uvC = {-1.0f, 0.95f};
-
-    for (int i = 0; i < sides; i++)
+    Vector3 axis = Vector3CrossProduct(oldT, newT);
+    float sinLen = Vector3Length(axis);
+    float cosAng = fminf(1.0f, fmaxf(-1.0f, Vector3DotProduct(oldT, newT)));
+    if (sinLen > 1e-5f)
     {
-        float ang0 = (float)i * (2.0f * PI / (float)sides);
-        float ang1 = (float)(i + 1) * (2.0f * PI / (float)sides);
-        Vector3 n0 = Vector3Add(Vector3Scale(right, cosf(ang0)), Vector3Scale(fwd, sinf(ang0)));
-        Vector3 n1 = Vector3Add(Vector3Scale(right, cosf(ang1)), Vector3Scale(fwd, sinf(ang1)));
-        float flare0 = (rootFlare > 0.01f) ? (1.0f + rootFlare * (0.55f + 0.45f * sinf(ang0 * 5.0f))) : 1.0f;
-        float flare1 = (rootFlare > 0.01f) ? (1.0f + rootFlare * (0.55f + 0.45f * sinf(ang1 * 5.0f))) : 1.0f;
-        Vector3 p00 = Vector3Add(a, Vector3Scale(n0, rA * flare0));
-        Vector3 p01 = Vector3Add(a, Vector3Scale(n1, rA * flare1));
-        Vector3 p10 = Vector3Add(c, Vector3Scale(n0, rC));
-        Vector3 p11 = Vector3Add(c, Vector3Scale(n1, rC));
-        TreeBuilder_PushTri(b, p00, n0, uvA, ca, p10, n0, uvC, cc, p11, n1, uvC, cc);
-        TreeBuilder_PushTri(b, p00, n0, uvA, ca, p11, n1, uvC, cc, p01, n1, uvA, ca);
+        Vector3 k = Vector3Scale(axis, 1.0f / sinLen);
+        float ang = atan2f(sinLen, cosAng);
+        float ca = cosf(ang), sa = sinf(ang);
+        Vector3 r = *ioRight;
+        // Rodrigues rotation
+        Vector3 kXr = Vector3CrossProduct(k, r);
+        float kDr = Vector3DotProduct(k, r);
+        r = Vector3Add(Vector3Add(Vector3Scale(r, ca), Vector3Scale(kXr, sa)), Vector3Scale(k, kDr * (1.0f - ca)));
+        // Re-orthogonalize against newT
+        r = Vector3Subtract(r, Vector3Scale(newT, Vector3DotProduct(r, newT)));
+        if (Vector3LengthSqr(r) > 1e-6f)
+            *ioRight = Vector3Normalize(r);
+    }
+    *ioFwd = Vector3Normalize(Vector3CrossProduct(newT, *ioRight));
+}
+
+// Continuous parallel-transport swept bark tube along pts[0..ptCount-1].
+// uv.x = -1.0 - 0.25 * branchOrder (bark sentinel + order); uv.y = continuous vStart..vEnd (zero ring banding!).
+static void Tree_SweepBranchSpline(TreeMeshBuilder *b, const Vector3 *pts, const float *rads, int ptCount,
+                                   int sides, Color colRoot, Color colTip,
+                                   float compRoot, float compTip,
+                                   float vStart, float vEnd, int branchOrder,
+                                   float rootFlare, float flareLobes, bool capTip)
+{
+    if (ptCount < 2 || sides < 3 || ptCount > 24 || sides > 12)
+        return;
+
+    Vector3 ringP[24][13];
+    Vector3 ringN[24][13];
+    Vector2 ringUV[24];
+    Color ringC[24];
+
+    Vector3 tangents[24];
+    for (int i = 0; i < ptCount; i++)
+    {
+        Vector3 d;
+        if (i == 0)
+            d = Vector3Subtract(pts[1], pts[0]);
+        else if (i == ptCount - 1)
+            d = Vector3Subtract(pts[i], pts[i - 1]);
+        else
+            d = Vector3Subtract(pts[i + 1], pts[i - 1]);
+        tangents[i] = (Vector3LengthSqr(d) > 1e-6f) ? Vector3Normalize(d) : (Vector3){0.0f, 1.0f, 0.0f};
+    }
+
+    Vector3 right, fwd;
+    Tree_BasisFromDir(tangents[0], &right, &fwd);
+    float barkSentinelX = -1.0f - 0.25f * (float)branchOrder;
+
+    for (int i = 0; i < ptCount; i++)
+    {
+        if (i > 0)
+            Tree_TransportFrame(tangents[i - 1], tangents[i], &right, &fwd);
+
+        float t = (float)i / (float)(ptCount - 1);
+        float vCoord = vStart + (vEnd - vStart) * t;
+        float comp = compRoot + (compTip - compRoot) * t;
+        Color c = Tree_LerpColor(colRoot, colTip, t);
+        c.a = (unsigned char)fminf(255.0f, fmaxf(0.0f, comp * 255.0f));
+        ringC[i] = c;
+        ringUV[i] = (Vector2){barkSentinelX, vCoord};
+
+        float flareDecay = (rootFlare > 0.01f) ? expf(-t * 4.6f) : 0.0f;
+        for (int j = 0; j <= sides; j++)
+        {
+            float ang = ((float)(j % sides) / (float)sides) * (2.0f * PI);
+            Vector3 radial = Vector3Add(Vector3Scale(right, cosf(ang)), Vector3Scale(fwd, sinf(ang)));
+            float flute = (flareDecay > 0.01f)
+                              ? (1.0f + rootFlare * flareDecay * (0.58f + 0.42f * cosf(ang * flareLobes + 0.4f)))
+                              : 1.0f;
+            float rad = rads[i] * flute;
+            ringP[i][j] = Vector3Add(pts[i], Vector3Scale(radial, rad));
+            ringN[i][j] = radial;
+        }
+    }
+
+    for (int i = 0; i < ptCount - 1; i++)
+    {
+        for (int j = 0; j < sides; j++)
+        {
+            TreeBuilder_PushTri(b,
+                                ringP[i][j], ringN[i][j], ringUV[i], ringC[i],
+                                ringP[i + 1][j], ringN[i + 1][j], ringUV[i + 1], ringC[i + 1],
+                                ringP[i + 1][j + 1], ringN[i + 1][j + 1], ringUV[i + 1], ringC[i + 1]);
+            TreeBuilder_PushTri(b,
+                                ringP[i][j], ringN[i][j], ringUV[i], ringC[i],
+                                ringP[i + 1][j + 1], ringN[i + 1][j + 1], ringUV[i + 1], ringC[i + 1],
+                                ringP[i][j + 1], ringN[i][j + 1], ringUV[i], ringC[i]);
+        }
+    }
+
+    if (capTip)
+    {
+        int last = ptCount - 1;
+        Vector3 apex = Vector3Add(pts[last], Vector3Scale(tangents[last], fmaxf(rads[last] * 2.2f, 0.04f)));
+        for (int j = 0; j < sides; j++)
+        {
+            TreeBuilder_PushTri(b,
+                                ringP[last][j], ringN[last][j], ringUV[last], ringC[last],
+                                apex, tangents[last], ringUV[last], ringC[last],
+                                ringP[last][j + 1], ringN[last][j + 1], ringUV[last], ringC[last]);
+        }
     }
 }
 
-// Curved & cupped 3D alpha-tested botanical frond card (ported from WebGL2 addArchedFrond)
-// quadrant: 0=Pine, 1=Cedar, 2=Broadleaf/Birch, 3=Willow/Bamboo
-static void Tree_AddArchedFrond(TreeMeshBuilder *b, Vector3 origin, float yaw, float pitch, float roll,
-                                float length, float width, float droop, float cup,
-                                float aoBase, float aoTip, Color tint, float windFlex, int quadrant, int lenSegs)
+static Vector3 Tree_EvalQuadBezier(Vector3 p0, Vector3 p1, Vector3 p2, float t)
 {
-    float uMin = (quadrant & 1) ? 0.505f : 0.005f;
-    float uMax = (quadrant & 1) ? 0.995f : 0.495f;
-    float vMin = (quadrant >= 2) ? 0.505f : 0.005f;
-    float vMax = (quadrant >= 2) ? 0.995f : 0.495f;
+    float u = 1.0f - t;
+    return (Vector3){
+        u * u * p0.x + 2.0f * u * t * p1.x + t * t * p2.x,
+        u * u * p0.y + 2.0f * u * t * p1.y + t * t * p2.y,
+        u * u * p0.z + 2.0f * u * t * p1.z + t * t * p2.z
+    };
+}
+
+// Helper: emit a smooth curved quadratic-Bezier branch + optional secondary/tertiary forks
+static void Tree_BuildCurvedLimb(TreeMeshBuilder *b, TreeSkeleton *sk,
+                                 Vector3 p0, Vector3 p1, Vector3 p2,
+                                 float r0, float r1, int segs, int sides,
+                                 Color barkA, Color barkB,
+                                 float comp0, float comp1, float v0, float v1,
+                                 int order, int lobeGroup, float crownH01)
+{
+    if (segs < 2) segs = 2;
+    if (segs > 10) segs = 10;
+    Vector3 pts[11];
+    float rads[11];
+    // Collar tuck: step start slightly backward along tangent so branch seats cleanly inside parent tube
+    Vector3 startTan = Vector3Normalize(Vector3Subtract(p1, p0));
+    pts[0] = Vector3Subtract(p0, Vector3Scale(startTan, r0 * 0.45f));
+    rads[0] = r0 * 1.12f;
+    for (int i = 1; i <= segs; i++)
+    {
+        float t = (float)i / (float)segs;
+        pts[i] = Tree_EvalQuadBezier(p0, p1, p2, t);
+        rads[i] = r0 + (r1 - r0) * powf(t, 0.85f);
+    }
+    Tree_SweepBranchSpline(b, pts, rads, segs + 1, sides, barkA, barkB,
+                           comp0, comp1, v0, v1, order, 0.0f, 0.0f, order >= 2);
+    if (sk)
+    {
+        Vector3 tipDir = Vector3Normalize(Vector3Subtract(pts[segs], pts[segs - 1]));
+        TreeSkeleton_AddAnchor(sk, pts[segs], tipDir, r1, crownH01, comp1, order, lobeGroup);
+    }
+}
+
+// =========================================================================
+// STAGE 2 & 3b: CANOPY VOLUME SOLVER & 3D CUPPED SPRIG EMITTER
+// =========================================================================
+
+// Emits a single arched & cupped 3D sprig card with spherized lobe normal transfer,
+// analytical canopy shell AO, and integer-packed (leafRank, canopyShell) in UV.xy.
+static void Tree_EmitSprigCard(TreeMeshBuilder *b, Vector3 origin,
+                               float yaw, float pitch, float roll,
+                               float length, float width, float droop, float cup,
+                               const TreeCanopyLobe *lobe, float leafRank,
+                               float windFlex, int lenSegs, Color tintMod)
+{
+    int cell = lobe ? lobe->cell : TREE_CELL_OAK_BROADLEAF;
+    int colIdx = cell & 3;
+    int rowIdx = cell >> 2;
+    float uMin = (float)colIdx * 0.25f + 0.0045f;
+    float uMax = (float)(colIdx + 1) * 0.25f - 0.0045f;
+    float vMin = (float)rowIdx * 0.50f + 0.0090f;
+    float vMax = (float)(rowIdx + 1) * 0.50f - 0.0090f;
 
     float cy = cosf(yaw), sy = sinf(yaw);
     float cp = cosf(pitch), sp = sinf(pitch);
     float cr = cosf(roll), sr = sinf(roll);
 
-    // Local forward, right, up basis (fwd x baseRight = +Y upward!)
     Vector3 fwd = {sy * cp, -sp, cy * cp};
     Vector3 baseRight = {cy, 0.0f, -sy};
     Vector3 baseUp = Vector3CrossProduct(fwd, baseRight);
     Vector3 right = Vector3Add(Vector3Scale(baseRight, cr), Vector3Scale(baseUp, sr));
     Vector3 up = Vector3Subtract(Vector3Scale(baseUp, cr), Vector3Scale(baseRight, sr));
+
+    int rankBucket = (int)fminf(63.0f, fmaxf(0.0f, floorf(leafRank * 63.99f)));
+    // Evaluate lobe shell at card midpoint so every vertex of the card shares ONE integer bucket (clean mip gradients!)
+    Vector3 cardMid = Vector3Add(origin, Vector3Scale(fwd, length * 0.55f));
+    cardMid.y -= droop * 0.30f;
+    float shell01 = 0.65f;
+    if (lobe)
+    {
+        Vector3 rel = {
+            (cardMid.x - lobe->center.x) / lobe->rx,
+            (cardMid.y - lobe->center.y) / lobe->ry,
+            (cardMid.z - lobe->center.z) / lobe->rz
+        };
+        float rDist = fminf(1.0f, Vector3Length(rel));
+        float hBias = MapMath_SmoothStep01(-1.0f, 1.0f, rel.y);
+        shell01 = fminf(1.0f, fmaxf(0.0f, rDist * 0.58f + hBias * 0.42f));
+    }
+    int shellBucket = (int)fminf(63.0f, fmaxf(0.0f, floorf(shell01 * 63.99f)));
 
     Vector3 gridP[4][3];
     Vector3 gridN[4][3];
@@ -635,36 +1230,56 @@ static void Tree_AddArchedFrond(TreeMeshBuilder *b, Vector3 origin, float yaw, f
     Color gridC[4][3];
 
     int rows = (lenSegs < 1) ? 1 : (lenSegs > 3 ? 3 : lenSegs);
+    Color baseCol = lobe ? Tree_LerpColor(lobe->colCore, lobe->colTip, shell01 * 0.55f) : WHITE;
+    Color tipCol  = lobe ? Tree_LerpColor(lobe->colCore, lobe->colTip, fminf(1.0f, 0.45f + shell01 * 0.55f)) : WHITE;
+
     for (int r = 0; r <= rows; r++)
     {
         float t = (float)r / (float)rows;
         float yDrop = -droop * t * t;
-        float ao = aoBase + (aoTip - aoBase) * t;
-        float flex = windFlex * (0.35f + 0.65f * t);
+        // Petiole-pinned wind compliance: base stays anchored to parent twig, tip flutters freely
+        float flex = windFlex * (0.28f + 0.72f * t);
         unsigned char ca = (unsigned char)fminf(255.0f, fmaxf(0.0f, flex * 255.0f));
+        Color rowC = Tree_LerpColor(baseCol, tipCol, t);
         Color col = {
-            (unsigned char)fminf(255.0f, (float)tint.r * ao),
-            (unsigned char)fminf(255.0f, (float)tint.g * ao),
-            (unsigned char)fminf(255.0f, (float)tint.b * ao),
+            (unsigned char)fminf(255.0f, (float)rowC.r * ((float)tintMod.r / 255.0f)),
+            (unsigned char)fminf(255.0f, (float)rowC.g * ((float)tintMod.g / 255.0f)),
+            (unsigned char)fminf(255.0f, (float)rowC.b * ((float)tintMod.b / 255.0f)),
             ca
         };
-        // V goes from bottom (vMax, stem base) to top (vMin, frond tip)
         float vCoord = vMax + (vMin - vMax) * t;
 
         for (int c = 0; c <= 2; c++)
         {
             float s = (float)c - 1.0f; // -1, 0, +1
-            float cupLift = -cup * (s * s) * (0.4f + 0.6f * sinf(t * PI));
+            float cupLift = -cup * (s * s) * (0.35f + 0.65f * sinf(t * PI));
             Vector3 pos = Vector3Add(origin, Vector3Scale(fwd, length * t));
             pos = Vector3Add(pos, Vector3Scale(right, s * width * 0.5f));
             pos = Vector3Add(pos, Vector3Scale(up, cupLift));
             pos.y += yDrop;
 
-            // Upward-biased volumetric normal so tops catch crisp snow & sunlight
-            Vector3 n = Vector3Normalize(Vector3Add(up, Vector3Add(Vector3Scale(right, s * 0.25f), (Vector3){0.0f, 0.35f, 0.0f})));
+            Vector3 nGeom = Vector3Normalize(Vector3Add(up, Vector3Add(Vector3Scale(right, s * 0.25f), (Vector3){0.0f, 0.30f, 0.0f})));
+            Vector3 nFinal = nGeom;
+            if (lobe && lobe->normalBlend > 0.01f)
+            {
+                Vector3 rel = {
+                    (pos.x - lobe->center.x) / lobe->rx,
+                    (pos.y - lobe->center.y) / lobe->ry,
+                    (pos.z - lobe->center.z) / lobe->rz
+                };
+                if (Vector3LengthSqr(rel) > 1e-4f)
+                {
+                    Vector3 nLobe = Vector3Normalize(rel);
+                    nFinal = Vector3Normalize(Vector3Lerp(nGeom, nLobe, lobe->normalBlend));
+                }
+            }
+
             gridP[r][c] = pos;
-            gridN[r][c] = n;
-            gridUV[r][c] = (Vector2){uMin + (uMax - uMin) * ((float)c * 0.5f), vCoord};
+            gridN[r][c] = nFinal;
+            gridUV[r][c] = (Vector2){
+                (float)rankBucket + uMin + (uMax - uMin) * ((float)c * 0.5f),
+                (float)shellBucket + vCoord
+            };
             gridC[r][c] = col;
         }
     }
@@ -683,377 +1298,934 @@ static void Tree_AddArchedFrond(TreeMeshBuilder *b, Vector3 origin, float yaw, f
     }
 }
 
-// 3-card volumetric conifer bough spray (main upper arched frond + 2 angled flank fronds)
-static void Tree_AddVolumetricConiferBough(TreeMeshBuilder *b, Vector3 origin, float yaw, float pitch,
-                                           float length, float width, float droop, float aoCore, float aoTip,
-                                           Color tint, float windFlex, int quadrant, int lod, unsigned int *rng)
+// 3-card volumetric conifer bough spray (preserved silhouette for mau_son Alpine Conifers)
+static void Tree_EmitConiferBough(TreeMeshBuilder *b, Vector3 origin, float yaw, float pitch,
+                                  float length, float width, float droop,
+                                  const TreeCanopyLobe *lobe, float leafRank,
+                                  Color tintMod, float windFlex, int lod, unsigned int *rng)
 {
     int segs = (lod == 0) ? 2 : 1;
-    Tree_AddArchedFrond(b, origin, yaw, pitch, (Tree_NextRand(rng) - 0.5f) * 0.14f,
-                        length, width, droop, width * 0.22f, aoCore, aoTip, tint, windFlex, quadrant, segs);
+    Tree_EmitSprigCard(b, origin, yaw, pitch, (Tree_NextRand(rng) - 0.5f) * 0.14f,
+                       length, width, droop, width * 0.22f, lobe, leafRank, windFlex, segs, tintMod);
     if (lod <= 1)
     {
         for (int sd = -1; sd <= 1; sd += 2)
         {
             Vector3 fOrig = {origin.x + sinf(yaw) * length * 0.14f, origin.y - 0.05f, origin.z + cosf(yaw) * length * 0.14f};
-            Tree_AddArchedFrond(b, fOrig,
-                                yaw + (float)sd * (0.28f + Tree_NextRand(rng) * 0.16f),
-                                pitch - 0.14f,
-                                (float)sd * (0.48f + Tree_NextRand(rng) * 0.18f),
-                                length * (0.82f + Tree_NextRand(rng) * 0.14f),
-                                width * 0.84f, droop * 1.08f, width * 0.18f,
-                                aoCore * 0.82f, aoTip * 0.92f, tint, windFlex, quadrant, 1);
+            float subRank = fminf(0.99f, leafRank + (sd < 0 ? 0.08f : -0.05f));
+            Tree_EmitSprigCard(b, fOrig,
+                               yaw + (float)sd * (0.28f + Tree_NextRand(rng) * 0.16f),
+                               pitch - 0.14f,
+                               (float)sd * (0.48f + Tree_NextRand(rng) * 0.18f),
+                               length * (0.82f + Tree_NextRand(rng) * 0.14f),
+                               width * 0.84f, droop * 1.08f, width * 0.18f,
+                               lobe, fmaxf(0.02f, subRank), windFlex, 1, tintMod);
         }
     }
 }
 
-// Multi-angle 3D volumetric broadleaf leaf-cloud cluster (prevents flat pancake canopy cards)
-static void Tree_AddVolumetricBroadleafCluster(TreeMeshBuilder *b, Vector3 center, float baseYaw,
-                                               float radius, float droop, float aoCore, float aoTip,
-                                               Color tint, float windFlex, int lod, unsigned int *rng)
+// Multi-angle 3D cupped sprig tuft anchored on a twig tip inside a TreeCanopyLobe
+static void Tree_EmitVolumetricSprigTuft(TreeMeshBuilder *b, Vector3 anchor, float baseYaw,
+                                         float cardLen, float cardWid, float droop,
+                                         const TreeCanopyLobe *lobe, float baseRank,
+                                         float windFlex, int lod, unsigned int *rng)
 {
     int count = (lod == 0) ? 4 : (lod == 1 ? 2 : 1);
     int segs = (lod == 0) ? 2 : 1;
     for (int i = 0; i < count; i++)
     {
-        float yaw = baseYaw + (float)i * (2.0f * PI / (float)count) + (Tree_NextRand(rng) - 0.5f) * 0.45f;
-        float pitch = -0.34f + (float)(i & 1) * 0.36f + (Tree_NextRand(rng) - 0.5f) * 0.24f;
-        float roll = ((i & 1) ? 0.42f : -0.42f) + (Tree_NextRand(rng) - 0.5f) * 0.25f;
+        float yaw = baseYaw + (float)i * (2.0f * PI / (float)count) + (Tree_NextRand(rng) - 0.5f) * 0.42f;
+        // Diverse pitches & rolls (including a soft dome-cap plane) prevent gaps from top-down isometric views
+        float pitch = (i == 0) ? (-0.08f + (Tree_NextRand(rng) - 0.5f) * 0.14f)
+                               : (-0.34f + (float)(i & 1) * 0.48f + (Tree_NextRand(rng) - 0.5f) * 0.22f);
+        float roll = ((i == 0) ? 0.14f : ((i == 1) ? -0.58f : ((i == 2) ? 0.62f : -0.32f))) + (Tree_NextRand(rng) - 0.5f) * 0.16f;
         Vector3 orig = {
-            center.x + (Tree_NextRand(rng) - 0.5f) * radius * 0.38f,
-            center.y + (Tree_NextRand(rng) - 0.42f) * radius * 0.32f,
-            center.z + (Tree_NextRand(rng) - 0.5f) * radius * 0.38f
+            anchor.x + (Tree_NextRand(rng) - 0.5f) * cardLen * 0.24f,
+            anchor.y + (Tree_NextRand(rng) - 0.42f) * cardLen * 0.20f,
+            anchor.z + (Tree_NextRand(rng) - 0.5f) * cardLen * 0.24f
         };
-        float len = radius * (0.95f + Tree_NextRand(rng) * 0.34f);
-        float wid = radius * (0.82f + Tree_NextRand(rng) * 0.28f);
-        float tv = 0.88f + Tree_NextRand(rng) * 0.20f;
-        Color c = {
-            (unsigned char)fminf(255.0f, (float)tint.r * tv),
-            (unsigned char)fminf(255.0f, (float)tint.g * tv),
-            (unsigned char)fminf(255.0f, (float)tint.b * tv),
+        float len = cardLen * (0.92f + Tree_NextRand(rng) * 0.28f);
+        float wid = cardWid * (0.90f + Tree_NextRand(rng) * 0.26f);
+        float tv = 0.90f + Tree_NextRand(rng) * 0.16f;
+        Color tintMod = {
+            (unsigned char)fminf(255.0f, 255.0f * tv),
+            (unsigned char)fminf(255.0f, 255.0f * tv),
+            (unsigned char)fminf(255.0f, 255.0f * tv),
             255
         };
-        Tree_AddArchedFrond(b, orig, yaw, pitch, roll, len, wid, droop, wid * 0.20f,
-                            aoCore, aoTip, c, windFlex, 2, segs);
+        float rank = fminf(0.98f, fmaxf(0.02f, baseRank + (Tree_NextRand(rng) - 0.5f) * 0.16f));
+        Tree_EmitSprigCard(b, orig, yaw, pitch, roll, len, wid, droop, wid * 0.26f,
+                           lobe, rank, windFlex, segs, tintMod);
+    }
+}
+
+// Dense 3D billowing floral cloud puff for Xianxia Peach Blossom (lush from top-down isometric & eye-level views!)
+static void Tree_EmitBlossomPuff(TreeMeshBuilder *b, Vector3 puffCenter, float puffRad,
+                                 const TreeCanopyLobe *macroLobe, float baseRank,
+                                 float windFlex, int lod, unsigned int *rng)
+{
+    int cards = (lod == 0) ? 6 : (lod == 1 ? 3 : 2);
+    int segs = (lod == 0) ? 2 : 1;
+    float sizeScale = (lod == 0) ? 1.0f : ((lod == 1) ? 1.24f : 1.52f);
+
+    for (int i = 0; i < cards; i++)
+    {
+        float yaw = (float)i * (2.0f * PI / (float)cards) + (Tree_NextRand(rng) - 0.5f) * 0.45f;
+        // Card 0 & 1 cap the top/upper dome softly for lush top-down isometric coverage;
+        // Cards 2..5 wrap around the sides & lower flanks for full 3D cloud volume.
+        float pitch, roll, yOff, rOff;
+        if (i == 0)
+        {
+            pitch = -0.05f + (Tree_NextRand(rng) - 0.5f) * 0.14f;
+            roll = (Tree_NextRand(rng) - 0.5f) * 0.22f;
+            yOff = puffRad * 0.26f;
+            rOff = puffRad * 0.18f;
+        }
+        else if (i == 1 && cards >= 4)
+        {
+            pitch = 0.12f + (Tree_NextRand(rng) - 0.5f) * 0.16f;
+            roll = 0.28f + (Tree_NextRand(rng) - 0.5f) * 0.18f;
+            yOff = puffRad * 0.18f;
+            rOff = puffRad * 0.26f;
+        }
+        else
+        {
+            pitch = -0.36f + (float)(i & 1) * 0.62f + (Tree_NextRand(rng) - 0.5f) * 0.22f;
+            roll = ((i & 1) ? 0.54f : -0.54f) + (Tree_NextRand(rng) - 0.5f) * 0.20f;
+            yOff = (Tree_NextRand(rng) - 0.55f) * puffRad * 0.34f;
+            rOff = puffRad * (0.20f + 0.26f * Tree_NextRand(rng));
+        }
+
+        Vector3 orig = {
+            puffCenter.x - sinf(yaw) * (puffRad * 0.36f) + cosf(yaw) * (rOff * 0.4f),
+            puffCenter.y + yOff,
+            puffCenter.z - cosf(yaw) * (puffRad * 0.36f) - sinf(yaw) * (rOff * 0.4f)
+        };
+        float len = puffRad * (1.28f + Tree_NextRand(rng) * 0.28f) * sizeScale;
+        float wid = puffRad * (1.16f + Tree_NextRand(rng) * 0.26f) * sizeScale;
+        float tv = 0.92f + Tree_NextRand(rng) * 0.14f;
+        Color tintMod = {
+            (unsigned char)fminf(255.0f, 255.0f * tv),
+            (unsigned char)fminf(255.0f, 255.0f * tv),
+            (unsigned char)fminf(255.0f, 255.0f * tv),
+            255
+        };
+        float rank = fminf(0.98f, fmaxf(0.02f, baseRank + (Tree_NextRand(rng) - 0.5f) * 0.18f));
+        Tree_EmitSprigCard(b, orig, yaw, pitch, roll, len, wid, 0.18f, wid * 0.28f,
+                           macroLobe, rank, windFlex, segs, tintMod);
+    }
+}
+
+// Dedicated Hero Xianxia Peach Blossom Tree (Dao Co Thu):
+// Leaning gnarled dark-plum trunk, wide tiered arching boughs, crooked secondary forks,
+// and billowing 3D multi-tone blossom cloud puffs (full from top-down & eye-level, sheds cleanly when dry!).
+static void Tree_BuildPeachBlossom(TreeMeshBuilder *b, TreeSkeleton *sk, int lod, unsigned int *rng)
+{
+    int trunkSides = (lod == 0) ? 8 : (lod == 1 ? 6 : 4);
+    int boughSides = (lod == 0) ? 5 : 4;
+
+    Color barkA = {50, 32, 34, 255};
+    Color barkB = {78, 52, 50, 255};
+    // Warm-shaded plum-rose interior to luminous blush-ivory exterior so Cell 3's crimson hearts & green loc non pop!
+    Color colCore = {174, 116, 144, 255};
+    Color colTip  = {255, 248, 250, 255};
+
+    // Stage 1: Gnarled leaning dark-plum trunk (low fork at ~2.2m for classic wide Dao Co Thu poise)
+    int rings = (lod == 0) ? 9 : 6;
+    Vector3 spine[10];
+    float spineR[10];
+    float trunkH = 2.35f;
+    float baseR = 0.35f;
+    for (int s = 0; s < rings; s++)
+    {
+        float t = (float)s / (float)(rings - 1);
+        float sx = 0.42f * t + 0.18f * sinf(t * PI * 1.4f);
+        float sz = 0.22f * sinf(t * PI * 1.1f);
+        spine[s] = (Vector3){sx, -0.25f + t * (trunkH + 0.25f), sz};
+        spineR[s] = baseR * powf(1.0f - t * 0.48f, 0.72f);
+    }
+    Tree_SweepBranchSpline(b, spine, spineR, rings, trunkSides, barkA, barkB,
+                           0.0f, 0.20f, 0.0f, 0.42f, 0, 0.56f, 5.0f, false);
+
+    // 4 smooth surface-hugging root buttresses
+    if (lod <= 1)
+    {
+        for (int r = 0; r < 4; r++)
+        {
+            float a = (float)r * (PI * 0.5f) + 0.38f + (Tree_NextRand(rng) - 0.5f) * 0.25f;
+            Vector3 rp[4] = {
+                {spine[0].x + cosf(a) * 0.16f, 0.34f, spine[0].z + sinf(a) * 0.16f},
+                {spine[0].x + cosf(a) * 0.42f, 0.12f, spine[0].z + sinf(a) * 0.42f},
+                {spine[0].x + cosf(a) * 0.70f, -0.06f, spine[0].z + sinf(a) * 0.70f},
+                {spine[0].x + cosf(a) * 0.94f, -0.32f, spine[0].z + sinf(a) * 0.94f}
+            };
+            float rr[4] = {0.14f, 0.095f, 0.055f, 0.022f};
+            Tree_SweepBranchSpline(b, rp, rr, 4, 5, barkA, barkA, 0.0f, 0.0f, 0.0f, 0.14f, 1, 0.0f, 0.0f, true);
+        }
+    }
+
+    // Unified macro crown dome lobe for coherent sunlit-top -> plum-shadowed-underside cloud lighting!
+    int macroLobeIdx = TreeSkeleton_AddLobe(sk, (Vector3){0.45f, 3.35f, 0.10f},
+                                            3.65f, 1.85f, 3.65f, 0.78f,
+                                            TREE_CELL_PEACH_BLOSSOM, colCore, colTip);
+    const TreeCanopyLobe *macroLobe = &sk->lobes[macroLobeIdx];
+
+    // 6 wide, gracefully arching tiered scaffold boughs (3 wide sweeping lower tier + 3 asymmetric upper dome tier)
+    int boughCount = (lod == 2) ? 4 : 6;
+    for (int i = 0; i < boughCount; i++)
+    {
+        bool lowerTier = (i < 3);
+        float tTrunk = lowerTier ? (0.64f + 0.12f * (float)i) : (0.86f + 0.06f * (float)(i - 3));
+        int idx0 = (int)(tTrunk * (float)(rings - 1));
+        if (idx0 >= rings - 1) idx0 = rings - 2;
+        float subT = tTrunk * (float)(rings - 1) - (float)idx0;
+        Vector3 orig = Vector3Lerp(spine[idx0], spine[idx0 + 1], subT);
+        float rParent = spineR[idx0] + (spineR[idx0 + 1] - spineR[idx0]) * subT;
+
+        float ang = lowerTier
+                        ? ((float)i * (2.0f * PI / 3.0f) + 0.25f + (Tree_NextRand(rng) - 0.5f) * 0.28f)
+                        : ((float)(i - 3) * (2.0f * PI / 3.0f) + 1.32f + (Tree_NextRand(rng) - 0.5f) * 0.28f);
+        // Wide graceful spread (wider than tall!) with gentle horizontal arch
+        float reach = (lowerTier ? 3.25f : 2.35f) * (0.88f + Tree_NextRand(rng) * 0.24f);
+        float midLift = lowerTier ? (1.10f + Tree_NextRand(rng) * 0.30f) : (1.55f + Tree_NextRand(rng) * 0.35f);
+        float tipLift = lowerTier ? (1.28f + Tree_NextRand(rng) * 0.35f) : (2.15f + Tree_NextRand(rng) * 0.42f);
+
+        Vector3 dir = {cosf(ang), 0.0f, sinf(ang)};
+        Vector3 mid = {orig.x + dir.x * reach * 0.54f, orig.y + midLift, orig.z + dir.z * reach * 0.54f};
+        Vector3 tip = {orig.x + dir.x * reach, orig.y + tipLift, orig.z + dir.z * reach};
+
+        float r1Base = fmaxf(0.065f, rParent * 0.62f);
+        float r1Tip  = fmaxf(0.022f, r1Base * 0.32f);
+        Tree_BuildCurvedLimb(b, sk, orig, mid, tip, r1Base, r1Tip, (lod == 0) ? 5 : 3, boughSides,
+                             barkA, barkB, 0.20f, 0.54f, 0.42f, 0.78f, 1, macroLobeIdx, lowerTier ? 0.55f : 0.82f);
+
+        // Emit a lush mid-bough & tip blossom cloud puff
+        Tree_EmitBlossomPuff(b, (Vector3){tip.x, tip.y + 0.22f, tip.z},
+                             lowerTier ? 1.18f : 1.08f, macroLobe,
+                             0.25f + 0.55f * Tree_NextRand(rng), 0.82f, lod, rng);
+
+        // Order 2 crooked flanking peach sub-branches + blossom puffs
+        int secCount = (lod == 0) ? 3 : (lod == 1 ? 2 : 1);
+        for (int s = 0; s < secCount; s++)
+        {
+            float st = 0.34f + 0.28f * (float)s;
+            Vector3 sOrig = Tree_EvalQuadBezier(orig, mid, tip, st);
+            float side = (s == 1) ? -1.0f : 1.0f;
+            float sAng = ang + side * (0.64f + Tree_NextRand(rng) * 0.32f);
+            float sReach = reach * (0.46f - 0.05f * (float)s);
+            float sLift = (lowerTier ? 0.52f : 0.72f) + Tree_NextRand(rng) * 0.28f;
+            Vector3 sMid = {sOrig.x + cosf(sAng) * sReach * 0.52f, sOrig.y + sLift * 0.70f, sOrig.z + sinf(sAng) * sReach * 0.52f};
+            Vector3 sTip = {sOrig.x + cosf(sAng) * sReach, sOrig.y + sLift, sOrig.z + sinf(sAng) * sReach};
+            float r2Base = fmaxf(0.024f, r1Base * 0.46f * (1.0f - st * 0.30f));
+            Tree_BuildCurvedLimb(b, sk, sOrig, sMid, sTip, r2Base, 0.010f, (lod == 0) ? 3 : 2, 4,
+                                 barkB, barkB, 0.44f, 0.72f, 0.68f, 0.92f, 2, macroLobeIdx, lowerTier ? 0.62f : 0.88f);
+
+            // Order 3 fine crooked terminal peach shoots (visible when bare/dry!)
+            if (lod == 0)
+            {
+                for (int tw = 0; tw < 2; tw++)
+                {
+                    float twT = 0.50f + 0.42f * (float)tw;
+                    Vector3 twOrig = Tree_EvalQuadBezier(sOrig, sMid, sTip, twT);
+                    float twAng = sAng + ((tw == 0) ? 0.58f : -0.58f);
+                    float twLen = sReach * 0.44f;
+                    Vector3 twMid = {twOrig.x + cosf(twAng) * twLen * 0.5f, twOrig.y + 0.22f, twOrig.z + sinf(twAng) * twLen * 0.5f};
+                    Vector3 twTip = {twOrig.x + cosf(twAng) * twLen, twOrig.y + 0.34f, twOrig.z + sinf(twAng) * twLen};
+                    Tree_BuildCurvedLimb(b, NULL, twOrig, twMid, twTip, fmaxf(0.012f, r2Base * 0.46f), 0.005f,
+                                         2, 3, barkB, barkB, 0.62f, 0.80f, 0.86f, 1.0f, 3, macroLobeIdx, 0.75f);
+                }
+            }
+
+            // Lush blossom puff seated over each secondary branch
+            Tree_EmitBlossomPuff(b, (Vector3){sTip.x, sTip.y + 0.18f, sTip.z},
+                                 lowerTier ? 1.02f : 0.96f, macroLobe,
+                                 0.18f + 0.74f * Tree_NextRand(rng), 0.86f, lod, rng);
+        }
+    }
+
+    // Asymmetric upper-crown blossom billows (closes the top dome smoothly for top-down isometric view!)
+    Vector3 topP = spine[rings - 1];
+    Tree_EmitBlossomPuff(b, (Vector3){topP.x + 0.25f, topP.y + 2.05f, topP.z + 0.15f},
+                         1.32f, macroLobe, 0.14f, 0.90f, lod, rng);
+    Tree_EmitBlossomPuff(b, (Vector3){topP.x - 0.65f, topP.y + 1.65f, topP.z - 0.45f},
+                         1.15f, macroLobe, 0.28f, 0.88f, lod, rng);
+    Tree_EmitBlossomPuff(b, (Vector3){topP.x + 0.78f, topP.y + 1.55f, topP.z - 0.55f},
+                         1.12f, macroLobe, 0.38f, 0.88f, lod, rng);
+}
+
+// =========================================================================
+// ARCHETYPE BUILDERS (USING THE 3-STAGE PIPELINE)
+// =========================================================================
+
+static void Tree_BuildAlpineConifer(TreeMeshBuilder *b, TreeSkeleton *sk, MapTreeArchetype archetype, int lod, unsigned int *rng)
+{
+    bool isSlim = (archetype == MAP_TREE_COLUMNAR_TAIGA_SPRUCE);
+    bool isBroad = (archetype == MAP_TREE_OLD_GROWTH_FIR);
+    int cell = isSlim ? TREE_CELL_CEDAR : TREE_CELL_SPRUCE;
+    int trunkSides = (lod == 0) ? 7 : (lod == 1 ? 5 : 4);
+    int boughSides = (lod == 0) ? 5 : 4;
+
+    Color barkA = {54, 40, 30, 255};
+    Color barkB = {74, 58, 44, 255};
+    float H = isSlim ? 9.2f : (isBroad ? 8.2f : 8.6f);
+    float baseR = isSlim ? 0.24f : (isBroad ? 0.36f : 0.30f);
+
+    // Stage 1: Continuous parallel-transport trunk + 4 root buttresses + internal downward bough sticks
+    int trunkRings = (lod == 0) ? 9 : 6;
+    Vector3 trunkPts[10];
+    float trunkR[10];
+    for (int i = 0; i < trunkRings; i++)
+    {
+        float t = (float)i / (float)(trunkRings - 1);
+        trunkPts[i] = (Vector3){sinf(t * 2.3f) * 0.09f, -0.25f + t * (H + 0.15f), cosf(t * 1.9f) * 0.07f - 0.07f};
+        trunkR[i] = baseR * (1.0f - t * 0.93f);
+    }
+    Tree_SweepBranchSpline(b, trunkPts, trunkR, trunkRings, trunkSides, barkA, barkB,
+                           0.0f, 0.45f, 0.0f, 1.0f, 0, 0.56f, 5.0f, true);
+
+    if (lod <= 1)
+    {
+        for (int r = 0; r < 4; r++)
+        {
+            float a = (float)r * (PI * 0.5f) + 0.35f;
+            Vector3 rp[3] = {
+                {cosf(a) * 0.12f, 0.58f, sinf(a) * 0.12f},
+                {cosf(a) * 0.48f, 0.12f, sinf(a) * 0.48f},
+                {cosf(a) * 0.88f, -0.24f, sinf(a) * 0.88f}
+            };
+            float rr[3] = {0.13f, 0.08f, 0.025f};
+            Tree_SweepBranchSpline(b, rp, rr, 3, 4, barkA, barkA, 0.0f, 0.0f, 0.0f, 0.15f, 1, 0.0f, 0.0f, true);
+        }
+    }
+
+    // Stage 2: Conical crown lobe for alpine spruce shading (gentle normal blend preserves crisp bough snow shelves)
+    int lobeIdx = TreeSkeleton_AddLobe(sk, (Vector3){0.0f, H * 0.48f, 0.0f},
+                                       isSlim ? 1.8f : 2.8f, H * 0.46f, isSlim ? 1.8f : 2.8f,
+                                       0.24f, cell, (Color){148, 168, 156, 255}, (Color){244, 255, 248, 255});
+    const TreeCanopyLobe *lobe = &sk->lobes[lobeIdx];
+
+    int whorls = (lod == 0) ? 12 : (lod == 1 ? 8 : 5);
+    for (int wi = 0; wi < whorls; wi++)
+    {
+        float t = (float)wi / (float)(whorls - 1);
+        float y = 0.85f + t * (H - 1.65f);
+        float tx = sinf((y / H) * 2.3f) * 0.09f;
+        float tz = cosf((y / H) * 1.9f) * 0.07f - 0.07f;
+        int bCount = (lod == 2) ? 4 : (wi < 4 ? 8 : (wi < 8 ? 7 : 5));
+        float bLen = (isSlim ? 1.75f : (isBroad ? 3.05f : 2.68f)) * (1.0f - powf(t, 0.88f) * 0.76f);
+        float bWid = (isSlim ? 1.12f : (isBroad ? 1.62f : 1.46f)) * (1.0f - powf(t, 0.82f) * 0.60f);
+        float droop = 0.55f * (1.0f - t * 0.78f);
+        float pitch = -0.22f + powf(t, 1.35f) * 0.46f;
+
+        for (int bi = 0; bi < bCount; bi++)
+        {
+            float yaw = (float)bi * (2.0f * PI / (float)bCount) + (float)wi * 0.68f + (Tree_NextRand(rng) - 0.5f) * 0.24f;
+            Vector3 orig = {tx, y + (Tree_NextRand(rng) - 0.5f) * 0.14f, tz};
+            float len = bLen * (0.86f + Tree_NextRand(rng) * 0.26f);
+
+            // Real curved downward-arcing woody bough underneath (visible when dryness -> 1.0!)
+            if (lod == 0 && (bi & 1) == 0 && wi < whorls - 2)
+            {
+                Vector3 bMid = {orig.x + sinf(yaw) * len * 0.40f, orig.y - droop * 0.48f, orig.z + cosf(yaw) * len * 0.40f};
+                Vector3 bTip = {orig.x + sinf(yaw) * len * 0.74f, orig.y - droop * 0.52f + 0.06f, orig.z + cosf(yaw) * len * 0.74f};
+                Tree_BuildCurvedLimb(b, NULL, orig, bMid, bTip, 0.055f * (1.0f - t * 0.62f), 0.012f,
+                                     3, boughSides, barkA, barkB, 0.18f + t * 0.18f, 0.42f + t * 0.25f,
+                                     0.2f + t * 0.5f, 0.6f + t * 0.35f, 1, lobeIdx, t);
+            }
+
+            float tv = 0.88f + Tree_NextRand(rng) * 0.20f;
+            Color tintMod = {(unsigned char)(240.0f * tv), (unsigned char)(255.0f * tv), (unsigned char)(245.0f * tv), 255};
+            float rank = fminf(0.96f, fmaxf(0.04f, 0.20f + 0.65f * t + (Tree_NextRand(rng) - 0.5f) * 0.24f));
+            Tree_EmitConiferBough(b, (Vector3){orig.x, orig.y + 0.06f, orig.z}, yaw, pitch,
+                                  len, bWid * (0.88f + Tree_NextRand(rng) * 0.22f), droop,
+                                  lobe, rank, tintMod, 0.35f + t * 0.60f, lod, rng);
+        }
+    }
+
+    // Sharp natural conifer apex (6 upright terminal needle shoots)
+    Vector3 apex = {sinf(2.3f) * 0.09f, H - 0.95f, cosf(1.9f) * 0.07f - 0.07f};
+    for (int i = 0; i < 6; i++)
+    {
+        float yaw = (float)i * (PI / 3.0f) + 0.3f;
+        Tree_EmitSprigCard(b, (Vector3){apex.x, apex.y + (float)(i & 1) * 0.24f, apex.z},
+                           yaw, -1.12f, 0.0f, 0.82f, 0.40f, 0.05f, 0.08f,
+                           lobe, 0.18f + 0.12f * (float)i, 0.95f, 1, WHITE);
+    }
+}
+
+static void Tree_BuildBonsaiPine(TreeMeshBuilder *b, TreeSkeleton *sk, MapTreeArchetype archetype, int lod, unsigned int *rng)
+{
+    // Stage 1: Smooth S-swept gnarled Huangshan / Coastal / Mountain Pine trunk + 3-order bonsai boughs
+    bool isSnow = (archetype == MAP_TREE_GNARLED_MOUNTAIN_PINE);
+    bool isCoastal = (archetype == MAP_TREE_COASTAL_PINE);
+    int trunkSides = (lod == 0) ? 8 : (lod == 1 ? 6 : 4);
+    int boughSides = (lod == 0) ? 5 : 4;
+
+    Color barkA = isSnow ? (Color){66, 56, 48, 255} : (Color){78, 54, 40, 255};
+    Color barkB = isSnow ? (Color){102, 88, 78, 255} : (Color){114, 82, 58, 255};
+    Color padCore = isSnow ? (Color){58, 86, 68, 255} : (Color){62, 98, 58, 255};
+    Color padTip  = isSnow ? (Color){178, 206, 188, 255} : (Color){174, 212, 138, 255};
+
+    float lean = isCoastal ? 1.55f : (isSnow ? 0.88f : 1.12f);
+    float H = isCoastal ? 5.6f : 6.4f;
+    int rings = (lod == 0) ? 11 : 7;
+    Vector3 spine[12];
+    float spineR[12];
+    for (int i = 0; i < rings; i++)
+    {
+        float t = (float)i / (float)(rings - 1);
+        float sx = -0.32f + lean * (1.35f * t + 0.44f * sinf(t * PI * 1.65f));
+        float sz = 0.24f * sinf(t * PI * 2.0f + 0.4f);
+        spine[i] = (Vector3){sx, -0.25f + t * (H + 0.25f), sz};
+        spineR[i] = 0.38f * powf(1.0f - t * 0.84f, 0.90f);
+    }
+    Tree_SweepBranchSpline(b, spine, spineR, rings, trunkSides, barkA, barkB,
+                           0.0f, 0.36f, 0.0f, 0.72f, 0, 0.62f, 5.0f, true);
+
+    // 4 smooth hugging surface root buttresses
+    if (lod <= 1)
+    {
+        for (int r = 0; r < 4; r++)
+        {
+            float a = (float)r * (PI * 0.5f) + 0.45f;
+            Vector3 rp[4] = {
+                {spine[0].x + cosf(a) * 0.14f, 0.36f, spine[0].z + sinf(a) * 0.14f},
+                {spine[0].x + cosf(a) * 0.42f, 0.12f, spine[0].z + sinf(a) * 0.42f},
+                {spine[0].x + cosf(a) * 0.72f, -0.06f, spine[0].z + sinf(a) * 0.72f},
+                {spine[0].x + cosf(a) * 0.98f, -0.32f, spine[0].z + sinf(a) * 0.98f}
+            };
+            float rr[4] = {0.16f, 0.11f, 0.065f, 0.025f};
+            Tree_SweepBranchSpline(b, rp, rr, 4, 5, barkA, barkA, 0.0f, 0.0f, 0.0f, 0.14f, 1, 0.0f, 0.0f, true);
+        }
+    }
+
+    // 6 cantilevered asymmetrical scaffold boughs -> crooked secondary elbows -> terminal twig forks
+    int boughCount = (lod == 2) ? 4 : 6;
+    for (int bi = 0; bi < boughCount; bi++)
+    {
+        float frac = (float)bi / (float)(boughCount - 1);
+        float tTrunk = 0.34f + frac * 0.62f;
+        int idx0 = (int)(tTrunk * (float)(rings - 1));
+        if (idx0 >= rings - 1) idx0 = rings - 2;
+        float subT = tTrunk * (float)(rings - 1) - (float)idx0;
+        Vector3 orig = Vector3Lerp(spine[idx0], spine[idx0 + 1], subT);
+        float rParent = spineR[idx0] + (spineR[idx0 + 1] - spineR[idx0]) * subT;
+
+        float ang = isCoastal
+                        ? (-0.55f + (float)bi * 0.42f + (Tree_NextRand(rng) - 0.5f) * 0.25f)
+                        : ((float)bi * 2.28f + 0.35f + (Tree_NextRand(rng) - 0.5f) * 0.22f);
+        float reach = (2.65f - frac * 0.95f) * (0.90f + Tree_NextRand(rng) * 0.22f);
+        Vector3 dir = {cosf(ang), 0.0f, sinf(ang)};
+        // Classic Huangshan pine elbow: dips slightly outward, then sweeps gently upward at pad tip
+        Vector3 mid = {orig.x + dir.x * reach * 0.52f, orig.y - 0.16f + frac * 0.22f, orig.z + dir.z * reach * 0.52f};
+        Vector3 tip = {orig.x + dir.x * reach, orig.y + 0.34f + frac * 0.28f, orig.z + dir.z * reach};
+
+        float rB0 = fmaxf(0.065f, rParent * 0.62f);
+        float rB1 = rB0 * 0.34f;
+        int lobeIdx = TreeSkeleton_AddLobe(sk, (Vector3){tip.x, tip.y + 0.22f, tip.z},
+                                           1.35f - frac * 0.22f, 0.48f, 1.35f - frac * 0.22f,
+                                           0.74f, TREE_CELL_PINE_ROSETTE, padCore, padTip);
+
+        Tree_BuildCurvedLimb(b, sk, orig, mid, tip, rB0, rB1, (lod == 0) ? 5 : 3, boughSides,
+                             barkA, barkB, 0.22f + frac * 0.14f, 0.52f + frac * 0.22f,
+                             0.42f, 0.82f, 1, lobeIdx, 0.40f + frac * 0.58f);
+
+        // Order 2 crooked bonsai sub-boughs flanking the pad
+        int subForks = (lod == 0) ? 3 : (lod == 1 ? 2 : 0);
+        for (int sf = 0; sf < subForks; sf++)
+        {
+            float st = 0.42f + 0.32f * (float)sf;
+            Vector3 fOrig = Tree_EvalQuadBezier(orig, mid, tip, st);
+            float fAng = ang + ((sf & 1) ? 0.72f : -0.72f) + (Tree_NextRand(rng) - 0.5f) * 0.22f;
+            float fReach = reach * (0.44f - 0.06f * (float)sf);
+            Vector3 fMid = {fOrig.x + cosf(fAng) * fReach * 0.55f, fOrig.y + 0.08f, fOrig.z + sinf(fAng) * fReach * 0.55f};
+            Vector3 fTip = {fOrig.x + cosf(fAng) * fReach, fOrig.y + 0.32f, fOrig.z + sinf(fAng) * fReach};
+            Tree_BuildCurvedLimb(b, sk, fOrig, fMid, fTip, rB0 * 0.48f, 0.016f, 3, 4,
+                                 barkB, barkB, 0.40f, 0.66f, 0.65f, 0.94f, 2, lobeIdx, 0.45f + frac * 0.52f);
+        }
+    }
+
+    // Crown apex pad
+    Vector3 apex = spine[rings - 1];
+    int apexLobe = TreeSkeleton_AddLobe(sk, (Vector3){apex.x + 0.25f, apex.y + 0.32f, apex.z},
+                                        1.42f, 0.52f, 1.42f, 0.76f, TREE_CELL_PINE_ROSETTE, padCore, padTip);
+    TreeSkeleton_AddAnchor(sk, (Vector3){apex.x + 0.18f, apex.y + 0.14f, apex.z}, (Vector3){0.2f, 1.0f, 0.0f}, 0.03f, 0.98f, 0.72f, 2, apexLobe);
+
+    // Stage 2 & 3: Populate each horizontal pine cloud pad with lush 3D star-fascicle rosettes
+    for (int ai = 0; ai < sk->anchorCount; ai++)
+    {
+        const TreeTwigAnchor *a = &sk->anchors[ai];
+        const TreeCanopyLobe *lobe = &sk->lobes[a->lobeGroup];
+        int rosettes = (lod == 0) ? 6 : (lod == 1 ? 3 : 2);
+        for (int r = 0; r < rosettes; r++)
+        {
+            float yaw = (float)r * (2.0f * PI / (float)rosettes) + (float)ai * 0.9f + (Tree_NextRand(rng) - 0.5f) * 0.35f;
+            float pitch = -0.20f - Tree_NextRand(rng) * 0.24f; // Gently domed cushion, never flat pancake!
+            float roll = ((r & 1) ? 0.32f : -0.32f) + (Tree_NextRand(rng) - 0.5f) * 0.18f;
+            Vector3 orig = {
+                a->pos.x + (Tree_NextRand(rng) - 0.5f) * 0.54f,
+                a->pos.y + 0.08f + (Tree_NextRand(rng) - 0.3f) * 0.24f,
+                a->pos.z + (Tree_NextRand(rng) - 0.5f) * 0.54f
+            };
+            float rank = fminf(0.98f, fmaxf(0.04f, 0.15f + 0.75f * Tree_NextRand(rng)));
+            Tree_EmitSprigCard(b, orig, yaw, pitch, roll,
+                               1.06f + Tree_NextRand(rng) * 0.30f, 0.98f + Tree_NextRand(rng) * 0.26f,
+                               0.16f, 0.22f, lobe, rank, fminf(0.95f, a->compliance + 0.22f),
+                               lod == 0 ? 2 : 1, WHITE);
+        }
+    }
+}
+
+static void Tree_BuildBambooGrove(TreeMeshBuilder *b, TreeSkeleton *sk, int lod, unsigned int *rng)
+{
+    // Stage 1: 5-6 gracefully cantilevered bamboo culms with raised nodal rings + alternating nodal side-twigs
+    int culmSides = (lod == 0) ? 7 : (lod == 1 ? 5 : 4);
+    Color culmBase  = {44, 78, 36, 255};
+    Color culmUpper = {86, 134, 58, 255};
+    Color nodeRing  = {34, 58, 26, 255};
+    // Deep cool bamboo-jade interior to natural sunlit jade tip (harmonizes with culms, no neon-lime!)
+    Color leafCore  = {36, 74, 38, 255};
+    Color leafTip   = {108, 158, 72, 255};
+
+    int culms = (lod == 2) ? 3 : 5;
+    const float ox[5] = {0.00f,  0.42f, -0.34f,  0.22f, -0.44f};
+    const float oz[5] = {0.00f,  0.28f,  0.36f, -0.38f, -0.22f};
+    const float hs[5] = {7.8f,   6.9f,   6.1f,   7.3f,   5.4f};
+    const float lx[5] = {0.95f, -0.82f,  0.65f,  0.72f, -0.68f};
+    const float lz[5] = {0.38f,  0.56f, -0.74f, -0.52f,  0.44f};
+
+    for (int c = 0; c < culms; c++)
+    {
+        int segs = (lod == 0) ? 10 : 6;
+        Vector3 pts[12];
+        float rads[12];
+        float baseR = 0.086f - (float)c * 0.007f;
+        for (int s = 0; s <= segs; s++)
+        {
+            float t = (float)s / (float)segs;
+            // Graceful cubic whip-bow under upper foliage weight!
+            float bow = t * t * (0.45f + 0.55f * t);
+            pts[s] = (Vector3){
+                ox[c] + lx[c] * bow,
+                -0.18f + hs[c] * t,
+                oz[c] + lz[c] * bow
+            };
+            rads[s] = baseR * (1.0f - t * 0.62f);
+        }
+        Tree_SweepBranchSpline(b, pts, rads, segs + 1, culmSides, culmBase, culmUpper,
+                               0.05f, 0.85f, 0.0f, 1.0f, 0, 0.16f, 4.0f, true);
+
+        // Raised dark internode diaphragm bands
+        if (lod <= 1)
+        {
+            for (int s = 1; s < segs; s++)
+            {
+                Vector3 nPts[2] = {Vector3Lerp(pts[s - 1], pts[s], 0.94f), pts[s]};
+                float nRad[2] = {rads[s] * 1.22f, rads[s] * 1.15f};
+                float t = (float)s / (float)segs;
+                Tree_SweepBranchSpline(b, nPts, nRad, 2, culmSides, nodeRing, nodeRing,
+                                       t * 0.80f, t * 0.82f, t, t + 0.02f, 1, 0.0f, 0.0f, false);
+            }
+        }
+
+        // Upper-culm feathery foliage lobe
+        Vector3 lobeCtr = {ox[c] + lx[c] * 0.68f, hs[c] * 0.72f, oz[c] + lz[c] * 0.68f};
+        int lobeIdx = TreeSkeleton_AddLobe(sk, lobeCtr, 1.35f, hs[c] * 0.34f, 1.35f,
+                                           0.55f, TREE_CELL_BAMBOO_FAN, leafCore, leafTip);
+
+        // Real alternating nodal side-twigs on upper 58% of culm (clean bare lower bamboo stalks!)
+        for (int s = 4; s <= segs; s++)
+        {
+            float t = (float)s / (float)segs;
+            if (t < 0.42f)
+                continue;
+            int twigs = (lod == 0) ? 2 : 1;
+            for (int tw = 0; tw < twigs; tw++)
+            {
+                float yaw = (float)c * 1.35f + (float)s * 2.15f + (float)tw * PI + (Tree_NextRand(rng) - 0.5f) * 0.35f;
+                float tLen = (0.52f + Tree_NextRand(rng) * 0.24f) * (1.12f - t * 0.36f);
+                Vector3 tMid = {pts[s].x + cosf(yaw) * tLen * 0.55f, pts[s].y + 0.14f, pts[s].z + sinf(yaw) * tLen * 0.55f};
+                Vector3 tTip = {pts[s].x + cosf(yaw) * tLen, pts[s].y + 0.04f, pts[s].z + sinf(yaw) * tLen};
+                if (lod == 0)
+                {
+                    Tree_BuildCurvedLimb(b, NULL, pts[s], tMid, tTip, 0.018f, 0.007f, 2, 4,
+                                         nodeRing, culmUpper, t * 0.78f, fminf(0.95f, t * 0.90f),
+                                         t, fminf(1.0f, t + 0.12f), 2, lobeIdx, t);
+                }
+                // Anchor foliage right at mid-twig (never floating detached past the twig tip!)
+                TreeSkeleton_AddAnchor(sk, Vector3Lerp(pts[s], tTip, 0.42f), Vector3Subtract(tTip, pts[s]),
+                                       0.012f, t, fminf(0.95f, t * 0.88f), 2, lobeIdx);
+            }
+        }
+    }
+
+    // Stage 2 & 3: Attach cascading, outward-drooping slender bamboo sprays directly from nodal twigs
+    for (int ai = 0; ai < sk->anchorCount; ai++)
+    {
+        const TreeTwigAnchor *a = &sk->anchors[ai];
+        const TreeCanopyLobe *lobe = &sk->lobes[a->lobeGroup];
+        float baseYaw = atan2f(a->dir.x, a->dir.z);
+        int sprays = (lod == 0) ? 2 : 1;
+        for (int f = 0; f < sprays; f++)
+        {
+            float yaw = baseYaw + ((f == 0) ? 0.28f : -0.32f) + (Tree_NextRand(rng) - 0.5f) * 0.30f;
+            // Positive pitch + graceful droop makes bamboo leaves cascade downward like real weeping bamboo shoots
+            float pitch = 0.12f + (float)f * 0.26f + (Tree_NextRand(rng) - 0.5f) * 0.18f;
+            float roll = ((f & 1) ? 0.48f : -0.48f) + (Tree_NextRand(rng) - 0.5f) * 0.18f;
+            float rank = fminf(0.97f, fmaxf(0.04f, 0.12f + 0.80f * Tree_NextRand(rng)));
+            Tree_EmitSprigCard(b, a->pos, yaw, pitch, roll,
+                               1.08f + Tree_NextRand(rng) * 0.24f, 0.72f + Tree_NextRand(rng) * 0.18f,
+                               0.38f, 0.16f, lobe, rank, fminf(0.98f, a->compliance + 0.12f),
+                               lod == 0 ? 2 : 1, WHITE);
+        }
+    }
+}
+
+static void Tree_BuildWeepingWillow(TreeMeshBuilder *b, TreeSkeleton *sk, int lod, unsigned int *rng)
+{
+    int trunkSides = (lod == 0) ? 8 : (lod == 1 ? 6 : 4);
+    int boughSides = (lod == 0) ? 5 : 4;
+    Color barkA = {62, 50, 38, 255};
+    Color barkB = {88, 72, 54, 255};
+    Color leafCore = {68, 114, 48, 255};
+    Color leafTip  = {166, 214, 102, 255};
+
+    // Stage 1: Leaning furrowed trunk + buttress roots -> 6 overarching scaffold boughs -> crown ribs
+    Vector3 trunkPts[6] = {
+        {0.00f, -0.25f, 0.00f},
+        {0.10f,  0.48f, 0.06f},
+        {0.24f,  1.22f, 0.14f},
+        {0.40f,  1.95f, 0.20f},
+        {0.52f,  2.65f, 0.24f},
+        {0.58f,  3.18f, 0.26f}
+    };
+    float trunkR[6] = {0.46f, 0.39f, 0.34f, 0.30f, 0.25f, 0.18f};
+    Tree_SweepBranchSpline(b, trunkPts, trunkR, 6, trunkSides, barkA, barkB,
+                           0.0f, 0.28f, 0.0f, 0.55f, 0, 0.58f, 6.0f, true);
+
+    if (lod <= 1)
+    {
+        for (int r = 0; r < 4; r++)
+        {
+            float a = (float)r * (PI * 0.5f) + 0.25f;
+            Vector3 rp[3] = {
+                {cosf(a) * 0.22f, 0.55f, sinf(a) * 0.22f},
+                {cosf(a) * 0.68f, 0.08f, sinf(a) * 0.68f},
+                {cosf(a) * 1.18f, -0.26f, sinf(a) * 1.18f}
+            };
+            float rr[3] = {0.16f, 0.09f, 0.025f};
+            Tree_SweepBranchSpline(b, rp, rr, 3, 4, barkA, barkA, 0.0f, 0.0f, 0.0f, 0.14f, 1, 0.0f, 0.0f, true);
+        }
+    }
+
+    int crownLobeIdx = TreeSkeleton_AddLobe(sk, (Vector3){0.55f, 4.35f, 0.25f},
+                                            3.35f, 2.15f, 3.35f, 0.68f, TREE_CELL_WILLOW_WHIP, leafCore, leafTip);
+    int capLobeIdx = TreeSkeleton_AddLobe(sk, (Vector3){0.55f, 4.95f, 0.25f},
+                                          2.65f, 1.35f, 2.65f, 0.78f, TREE_CELL_OAK_BROADLEAF, leafCore, leafTip);
+
+    int boughs = (lod == 2) ? 4 : 6;
+    for (int i = 0; i < boughs; i++)
+    {
+        float ang = (float)i * (2.0f * PI / (float)boughs) + 0.30f;
+        float reach = 2.65f + Tree_NextRand(rng) * 0.85f;
+        Vector3 dir = {cosf(ang), 0.0f, sinf(ang)};
+        Vector3 orig = trunkPts[4];
+        Vector3 mid = {orig.x + dir.x * reach * 0.52f, orig.y + 1.85f, orig.z + dir.z * reach * 0.52f};
+        Vector3 tip = {orig.x + dir.x * reach, orig.y + 1.15f, orig.z + dir.z * reach};
+        Tree_BuildCurvedLimb(b, sk, orig, mid, tip, 0.16f, 0.045f, (lod == 0) ? 5 : 3, boughSides,
+                             barkA, barkB, 0.28f, 0.66f, 0.50f, 0.88f, 1, crownLobeIdx, 0.72f);
+
+        // Secondary flanking crown ribs + upper dome sprigs (eliminates bald top-down spider!)
+        if (lod <= 1)
+        {
+            for (int sd = -1; sd <= 1; sd += 2)
+            {
+                float fAng = ang + (float)sd * 0.46f;
+                Vector3 fOrig = Tree_EvalQuadBezier(orig, mid, tip, 0.48f);
+                Vector3 fMid = {fOrig.x + cosf(fAng) * 0.95f, fOrig.y + 0.55f, fOrig.z + sinf(fAng) * 0.95f};
+                Vector3 fTip = {fOrig.x + cosf(fAng) * 1.65f, fOrig.y - 0.12f, fOrig.z + sinf(fAng) * 1.65f};
+                Tree_BuildCurvedLimb(b, sk, fOrig, fMid, fTip, 0.075f, 0.018f, 3, 4,
+                                     barkB, barkB, 0.48f, 0.76f, 0.72f, 0.96f, 2, crownLobeIdx, 0.78f);
+            }
+        }
+
+        // Upper dome foliage cap (Cell 4 broadleaf tufts so isometric top-down view is lush!)
+        Tree_EmitVolumetricSprigTuft(b, (Vector3){mid.x, mid.y + 0.25f, mid.z}, ang,
+                                     1.15f, 1.05f, 0.28f, &sk->lobes[capLobeIdx],
+                                     0.20f + 0.50f * Tree_NextRand(rng), 0.74f, lod, rng);
+
+        // Cascading weeping willow curtains (Cell 7) hanging along mid..tip
+        int curtains = (lod == 0) ? 7 : (lod == 1 ? 4 : 2);
+        for (int c = 0; c < curtains; c++)
+        {
+            float frac = 0.22f + 0.78f * ((float)c / (float)(curtains > 1 ? curtains - 1 : 1));
+            Vector3 anc = Tree_EvalQuadBezier(orig, mid, tip, frac);
+            anc.y += 0.22f;
+            float rank = fminf(0.98f, fmaxf(0.05f, 0.12f + 0.82f * Tree_NextRand(rng)));
+            Tree_EmitSprigCard(b, anc, ang + (Tree_NextRand(rng) - 0.5f) * 0.75f, 1.34f,
+                               (Tree_NextRand(rng) - 0.5f) * 0.65f,
+                               2.45f + Tree_NextRand(rng) * 0.95f, 0.88f, 0.12f, 0.14f,
+                               &sk->lobes[crownLobeIdx], rank, 0.92f, lod == 0 ? 2 : 1, WHITE);
+        }
+    }
+    // Central apex cap cluster
+    Tree_EmitVolumetricSprigTuft(b, (Vector3){0.55f, 4.95f, 0.25f}, 0.5f, 1.35f, 1.25f, 0.24f,
+                                 &sk->lobes[capLobeIdx], 0.35f, 0.80f, lod, rng);
+}
+
+// Unified Sympodial Deciduous & Deadwood Builder:
+// Covers PEACH_BLOSSOM, MEADOW_OAK, MEADOW_BIRCH, FROSTED_BIRCH, ARID_ACACIA, FROZEN_DEADWOOD
+static void Tree_BuildSympodialTree(TreeMeshBuilder *b, TreeSkeleton *sk, MapTreeArchetype archetype, int lod, unsigned int *rng)
+{
+    bool isPeach   = (archetype == MAP_TREE_PEACH_BLOSSOM);
+    bool isBirch   = (archetype == MAP_TREE_MEADOW_BIRCH || archetype == MAP_TREE_FROSTED_BIRCH);
+    bool isFrosted = (archetype == MAP_TREE_FROSTED_BIRCH);
+    bool isAcacia  = (archetype == MAP_TREE_ARID_ACACIA);
+    bool isDead    = (archetype == MAP_TREE_FROZEN_DEADWOOD);
+
+    int trunkSides = (lod == 0) ? 8 : (lod == 1 ? 6 : 4);
+    int boughSides = (lod == 0) ? 5 : 4;
+
+    Color barkA = isBirch ? (Color){204, 202, 196, 255}
+                : (isDead ? (Color){62, 58, 55, 255}
+                : (isPeach ? (Color){58, 38, 36, 255}
+                : (isAcacia ? (Color){78, 64, 48, 255} : (Color){68, 50, 38, 255})));
+    Color barkB = isBirch ? (Color){238, 236, 230, 255}
+                : (isDead ? (Color){98, 92, 86, 255}
+                : (isPeach ? (Color){84, 56, 52, 255}
+                : (isAcacia ? (Color){106, 88, 66, 255} : (Color){96, 72, 52, 255})));
+
+    int leafCell = isPeach ? TREE_CELL_PEACH_BLOSSOM
+                 : (isBirch ? TREE_CELL_BIRCH_SPRIG
+                 : (isAcacia ? TREE_CELL_WILLOW_WHIP : TREE_CELL_OAK_BROADLEAF));
+
+    // Rich core-to-tip botanical color ramp (deep shaded interior -> luminous sunlit crown)
+    Color colCore = isPeach   ? (Color){176, 82, 118, 255}
+                  : (isFrosted ? (Color){168, 108, 42, 255}
+                  : (isAcacia  ? (Color){84, 96, 46, 255}
+                  : (isBirch   ? (Color){66, 114, 48, 255}
+                               : (Color){44, 88, 42, 255})));
+    Color colTip  = isPeach   ? (Color){255, 206, 224, 255}
+                  : (isFrosted ? (Color){248, 194, 96, 255}
+                  : (isAcacia  ? (Color){174, 182, 92, 255}
+                  : (isBirch   ? (Color){164, 218, 104, 255}
+                               : (Color){126, 188, 82, 255})));
+
+    // Stage 1: Continuous curved trunk + flared root buttresses
+    float trunkH = isBirch ? 6.8f : (isAcacia ? 2.6f : (isPeach ? 3.2f : (isDead ? 4.4f : 3.5f)));
+    float baseR  = isBirch ? 0.22f : (isAcacia ? 0.28f : (isPeach ? 0.34f : (isDead ? 0.38f : 0.42f)));
+    int rings = (lod == 0) ? 9 : 6;
+    Vector3 spine[10];
+    float spineR[10];
+    for (int s = 0; s < rings; s++)
+    {
+        float t = (float)s / (float)(rings - 1);
+        float gnarl = isPeach ? 0.38f : (isDead ? 0.44f : (isBirch ? 0.22f : 0.28f));
+        float sx = sinf(t * 2.5f + 0.2f) * gnarl + t * (isPeach ? 0.26f : 0.12f);
+        float sz = cosf(t * 2.1f) * gnarl * 0.72f - gnarl * 0.72f;
+        spine[s] = (Vector3){sx, -0.25f + t * (trunkH + 0.25f), sz};
+        // Sympodial trunk tapers gently until the main fork crown, birch tapers continuously to apex
+        float taperExp = isBirch ? 0.88f : 0.62f;
+        spineR[s] = baseR * powf(1.0f - t * (isBirch ? 0.86f : 0.56f), taperExp);
+    }
+    Tree_SweepBranchSpline(b, spine, spineR, rings, trunkSides, barkA, barkB,
+                           0.0f, isBirch ? 0.36f : 0.22f, 0.0f, 0.48f, 0,
+                           isBirch ? 0.34f : 0.56f, 5.0f, isBirch || isDead);
+
+    // 4 smooth surface-hugging root buttresses
+    if (lod <= 1 && !isBirch)
+    {
+        for (int r = 0; r < 4; r++)
+        {
+            float a = (float)r * (PI * 0.5f) + 0.40f + (Tree_NextRand(rng) - 0.5f) * 0.30f;
+            Vector3 rp[4] = {
+                {spine[0].x + cosf(a) * (baseR * 0.45f), 0.34f, spine[0].z + sinf(a) * (baseR * 0.45f)},
+                {spine[0].x + cosf(a) * (baseR * 1.15f), 0.12f, spine[0].z + sinf(a) * (baseR * 1.15f)},
+                {spine[0].x + cosf(a) * (baseR * 1.85f), -0.06f, spine[0].z + sinf(a) * (baseR * 1.85f)},
+                {spine[0].x + cosf(a) * (baseR * 2.45f), -0.32f, spine[0].z + sinf(a) * (baseR * 2.45f)}
+            };
+            float rr[4] = {baseR * 0.40f, baseR * 0.28f, baseR * 0.16f, 0.025f};
+            Tree_SweepBranchSpline(b, rp, rr, 4, 5, barkA, barkA, 0.0f, 0.0f, 0.0f, 0.14f, 1, 0.0f, 0.0f, true);
+        }
+    }
+
+    // Order 1 Primary Scaffold Boughs -> Order 2 Secondary Limbs -> Order 3 Terminal Crooked Twigs
+    int primaryCount = (lod == 2) ? 4 : (isBirch ? 8 : (isAcacia ? 5 : 6));
+    for (int i = 0; i < primaryCount; i++)
+    {
+        float frac = (float)i / (float)(primaryCount > 1 ? primaryCount - 1 : 1);
+        float tTrunk = isBirch ? (0.34f + frac * 0.54f) : (0.58f + frac * 0.40f);
+        int idx0 = (int)(tTrunk * (float)(rings - 1));
+        if (idx0 >= rings - 1) idx0 = rings - 2;
+        float subT = tTrunk * (float)(rings - 1) - (float)idx0;
+        Vector3 orig = Vector3Lerp(spine[idx0], spine[idx0 + 1], subT);
+        float rParent = spineR[idx0] + (spineR[idx0 + 1] - spineR[idx0]) * subT;
+
+        float ang = (float)i * 2.399963f + 0.35f + (Tree_NextRand(rng) - 0.5f) * 0.26f;
+        float crownProf = sinf(0.32f + frac * 2.35f);
+        float reach = (isAcacia ? 3.15f : (isBirch ? 1.85f : (isPeach ? 2.55f : (isDead ? 2.35f : 2.85f))))
+                    * (0.64f + 0.46f * crownProf) * (0.88f + Tree_NextRand(rng) * 0.24f);
+        float lift  = (isAcacia ? 1.35f : (isBirch ? 1.85f : (isPeach ? 1.75f : (isDead ? 1.95f : 2.15f))))
+                    * (0.72f + 0.36f * (1.0f - frac * 0.35f));
+
+        Vector3 dir = {cosf(ang), 0.0f, sinf(ang)};
+        // Arching scaffold limb with gentle phototropic upward sweep
+        Vector3 mid = {
+            orig.x + dir.x * reach * 0.50f + (Tree_NextRand(rng) - 0.5f) * 0.28f,
+            orig.y + lift * (isAcacia ? 0.76f : 0.58f),
+            orig.z + dir.z * reach * 0.50f + (Tree_NextRand(rng) - 0.5f) * 0.28f
+        };
+        Vector3 tip = {
+            orig.x + dir.x * reach,
+            orig.y + lift * (isAcacia ? 0.94f : 1.04f),
+            orig.z + dir.z * reach
+        };
+
+        // Pipe-model radius scaling (r_child ~ 0.62 * r_parent)
+        float r1Base = fmaxf(0.055f, rParent * 0.64f);
+        float r1Tip  = fmaxf(0.024f, r1Base * 0.36f);
+
+        // Stage 2: Dedicated Canopy Cloud Lobe centered over this scaffold bough's sub-crown
+        float lobeRX = isAcacia ? 1.65f : (isBirch ? 1.15f : (isPeach ? 1.38f : 1.52f));
+        float lobeRY = isAcacia ? 0.56f : (isBirch ? 1.05f : (isPeach ? 0.96f : 1.12f));
+        int lobeIdx = TreeSkeleton_AddLobe(sk, (Vector3){(mid.x + tip.x) * 0.5f, tip.y + lobeRY * 0.22f, (mid.z + tip.z) * 0.5f},
+                                           lobeRX, lobeRY, lobeRX, 0.76f, leafCell, colCore, colTip);
+
+        Tree_BuildCurvedLimb(b, sk, orig, mid, tip, r1Base, r1Tip, (lod == 0) ? 5 : 3, boughSides,
+                             barkA, barkB, 0.20f + frac * 0.14f, 0.48f + frac * 0.16f,
+                             0.42f, 0.76f, 1, lobeIdx, 0.42f + frac * 0.48f);
+
+        // Order 2 Secondary Limbs (2-3 per scaffold bough)
+        int secCount = (lod == 0) ? 3 : (lod == 1 ? 2 : 0);
+        for (int s = 0; s < secCount; s++)
+        {
+            float st = 0.36f + 0.30f * (float)s;
+            Vector3 sOrig = Tree_EvalQuadBezier(orig, mid, tip, st);
+            float side = (s == 1) ? -1.0f : 1.0f;
+            float sAng = ang + side * (0.58f + Tree_NextRand(rng) * 0.34f);
+            float sReach = reach * (0.48f - 0.06f * (float)s);
+            float sLift = lift * (isAcacia ? 0.22f : (0.38f + Tree_NextRand(rng) * 0.20f));
+            Vector3 sMid = {sOrig.x + cosf(sAng) * sReach * 0.52f, sOrig.y + sLift * 0.65f, sOrig.z + sinf(sAng) * sReach * 0.52f};
+            Vector3 sTip = {sOrig.x + cosf(sAng) * sReach, sOrig.y + sLift, sOrig.z + sinf(sAng) * sReach};
+            float r2Base = fmaxf(0.026f, r1Base * 0.46f * (1.0f - st * 0.35f));
+            float r2Tip  = fmaxf(0.011f, r2Base * 0.35f);
+
+            Tree_BuildCurvedLimb(b, sk, sOrig, sMid, sTip, r2Base, r2Tip, (lod == 0) ? 3 : 2, 4,
+                                 barkB, barkB, 0.42f, 0.68f, 0.68f, 0.90f, 2, lobeIdx, 0.52f + frac * 0.44f);
+
+            // Order 3 Crooked Terminal Twigs (LOD0 only — gives unmistakable authentic bare-tree silhouette!)
+            if (lod == 0)
+            {
+                for (int tw = 0; tw < 2; tw++)
+                {
+                    float twT = 0.48f + 0.44f * (float)tw;
+                    Vector3 twOrig = Tree_EvalQuadBezier(sOrig, sMid, sTip, twT);
+                    float twAng = sAng + ((tw == 0) ? 0.64f : -0.64f) + (Tree_NextRand(rng) - 0.5f) * 0.30f;
+                    float twLen = sReach * 0.46f;
+                    Vector3 twMid = {twOrig.x + cosf(twAng) * twLen * 0.52f, twOrig.y + 0.24f, twOrig.z + sinf(twAng) * twLen * 0.52f};
+                    Vector3 twTip = {twOrig.x + cosf(twAng) * twLen, twOrig.y + (isAcacia ? 0.14f : 0.42f), twOrig.z + sinf(twAng) * twLen};
+                    Tree_BuildCurvedLimb(b, sk, twOrig, twMid, twTip, fmaxf(0.014f, r2Base * 0.48f), 0.006f,
+                                         2, 3, barkB, barkB, 0.60f, 0.78f, 0.84f, 1.0f, 3, lobeIdx, 0.62f + frac * 0.36f);
+                }
+            }
+        }
+    }
+
+    // Upper leader crown fork & dome lobe (natural rounded top instead of flat lid)
+    Vector3 topP = spine[rings - 1];
+    int topLobe = TreeSkeleton_AddLobe(sk, (Vector3){topP.x, topP.y + (isAcacia ? 0.65f : 1.35f), topP.z},
+                                       isAcacia ? 1.85f : (isBirch ? 1.15f : 1.55f),
+                                       isAcacia ? 0.58f : 1.15f,
+                                       isAcacia ? 1.85f : (isBirch ? 1.15f : 1.55f),
+                                       0.78f, leafCell, colCore, colTip);
+    if (!isBirch)
+    {
+        for (int u = 0; u < 3; u++)
+        {
+            float ua = (float)u * (2.0f * PI / 3.0f) + 0.5f;
+            float uReach = isAcacia ? 1.25f : 1.05f;
+            float uLift = isAcacia ? 0.85f : 1.55f;
+            Vector3 uMid = {topP.x + cosf(ua) * uReach * 0.5f, topP.y + uLift * 0.62f, topP.z + sinf(ua) * uReach * 0.5f};
+            Vector3 uTip = {topP.x + cosf(ua) * uReach, topP.y + uLift, topP.z + sinf(ua) * uReach};
+            Tree_BuildCurvedLimb(b, sk, topP, uMid, uTip, fmaxf(0.045f, spineR[rings - 1] * 0.65f), 0.012f,
+                                 3, 4, barkB, barkB, 0.36f, 0.72f, 0.65f, 0.96f, 2, topLobe, 0.94f);
+        }
+    }
+    else
+    {
+        TreeSkeleton_AddAnchor(sk, (Vector3){topP.x, topP.y + 0.15f, topP.z}, (Vector3){0.0f, 1.0f, 0.0f}, 0.02f, 0.98f, 0.88f, 2, topLobe);
+    }
+
+    if (isDead)
+        return; // Pure bare 3-order deadwood skeleton!
+
+    // Stage 3: Populate 3D cupped sprig tufts onto Order 1/2/3 twig anchors with spherized lobe normals
+    float cardLen = isPeach ? 0.86f : (isBirch ? 0.82f : (isAcacia ? 0.96f : 0.94f));
+    float cardWid = isPeach ? 0.82f : (isBirch ? 0.74f : (isAcacia ? 0.92f : 0.88f));
+    float droop   = isBirch ? 0.28f : (isAcacia ? 0.12f : 0.20f);
+    if (lod == 1) { cardLen *= 1.22f; cardWid *= 1.20f; }
+    if (lod == 2) { cardLen *= 1.55f; cardWid *= 1.52f; }
+
+    for (int ai = 0; ai < sk->anchorCount; ai++)
+    {
+        const TreeTwigAnchor *a = &sk->anchors[ai];
+        const TreeCanopyLobe *lobe = &sk->lobes[a->lobeGroup];
+        float baseYaw = atan2f(a->dir.x, a->dir.z);
+        // Outer Order-3 twigs get higher leafRank so outer canopy thins first during drying!
+        float baseRank = fminf(0.96f, fmaxf(0.05f, (a->order >= 3 ? 0.45f : 0.15f) + 0.48f * Tree_NextRand(rng)));
+        float scaleByOrder = (a->order >= 3) ? 0.84f : 1.04f;
+        Tree_EmitVolumetricSprigTuft(b, a->pos, baseYaw,
+                                     cardLen * scaleByOrder, cardWid * scaleByOrder, droop,
+                                     lobe, baseRank, fminf(0.98f, a->compliance + 0.16f), lod, rng);
     }
 }
 
 static Mesh Tree_BuildArchetypeMesh(MapTreeArchetype archetype, int lod)
 {
     TreeMeshBuilder b = {0};
-    if (!TreeBuilder_Init(&b, lod == 0 ? 8192 : (lod == 1 ? 3072 : 1024)))
+    if (!TreeBuilder_Init(&b, lod == 0 ? 12288 : (lod == 1 ? 4096 : 1536)))
         return (Mesh){0};
 
-    unsigned int rng = 1101u + (unsigned int)archetype * 337u;
-    int trunkSides = (lod == 0) ? 7 : (lod == 1 ? 5 : 4);
-    int boughSides = (lod == 0) ? 5 : 4;
-
-    if (archetype == MAP_TREE_ALPINE_SNOW_SPRUCE || archetype == MAP_TREE_COLUMNAR_TAIGA_SPRUCE || archetype == MAP_TREE_OLD_GROWTH_FIR)
+    TreeSkeleton *sk = (TreeSkeleton *)MemAlloc((unsigned int)sizeof(TreeSkeleton));
+    if (!sk)
     {
-        // Ported from WebGL2 Showcase Species 1, 4, 5: Straight dark trunk + flared roots + 9-10 drooping frond whorls + sharp spire apex!
-        bool isSlim = (archetype == MAP_TREE_COLUMNAR_TAIGA_SPRUCE);
-        bool isBroad = (archetype == MAP_TREE_OLD_GROWTH_FIR);
-        int quad = isSlim ? 1 : 0;
-        Color barkA = {56, 42, 32, 255};
-        Color barkB = {74, 58, 44, 255};
-
-        float H = isSlim ? 9.2f : (isBroad ? 8.2f : 8.6f);
-        float baseR = isSlim ? 0.24f : (isBroad ? 0.36f : 0.30f);
-        int trunkSegs = (lod == 0) ? 8 : 5;
-        Vector3 prev = {0.0f, -0.25f, 0.0f};
-        float prevR = baseR;
-        for (int i = 1; i <= trunkSegs; i++)
-        {
-            float t = (float)i / (float)trunkSegs;
-            Vector3 cur = {sinf(t * 2.3f) * 0.09f, -0.25f + t * (H + 0.15f), cosf(t * 1.9f) * 0.07f - 0.07f};
-            float curR = baseR * (1.0f - t * 0.92f);
-            Tree_AddTube(&b, prev, cur, prevR, curR, trunkSides, barkA, barkB, t * 0.35f, t * 0.45f, (i == 1) ? 0.58f : 0.0f);
-            prev = cur;
-            prevR = curR;
-        }
-        // 4 flared alpine root buttresses
-        if (lod <= 1)
-        {
-            for (int r = 0; r < 4; r++)
-            {
-                float a = (float)r * (PI * 0.5f) + 0.35f;
-                Vector3 r0 = {cosf(a) * 0.14f, 0.55f, sinf(a) * 0.14f};
-                Vector3 r1 = {cosf(a) * 0.85f, -0.22f, sinf(a) * 0.85f};
-                Tree_AddTube(&b, r0, r1, 0.12f, 0.03f, 4, barkA, barkA, 0.0f, 0.0f, 0.0f);
-            }
-        }
-
-        int whorls = (lod == 0) ? 12 : (lod == 1 ? 8 : 5);
-        for (int wi = 0; wi < whorls; wi++)
-        {
-            float t = (float)wi / (float)(whorls - 1);
-            float y = 0.85f + t * (H - 1.65f);
-            float tx = sinf((y / H) * 2.3f) * 0.09f;
-            float tz = cosf((y / H) * 1.9f) * 0.07f - 0.07f;
-            int bCount = (lod == 2) ? 4 : (wi < 4 ? 8 : (wi < 8 ? 7 : 5));
-            float bLen = (isSlim ? 1.75f : (isBroad ? 3.05f : 2.68f)) * (1.0f - powf(t, 0.88f) * 0.76f);
-            float bWid = (isSlim ? 1.12f : (isBroad ? 1.62f : 1.46f)) * (1.0f - powf(t, 0.82f) * 0.60f);
-            float droop = 0.55f * (1.0f - t * 0.78f);
-            float pitch = -0.22f + powf(t, 1.35f) * 0.46f;
-
-            for (int bi = 0; bi < bCount; bi++)
-            {
-                float yaw = (float)bi * (2.0f * PI / (float)bCount) + (float)wi * 0.68f + (Tree_NextRand(&rng) - 0.5f) * 0.24f;
-                Vector3 orig = {tx, y + (Tree_NextRand(&rng) - 0.5f) * 0.14f, tz};
-                float len = bLen * (0.86f + Tree_NextRand(&rng) * 0.26f);
-                if (lod == 0 && wi < 5)
-                {
-                    Vector3 bTip = {orig.x + sinf(yaw) * len * 0.68f, orig.y - droop * 0.65f, orig.z + cosf(yaw) * len * 0.68f};
-                    Tree_AddTube(&b, orig, bTip, 0.06f * (1.0f - t * 0.6f), 0.015f, 4, barkA, barkB, 0.2f, 0.5f, 0.0f);
-                }
-                float tv = 0.88f + Tree_NextRand(&rng) * 0.22f;
-                Color tint = {(unsigned char)(240.0f * tv), (unsigned char)(255.0f * tv), (unsigned char)(245.0f * tv), 255};
-                Tree_AddVolumetricConiferBough(&b, (Vector3){orig.x, orig.y + 0.06f, orig.z}, yaw, pitch,
-                                               len, bWid * (0.88f + Tree_NextRand(&rng) * 0.22f), droop,
-                                               0.42f + t * 0.30f, 0.90f + t * 0.10f, tint, 0.35f + t * 0.60f, quad, lod, &rng);
-            }
-        }
-        // Sharp natural conifer apex (6 upright terminal needle shoots — NO ball on top!)
-        Vector3 apex = {sinf(2.3f) * 0.09f, H - 0.95f, cosf(1.9f) * 0.07f - 0.07f};
-        for (int i = 0; i < 6; i++)
-        {
-            float yaw = (float)i * (PI / 3.0f) + 0.3f;
-            Tree_AddArchedFrond(&b, (Vector3){apex.x, apex.y + (float)(i & 1) * 0.24f, apex.z},
-                                yaw, -1.12f, 0.0f, 0.82f, 0.40f, 0.05f, 0.08f, 0.72f, 1.0f, WHITE, 0.95f, quad, 1);
-        }
+        TreeBuilder_Free(&b);
+        return (Mesh){0};
     }
-    else if (archetype == MAP_TREE_ANCIENT_PINE || archetype == MAP_TREE_GNARLED_MOUNTAIN_PINE || archetype == MAP_TREE_COASTAL_PINE)
+    memset(sk, 0, sizeof(TreeSkeleton));
+
+    unsigned int rng = 1101u + (unsigned int)archetype * 337u;
+
+    if (archetype == MAP_TREE_ALPINE_SNOW_SPRUCE ||
+        archetype == MAP_TREE_COLUMNAR_TAIGA_SPRUCE ||
+        archetype == MAP_TREE_OLD_GROWTH_FIR)
     {
-        // Ported from WebGL2 Showcase Species 2: S-curved Huangshan Pine + tiered horizontal pine frond clouds
-        bool isSnow = (archetype == MAP_TREE_GNARLED_MOUNTAIN_PINE);
-        bool isCoastal = (archetype == MAP_TREE_COASTAL_PINE);
-        Color barkA = isSnow ? (Color){68, 56, 48, 255} : (Color){82, 56, 40, 255};
-        Color barkB = isSnow ? (Color){98, 84, 74, 255} : (Color){112, 78, 54, 255};
-
-        float lean = isCoastal ? 1.45f : 0.95f;
-        Vector3 pts[6] = {
-            {-0.35f, -0.25f, 0.08f},
-            {-0.10f,  1.25f, 0.20f},
-            { 0.45f * lean, 2.45f, 0.14f},
-            { 1.05f * lean, 3.65f, -0.08f},
-            { 0.78f * lean, 4.85f, -0.14f},
-            { 1.38f * lean, 6.05f, 0.10f}
-        };
-        float rads[6] = {0.40f, 0.30f, 0.23f, 0.17f, 0.12f, 0.06f};
-        for (int s = 0; s < 5; s++)
-            Tree_AddTube(&b, pts[s], pts[s + 1], rads[s], rads[s + 1], trunkSides, barkA, barkB, (float)s * 0.10f, (float)(s + 1) * 0.12f, (s == 0) ? 0.55f : 0.0f);
-
-        int tiers = (lod == 2) ? 4 : 6;
-        for (int ti = 0; ti < tiers; ti++)
-        {
-            float frac = (float)ti / (float)(tiers - 1);
-            int seg = (ti < 2) ? 2 : ((ti < 4) ? 3 : 5);
-            Vector3 base = pts[seg];
-            float ang = (float)ti * 2.25f + (isCoastal ? 0.15f : 0.55f);
-            float reach = 2.55f - frac * 1.05f;
-            Vector3 bEnd = {base.x + cosf(ang) * reach, base.y + 0.35f, base.z + sinf(ang) * reach};
-            Tree_AddTube(&b, base, bEnd, 0.11f, 0.04f, boughSides, barkA, barkB, 0.28f, 0.55f, 0.0f);
-
-            int fronds = (lod == 0) ? 9 : (lod == 1 ? 5 : 3);
-            for (int f = 0; f < fronds; f++)
-            {
-                float fyaw = (float)f * (2.0f * PI / (float)fronds) + Tree_NextRand(&rng) * 0.35f;
-                float flen = (1.45f - frac * 0.30f) * (0.85f + Tree_NextRand(&rng) * 0.28f);
-                Tree_AddArchedFrond(&b, (Vector3){bEnd.x, bEnd.y + ((f % 3) - 1) * 0.16f, bEnd.z},
-                                    fyaw, -0.08f + (float)(f % 3) * 0.10f, (Tree_NextRand(&rng) - 0.5f) * 0.22f,
-                                    flen, 0.96f, 0.24f, 0.16f, 0.52f, 1.0f, WHITE, 0.65f + frac * 0.30f, 0, lod == 0 ? 2 : 1);
-            }
-        }
+        Tree_BuildAlpineConifer(&b, sk, archetype, lod, &rng);
+    }
+    else if (archetype == MAP_TREE_ANCIENT_PINE ||
+             archetype == MAP_TREE_GNARLED_MOUNTAIN_PINE ||
+             archetype == MAP_TREE_COASTAL_PINE)
+    {
+        Tree_BuildBonsaiPine(&b, sk, archetype, lod, &rng);
     }
     else if (archetype == MAP_TREE_BAMBOO)
     {
-        // Multi-culm bamboo grove cluster (3 staggered culms + raised internode rings + Q3 lanceolate leaf plumes)
-        Color culmDark = {46, 86, 38, 255};
-        Color culmLight = {96, 146, 62, 255};
-        Color nodeBand = {34, 62, 28, 255};
-        Color leafTint = {168, 224, 118, 255};
-        int culms = (lod == 2) ? 2 : 3;
-        float ox[3] = {0.0f, 0.36f, -0.30f}, oz[3] = {0.0f, 0.24f, 0.34f};
-        float hs[3] = {7.4f, 6.2f, 5.3f};
-        float lx[3] = {0.55f, -0.48f, 0.32f}, lz[3] = {0.22f, 0.35f, -0.45f};
-        for (int c = 0; c < culms; c++)
-        {
-            int segs = (lod == 0) ? 9 : 5;
-            Vector3 prev = {ox[c], -0.15f, oz[c]};
-            float prevR = 0.092f - (float)c * 0.012f;
-            for (int s = 1; s <= segs; s++)
-            {
-                float t = (float)s / (float)segs;
-                Vector3 cur = {ox[c] + lx[c] * t * t, hs[c] * t, oz[c] + lz[c] * t * t};
-                float curR = prevR * 0.91f;
-                Tree_AddTube(&b, prev, cur, prevR, curR, trunkSides, culmDark, culmLight, t * 0.65f, t * 0.78f, 0.0f);
-                if (lod <= 1 && s < segs)
-                    Tree_AddTube(&b, Vector3Lerp(prev, cur, 0.95f), cur, curR * 1.24f, curR * 1.18f, trunkSides, nodeBand, nodeBand, t * 0.7f, t * 0.75f, 0.0f);
-                if (t >= 0.45f)
-                {
-                    int sprays = (lod == 0) ? 4 : 2;
-                    for (int k = 0; k < sprays; k++)
-                    {
-                        float yaw = (float)k * (2.0f * PI / (float)sprays) + (float)s * 1.1f;
-                        Tree_AddArchedFrond(&b, cur, yaw, -0.18f, 0.15f, 1.15f, 0.78f, 0.32f, 0.12f, 0.62f, 1.0f, leafTint, 0.85f, 3, 1);
-                    }
-                }
-                prev = cur;
-                prevR = curR;
-            }
-        }
+        Tree_BuildBambooGrove(&b, sk, lod, &rng);
     }
     else if (archetype == MAP_TREE_WEEPING_WILLOW)
     {
-        // Leaning split trunk + 6 overarching boughs + 36 draping Q3 willow frond curtains (Liễu Rũ)
-        Color barkA = {64, 52, 40, 255};
-        Color barkB = {86, 70, 52, 255};
-        Color willowTint = {152, 214, 96, 255};
-        Vector3 p0 = {0.0f, -0.25f, 0.0f}, p1 = {0.22f, 1.35f, 0.12f}, p2 = {0.58f, 2.85f, 0.24f};
-        Tree_AddTube(&b, p0, p1, 0.44f, 0.32f, trunkSides, barkA, barkB, 0.0f, 0.12f, 0.40f);
-        Tree_AddTube(&b, p1, p2, 0.32f, 0.22f, trunkSides, barkB, barkB, 0.12f, 0.28f, 0.0f);
-
-        int boughs = (lod == 2) ? 4 : 6;
-        for (int i = 0; i < boughs; i++)
-        {
-            float ang = (float)i * (2.0f * PI / (float)boughs) + 0.32f;
-            float reach = 2.6f + Tree_NextRand(&rng) * 0.9f;
-            Vector3 dir = {cosf(ang), 0.0f, sinf(ang)};
-            Vector3 mid = {p2.x + dir.x * reach * 0.52f, p2.y + 1.45f, p2.z + dir.z * reach * 0.52f};
-            Vector3 tip = {p2.x + dir.x * reach, p2.y + 0.95f, p2.z + dir.z * reach};
-            Tree_AddTube(&b, p2, mid, 0.16f, 0.10f, boughSides, barkA, barkB, 0.28f, 0.48f, 0.0f);
-            Tree_AddTube(&b, mid, tip, 0.10f, 0.05f, boughSides, barkB, barkB, 0.48f, 0.66f, 0.0f);
-
-            int curtains = (lod == 0) ? 6 : (lod == 1 ? 3 : 2);
-            for (int c = 0; c < curtains; c++)
-            {
-                float frac = 0.25f + 0.75f * ((float)c / (float)curtains);
-                Vector3 anc = Vector3Lerp(mid, tip, frac);
-                anc.y += 0.25f;
-                // Pitch +1.35 rad points almost straight downward like weeping curtains
-                Tree_AddArchedFrond(&b, anc, ang + (Tree_NextRand(&rng) - 0.5f) * 0.6f, 1.32f,
-                                    (Tree_NextRand(&rng) - 0.5f) * 0.5f, 2.55f + Tree_NextRand(&rng) * 0.95f,
-                                    0.95f, 0.15f, 0.12f, 0.65f, 1.0f, willowTint, 0.92f, 3, lod == 0 ? 2 : 1);
-            }
-        }
+        Tree_BuildWeepingWillow(&b, sk, lod, &rng);
     }
-    else if (archetype == MAP_TREE_FROZEN_DEADWOOD)
+    else if (archetype == MAP_TREE_PEACH_BLOSSOM)
     {
-        // Sculpted leafless frost/volcanic gnarled deadwood snag
-        Color barkA = {56, 52, 50, 255};
-        Color barkB = {92, 86, 82, 255};
-        Vector3 p0 = {0.0f, -0.25f, 0.0f}, p1 = {0.28f, 1.65f, -0.15f}, p2 = {-0.12f, 3.45f, 0.22f}, p3 = {0.35f, 4.95f, -0.10f};
-        Tree_AddTube(&b, p0, p1, 0.38f, 0.26f, trunkSides, barkA, barkB, 0.0f, 0.08f, 0.42f);
-        Tree_AddTube(&b, p1, p2, 0.26f, 0.16f, trunkSides, barkA, barkB, 0.08f, 0.16f, 0.0f);
-        Tree_AddTube(&b, p2, p3, 0.16f, 0.06f, trunkSides, barkB, barkB, 0.16f, 0.24f, 0.0f);
-        int limbs = (lod == 2) ? 3 : 6;
-        for (int i = 0; i < limbs; i++)
-        {
-            float ang = (float)i * 2.15f + 0.4f;
-            Vector3 root = (i < 2) ? p1 : p2;
-            Vector3 mid = {root.x + cosf(ang) * 1.15f, root.y + 0.85f, root.z + sinf(ang) * 1.15f};
-            Vector3 tip = {mid.x + cosf(ang + 0.35f) * 0.95f, mid.y + 0.65f, mid.z + sinf(ang + 0.35f) * 0.95f};
-            Tree_AddTube(&b, root, mid, 0.12f, 0.065f, boughSides, barkA, barkB, 0.10f, 0.18f, 0.0f);
-            Tree_AddTube(&b, mid, tip, 0.065f, 0.022f, boughSides, barkB, barkB, 0.18f, 0.26f, 0.0f);
-        }
+        Tree_BuildPeachBlossom(&b, sk, lod, &rng);
     }
     else
     {
-        // Broadleaf trees using Q2 rich volumetric leaf-cloud clusters + curved continuous leader trunk
-        // & staggered multi-altitude forked limbs (FROSTED_BIRCH, MEADOW_BIRCH, MEADOW_OAK, PEACH_BLOSSOM, ARID_ACACIA)
-        bool isPeach = (archetype == MAP_TREE_PEACH_BLOSSOM);
-        bool isBirch = (archetype == MAP_TREE_MEADOW_BIRCH || archetype == MAP_TREE_FROSTED_BIRCH);
-        bool isFrosted = (archetype == MAP_TREE_FROSTED_BIRCH);
-        bool isAcacia = (archetype == MAP_TREE_ARID_ACACIA);
-
-        Color barkA = isBirch ? (Color){206, 204, 198, 255} : (Color){74, 52, 38, 255};
-        Color barkB = isBirch ? (Color){238, 236, 232, 255} : (Color){98, 70, 50, 255};
-        Color foliageTint = isPeach ? (Color){248, 168, 194, 255}
-                          : (isFrosted ? (Color){236, 178, 86, 255}
-                          : (isAcacia ? (Color){158, 166, 84, 255}
-                          : (isBirch ? (Color){132, 192, 82, 255} : (Color){92, 162, 68, 255})));
-
-        // 1. Smooth curved continuous trunk & tapering central leader into upper crown (zero kinked sticks!)
-        float totalH = isBirch ? 7.2f : (isAcacia ? 4.4f : 5.8f);
-        float baseR  = isBirch ? 0.24f : (isAcacia ? 0.30f : 0.38f);
-        int trunkSegs = (lod == 0) ? 7 : 4;
-        Vector3 spinePts[8];
-        float spineR[8];
-        for (int s = 0; s <= trunkSegs; s++)
-        {
-            float t = (float)s / (float)trunkSegs;
-            float swayX = sinf(t * 2.4f) * (isBirch ? 0.24f : 0.30f) + t * (isBirch ? 0.14f : 0.08f);
-            float swayZ = cosf(t * 1.9f) * (isBirch ? 0.18f : 0.22f) - (isBirch ? 0.18f : 0.22f);
-            spinePts[s] = (Vector3){swayX, -0.25f + t * (totalH + 0.15f), swayZ};
-            spineR[s] = baseR * powf(1.0f - t * 0.88f, 0.92f);
-        }
-        for (int s = 0; s < trunkSegs; s++)
-        {
-            float t0 = (float)s / (float)trunkSegs;
-            float t1 = (float)(s + 1) / (float)trunkSegs;
-            Tree_AddTube(&b, spinePts[s], spinePts[s + 1], spineR[s], spineR[s + 1],
-                         trunkSides, (s == 0) ? barkA : barkB, barkB,
-                         t0 * 0.25f, t1 * 0.30f, (s == 0) ? (isBirch ? 0.34f : 0.48f) : 0.0f);
-        }
-
-        // 2. Staggered multi-altitude primary limbs + curved 2-segment arches + secondary forks
-        int limbs = (lod == 2) ? 4 : (isBirch ? 8 : 7);
-        for (int i = 0; i < limbs; i++)
-        {
-            float frac = (float)i / (float)(limbs > 1 ? limbs - 1 : 1);
-            // Distribute limbs naturally from 36% up to 84% of trunk height (never all from one point!)
-            float tTrunk = (isAcacia ? 0.48f : 0.36f) + frac * (isAcacia ? 0.38f : 0.48f);
-            float fIdx = tTrunk * (float)trunkSegs;
-            int idx0 = (int)fIdx;
-            if (idx0 >= trunkSegs) idx0 = trunkSegs - 1;
-            float subT = fIdx - (float)idx0;
-            Vector3 orig = Vector3Lerp(spinePts[idx0], spinePts[idx0 + 1], subT);
-            float rTrunk = spineR[idx0] + (spineR[idx0 + 1] - spineR[idx0]) * subT;
-
-            // Golden-angle spiral azimuth for balanced 360-deg silhouette
-            float ang = (float)i * 2.399963f + 0.35f + (Tree_NextRand(&rng) - 0.5f) * 0.22f;
-            float crownProfile = sinf(0.28f + frac * 2.45f); // Widest mid-crown, gracefully tapering toward apex
-            float reach = (isBirch ? 2.15f : (isAcacia ? 2.85f : 2.55f)) * (0.55f + 0.55f * crownProfile) * (0.88f + Tree_NextRand(&rng) * 0.24f);
-            float lift  = (isBirch ? 1.55f : (isAcacia ? 0.95f : 1.45f)) * (0.65f + 0.45f * (1.0f - frac * 0.4f));
-
-            Vector3 dir = {cosf(ang), 0.0f, sinf(ang)};
-            Vector3 mid = {orig.x + dir.x * reach * 0.52f, orig.y + lift * 0.62f, orig.z + dir.z * reach * 0.52f};
-            Vector3 tip = {orig.x + dir.x * reach, orig.y + lift * (isBirch ? 0.96f : 1.02f), orig.z + dir.z * reach};
-
-            float rBase = rTrunk * 0.58f;
-            float rMid  = rBase * 0.56f;
-            float rTip  = rBase * 0.22f;
-            Tree_AddTube(&b, orig, mid, rBase, rMid, boughSides, barkA, barkB, 0.22f + frac * 0.15f, 0.42f + frac * 0.15f, 0.0f);
-            Tree_AddTube(&b, mid, tip, rMid, rTip, boughSides, barkB, barkB, 0.42f + frac * 0.15f, 0.60f + frac * 0.15f, 0.0f);
-
-            float droop = isBirch ? 0.38f : 0.24f;
-            float clRad = (isBirch ? 1.18f : 1.38f) * (0.78f + 0.32f * crownProfile);
-            // Mid-bough secondary fork + volumetric foliage cluster
-            if (lod <= 1)
-            {
-                float forkSide = (i & 1) ? 0.68f : -0.68f;
-                float fAng = ang + forkSide + (Tree_NextRand(&rng) - 0.5f) * 0.20f;
-                float fReach = reach * 0.54f;
-                Vector3 forkTip = {mid.x + cosf(fAng) * fReach, mid.y + lift * 0.38f, mid.z + sinf(fAng) * fReach};
-                Tree_AddTube(&b, mid, forkTip, rMid * 0.72f, rTip * 0.80f, 4, barkB, barkB, 0.45f, 0.66f, 0.0f);
-                Tree_AddVolumetricBroadleafCluster(&b, forkTip, fAng, clRad * 0.88f, droop,
-                                                   0.62f + frac * 0.18f, 1.0f, foliageTint, 0.78f, lod, &rng);
-            }
-            // Primary bough tip volumetric foliage cluster
-            Tree_AddVolumetricBroadleafCluster(&b, tip, ang, clRad, droop,
-                                               0.60f + frac * 0.20f, 1.0f, foliageTint, 0.84f, lod, &rng);
-        }
-
-        // 3. Soft layered upper leader crown (graceful ovoid apex instead of flat lid)
-        Vector3 topAnchor = spinePts[trunkSegs];
-        Tree_AddVolumetricBroadleafCluster(&b, (Vector3){topAnchor.x, topAnchor.y - 0.35f, topAnchor.z},
-                                           0.4f, isBirch ? 1.35f : 1.55f, isBirch ? 0.34f : 0.22f,
-                                           0.70f, 1.0f, foliageTint, 0.92f, lod, &rng);
-        Tree_AddVolumetricBroadleafCluster(&b, (Vector3){topAnchor.x, topAnchor.y + 0.35f, topAnchor.z},
-                                           1.8f, isBirch ? 1.05f : 1.25f, isBirch ? 0.28f : 0.20f,
-                                           0.78f, 1.0f, foliageTint, 0.96f, lod, &rng);
+        Tree_BuildSympodialTree(&b, sk, archetype, lod, &rng);
     }
 
+    MemFree(sk);
     Mesh mesh = TreeBuilder_ToMesh(&b);
     TreeBuilder_Free(&b);
     return mesh;
@@ -1067,9 +2239,13 @@ static int s_treeLocAtlasTex = -1;
 static int s_treeLocDrawDistSq = -1;
 static int s_treeLocBaseOffset = -1;
 static int s_treeLocSnowAmount = -1;
+static int s_treeLocGlobalDryness = -1;
+static int s_treeLocGlobalScorch = -1;
 static int s_treeShadowLocInstTex = -1;
 static int s_treeShadowLocAtlasTex = -1;
 static int s_treeShadowLocBaseOffset = -1;
+static int s_treeShadowLocGlobalDryness = -1;
+static int s_treeShadowLocGlobalScorch = -1;
 
 static Shader Tree_GetShader(void)
 {
@@ -1086,12 +2262,16 @@ static Shader Tree_GetShader(void)
             s_treeLocDrawDistSq = GetShaderLocation(s_treeShader, "u_treeDrawDistSq");
             s_treeLocBaseOffset = GetShaderLocation(s_treeShader, "u_instanceBaseOffset");
             s_treeLocSnowAmount = GetShaderLocation(s_treeShader, "u_treeSnowAmount");
+            s_treeLocGlobalDryness = GetShaderLocation(s_treeShader, "u_treeGlobalDryness");
+            s_treeLocGlobalScorch = GetShaderLocation(s_treeShader, "u_treeGlobalScorch");
         }
         if (s_treeShadowShader.id != 0)
         {
             s_treeShadowLocInstTex = GetShaderLocation(s_treeShadowShader, "u_treeInstanceTex");
             s_treeShadowLocAtlasTex = GetShaderLocation(s_treeShadowShader, "u_treeFoliageAtlas");
             s_treeShadowLocBaseOffset = GetShaderLocation(s_treeShadowShader, "u_instanceBaseOffset");
+            s_treeShadowLocGlobalDryness = GetShaderLocation(s_treeShadowShader, "u_treeGlobalDryness");
+            s_treeShadowLocGlobalScorch = GetShaderLocation(s_treeShadowShader, "u_treeGlobalScorch");
         }
         Tree_GetFoliageAtlas();
         s_treeShaderReady = true;
@@ -1168,6 +2348,8 @@ MapTreeSystem MapProp_CreateTreeSystem(const MapTreePlacement *placements, int c
     sys.lod0Distance = 40.0f;
     sys.lod1Distance = 88.0f;
     sys.snowCoverage = -1.0f;
+    sys.globalDryness = 0.0f;
+    sys.globalScorch = 0.0f;
     if (!placements || count <= 0)
         return sys;
 
@@ -1254,7 +2436,7 @@ MapTreeSystem MapProp_CreateTreeSystem(const MapTreePlacement *placements, int c
             allPx[b + 3] = p->rotationDeg * DEG2RAD;
             allPx[b + 4] = (p->scaleXZ > 0.1f) ? p->scaleXZ : 1.0f;
             allPx[b + 5] = (p->scaleY > 0.1f) ? p->scaleY : 1.0f;
-            allPx[b + 6] = p->phase;
+            allPx[b + 6] = Tree_PackInstanceState(p->phase, p->dryness, p->scorch, 0.0f);
             allPx[b + 7] = (float)packedRGB;
             k++;
         }
@@ -1297,6 +2479,40 @@ void MapProp_SetTreeSnowCoverage(MapTreeSystem *sys, float coverage)
     if (!sys)
         return;
     sys->snowCoverage = fminf(1.0f, fmaxf(0.0f, coverage));
+}
+
+void MapProp_SetTreeCondition(MapTreeSystem *sys, float globalDryness, float globalScorch)
+{
+    if (!sys)
+        return;
+    sys->globalDryness = fminf(1.0f, fmaxf(0.0f, globalDryness));
+    sys->globalScorch = fminf(1.0f, fmaxf(0.0f, globalScorch));
+}
+
+void MapProp_SetTreeState(MapTreeSystem *sys, MapTreeState state)
+{
+    if (!sys)
+        return;
+    switch (state)
+    {
+    case MAP_TREE_STATE_LUSH:
+        MapProp_SetTreeCondition(sys, 0.0f, 0.0f);
+        break;
+    case MAP_TREE_STATE_AUTUMN:
+        MapProp_SetTreeCondition(sys, 0.36f, 0.0f);
+        break;
+    case MAP_TREE_STATE_WITHERED:
+        MapProp_SetTreeCondition(sys, 0.68f, 0.0f);
+        break;
+    case MAP_TREE_STATE_DRY_BARE:
+        MapProp_SetTreeCondition(sys, 1.0f, 0.0f);
+        break;
+    case MAP_TREE_STATE_SCORCHED:
+        MapProp_SetTreeCondition(sys, 1.0f, 0.85f);
+        break;
+    default:
+        break;
+    }
 }
 
 void MapProp_PrepareTreeSystem(MapTreeSystem *sys, Camera3D cam)
@@ -1413,7 +2629,11 @@ void MapProp_DrawTreeSystem(const MapTreeSystem *sys, float time, Vector2 windDi
     rlDisableBackfaceCulling();
 
     float distSq = sys->drawDistance * sys->drawDistance;
+    float gDry = sys->globalDryness;
+    float gSco = sys->globalScorch;
     if (s_treeLocDrawDistSq >= 0) SetShaderValue(sh, s_treeLocDrawDistSq, &distSq, SHADER_UNIFORM_FLOAT);
+    if (s_treeLocGlobalDryness >= 0) SetShaderValue(sh, s_treeLocGlobalDryness, &gDry, SHADER_UNIFORM_FLOAT);
+    if (s_treeLocGlobalScorch >= 0) SetShaderValue(sh, s_treeLocGlobalScorch, &gSco, SHADER_UNIFORM_FLOAT);
     if (s_treeLocInstTex >= 0)
     {
         int unit0 = 0;
@@ -1478,6 +2698,10 @@ void MapProp_DrawTreeSystemShadowCasters(const MapTreeSystem *sys, Shader depthS
     Nature_UpdateShadowShader(sh, time, windDirection, windStrength,
                               false, 0.0f, NATURE_WIND_RESPONSE_FLOWER);
     rlDisableBackfaceCulling();
+    float gDry = sys->globalDryness;
+    float gSco = sys->globalScorch;
+    if (s_treeShadowLocGlobalDryness >= 0) SetShaderValue(sh, s_treeShadowLocGlobalDryness, &gDry, SHADER_UNIFORM_FLOAT);
+    if (s_treeShadowLocGlobalScorch >= 0) SetShaderValue(sh, s_treeShadowLocGlobalScorch, &gSco, SHADER_UNIFORM_FLOAT);
     if (s_treeShadowLocInstTex >= 0)
     {
         int unit0 = 0;
@@ -1567,8 +2791,11 @@ void MapFlora_EvaluateTreeUnderstorey(float x, float z,
             }
             else if (rn < 1.05f)
             {
+                // Bare dry canopies let more sunlight through to the understorey
+                float dryRelax = fminf(1.0f, fmaxf(0.0f, t->dryness)) * 0.65f;
                 float shadeT = (rn - 0.30f) / 0.75f;
-                dens = fminf(dens, 0.45f + 0.48f * shadeT);
+                float minDens = 0.45f + dryRelax * 0.45f;
+                dens = fminf(dens, minDens + (0.93f - minDens) * shadeT);
                 hScale = fminf(hScale, 0.55f + 0.35f * shadeT);
             }
             if (rn >= 0.72f && rn <= 1.45f)
