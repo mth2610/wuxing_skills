@@ -43,6 +43,20 @@ static void RegisterDefaultItems(void)
          .isSkinned = true,
          .modelPath = "assets/characters/bodies/human_male_base.glb",
          .uiColor = (Color){220, 200, 180, 255}},
+        {.id = "male_body_v5",
+         .name = "Thân Thể Nam Võ Hiệp V5",
+         .description = "Hình thể nam võ hiệp điêu khắc giải phẫu chuẩn tỷ lệ 1.80m, khung xương Mixamo 20 khớp T-Pose.",
+         .source = "Mặc định nhân vật khởi đầu",
+         .slot = MODULAR_SLOT_BASE_BODY,
+         .itemType = ITEM_TYPE_MODULAR,
+         .element = WARDROBE_ELEM_NONE,
+         .rarity = WARDROBE_RARITY_RARE,
+         .unlockType = UNLOCK_TYPE_DEFAULT,
+         .unlockHint = "Khởi đầu giang hồ",
+         .stats = {120.0f, 60.0f, 1.0f, 0.02f, 0.02f, 0.0f, "Cân Cốt Tinh Kiện: Hình thể cân đối, tương thích trọn vẹn ngoại trang"},
+         .isSkinned = true,
+         .modelPath = "assets/characters/bodies/male_body_v5.glb",
+         .uiColor = (Color){228, 186, 156, 255}},
         {.id = "ao_giao_linh",
          .name = "Áo Giao Lĩnh Lam Y",
          .description = "Trang phục truyền thống giao lĩnh thêu viền mây vàng, chất lụa xanh thẫm thoát tục như mây khói non xa.",
@@ -928,12 +942,13 @@ void PlayerWardrobe_Init(PlayerWardrobe *pw, const char *playerId)
     Wardrobe_InitCatalog();
 
     PlayerWardrobe_UnlockItem(pw, "human_body");
+    PlayerWardrobe_UnlockItem(pw, "male_body_v5");
     PlayerWardrobe_UnlockItem(pw, "ao_giao_linh");
     PlayerWardrobe_UnlockItem(pw, "ao_tien_hiep");
     PlayerWardrobe_UnlockItem(pw, "quan_wuxia");
     PlayerWardrobe_UnlockItem(pw, "chien_hai_van_du");
 
-    PlayerWardrobe_Equip(pw, "human_body");
+    PlayerWardrobe_Equip(pw, "male_body_v5");
     PlayerWardrobe_Equip(pw, "ao_giao_linh");
     PlayerWardrobe_Equip(pw, "quan_wuxia");
     PlayerWardrobe_Equip(pw, "chien_hai_van_du");

@@ -1,16 +1,14 @@
 #version 330
 #include "core/shaders/common/vs_header.glsl"
 
-// The CPU submits ONE flat quad and nothing else. Every ring, glyph, dash and
-// square in this effect is a fragment-stage computation over that quad's local
-// coordinate, which arrives in fragTexCoord already expressed in RUNE RADII
-// (|uv| == 1.0 is the nominal ring). Nothing is displaced here.
-//
-// fragPosition is NOT used by the fragment stage and must not be: matModel is
-// model x view for every draw inside MyBeginMode3D (ENGINE_LANDMINES 9), so it
-// would hand the shader view space while reading like world space. The texture
-// coordinate is the only channel that carries the disc's own frame.
+in vec4 vertexColor;
+out vec4 fragColor;
+
+// Vertex shader for Cổ Ấn Vạn Pháp (VFX_ComposeRuneCircle / Variant).
+// Surfaces arrive with fragTexCoord in [0, 1] (for rune/pulse quads) or [0, 1]
+// per billboard (for pinpoint embers, with fragColor carrying heat/alpha).
 void main()
 {
+    fragColor = vertexColor;
     VS_FinalOutput(vertexPosition);
 }

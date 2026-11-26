@@ -174,6 +174,7 @@ static VFX_MeshSurfaceAuraVariant s_meshSurfaceAuraFixtureVariant = VFX_MESH_SUR
 static VFX_DecalVariant s_decalFixtureVariant = VFX_DECAL_VARIANT_IMPACT;
 static VFX_SurfaceParticleRingVariant s_surfaceParticleRingFixtureVariant = VFX_SURFACE_PARTICLE_RING_VARIANT_DUST;
 static VFX_ImpactDustVariant s_impactDustFixtureVariant = VFX_IMPACT_DUST_VARIANT_DUST_PUFF;
+static VFX_RuneCircleVariant s_runeCircleFixtureVariant = VFX_RUNE_PHAN_THIEN;
 static TrailPresetId s_motionRibbonFixturePreset = MOTION_RIBBON_SWORD_COMET;
 static VFX_MotionRibbonConfig s_liveMotionRibbonConfig;
 static bool s_liveMotionRibbonConfigInit = false;
@@ -810,6 +811,10 @@ static void VFXTest_RefreshInspectorParams(bool force)
     else if (VFXTest_IsNewFxNamed("SHOCK RING"))
     {
         s_inspectorParamCount = VFX_ShockRing_GetParams(VFXTest_GetShockRingDesc(), s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
+    }
+    else if (VFXTest_IsNewFxNamed("RUNE CIRCLE"))
+    {
+        s_inspectorParamCount = VFX_RuneCircle_GetParams(VFX_RuneCircle_GetLiveConfig(), s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
     }
     else if (VFXTest_IsNewFxNamed("SHIELD SHELL"))
     {
@@ -2234,6 +2239,7 @@ static const char *VFXTest_UIActiveVariant(void)
     if (VFXTest_IsNewFxNamed("IMPACT DUST")) return VFX_ImpactDustVariant_Name(s_impactDustFixtureVariant);
     if (VFXTest_IsNewFxNamed("GUIDED FIRE")) return VFX_FirePreset_Name(VFX_Fire_GetLiveConfig()->preset);
     if (VFXTest_IsNewFxNamed("SHOCK RING")) return VFX_ShockRingVariant_Name(VFXTest_GetShockRingDesc()->variant);
+    if (VFXTest_IsNewFxNamed("RUNE CIRCLE")) return VFX_RuneCircleVariant_Name(VFX_RuneCircle_GetLiveConfig()->variant);
     if (VFXTest_IsNewFxNamed("SHIELD SHELL")) return VFX_ShieldPreset_Name(VFXTest_GetShieldDesc()->preset);
     if (VFXTest_IsNewFxNamed("GUIDED EARTH")) return VFX_GuidedEarthPreset_Name(VFX_GuidedEarth_GetLiveConfig()->preset);
     if (VFXTest_IsNewFxNamed("GRANULAR SAND")) return VFX_GranularSandPreset_Name(VFX_GranularSand_GetLiveConfig()->preset);
@@ -3284,6 +3290,19 @@ void VFXTest_Draw3D(void)
                 TraceLog(LOG_INFO, "SHOCK RING preset: %s (>, next; <, previous)", VFX_ShockRingVariant_Name(sd->variant));
             }
         }
+        else if (VFXTest_IsNewFxNamed("RUNE CIRCLE"))
+        {
+            int direction = IsKeyPressed(KEY_PERIOD) ? 1 : (IsKeyPressed(KEY_COMMA) ? -1 : 0);
+            if (direction != 0)
+            {
+                VFX_RuneCircleConfig *rc = VFX_RuneCircle_GetLiveConfig();
+                rc->variant = (VFX_RuneCircleVariant)(((int)rc->variant + direction + VFX_RUNE_VARIANT_COUNT) % VFX_RUNE_VARIANT_COUNT);
+                s_runeCircleFixtureVariant = rc->variant;
+                s_meshTime = 0.0f;
+                VFXTest_RefreshInspectorParams(true);
+                TraceLog(LOG_INFO, "RUNE CIRCLE variant: %s (>, next; <, previous)", VFX_RuneCircleVariant_Name(rc->variant));
+            }
+        }
         else if (VFXTest_IsNewFxNamed("GUIDED FIRE"))
         {
             if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))
@@ -3572,7 +3591,14 @@ void VFXTest_Draw3D(void)
                       s_vfxFixtureHandle[22] = VFX_ComposeRefParticles(s_prefabStartPos, 1.5f);
                   break;
               }
-              case 23: VFX_ComposeRuneCircle(s_prefabStartPos, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.5f, progress, 5); break;
+              case 23: {
+                  const VFX_RuneCircleConfig *rc = VFX_RuneCircle_GetLiveConfig();
+                  bool portal = (rc->posture == VFX_RUNE_POSTURE_PORTAL);
+                  Vector3 pos = portal ? Vector3Add(s_prefabStartPos, (Vector3){0.0f, rc->radius * 1.15f, 0.0f}) : s_prefabStartPos;
+                  Vector3 nrm = portal ? (Vector3){0.0f, 0.0f, 1.0f} : (Vector3){0.0f, 1.0f, 0.0f};
+                  VFX_ComposeRuneCircleVariant(pos, nrm, rc->variant, rc->radius, progress, 4);
+                  break;
+              }
               case 25: VFX_ComposeShockRingEx(s_prefabStartPos, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.5f, progress, VFXTest_GetShockRingDesc()); break;
               case 26:
               {
@@ -3898,6 +3924,13 @@ void VFXTest_SetRenderTarget(int newfxIndex, Vector3 spawnPos)
     const char *envShockIn = getenv("WUXING_SHOCK_RING_INWARD");
     if (envShockIn && *envShockIn) {
         VFXTest_GetShockRingDesc()->inward = (atoi(envShockIn) != 0);
+    }
+
+    const char *envRuneV = getenv("WUXING_RUNE_CIRCLE_VARIANT");
+    if (envRuneV && *envRuneV) {
+        int rv = (atoi(envRuneV) % VFX_RUNE_VARIANT_COUNT + VFX_RUNE_VARIANT_COUNT) % VFX_RUNE_VARIANT_COUNT;
+        s_runeCircleFixtureVariant = (VFX_RuneCircleVariant)rv;
+        VFX_RuneCircle_GetLiveConfig()->variant = s_runeCircleFixtureVariant;
     }
 
     const char *envShieldP = getenv("WUXING_SHIELD_PRESET");

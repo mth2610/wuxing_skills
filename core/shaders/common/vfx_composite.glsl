@@ -61,6 +61,18 @@ vec4 VFX_ResolveBody(vec3 bodyColor, float bodyIntensity, float coverage)
     return vec4(VFX_Finite3(bodyColor * max(bodyIntensity, 0.0)), a);
 }
 
+// Luminous opacity floor for premultiplied emissive VFX:
+// On dark backgrounds (dst ~ 0), (1 - a) * dst ~ 0 so this is invisible.
+// On bright snow/daylight backgrounds (dst ~ (0.85, 0.92, 1.15)), raising alpha
+// smoothly with emission peak blocks the background's complementary channels
+// (e.g. snow's blue) from leaking into the emitter and shifting amber-gold
+// fire/runes into salmon-pink or washing cyan shields into white.
+float VFX_LuminousOpacity(vec3 glow)
+{
+    float peak = max(glow.r, max(glow.g, glow.b));
+    return clamp(peak / (0.36 + peak), 0.0, 0.94);
+}
+
 vec4 VFX_ResolvePremultiplied(vec3 bodyColor, float bodyIntensity,
                               float coverage, vec3 emissionColor,
                               float coreMask, float emissionGain)
@@ -68,6 +80,7 @@ vec4 VFX_ResolvePremultiplied(vec3 bodyColor, float bodyIntensity,
     float a = clamp(VFX_Finite(coverage), 0.0, 1.0);
     vec3 body = bodyColor * max(bodyIntensity, 0.0) * a;
     vec3 glow = emissionColor * max(coreMask, 0.0) * max(emissionGain, 0.0);
+    a = max(a, VFX_LuminousOpacity(glow));
     return vec4(VFX_Finite3(body + glow), a);
 }
 
@@ -110,6 +123,7 @@ vec4 VFX_ResolveOutput(vec3 bodyColor, float bodyIntensity, float coverage,
     float a = clamp(VFX_Finite(coverage), 0.0, 1.0);
     vec3 body = bodyColor * max(bodyIntensity, 0.0) * a;
     vec3 glow = emissionColor * max(coreMask, 0.0) * max(emissionGain, 0.0);
+    a = max(a, VFX_LuminousOpacity(glow));
     return vec4(VFX_TonemapSafeHDR(body + glow), a);
 #else
     return VFX_ResolvePremultiplied(bodyColor, bodyIntensity, coverage,

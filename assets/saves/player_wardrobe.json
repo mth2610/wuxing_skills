@@ -1,12 +1,12 @@
 {
   "player_id": "Player_1",
   "equipped": {
-    "base_body": "human_body",
-    "torso": "ao_giao_linh_3",
+    "base_body": "male_body_v5",
+    "torso": "",
     "legs": "",
     "boots": "chien_hai_van_du",
     "bracers": "",
-    "headgear": "non_la_hiep_khach",
+    "headgear": "",
     "mask": "",
     "hair": "",
     "waist": "",
@@ -17,6 +17,7 @@
   },
   "unlocked": [
     "human_body",
+    "male_body_v5",
     "ao_giao_linh",
     "ao_tien_hiep",
     "quan_wuxia",

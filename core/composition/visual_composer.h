@@ -1372,10 +1372,44 @@ void VFX_FlowShield_DrawRefraction(Camera3D camera);
 
 // ── E5.1. Glint sparkle ─────────────────────────────────────────────────────
 // Anisotropic star glints over a Fibonacci point cloud (the holy/metal/faith
-// ── E5.2. Rune circle ───────────────────────────────────────────────────────
-// A summoning seal: concentric ribbon rings, alternating written/plain, each on
-// its own spin and breathe. `normal` = the plane's normal ((0,1,0) = flat on the
-// ground). `t01` 0→1 drives open/hold/close. Continuous.
+// ── E5.2. Rune circle (Cổ Ấn Vạn Pháp — 6 WebGL-derived Ancient Seal variants)
+// 3 counter-rotating parallax layers (inner core + main script, outer script +
+// geometric motifs, perimeter energy pulse) + pinpoint orbital embers.
+// `normal` = plane normal ((0,1,0) = flat ground seal; horizontal = standing portal).
+// `t01` 0→1 drives symmetric ignite sweep / hold / fade. Continuous.
+typedef enum {
+    VFX_RUNE_PHAN_THIEN = 0, // Phần Thiên Cổ Ấn — Ancient Fire Seal (amber/gold)
+    VFX_RUNE_BAT_QUAI   = 1, // Bát Quái Thái Cực Ấn — Classic Dao Gold + Bagua + Double Octagon
+    VFX_RUNE_TRU_TIEN   = 2, // Tru Tiên Kiếm Ấn — Frost Steel Cyan + 8 Geometric Sword Blades
+    VFX_RUNE_HUYET_SAT  = 3, // Huyết Sát Ma Ấn — Abyssal Crimson + Sawtooth & Altar Spikes
+    VFX_RUNE_U_MINH     = 4, // U Minh Linh Ấn — Jade Soul Seal + Bronze Mirror Notches + Hexagrams
+    VFX_RUNE_TINH_TU    = 5, // Tinh Tú Chu Thiên Ấn — Violet Astral Astrolabe + 28 Mansions
+    VFX_RUNE_VARIANT_COUNT
+} VFX_RuneCircleVariant;
+
+typedef enum {
+    VFX_RUNE_POSTURE_GROUND = 0, // Flat ground seal (terrain-conformed)
+    VFX_RUNE_POSTURE_PORTAL = 1, // Standing vertical portal seal
+    VFX_RUNE_POSTURE_COUNT
+} VFX_RuneCirclePosture;
+
+typedef struct {
+    VFX_RuneCircleVariant variant;
+    VFX_RuneCirclePosture posture;
+    float radius;
+    float spinSpeed;
+    float glow;
+    float embers;
+    float parallax;
+} VFX_RuneCircleConfig;
+
+const char *VFX_RuneCircleVariant_Name(VFX_RuneCircleVariant variant);
+VFX_RuneCircleVariant VFX_RuneCircle_VariantForMaterial(VC_MaterialId mat);
+VFX_RuneCircleConfig *VFX_RuneCircle_GetLiveConfig(void);
+int VFX_RuneCircle_GetParams(VFX_RuneCircleConfig *cfg, VFX_ParamDef *out, int maxOut);
+void VFX_ComposeRuneCircleVariant(Vector3 center, Vector3 normal,
+                                  VFX_RuneCircleVariant variant,
+                                  float radius, float t01, int ringCount);
 void VFX_ComposeRuneCircle(Vector3 center, Vector3 normal, VC_MaterialId mat, float radius, float t01, int ringCount);
 
 // ── PRIMARY. Core glow ──────────────────────────────────────────────────────

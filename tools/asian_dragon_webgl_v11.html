@@ -1,0 +1,2809 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Kim Long X • Serpentine Motion &amp; Skill Lab</title>
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#070910;color:#eee;font-family:system-ui,-apple-system,sans-serif}
+canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab}
+canvas:active{cursor:grabbing}
+.top{position:absolute;top:24px;left:28px;pointer-events:none;max-width:52vw}
+.eyebrow{font-size:10px;color:#d6ae72;letter-spacing:4px;font-weight:700}
+.top h1{font-family:Georgia,serif;font-weight:400;font-size:clamp(26px,3.6vw,46px);margin:6px 0 0;letter-spacing:3px;text-shadow:0 3px 22px #000}
+.sub{font-size:12px;color:#a8a6b0;letter-spacing:.8px;margin-top:5px}
+.event-banner{margin-top:10px;display:inline-flex;align-items:center;gap:8px;padding:5px 11px;border-radius:999px;background:#121722cc;border:1px solid #d6ae7255;font-size:11px;color:#f4d399;letter-spacing:1px;opacity:0;transform:translateY(-4px);transition:opacity .18s,transform .18s}
+.event-banner.show{opacity:1;transform:translateY(0)}
+.event-dot{width:7px;height:7px;border-radius:50%;background:#ffae42;box-shadow:0 0 10px #ffae42}
+.panel{position:absolute;right:20px;top:20px;background:#0e121be4;border:1px solid #ffffff1a;border-radius:13px;padding:14px;width:264px;max-height:calc(100dvh - 40px);overflow:auto;backdrop-filter:blur(14px)}
+.panel::-webkit-scrollbar{width:5px}
+.panel::-webkit-scrollbar-thumb{background:#ffffff24;border-radius:4px}
+.panel h2{font-size:10.5px;letter-spacing:2px;color:#d6ae72;margin:0 0 10px;display:flex;justify-content:space-between;align-items:center}
+.section{margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid #ffffff1c}
+.section:last-of-type{border-bottom:none;margin-bottom:4px;padding-bottom:0}
+.row{display:flex;gap:6px;margin:6px 0}
+.row button{flex:1}
+button{background:#1d232f;border:1px solid #ffffff1e;border-radius:7px;color:#ddd;padding:7px 6px;font:11.5px system-ui;cursor:pointer;transition:background .15s,border-color .15s}
+button:hover,button.active{background:#423023;border-color:#b5864c;color:#ffe2b0}
+select{width:100%;background:#1d232f;color:#eee;border:1px solid #ffffff25;padding:7px 8px;border-radius:6px;font:12px system-ui}
+.range{display:grid;grid-template-columns:76px 1fr 34px;align-items:center;gap:6px;font-size:11.5px;color:#b8bac2;margin:8px 0}
+.range span{text-align:right;font-variant-numeric:tabular-nums;color:#d6ae72;font-size:10.5px}
+input[type=range]{width:100%;accent-color:#cda66e;margin:0}
+.checks{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:8px 0 4px;font-size:11px;color:#c2c5cf}
+.checks label{display:flex;align-items:center;gap:5px;cursor:pointer}
+.swatches{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin-top:8px}
+.swatches label{display:flex;flex-direction:column;align-items:center;gap:3px;font-size:10px;color:#b8bbc3}
+.swatches input{width:38px;height:24px;padding:2px;border:1px solid #ffffff25;background:#1d232f;border-radius:4px;cursor:pointer}
+.status{font-size:10.5px;color:#d6ae72;min-height:14px;margin-top:4px;line-height:1.4}
+.events-bar{position:relative;height:14px;background:#161b26;border:1px solid #ffffff18;border-radius:4px;margin:6px 0 2px;overflow:hidden}
+.events-fill{position:absolute;top:0;bottom:0;left:0;background:linear-gradient(90deg,#7c5528,#d6ae72);opacity:.38;width:0%}
+.events-marker{position:absolute;top:0;bottom:0;width:2px;background:#ffbe55;box-shadow:0 0 6px #ffbe55}
+.stats{font-size:10px;color:#8d929e;line-height:1.7;margin-top:10px;border-top:1px solid #ffffff16;padding-top:8px}
+.foot{position:absolute;bottom:18px;left:28px;font-size:11px;color:#a0a4b2;pointer-events:none}
+.tag{color:#d6ae72}
+.error{position:absolute;inset:0;display:none;place-items:center;background:#111;color:white;padding:30px;z-index:10}
+@media(max-width:700px){
+  .top{top:14px;left:14px;max-width:60vw}
+  .panel{top:auto;bottom:36px;right:10px;width:225px;max-height:62dvh;padding:10px}
+  .stats{display:none}
+  .foot{left:12px;bottom:10px;font-size:10px}
+}
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div class="top">
+  <div class="eyebrow">SERPENTINE KINEMATICS &amp; SKILL LAB / 10</div>
+  <h1 id="dragonName">KIM LONG</h1>
+  <div class="sub">Spline-Follow Solver · 10 chuyển động uốn lượn &amp; Skill · Socket VFX · Export JSON</div>
+  <div class="event-banner" id="eventBanner"><span class="event-dot"></span><span id="eventText">ready</span></div>
+</div>
+
+<div class="panel">
+  <h2>CHUYỂN ĐỘNG UỐN LƯỢN &amp; SKILL</h2>
+  <div class="section">
+    <select id="clip" aria-label="Chọn chuyển động hoặc skill">
+      <optgroup label="Uốn lượn cơ bản (Loop)">
+        <option value="swim_s" selected>Du Long · Uốn chữ S (Air Swim)</option>
+        <option value="idle_float">Vân Long · Lơ lửng thở sóng</option>
+        <option value="figure8">Bát Tự · Lượn số 8 không trung</option>
+        <option value="coil_orbit">Bàn Long · Quấn trụ hộ thể</option>
+      </optgroup>
+      <optgroup label="Chuyển động dựng Skill (One-shot)">
+        <option value="spiral_rise">Thanh Long Thăng Thiên · Xoắn ốc</option>
+        <option value="coil_lunge">Thần Long Phá Không · Thu thân phóng</option>
+        <option value="dive_strike">Thiên Long Giáng Thế · Bổ nhào AoE</option>
+        <option value="breath_sweep">Long Tức Quét Ngang · Phun quét</option>
+        <option value="tail_whip">Thần Long Bãi Vĩ · Quất đuôi</option>
+        <option value="rear_roar">Long Ngâm Chấn Thiên · Dựng cổ gầm</option>
+      </optgroup>
+    </select>
+
+    <div class="row">
+      <button id="playSkill">Phát lại</button>
+      <button id="anim" class="active">Chạy</button>
+      <button id="stopSkill">Du Long</button>
+    </div>
+
+    <div class="events-bar" id="eventsBar" title="Timeline & Skill Event Markers">
+      <div class="events-fill" id="eventsFill"></div>
+    </div>
+    <div class="range">Timeline <input id="scrub" type="range" min="0" max="1" step="0.001" value="0"><span id="scrubVal">0.00s</span></div>
+    <div class="range">Tốc độ <input id="speed" type="range" min="0.20" max="2.2" step="0.05" value="1"><span id="speedVal">1.00x</span></div>
+
+    <div class="checks">
+      <label><input id="rootMotion" type="checkbox" checked> Root motion</label>
+      <label><input id="followCam" type="checkbox" checked> Bám theo rồng</label>
+      <label><input id="showGuides" type="checkbox"> Quỹ đạo &amp; VFX</label>
+      <label><input id="loopSkill" type="checkbox"> Lặp skill</label>
+    </div>
+    <div class="status" id="skillStatus">swim_s · loop</div>
+  </div>
+
+  <h2>TINH CHỈNH SÓNG (SKILL PARAMS)</h2>
+  <div class="section">
+    <div class="range">Uốn ngang <input id="ampX" type="range" min="0" max="2.2" step="0.05" value="1.00"><span id="ampXVal">1.00</span></div>
+    <div class="range">Nhấp nhô <input id="ampY" type="range" min="0" max="2.2" step="0.05" value="1.00"><span id="ampYVal">1.00</span></div>
+    <div class="range">Bước sóng <input id="freq" type="range" min="0.5" max="2.2" step="0.05" value="1.00"><span id="freqVal">1.00</span></div>
+    <div class="range">Nghiêng cua <input id="bank" type="range" min="0" max="2.0" step="0.05" value="1.00"><span id="bankVal">1.00</span></div>
+    <div class="range">Mở hàm <input id="jaw" type="range" min="0" max="45" step="1" value="4"><span id="jawVal">4°</span></div>
+    <div class="row">
+      <button id="exportSkill">Xuất Skill JSON</button>
+      <button id="resetParams">Mặc định</button>
+    </div>
+    <div class="status" id="exportStatus" aria-live="polite"></div>
+  </div>
+
+  <h2>LONG TỘC / VẬT LIỆU</h2>
+  <div class="section">
+    <div class="row" style="margin-top:0">
+      <select id="variant" aria-label="Loại rồng" style="flex:1.2">
+        <option value="gold">Kim Long</option>
+        <option value="fire">Hỏa Long</option>
+        <option value="jade">Thanh Long</option>
+        <option value="white">Bạch Long</option>
+        <option value="black">Hắc Long</option>
+        <option value="custom">Tùy chỉnh</option>
+      </select>
+      <select id="quality" aria-label="Chất lượng" style="flex:1">
+        <option value="game">Game</option>
+        <option value="mobile">Mobile</option>
+        <option value="hero">Hero</option>
+      </select>
+    </div>
+    <div class="swatches">
+      <label>Vảy<input id="colorScale" type="color" value="#b88834"></label>
+      <label>Vây<input id="colorFin" type="color" value="#8c3b15"></label>
+      <label>Bờm<input id="colorMane" type="color" value="#e2cfa9"></label>
+      <label>Bụng<input id="colorBelly" type="color" value="#c8ab7c"></label>
+    </div>
+    <div class="row"><button id="copyPalette">Sao chép Palette JSON</button></div>
+    <div class="status" id="paletteStatus" aria-live="polite"></div>
+  </div>
+
+  <h2>GÓC NHÌN &amp; DEBUG</h2>
+  <div class="section">
+    <div class="row"><button id="fullview" class="active">Toàn cảnh</button><button id="headview">Cận đầu</button><button id="topview">Từ trên</button></div>
+    <div class="row"><button id="auto">Tự xoay</button><button id="bones">Xương</button><button id="rest">Bind pose</button></div>
+    <div class="row"><button id="wire">Wireframe</button><button id="reset">Đặt lại</button><button id="screen">Full</button></div>
+    <div class="range">Ánh sáng <input id="light" aria-label="Ánh sáng" type="range" min="0.4" max="1.6" step="0.05" value="1"><span id="lightVal">1.00</span></div>
+  </div>
+
+  <div class="stats" id="stats">WebGL 2 · hình học thực</div>
+</div>
+
+<div class="foot"><span class="tag">Kéo</span> xoay · <span class="tag">Cuộn</span> zoom · <span class="tag">Shift + kéo</span> di chuyển · <span class="tag">Space</span> chạy/dừng · <span class="tag">R</span> phát lại skill</div>
+<div class="error" id="error"></div>
+
+<script>
+'use strict';
+const canvas = document.getElementById('gl');
+const gl = canvas.getContext('webgl2', { antialias: true, alpha: false, powerPreference: 'high-performance' });
+function fail(e) {
+  const el = document.getElementById('error');
+  el.style.display = 'grid';
+  el.textContent = 'Không thể khởi tạo WebGL 2: ' + e;
+  throw Error(e);
+}
+if (!gl) fail('Trình duyệt hoặc GPU không hỗ trợ WebGL 2.');
+
+const qualityKey = new URLSearchParams(location.search).get('quality') || 'game';
+const quality = ({
+  hero:   { grid: .78, scale: [5, 4], shadow: 2048, pcf: 9, dpr: 1.75, lights: 4 },
+  game:   { grid: .54, scale: [3, 3], shadow: 1024, pcf: 4, dpr: 1.35, lights: 3 },
+  mobile: { grid: .35, scale: [2, 2], shadow: 0,    pcf: 0, dpr: 1.0,  lights: 1 }
+})[qualityKey] || { grid: .54, scale: [3, 3], shadow: 1024, pcf: 4, dpr: 1.35, lights: 3 };
+
+const PI = Math.PI, TAU = PI * 2;
+const V = (x = 0, y = 0, z = 0) => [x, y, z];
+const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const mul = (a, s) => [a[0] * s, a[1] * s, a[2] * s];
+const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const len = a => Math.hypot(a[0], a[1], a[2]);
+const norm = a => mul(a, 1 / (len(a) || 1));
+const mix = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+const lerp = (a, b, t) => a + (b - a) * t;
+const smooth = t => { t = clamp(t, 0, 1); return t * t * (3 - 2 * t); };
+const smoother = t => { t = clamp(t, 0, 1); return t * t * t * (t * (t * 6 - 15) + 10); };
+
+let seed = 1047;
+function rnd() { seed = (1664525 * seed + 1013904223) >>> 0; return seed / 4294967296; }
+const range = (a, b) => lerp(a, b, rnd());
+
+function cat(points, t) {
+  let q = clamp(t, 0, 1) * (points.length - 1);
+  let i = Math.min(points.length - 2, Math.floor(q));
+  let s = q - i;
+  let a = points[Math.max(0, i - 1)];
+  let b = points[i];
+  let c = points[i + 1];
+  let d = points[Math.min(points.length - 1, i + 2)];
+  return b.map((x, k) => 0.5 * ((2 * x) + (-a[k] + c[k]) * s + (2 * a[k] - 5 * x + 4 * c[k] - d[k]) * s * s + (-a[k] + 3 * x - 3 * c[k] + d[k]) * s * s * s));
+}
+
+function frame(fn, t, ref = V(0, 1, 0)) {
+  const p = fn(t);
+  const T = norm(sub(fn(Math.min(1, t + .001)), fn(Math.max(0, t - .001))));
+  let U = sub(ref, mul(T, dot(ref, T)));
+  if (len(U) < .08) U = sub(V(0, 0, 1), mul(T, T[2]));
+  U = norm(U);
+  let R = norm(cross(T, U));
+  return { p, T, U, R };
+}
+
+function basis(p, X, Y, Z) {
+  return v => add(p, add(mul(X, v[0]), add(mul(Y, v[1]), mul(Z, v[2]))));
+}
+
+const hex = h => {
+  let n = parseInt(h, 16);
+  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255].map(x => Math.pow(x, 2.2));
+};
+const mat = (h, m = .1, r = .55, e = 0) => ({ c: hex(h), m, r, e });
+
+// Semantic material channels (0..12) + fixed anatomical materials (-1)
+const skin = mat('523117', .14, .62), deep = mat('211109', .05, .78), red = mat('b88834', .42, .42);
+const gold = mat('c9a76a', .28, .44), darkGold = mat('5c3d1e', .15, .62), ivory = mat('c8ab7c', .06, .58);
+const cream = mat('e2cfa9', .02, .68), maneRed = mat('8a491c', .04, .66), claw = mat('d9c49e', .12, .38);
+const eye = mat('ffa41c', .04, .10, .48), fin = mat('8c3b15', .10, .52), finTip = mat('dfa855', .14, .44), nose = mat('422414', .08, .54);
+const mouth = mat('14070d', .0, .78), tongue = mat('7d2531', .02, .42), pupil = mat('080404', .0, .10);
+const tooth = mat('e4d8c0', .04, .30), glint = mat('fff9ee', .0, .06, 1.45);
+
+const roles = ['skin','deep','scale','horn','hornDetail','belly','mane','maneAccent','claw','eye','fin','finTip','nose'];
+[skin, deep, red, gold, darkGold, ivory, cream, maneRed, claw, eye, fin, finTip, nose].forEach((m, i) => m.slot = i);
+
+// Grounded, rich ancient-bronze / organic-keratin / silk-mane PBR palettes (zero candy-plastic glare)
+const variants = {
+  gold: {
+    name: 'KIM LONG',
+    colors: ['5a3617','241309','b88834','cbb078','5e3f1f','c8ab7c','e2cfa9','8c4b1c','d9c49e','ffa41b','8c3b15','dfa855','442514'],
+    metal:  [.14,.05,.42,.26,.14,.06,.02,.04,.12,.04,.10,.14,.08],
+    rough:  [.62,.78,.42,.44,.60,.58,.68,.66,.36,.12,.52,.44,.54]
+  },
+  fire: {
+    name: 'HỎA LONG',
+    colors: ['4a1513','1f080b','9e2f1d','bfa070','54311a','c79e78','e6c8a8','8f2a14','d8b78c','ff9a1c','781c14','e89344','3a1213'],
+    metal:  [.08,.04,.18,.22,.12,.05,.02,.04,.12,.04,.08,.12,.06],
+    rough:  [.64,.78,.46,.46,.60,.60,.70,.66,.36,.12,.52,.44,.54]
+  },
+  jade: {
+    name: 'THANH LONG',
+    colors: ['153d38','0a1f1b','2c785f','aebd98','3e523f','b1c498','d2e6d3','1b5557','b4cab2','9ef25c','114a48','72c99e','143330'],
+    metal:  [.10,.04,.22,.20,.12,.05,.02,.04,.10,.04,.10,.14,.06],
+    rough:  [.60,.76,.42,.46,.58,.58,.68,.66,.38,.12,.50,.42,.54]
+  },
+  white: {
+    name: 'BẠCH LONG',
+    colors: ['6e7e8c','334152','cdd7de','c4d0de','5d6f85','dfd6c7','f0ede2','7d99b0','d4dbe0','76d8ff','6b87a0','d8f2fa','566878'],
+    metal:  [.10,.04,.18,.24,.14,.05,.02,.04,.12,.04,.08,.12,.06],
+    rough:  [.62,.76,.46,.44,.58,.60,.70,.66,.38,.12,.52,.44,.54]
+  },
+  black: {
+    name: 'HẮC LONG',
+    colors: ['1a1f29','090c12','313947','748296','343a4a','706f74','9ea2b5','333a4f','8c9aad','ff7828','25243b','7e78b0','1c1f29'],
+    metal:  [.14,.06,.30,.28,.16,.06,.02,.05,.16,.04,.10,.14,.08],
+    rough:  [.58,.76,.40,.42,.58,.60,.68,.66,.36,.12,.50,.44,.52]
+  }
+};
+
+function presetData(key) {
+  let p = variants[key];
+  if (!p) throw Error('Unknown dragon variant: ' + key);
+  return Object.fromEntries(roles.map((r, i) => [r, { color: '#' + p.colors[i], metallic: p.metal[i], roughness: p.rough[i] }]));
+}
+
+let activeVariant = 'gold', currentPalette = presetData('gold');
+let paletteRGB = new Float32Array(roles.length * 3), paletteFinish = new Float32Array(roles.length * 2);
+function rebuildPalette() {
+  roles.forEach((r, i) => {
+    let p = currentPalette[r];
+    paletteRGB.set(hex(p.color.replace('#', '')), i * 3);
+    paletteFinish.set([p.metallic, p.roughness], i * 2);
+  });
+}
+rebuildPalette();
+
+const luminance = c => c[0] * .2126 + c[1] * .7152 + c[2] * .0722;
+let verts = [], inds = [], skinData = [], styleData = [], binding = () => [0, 0, 1, 0];
+
+// styleData per vertex = [slot, style, ex, ey]. For scales: style = position along the scale (0.05..1),
+// ex = across-scale coordinate u, ey = dorsal factor (0 = flank/belly side, 1 = spine ridge).
+function vertex(p, n, m, c = m.c, w = null, style = 0, ex = 0, ey = 0) {
+  let i = verts.length / 12, slot = m.slot ?? -1;
+  let shade = slot < 0 ? 1 : clamp(luminance(c) / Math.max(.00001, luminance(m.c)), .10, 2.0);
+  verts.push(...p, ...norm(n), ...(slot < 0 ? c : [shade, shade, shade]), m.m, m.r, m.e);
+  skinData.push(...(w || binding(p)));
+  styleData.push(slot, style, ex, ey);
+  return i;
+}
+
+function grid(nu, nv, fn, flip = false, exact = false) {
+  if (!exact) {
+    nu = Math.max(2, Math.round(nu * quality.grid));
+    nv = Math.max(2, Math.round(nv * quality.grid));
+  }
+  let off = verts.length / 12;
+  for (let j = 0; j <= nv; j++) {
+    for (let i = 0; i <= nu; i++) {
+      const u = i / nu, v = j / nv, { p, n, m, c, w, style, ex, ey } = fn(u, v);
+      vertex(p, n, m, c || m.c, w, style || 0, ex || 0, ey || 0);
+    }
+  }
+  for (let j = 0; j < nv; j++) {
+    for (let i = 0; i < nu; i++) {
+      let a = off + j * (nu + 1) + i, b = a + 1, c = a + nu + 1, d = c + 1;
+      if (flip) inds.push(a, c, b, b, c, d);
+      else inds.push(a, b, c, b, d, c);
+    }
+  }
+}
+
+function surface(nu, nv, fn, m, col, flip = false, styleFn = null, exact = false) {
+  grid(nu, nv, (u, v) => {
+    let p = fn(u, v);
+    let du = sub(fn(Math.min(1, u + .0006), v), fn(Math.max(0, u - .0006), v));
+    let dv = sub(fn(u, Math.min(1, v + .0006)), fn(u, Math.max(0, v - .0006)));
+    let n = norm(cross(du, dv));
+    if (flip) n = mul(n, -1);
+    let st = styleFn ? styleFn(u, v) : 0;
+    if (!Array.isArray(st)) st = [st, 0, 0];
+    return { p, n, m, c: col ? col(u, v) : m.c, style: st[0], ex: st[1], ey: st[2] };
+  }, flip, exact);
+}
+
+function ell(center, rad, m, axes = [V(1,0,0), V(0,1,0), V(0,0,1)], seg = 22, rings = 14, tintMul = 1) {
+  const [X, Y, Z] = axes;
+  grid(seg, rings, (u, v) => {
+    let a = u * TAU, b = v * PI;
+    let d = [Math.sin(b) * Math.cos(a), Math.cos(b), Math.sin(b) * Math.sin(a)];
+    return {
+      p: add(center, add(mul(X, d[0] * rad[0]), add(mul(Y, d[1] * rad[1]), mul(Z, d[2] * rad[2])))),
+      n: add(mul(X, d[0] / rad[0]), add(mul(Y, d[1] / rad[1]), mul(Z, d[2] / rad[2]))),
+      m,
+      c: tintMul === 1 ? m.c : mul(m.c, tintMul)
+    };
+  }, true);
+}
+
+// Polar-oriented anatomical eyeball (+Z = outward cornea center) with crisp limbal ring & iris shading
+function dragonEyeball(center, rad, m, axes, seg = 28, rings = 18) {
+  const [X, Y, Z] = axes;
+  grid(seg, rings, (u, v) => {
+    let a = u * TAU, b = v * PI; // b=0 at cornea apex (+Z), b=PI/2 at equator
+    let sx = Math.sin(b) * Math.cos(a), sy = Math.sin(b) * Math.sin(a), sz = Math.cos(b);
+    let rIris = Math.sin(b); // 0 at pupil center, 1 at equator
+    // Natural fiery iris gradient: glowing golden core, warm amber mid-iris, crisp dark limbal ring near edge
+    let radialFibers = .94 + .06 * Math.sin(a * 18.0);
+    let coreGlow = 1.24 - .28 * smooth((rIris - .18) / .45);
+    let limbalDark = 1.0 - .62 * smooth((rIris - .62) / .24);
+    let upperShadow = 1.0 - .18 * smooth((sy - .25) / .65);
+    let shade = clamp(radialFibers * coreGlow * limbalDark * upperShadow, .22, 1.35);
+    return {
+      p: add(center, add(mul(X, sx * rad[0]), add(mul(Y, sy * rad[1]), mul(Z, sz * rad[2])))),
+      n: add(mul(X, sx / rad[0]), add(mul(Y, sy / rad[1]), mul(Z, sz / rad[2]))),
+      m,
+      c: mul(m.c, shade),
+      style: clamp(rIris, 0, 1)
+    };
+  }, false, true);
+}
+
+function tube(points, rad, m, seg = 20, sides = 12, ref = V(0,1,0), ellip = 1, col = null, styleFn = null) {
+  let fn = t => cat(points, t);
+  grid(sides, seg, (u, t) => {
+    const f = frame(fn, t, ref), a = u * TAU, r = typeof rad === 'function' ? rad(t) : rad;
+    const dr = add(mul(f.U, Math.cos(a)), mul(f.R, Math.sin(a) * ellip));
+    const n = add(mul(f.U, Math.cos(a)), mul(f.R, Math.sin(a) / ellip));
+    return { p: add(f.p, mul(dr, r)), n, m, c: col ? col(u, t) : m.c, style: styleFn ? styleFn(u, t) : 0 };
+  });
+}
+
+// Soft tapered silk-flame hair lock with natural root-to-tip maneAccent gradient & subtle twist
+function strand(points, w, m, ref = V(0,0,1), flat = .36, grad = 0, twist = 0, gp = 1.15) {
+  let fn = t => cat(points, t);
+  surface(10, 18, (u, t) => {
+    let f = frame(fn, t, ref), a = u * TAU + twist * t;
+    let profile = Math.pow(Math.sin(PI * (.10 + .90 * t)), .58) * Math.pow(Math.max(0, 1 - t), .55);
+    let rr = w * (.08 + .95 * profile) + .001;
+    let flute = 1 + .12 * Math.cos(u * TAU * 3.0);
+    return add(f.p, mul(add(mul(f.U, Math.cos(a)), mul(f.R, Math.sin(a) * flat)), rr * flute));
+  }, m, (u, t) => mul(m.c, .72 + .10 * Math.cos(u * TAU * 3.0) + .24 * Math.pow(t, .65)), false,
+  grad > 0 ? (u, t) => grad * Math.pow(1 - t, gp) : null);
+}
+
+// Majestic S-coiled spine (proud elevated chest & neck, sleek sweeping coils)
+const anchors = [
+  V(-7.15, 2.06, 1.38),
+  V(-6.45, 1.74, .86),
+  V(-5.55, 1.06, .20),
+  V(-4.35, .10, -.26),
+  V(-2.90, -.52, .12),
+  V(-1.35, -.38, .86),
+  V(.25, .42, 1.08),
+  V(1.85, 1.15, .36),
+  V(3.35, 1.12, -.76),
+  V(4.70, .42, -1.35),
+  V(5.85, -.38, -.88),
+  V(6.85, -.74, .05),
+  V(7.80, -.42, .94),
+  V(8.75, .26, 1.16),
+  V(9.65, .96, .58)
+];
+
+let samples = [], total = 0;
+for (let i = 0; i <= 1100; i++) {
+  let p = cat(anchors, i / 1100);
+  if (i) total += len(sub(p, samples[i - 1].p));
+  samples.push({ p, d: total });
+}
+function spine(t) {
+  let d = clamp(t, 0, 1) * total, l = 0, h = samples.length - 1;
+  while (h - l > 1) {
+    let k = (h + l) >> 1;
+    if (samples[k].d < d) l = k; else h = k;
+  }
+  return mix(samples[l].p, samples[h].p, (d - samples[l].d) / (samples[h].d - samples[l].d || 1));
+}
+
+let frames = [];
+for (let i = 0; i <= 660; i++) {
+  let t = i / 660, p = spine(t);
+  let T = norm(sub(spine(Math.min(1, t + .002)), spine(Math.max(0, t - .002))));
+  let U = norm(sub(V(0, 1, 0), mul(T, T[1])));
+  let R = norm(cross(T, U));
+  frames.push({ p, T, U, R });
+}
+function F(t) {
+  let f = frames[Math.round(clamp(t, 0, 1) * 660)];
+  return { ...f, p: spine(t) };
+}
+
+function radius(t) {
+  let neckToChest = .40 + .22 * Math.exp(-Math.pow((t - .22) / .20, 2));
+  let midSwell = .08 * Math.exp(-Math.pow((t - .54) / .22, 2));
+  let taper = Math.pow(Math.max(.001, 1 - Math.pow(t, 2.05)), .92);
+  return (neckToChest + midSwell) * taper + .018;
+}
+
+function bodyShape(a) {
+  let c = Math.cos(a), s = Math.sin(a);
+  let rx = 1.0 + .05 * Math.sin(PI * Math.max(0, c));
+  let ry = c > 0 ? (1.06 + .05 * Math.pow(c, 4)) : (.90 + .06 * (1 + c));
+  return [ry * c, rx * s];
+}
+function radial(f, a) { return add(mul(f.U, Math.cos(a)), mul(f.R, Math.sin(a))); }
+function bodyPoint(t, a, offset = 0) {
+  let f = F(t), r = radius(t), [cy, cx] = bodyShape(a);
+  let dir = add(mul(f.U, cy), mul(f.R, cx));
+  let n = norm(dir);
+  return add(f.p, add(mul(dir, r), mul(n, offset)));
+}
+
+// Named hierarchical bind skeleton (38 bones)
+const bones = [], NS = 24;
+function bone(name, parent, p, axis = V(0, 1, 0), kind = 'spine') {
+  let id = bones.length;
+  bones.push({ name, parent, p, axis: norm(axis), kind });
+  return id;
+}
+for (let i = 0; i < NS; i++) {
+  let f = F(i / (NS - 1));
+  bone(i === 0 ? 'neck_00' : i < 5 ? 'neck_' + String(i).padStart(2, '0') : i < 17 ? 'spine_' + String(i - 5).padStart(2, '0') : 'tail_' + String(i - 17).padStart(2, '0'), i - 1, f.p, f.U, 'spine');
+}
+
+const hf = F(0);
+const rawHZ = mul(hf.T, -1);
+const HZ = norm(add(mul(rawHZ, .88), V(rawHZ[0] * .22, -.14, rawHZ[2] * .22)));
+const HY = norm(sub(V(0, 1, 0), mul(HZ, HZ[1])));
+const HX = norm(cross(HY, HZ));
+const H = basis(hf.p, HX, HY, HZ), HA = [HX, HY, HZ];
+
+const HEAD = bone('head', 0, H(V(0, .03, -.18)), HY, 'head');
+const JAW  = bone('jaw', HEAD, H(V(0, -.21, -.04)), HX, 'jaw');
+
+function rigid(i) { return [i, i, 1, 0]; }
+function blend(i, j, t) { t = clamp(t, 0, 1); return [i, j, 1 - t, t]; }
+function spineW(t) { let q = clamp(t, 0, 1) * (NS - 1), i = Math.min(NS - 2, Math.floor(q)); return blend(i, i + 1, q - i); }
+function nearSpine(p, t) {
+  let k = Math.round(t * 660), best = k, dd = Infinity;
+  for (let i = Math.max(0, k - 14); i <= Math.min(660, k + 14); i++) {
+    let d = sub(p, frames[i].p), d2 = dot(d, d);
+    if (d2 < dd) { best = i; dd = d2; }
+  }
+  return spineW(best / 660);
+}
+
+// Base torso hide (deep matte shadow crevices under scales for grounded armor depth)
+grid(60, 360, (u, t) => {
+  let a = u * TAU, f = F(t), n = radial(f, a);
+  let belly = Math.max(0, (-Math.cos(a) - .38) / .62);
+  let dorsalAO = .82 - .16 * Math.pow(Math.max(0, Math.cos(a)), 6);
+  return { p: bodyPoint(t, a), n, m: skin, c: mul(skin.c, (.60 + .18 * belly) * dorsalAO), w: spineW(t) };
+});
+
+// Sculpted keeled dragon scales with deep root AO and satin rim highlight
+function scaleWidth(v) {
+  return Math.max(.015, (1 - .42 * v) * Math.pow(Math.max(0, 1 - Math.pow(v, 2.5)), .62) * (.84 + .16 * Math.sin(Math.min(v * 3, 1) * PI / 2)));
+}
+function scaleRelief(u, v) {
+  let x = 2 * u - 1, side = Math.max(0, 1 - x * x), keel = Math.exp(-Math.pow(x / .32, 2));
+  return (.015 + .064 * v) * Math.pow(side, .75) * Math.sin(PI * (.12 + .88 * v)) + .024 * v * v + .016 * keel * v - .015 * (1 - v);
+}
+function scaleShade(u, v, variation) {
+  let x = Math.abs(2 * u - 1), keel = Math.exp(-Math.pow(x / .26, 2));
+  let rootAO = .66 + .34 * smooth(v / .42);
+  let edgeRim = .06 * smooth((v - .68) / .28) * (1 - x * x);
+  return variation * rootAO * (.88 + .10 * Math.sin(PI * v) + .10 * keel + edgeRim - .16 * Math.pow(x, 4) - .06 * Math.pow(v, 10));
+}
+function scale(p, X, Y, Z, w, h, m = red, variation = 1, dors = .5) {
+  const base = basis(p, X, Y, Z);
+  surface(...quality.scale, (u, v) => {
+    let x = 2 * u - 1, side = scaleWidth(v), relief = scaleRelief(u, v) * w;
+    return base(V(x * w * side * .5, (v - .42) * h, relief));
+  }, m, (u, v) => mul(m.c, scaleShade(u, v, variation)), false, (u, v) => [.05 + .95 * v, u, dors], true);
+}
+
+// Body scales along arc length
+let rows = [], d = .08;
+while (d < total * .995) {
+  let t = d / total, r = radius(t), step = clamp(.215 * Math.sqrt(r / .62), .058, .225);
+  rows.push({ t, step });
+  d += step;
+}
+for (let j = 0; j < rows.length; j++) {
+  let { t, step } = rows[j], r = radius(t);
+  if (r < .032) continue;
+  let count = Math.max(7, Math.round(TAU * r / clamp(.24 * Math.sqrt(r / .62), .068, .245)));
+  let dt = step / total * 1.48;
+  binding = p => nearSpine(p, t);
+  for (let k = 0; k < count; k++) {
+    let a = TAU * (k + (j % 2) * .5) / count;
+    if (Math.cos(a) < -.56) continue;
+    let width = TAU / count * 1.15;
+    let dorsalTint = .88 + .15 * Math.cos(a);
+    let variation = range(.92, 1.08) * dorsalTint;
+    let dors = clamp((Math.cos(a) + .56) / 1.56, 0, 1);
+    surface(...quality.scale, (u, v) => {
+      let tt = clamp(t + (v - .40) * dt, 0, 1);
+      let aa = a + (2 * u - 1) * width * .5 * scaleWidth(v);
+      let lift = scaleRelief(u, v) * Math.min(r, .70) * .66;
+      return bodyPoint(tt, aa, lift);
+    }, red, (u, v) => mul(red.c, scaleShade(u, v, variation)), false, (u, v) => [.05 + .95 * v, u, dors], true);
+  }
+}
+
+// Overlapping armored ventral scutes with crisp shaded grooves
+let bellyD = .12;
+while (bellyD < total * .985) {
+  let t = bellyD / total, r = radius(t), pitch = clamp(.34 * Math.sqrt(r / .60), .075, .36);
+  let dt = pitch / total * 1.16, shade = range(.94, 1.06);
+  binding = p => nearSpine(p, t);
+  surface(20, 7, (u, v) => {
+    let a = PI + (u - .5) * 2.02 * (.95 + .05 * Math.sin(PI * v));
+    let tt = clamp(t + (v - .45) * dt, 0, 1);
+    let side = Math.pow(Math.sin(PI * u), .34);
+    let lift = radius(tt) * (.016 + .034 * Math.sin(PI * v) + .022 * v) * side;
+    return bodyPoint(tt, a, lift);
+  }, ivory, (u, v) => mul(ivory.c, shade * (.72 + .28 * smooth(v / .48)) * (.88 + .12 * Math.sin(PI * u))));
+  bellyD += pitch;
+}
+
+// Swept organic dorsal crest fin
+function finProfile(t) {
+  let q = clamp((t - .014) / .970, 0, 1);
+  let env = Math.pow(Math.max(0, Math.sin(PI * Math.pow(q, .72))), .42);
+  let napeBoost = 1.0 + .52 * Math.exp(-Math.pow((q - .13) / .14, 2)) + .16 * Math.exp(-Math.pow((q - .55) / .18, 2));
+  let r = radius(t);
+  let cycle = q * 34;
+  let phase = cycle - Math.floor(cycle);
+  let wave = Math.pow(Math.sin(PI * Math.pow(phase, .68)), 1.15);
+  let sub = .08 * Math.sin(q * 11 * PI);
+  return Math.min(.56, r * .90 * napeBoost) * env * (.38 + .65 * wave + sub);
+}
+function finPoint(t, h, side) {
+  let f = F(t), height = finProfile(t), q = clamp((t - .014) / .970, 0, 1);
+  let phase = (q * 34) % 1;
+  let root = bodyPoint(t, 0, -.016);
+  let sweep = height * (1.05 + .20 * Math.sin(PI * phase)) * Math.pow(h, 1.38);
+  let rib = .72 + .28 * Math.pow(Math.sin(PI * Math.pow(phase, .68)), 6);
+  let thick = (.023 + .013 * rib) * Math.pow(Math.max(0, 1 - h), .72) + .002;
+  return add(root, add(mul(f.U, height * h), add(mul(f.T, sweep), mul(f.R, side * thick))));
+}
+for (let side of [-1, 1]) {
+  binding = () => spineW(0);
+  grid(10, 780, (u, v) => {
+    let t = .014 + .970 * v, p = finPoint(t, u, side);
+    let du = sub(finPoint(t, Math.min(1, u + .001), side), finPoint(t, Math.max(0, u - .001), side));
+    let dv = sub(finPoint(Math.min(.984, t + .00018), u, side), finPoint(Math.max(.014, t - .00018), u, side));
+    let n = mul(norm(cross(du, dv)), -side);
+    let phase = (v * 34) % 1;
+    let ridge = Math.pow(Math.sin(PI * Math.pow(phase, .68)), 8);
+    let shade = .68 + .24 * u + .14 * ridge;
+    return {
+      p, n, m: fin, c: mul(fin.c, shade),
+      w: spineW(clamp(t + finProfile(t) * 1.05 * Math.pow(u, 1.38) / total, 0, 1)),
+      style: smooth((u - .18) / .82)
+    };
+  }, side === 1);
+}
+grid(2, 780, (u, v) => {
+  let t = .014 + .970 * v, p = mix(finPoint(t, 1, -1), finPoint(t, 1, 1), u);
+  return { p, n: F(t).U, m: fin, c: mul(fin.c, .95), style: 1, w: spineW(clamp(t + finProfile(t) * 1.05 / total, 0, 1)) };
+}, false);
+
+// ============================================================================
+// NOBLE IMPERIAL DRAGON HEAD (+Z snout, +Y dorsal, ±X sides)
+// ============================================================================
+binding = () => rigid(HEAD);
+function he(p, r, m, axes = HA, s = 22) { ell(H(p), r, m, axes, s, 15); }
+function ht(ps, r, m, seg = 22, side = 11, ref = HY, e = 1, col = null, sf = null) { tube(ps.map(H), r, m, seg, side, ref, e, col, sf); }
+function hs(ps, w, m, ref = HX, flat = .38, grad = 0, tw = 0) { strand(ps.map(H), w, m, ref, flat, grad, tw); }
+
+function skullLoft(sections, m, detail = 48, sculptFn = null) {
+  let fn = t => cat(sections.map(q => q.slice(0, 3)), t);
+  let rr = t => cat(sections.map(q => [q[3], q[4], 0]), t);
+  surface(64, detail, (u, t) => {
+    let [z, y, w] = fn(t), [up, down] = rr(t);
+    let a = u * TAU, c = Math.cos(a), s = Math.sin(a);
+    let x = s * Math.max(.001, w);
+    let yy = y + c * (c >= 0 ? Math.max(.001, up) : Math.max(.001, down));
+    if (sculptFn) {
+      let res = sculptFn(x, yy, z, c, s, t);
+      x = res[0]; yy = res[1]; z = res[2];
+    }
+    return H(V(x, yy, z));
+  }, m, (u, t) => {
+    let c = Math.cos(u * TAU);
+    let ridgeHi = .10 * Math.pow(Math.max(0, c), 4);
+    let underAO = c < -.15 ? -.22 * (-c - .15) : 0;
+    return mul(m.c, .74 + .20 * Math.max(0, c) + ridgeHi + underAO + .06 * Math.sin(PI * t));
+  }, true);
+}
+
+// Sculpted aristocratic cranium, lean nasal bridge & noble lion-dragon muzzle
+const upperSections = [
+  [-.92, .02, .006, .006, .006],
+  [-.72, .06, .35,  .40,  .32],
+  [-.36, .12, .56,  .56,  .35],
+  [ .06, .14, .59,  .57,  .32],
+  [ .42, .12, .52,  .45,  .25],
+  [ .76, .07, .37,  .27,  .19],
+  [1.12, .06, .35,  .23,  .17],
+  [1.44, .09, .45,  .25,  .16],
+  [1.68, .12, .37,  .21,  .12],
+  [1.81, .13, .18,  .12,  .07],
+  [1.86, .13, .005, .005, .005]
+];
+
+skullLoft(upperSections, red, 52, (x, y, z, c, s) => {
+  let absS = Math.abs(s);
+  let snoutMask = smooth((z - .34) / .42) * (1 - smooth((z - 1.65) / .20));
+  // Chiseled flat-topped nasal bridge
+  if (c > .18) {
+    x *= 1 - .14 * Math.pow(c, 2) * snoutMask;
+    y += .036 * Math.pow(c, 4) * snoutMask;
+  }
+  // Clean orbital recess so the bold eye sits naturally inside the skull
+  let eyeMask = Math.exp(-Math.pow((z - .42) / .22, 2));
+  if (absS > .52 && c > -.08 && c < .72) {
+    let pocket = Math.sin(PI * clamp((c + .08) / .80, 0, 1)) * smooth((absS - .52) / .35);
+    x *= 1 - .18 * eyeMask * pocket;
+  }
+  // Subtle hollowing along mid-snout sides
+  let cheekHollow = Math.exp(-Math.pow((z - .94) / .28, 2));
+  if (absS > .75 && Math.abs(c) < .45) {
+    x *= 1 - .09 * cheekHollow * (1 - Math.abs(c) / .45);
+  }
+  // Subtle fierce maxillary lip curve
+  if (c < .05 && absS > .45) {
+    let lipWeight = smooth((absS - .45) / .45) * (1 - smooth((-.65 - c) / .35));
+    let snarlLift = .042 * Math.exp(-Math.pow((z - 1.15) / .24, 2));
+    let fangDrop  = -.030 * Math.exp(-Math.pow((z - 1.47) / .14, 2));
+    y += (snarlLift + fangDrop) * lipWeight;
+  }
+  // Lion-nose central cleft at snout tip
+  if (z > 1.54 && c > 0 && absS < .42) {
+    let tipMask = smooth((z - 1.54) / .24);
+    let cleft = (1 - absS / .42) * Math.pow(c, 1.5);
+    y -= .034 * tipMask * cleft;
+    z -= .030 * tipMask * cleft;
+  }
+  return [x, y, z];
+});
+
+// Upper palate
+skullLoft([
+  [.02, -.14, .06, .02, .03],
+  [.36, -.15, .39, .04, .04],
+  [.84, -.11, .31, .035, .035],
+  [1.36, -.05, .34, .03, .035],
+  [1.62, -.02, .09, .01, .01]
+], mouth, 22);
+
+// Leathery sculpted nose pad & dorsal forehead crest
+he(V(0, .135, 1.72), V(.23, .095, .125), nose);
+hs([V(0, .33, 1.64), V(0, .38, 1.36), V(0, .34, 1.00), V(0, .57, .54), V(0, .72, .06), V(0, .62, -.46)], .135, skin, HX, .56);
+
+// Sleek interlocking nasal bridge armor plates
+for (let k = 0; k < 8; k++) {
+  let z = .54 + k * .142;
+  let y = .345 - .065 * Math.sin(k / 7 * PI * .85) + (k > 5 ? (k - 5) * .026 : 0);
+  let w = .235 - .038 * Math.sin(k / 7 * PI) + (k > 5 ? .035 : 0);
+  let tilt = k < 2 ? -.26 : (k > 5 ? .14 : -.04);
+  let Z = norm(add(HY, mul(HZ, tilt))), Y = norm(sub(mul(HZ, -1), mul(Z, dot(mul(HZ, -1), Z)))), X = norm(cross(Y, Z));
+  scale(H(V(0, y, z)), X, Y, Z, w, .185, red, .94 + .05 * (k % 2), 1);
+}
+
+// Lower jaw (lean armored mandible)
+binding = () => rigid(JAW);
+skullLoft([
+  [-.14, -.24, .05, .04, .04],
+  [ .12, -.32, .40, .11, .17],
+  [ .48, -.33, .38, .10, .16],
+  [ .88, -.28, .30, .09, .13],
+  [1.28, -.21, .29, .08, .12],
+  [1.56, -.14, .22, .065, .085],
+  [1.67, -.11, .005, .005, .005]
+], red, 38, (x, y, z, c, s) => {
+  if (c < -.3) y += .028 * (-c - .3);
+  if (Math.abs(s) > .7 && c < .1) x *= 1.04;
+  return [x, y, z];
+});
+skullLoft([
+  [.14, -.22, .05, .01, .02],
+  [.48, -.23, .33, .04, .04],
+  [.98, -.19, .24, .035, .035],
+  [1.42, -.12, .18, .025, .025],
+  [1.55, -.10, .01, .005, .005]
+], mouth, 20);
+ht([V(0, -.19, .35), V(0, -.18, .82), V(0, -.14, 1.24), V(0, -.11, 1.44)], t => .15 * Math.sin(PI * (.15 + .85 * t)) * (1 - .45 * t) + .012, tongue, 18, 10, HY, .42);
+
+// Armored chin scutes along lower mandible
+for (let k = 0; k < 5; k++) {
+  let z = .36 + k * .26, y = -.43 + k * .058, w = .35 - k * .042;
+  let Z = norm(add(mul(HY, -1), mul(HZ, .22))), Y = norm(sub(mul(HZ, -1), mul(Z, dot(mul(HZ, -1), Z)))), X = norm(cross(Y, Z));
+  scale(H(V(0, y, z)), X, Y, Z, w, .24, ivory, .94 + .05 * (k % 2));
+}
+
+// Bilateral head features
+binding = () => rigid(HEAD);
+for (const s of [-1, 1]) {
+  // ========================================================================
+  // 1. NOBLE, WIDE-OPEN, BLAZING IMPERIAL DRAGON EYE (Long Mục — ZERO squint!)
+  // ========================================================================
+  const outward = norm(add(mul(HX, s * .76), add(mul(HZ, .64), mul(HY, .03))));
+  const eyeUp = norm(sub(HY, mul(outward, dot(HY, outward))));
+  const eyeH = norm(cross(eyeUp, outward));
+  const backSign = dot(eyeH, mul(HZ, -1)) >= 0 ? 1 : -1;
+  const eyeAxes = [eyeH, eyeUp, outward];
+  const ec = H(V(s * .44, .27, .42));
+
+  // Deep velvety socket rim
+  ell(ec, V(.21, .155, .085), deep, eyeAxes, 26, 14);
+  // Full, commanding, luminous amber-gold eyeball with radial iris shading & dark limbal ring
+  const eyeb = add(ec, mul(outward, .052));
+  dragonEyeball(eyeb, V(.152, .128, .102), eye, eyeAxes, 32, 20);
+  // Dignified sharp dark almond-vertical slit pupil (bold, intense, focused)
+  const pupilPos = add(eyeb, mul(outward, .094));
+  ell(pupilPos, V(.038, .092, .016), pupil, eyeAxes, 20, 14);
+  // Dual corneal specular glints (gives instant life, soul, and intensity)
+  ell(add(pupilPos, add(mul(eyeUp, .036), mul(eyeH, -.026 * backSign))), V(.019, .016, .008), glint, eyeAxes, 12, 8);
+  ell(add(pupilPos, add(mul(eyeUp, -.028), mul(eyeH, .022 * backSign))), V(.009, .008, .006), glint, eyeAxes, 10, 6);
+
+  // Clean, taut, aristocratic eyelids framing the eye wide open (NO thick pinching tubes!)
+  function eyelid(top) {
+    let pts = [];
+    for (let i = 0; i <= 14; i++) {
+      let q = i / 14;
+      let tSym = (q - .5) * backSign; // -0.5 inner corner (nose), +0.5 outer corner (temple)
+      let xOff = (q - .5) * .36;
+      // Gentle dignified almond tilt: slightly anchored inner corner, proud swept outer corner
+      let slant = tSym * .055;
+      // Open vertical aperture: top arch stays cleanly above iris center (+0.106), bottom sits cleanly below (-0.102)
+      let arch = top
+        ? (.108 * Math.sin(PI * Math.pow(q, .90)) + .004)
+        : (-.102 * Math.sin(PI * q) - .004);
+      let outPop = (top ? .086 : .076) + .046 * Math.sin(PI * q);
+      pts.push(add(ec, add(mul(eyeH, xOff), add(mul(eyeUp, arch + slant), mul(outward, outPop)))));
+    }
+    tube(pts, t => (top ? .024 : .018) + (top ? .012 : .008) * Math.sin(PI * t), top ? skin : red, 24, 9, outward);
+  }
+  eyelid(true);
+  eyelid(false);
+
+  // 2. Sculpted noble supraorbital brow ridge (mi cốt) hovering cleanly ABOVE the eye
+  ht([
+    V(s * .14, .32, 1.00),
+    V(s * .35, .44, .74),
+    V(s * .54, .51, .38),
+    V(s * .63, .53, -.04),
+    V(s * .56, .45, -.42)
+  ], t => .068 * Math.sin(PI * (.14 + .82 * t)) + .020, skin, 26, 10, HY, .78);
+
+  // Organic windswept brow plume (varied lengths & curves, NOT stiff parallel pins)
+  const browLocks = [
+    { z: .70, x: .36, y: .46, l: .78, flair: .16, lift: .16, w: .052, tw: .4 },
+    { z: .58, x: .42, y: .50, l: 1.02, flair: .24, lift: .22, w: .064, tw: -.3 },
+    { z: .44, x: .48, y: .53, l: 1.24, flair: .32, lift: .26, w: .072, tw: .5 },
+    { z: .28, x: .54, y: .54, l: 1.12, flair: .30, lift: .18, w: .062, tw: -.4 }
+  ];
+  for (let bl of browLocks) {
+    hs([
+      V(s * bl.x, bl.y, bl.z),
+      V(s * (bl.x + bl.flair * .45), bl.y + bl.lift * .60, bl.z - bl.l * .30),
+      V(s * (bl.x + bl.flair * .95), bl.y + bl.lift * .95, bl.z - bl.l * .66),
+      V(s * (bl.x + bl.flair * .85), bl.y + bl.lift * .45, bl.z - bl.l)
+    ], bl.w, cream, HX, .46, .78, bl.tw * s);
+  }
+
+  // 3. Sculpted cheekbone ridge & flush armor cheek plates
+  ht([
+    V(s * .34, .06, .88),
+    V(s * .54, .07, .46),
+    V(s * .63, .05, .02),
+    V(s * .55, -.03, -.40)
+  ], t => .068 * Math.sin(PI * (.15 + .85 * t)) + .018, red, 20, 9, HY, .72);
+
+  for (let j = 0; j < 5; j++) {
+    for (let k = 0; k < 3; k++) {
+      let z = -.36 + j * .22, y = -.08 + k * .11;
+      if (z > .18 && z < .68 && k === 2) continue; // keep eye socket clean & wide
+      let x = s * (z > .65 ? (.36 - .04 * k) : (.56 - .06 * Math.abs(y)));
+      let Z = norm(add(mul(HX, s * .92), add(mul(HY, y * .55), mul(HZ, .15))));
+      let Y = norm(sub(mul(HZ, -1), mul(Z, dot(mul(HZ, -1), Z))));
+      let X = norm(cross(Y, Z));
+      scale(H(V(x, y, z)), X, Y, Z, .13, .18, red, .88 + .12 * ((j + k) % 2));
+    }
+  }
+
+  // 4. Sculpted cloud-scroll nostrils (long tỵ)
+  he(V(s * .22, .18, 1.67), V(.09, .050, .048), mouth);
+  ht([
+    V(s * .10, .22, 1.72),
+    V(s * .24, .27, 1.66),
+    V(s * .40, .20, 1.50),
+    V(s * .37, .12, 1.32)
+  ], t => .032 + .026 * Math.sin(PI * t), skin, 20, 10, HY, .85);
+
+  // 5. Lip ridge & clean interlocking saber fangs
+  ht([
+    V(s * .34, -.01, 1.66),
+    V(s * .43, -.035, 1.38),
+    V(s * .39, -.01, 1.06),
+    V(s * .42, -.10, .64),
+    V(s * .51, -.14, .18)
+  ], t => .032 + .016 * Math.sin(PI * t), skin, 24, 9);
+
+  const upperTeeth = [
+    { z: 1.54, x: .26, y: -.01, l: .11, r: .032 },
+    { z: 1.41, x: .37, y: -.03, l: .25, r: .048 }, // main saber fang
+    { z: 1.24, x: .36, y: -.02, l: .10, r: .032 },
+    { z: 1.08, x: .34, y: -.02, l: .09, r: .030 },
+    { z: .92,  x: .35, y: -.05, l: .12, r: .034 },
+    { z: .76,  x: .37, y: -.08, l: .14, r: .036 },
+    { z: .58,  x: .40, y: -.11, l: .10, r: .031 },
+    { z: .42,  x: .41, y: -.13, l: .08, r: .028 }
+  ];
+  for (let tk of upperTeeth) {
+    binding = () => rigid(HEAD);
+    let x = s * tk.x;
+    ht([
+      V(x, tk.y, tk.z),
+      V(x * .97, tk.y - tk.l * .58, tk.z + .015),
+      V(x * .86, tk.y - tk.l, tk.z - .034)
+    ], t => tk.r * Math.pow(1 - t, .72) + .002, tooth, 11, 9);
+  }
+  const lowerTeeth = [
+    { z: 1.48, x: .21, y: -.12, l: .10, r: .028 },
+    { z: 1.31, x: .29, y: -.14, l: .19, r: .040 },
+    { z: 1.06, x: .28, y: -.18, l: .09, r: .028 },
+    { z: .82,  x: .30, y: -.21, l: .10, r: .030 },
+    { z: .58,  x: .33, y: -.23, l: .08, r: .026 }
+  ];
+  for (let tk of lowerTeeth) {
+    binding = () => rigid(JAW);
+    let x = s * tk.x;
+    ht([
+      V(x, tk.y, tk.z),
+      V(x * .96, tk.y + tk.l * .58, tk.z + .010),
+      V(x * .88, tk.y + tk.l, tk.z - .022)
+    ], t => tk.r * Math.pow(1 - t, .75) + .002, tooth, 10, 8);
+  }
+
+  // 6. Majestic branching antlers: dark coronet root -> golden shaft -> polished ivory tips, swept back with a graceful curl
+  binding = () => rigid(HEAD);
+  ht([
+    V(s * .33, .45, -.10),
+    V(s * .39, .53, -.22),
+    V(s * .46, .60, -.34)
+  ], t => .215 * (1 - .24 * t) * (1 + .14 * Math.sin(PI * t)), darkGold, 10, 14, HX, .92);
+
+  const horn = [
+    V(s * .37, .49, -.18),
+    V(s * .60, .88, -.54),
+    V(s * .86, 1.28, -1.12),
+    V(s * 1.00, 1.66, -1.82),
+    V(s * .93, 2.02, -2.46),
+    V(s * 1.00, 2.24, -3.02)
+  ];
+  const hornR = t => .190 * Math.pow(1 - t, .60) + .008;
+  ht(horn, hornR, gold, 48, 16, HX, .88,
+    (u, t) => mul(gold.c, .80 + .22 * smooth(t / .55) + .05 * Math.cos(u * TAU * 4)),
+    (u, t) => Math.max(.002, t));
+
+  const tines = [
+    { t: .20, mid: V(s * .16, .34, .22),  tip: V(s * .26, .80, .50),  r: .112 },
+    { t: .44, mid: V(s * .22, .38, .04),  tip: V(s * .40, .94, .14),  r: .098 },
+    { t: .66, mid: V(s * .14, .30, -.06), tip: V(s * .28, .72, -.02), r: .078 },
+    { t: .82, mid: V(s * .06, .22, .04),  tip: V(s * .14, .52, .14),  r: .058 }
+  ];
+  for (let tn of tines) {
+    let p = cat(horn, tn.t);
+    ht([p, add(p, tn.mid), add(p, tn.tip)], q => tn.r * Math.pow(1 - q, .74) + .005, gold, 20, 12, HX, .88,
+      (u, t) => mul(gold.c, .86 + .20 * t),
+      (u, q) => 2 + clamp(.30 + .70 * q, 0, 1));
+  }
+  for (let k = 0; k < 6; k++) {
+    let t = .04 + k * .075, p = cat(horn, t), a = frame(q => cat(horn, q), t, V(1, 0, 0));
+    let r = hornR(t), pp = [];
+    for (let q = 0; q <= 14; q++) pp.push(add(p, mul(radial(a, q / 14 * TAU), r * 1.010)));
+    ht(pp, .0105 * (1 - .5 * t), darkGold, 18, 6, HX);
+  }
+
+  // 7. Sleek swept ear fins
+  for (let k = 0; k < 3; k++) {
+    hs([
+      V(s * .49, .24 - k * .05, -.16),
+      V(s * (.82 + k * .04), .29 + k * .04, -.58),
+      V(s * (1.14 + k * .09), .32 + k * .08, -1.04 - k * .08)
+    ], .145 - k * .020, fin, HX, .25);
+  }
+
+  // 8. Flowing silk-gold whiskers: long, fine, S-waved and trailing back instead of a stiff loop
+  he(V(s * .39, .06, 1.46), V(.072, .052, .072), skin);
+  const wave = (pts, ax, ay, f) => pts.map((q, i) => V(q[0] + s * ax * Math.sin(i * f) * Math.min(1, i / 3), q[1] + ay * Math.cos(i * f * .8), q[2]));
+  const whisk = wave([
+    V(s * .39, .06, 1.48),
+    V(s * .66, .08, 1.76),
+    V(s * 1.00, -.04, 1.74),
+    V(s * 1.36, -.30, 1.48),
+    V(s * 1.68, -.68, 1.02),
+    V(s * 1.90, -1.08, .46),
+    V(s * 1.96, -1.44, -.16),
+    V(s * 1.84, -1.74, -.74)
+  ], .08, .05, 1.25);
+  ht(whisk, t => .050 * Math.pow(1 - t, .85) + .004, gold, 96, 9, HY);
+  const whisk2 = wave([
+    V(s * .45, -.07, 1.10),
+    V(s * .82, -.20, 1.16),
+    V(s * 1.18, -.36, .84),
+    V(s * 1.46, -.56, .30),
+    V(s * 1.58, -.80, -.30),
+    V(s * 1.50, -1.02, -.84)
+  ], .08, .05, 1.6);
+  ht(whisk2, t => .026 * Math.pow(1 - t, .85) + .003, cream, 64, 8, HY, 1, null, (u, t) => .70 * Math.pow(1 - t, 1.2));
+  // fine short chin whiskers
+  ht(wave([
+    V(s * .30, -.20, 1.30),
+    V(s * .62, -.40, 1.10),
+    V(s * .98, -.62, .62),
+    V(s * 1.18, -.84, .02)
+  ], .05, .04, 1.4), t => .016 * Math.pow(1 - t, .85) + .002, cream, 36, 7, HY, 1, null, (u, t) => .55 * Math.pow(1 - t, 1.1));
+
+  // 9. Organic clustered windswept mane (varied twist, curl, length — ZERO stiff comb rows!)
+  const sideMane = [
+    // Upper temple sweeping plumes
+    { p: [.44, .46, -.18], l: 1.55, fl: .42, up: .38, w: .155, tw: .7,  g: .84 },
+    { p: [.52, .34, -.24], l: 1.85, fl: .58, up: .24, w: .170, tw: -.6, g: .88 },
+    { p: [.56, .18, -.28], l: 1.95, fl: .66, up: .08, w: .165, tw: .8,  g: .86 },
+    { p: [.54, .00, -.26], l: 1.65, fl: .54, up: -.08,w: .145, tw: -.7, g: .90 },
+    { p: [.46,-.16, -.20], l: 1.38, fl: .40, up: -.18,w: .125, tw: .5,  g: .88 },
+    // Deeper neck-hugger under-layer for lush silhouette without comb gaps
+    { p: [.40, .40, -.44], l: 1.35, fl: .32, up: .28, w: .140, tw: -.5, g: .94 },
+    { p: [.48, .22, -.48], l: 1.55, fl: .42, up: .10, w: .150, tw: .6,  g: .95 },
+    { p: [.46, .02, -.46], l: 1.45, fl: .36, up: -.10,w: .135, tw: -.4, g: .95 },
+    { p: [.38,-.18, -.42], l: 1.20, fl: .28, up: -.22,w: .115, tw: .5,  g: .94 },
+    // Wispy aerodynamic outer accent locks
+    { p: [.56, .28, -.16], l: 1.40, fl: .72, up: .34, w: .082, tw: 1.1, g: .70 },
+    { p: [.58, .08, -.18], l: 1.52, fl: .76, up: .04, w: .078, tw: -1.0,g: .72 },
+    { p: [.50,-.12, -.12], l: 1.18, fl: .55, up: -.22,w: .072, tw: .9,  g: .75 }
+  ];
+  for (let m of sideMane) {
+    let [x0, y0, z0] = [s * m.p[0], m.p[1], m.p[2]];
+    hs([
+      V(x0, y0, z0),
+      V(x0 + s * m.fl * .42, y0 + m.up * .52, z0 - m.l * .30),
+      V(x0 + s * m.fl * .92, y0 + m.up * .96 + .06, z0 - m.l * .66),
+      V(x0 + s * m.fl * .74, y0 + m.up * .55 - .08, z0 - m.l)
+    ], m.w, cream, HX, .46, m.g, m.tw * s, .85);
+  }
+
+  // 10. Graceful swept rear-jaw cheek whiskers (leaves armored mid-jaw clean — NO chin ribcage!)
+  binding = () => rigid(JAW);
+  const jawLocks = [
+    { p: [.34, -.30, .14], l: .95, fl: .22, dn: .28, w: .085, tw: .5 },
+    { p: [.30, -.34, .34], l: .82, fl: .18, dn: .32, w: .072, tw: -.4 },
+    { p: [.22, -.35, .64], l: .86, fl: .12, dn: .38, w: .066, tw: .4 }
+  ];
+  for (let jl of jawLocks) {
+    let [x0, y0, z0] = [s * jl.p[0], jl.p[1], jl.p[2]];
+    hs([
+      V(x0, y0, z0),
+      V(x0 + s * jl.fl * .45, y0 - jl.dn * .55, z0 - jl.l * .28),
+      V(x0 + s * jl.fl * .85, y0 - jl.dn * .92, z0 - jl.l * .66),
+      V(x0 + s * jl.fl * .60, y0 - jl.dn * .68, z0 - jl.l)
+    ], jl.w, cream, HX, .45, .86, jl.tw * s);
+  }
+}
+
+// Crown dorsal mane crest (flowing seamlessly backward into dorsal fin)
+binding = () => rigid(HEAD);
+const crownLocks = [
+  { x:  .00, y: .58, z:  .06, l: 1.58, up: .44, w: .155, tw:  .2 },
+  { x: -.13, y: .55, z: -.04, l: 1.48, up: .38, w: .142, tw: -.5 },
+  { x:  .13, y: .55, z: -.04, l: 1.48, up: .38, w: .142, tw:  .5 },
+  { x: -.25, y: .50, z: -.14, l: 1.36, up: .32, w: .130, tw: -.7 },
+  { x:  .25, y: .50, z: -.14, l: 1.36, up: .32, w: .130, tw:  .7 },
+  { x: -.08, y: .50, z: -.30, l: 1.38, up: .28, w: .135, tw:  .4 },
+  { x:  .08, y: .50, z: -.30, l: 1.38, up: .28, w: .135, tw: -.4 }
+];
+for (let cl of crownLocks) {
+  hs([
+    V(cl.x, cl.y, cl.z),
+    V(cl.x * 1.28, cl.y + cl.up * .75, cl.z - cl.l * .30),
+    V(cl.x * 1.52, cl.y + cl.up,       cl.z - cl.l * .66),
+    V(cl.x * 1.35, cl.y + cl.up * .35, cl.z - cl.l)
+  ], cl.w, cream, HX, .52, .90, cl.tw);
+}
+
+// Focused, dignified imperial chin goatee (clustered at chin tip & swept cleanly back)
+binding = () => rigid(JAW);
+const goateeLocks = [
+  { x:  .00, z: 1.06, l: 1.08, dn: .46, w: .092, tw:  .0 },
+  { x: -.09, z: 1.00, l:  .96, dn: .42, w: .078, tw: -.5 },
+  { x:  .09, z: 1.00, l:  .96, dn: .42, w: .078, tw:  .5 },
+  { x: -.17, z:  .88, l:  .84, dn: .36, w: .065, tw: -.6 },
+  { x:  .17, z:  .88, l:  .84, dn: .36, w: .065, tw:  .6 }
+];
+for (let glk of goateeLocks) {
+  hs([
+    V(glk.x, -.35, glk.z),
+    V(glk.x * 1.15, -.35 - glk.dn * .60, glk.z - .16),
+    V(glk.x * 1.05, -.35 - glk.dn * .95, glk.z - glk.l * .58),
+    V(glk.x * .65,  -.35 - glk.dn * .72, glk.z - glk.l * 1.02)
+  ], glk.w, cream, HX, .44, .82, glk.tw);
+}
+
+// ============================================================================
+// MUSCULAR PREDATORY LIMBS, GRASPING TALONS & SWEPT ELBOW FLAME RIBBONS
+// ============================================================================
+function leg(t, s, front) {
+  let f = F(t), S = mul(f.R, s), D = mul(f.U, -1), T = f.T, r = radius(t);
+  let P = (x, y, z) => add(f.p, add(mul(S, x), add(mul(D, y), mul(T, z))));
+
+  let a = P(r * .58, r * .22, 0);
+  let b = P(r + .24, .34, front ? .22 : -.06);
+  let c = P(r + .48, .72, front ? .52 : .38);
+  let d = P(r + .52, 1.08, front ? .08 : .66);
+  let e = P(r + .56, 1.28, front ? -.38 : .26);
+
+  let label = (front ? 'fore' : 'hind') + (s < 0 ? '_L' : '_R');
+  let parent = Math.round(t * (NS - 1));
+  let axis = norm(cross(sub(c, a), sub(e, c)));
+  if (len(axis) < .1) axis = T;
+
+  let upper = bone(label + '_upper', parent, a, axis, 'upper');
+  let lower = bone(label + '_lower', upper, c, axis, 'lower');
+  let foot  = bone(label + '_foot',  lower, e, axis, 'foot');
+
+  const proj = (p, x, y) => dot(sub(p, x), sub(y, x)) / dot(sub(y, x), sub(y, x));
+  const limbWeight = p => {
+    let q = proj(p, a, c), v = proj(p, c, e);
+    if (q < .26) return blend(parent, upper, smooth(q / .26));
+    if (q < .79 && v < .10) return rigid(upper);
+    if (v < .22) return blend(upper, lower, smooth((q - .79 + Math.max(0, v)) / .38));
+    if (v < .76) return rigid(lower);
+    return blend(lower, foot, smooth((v - .76) / .30));
+  };
+
+  binding = limbWeight;
+  ell(a, V(.30, .33, .42), skin, [S, D, T], 22, 14, .36);
+  tube([a, b, c], q => .17 + .20 * Math.pow(Math.sin(PI * (.18 + .82 * q)), .85), skin, 28, 16, T, .85, (u, q) => mul(skin.c, .38));
+  ell(c, V(.18, .18, .20), red, [S, D, T]);
+  tube([c, d, e], q => lerp(.175, .095, q) + .042 * Math.sin(PI * q), red, 26, 15, T, .86);
+
+  let fn = q => cat([a, b, c, d, e], q);
+  for (let j = 0; j < 19; j++) {
+    let q = (j + .4) / 19, ff = frame(fn, q, T);
+    let rr = q < .5
+      ? (.17 + .20 * Math.pow(Math.sin(PI * (.18 + .82 * q * 2)), .85))
+      : lerp(.175, .095, (q - .5) * 2) + .042 * Math.sin(PI * (q - .5) * 2);
+    for (let k = 0; k < 10; k++) {
+      let aa = TAU * (k + (j % 2) * .5) / 10, Z = radial(ff, aa), X = norm(cross(ff.T, Z));
+      scale(add(ff.p, mul(Z, rr * .93)), X, ff.T, Z, rr * .72, .15, red, range(.90, 1.10));
+    }
+  }
+
+  // Flowing, sinuous elbow/hock flame ribbons (organic curve, not stiff triangles)
+  const tuftSpecs = [
+    { q: .45, l: .78, w: .092, out: .14, lift: -.16, tw:  .5 },
+    { q: .68, l: 1.04,w: .086, out: .22, lift: -.08, tw: -.6 },
+    { q: .86, l: .92, w: .076, out: .20, lift:  .04, tw:  .5 },
+    { q: 1.00,l: .72, w: .064, out: .14, lift:  .12, tw: -.4 }
+  ];
+  for (let ts of tuftSpecs) {
+    let p0 = mix(b, c, ts.q);
+    strand([
+      p0,
+      add(p0, add(mul(S, ts.out * .5), add(mul(T, ts.l * .32), mul(D, ts.lift * .5)))),
+      add(p0, add(mul(S, ts.out * 1.1), add(mul(T, ts.l * .72), mul(D, ts.lift)))),
+      add(p0, add(mul(S, ts.out * .75), add(mul(T, ts.l * 1.12), mul(D, ts.lift * .6))))
+    ], ts.w, cream, T, .42, .90, ts.tw * s);
+  }
+
+  // Predatory grasping eagle/dragon talons
+  binding = () => rigid(foot);
+  ell(e, V(.19, .13, .23), skin, [S, D, T]);
+
+  for (let k = 0; k < 5; k++) {
+    let rear = k === 4;
+    let spreadIdx = rear ? 0 : (k - 1.5);
+    let baseDir = rear
+      ? norm(add(mul(T, .88), mul(S, -.30)))
+      : norm(add(mul(T, -.88), add(mul(S, .32 + spreadIdx * .28), mul(D, .08))));
+    let root = add(e, add(mul(T, rear ? .16 : -.08), mul(S, rear ? -.04 : spreadIdx * .075)));
+    let seg1 = rear ? .18 : (.24 - .025 * Math.abs(spreadIdx));
+    let seg2 = rear ? .14 : (.21 - .02 * Math.abs(spreadIdx));
+    let p1 = add(root, add(mul(baseDir, seg1), mul(D, -.05)));
+    let p2 = add(p1, add(mul(baseDir, seg2), mul(D, .13)));
+    let clawTip = add(p2, add(mul(baseDir, .06), mul(D, .24)));
+    let clawHook = add(clawTip, add(mul(baseDir, -.14), mul(D, .08)));
+
+    tube([root, p1, p2], q => lerp(.076, .046, q), skin, 14, 10, T);
+    ell(p1, V(.060, .062, .060), red);
+    tube([p2, add(p2, add(mul(baseDir, .10), mul(D, .08))), clawTip, clawHook],
+      q => .056 * Math.pow(1 - q, .72) + .002, claw, 16, 10, T);
+  }
+}
+
+leg(.165, -1, true);
+leg(.165,  1, true);
+leg(.565, -1, false);
+leg(.565,  1, false);
+
+// ============================================================================
+// FLOWING SILK-FLAME TAIL PLUME
+// ============================================================================
+// Lush plume: three layered fans of silk locks that streak out of the tail tip, amber at the root fading to cream
+for (let i = 0; i < 33; i++) {
+  let ring = i % 3, idx = (i - ring) / 3, count = 11;
+  let t = .900 + ring * .030 + (idx % 2) * .008;
+  let f = F(t);
+  let ang = (idx / count) * TAU + ring * .62;
+  let R = radial(f, ang);
+  let p = bodyPoint(t, ang, -.005);
+  let wob = Math.sin(i * 2.399);
+  let l = (2.05 + .70 * (.5 + .5 * wob)) * (ring === 0 ? 1.0 : ring === 1 ? .86 : .72) * (.90 + .10 * Math.cos(ang * 2));
+  let flare = .26 + .30 * (1 - ring * .22) + .10 * wob;
+  let drop = .22 * Math.cos(ang) * wob;
+  binding = () => spineW(t);
+  strand([
+    p,
+    add(p, add(mul(f.T, l * .30), add(mul(R, flare * .55), mul(f.U, drop * .3)))),
+    add(p, add(mul(f.T, l * .66), add(mul(R, flare * 1.05), mul(f.U, drop * .8)))),
+    add(p, add(mul(f.T, l * 1.10), add(mul(R, flare * 1.45), add(mul(f.U, drop * 1.2), mul(f.U, -.16)))))
+  ], .165 - ring * .028, cream, f.U, .34, .98, (idx % 2 ? .5 : -.5), .70);
+}
+
+// Flowing neck mane: broad silk locks hugging the upper neck and streaming back in the wind
+for (let side of [-1, 1]) {
+  for (let i = 0; i < 10; i++) {
+    let q = i / 9, t = .040 + q * .22;
+    let f = F(t), r = radius(t);
+    let a = side * (.80 + .22 * ((i * 5) % 3) / 2);
+    let root = bodyPoint(t, a, -.012);
+    let out = norm(radial(f, a));
+    let vary = .84 + .32 * ((i * 7) % 5) / 4;
+    let L = (1.50 + .55 * Math.sin(PI * Math.min(1, q * 1.1 + .15))) * vary;
+    let wv = ((i % 2) ? 1 : -1) * .10;
+    binding = () => spineW(t);
+    strand([
+      add(root, mul(out, -.02)),
+      add(root, add(mul(f.T, L * .30), add(mul(out, .08 + r * .16), mul(f.U, .06)))),
+      add(root, add(mul(f.T, L * .66), add(mul(out, .18 + r * .30 + wv), mul(f.U, .12)))),
+      add(root, add(mul(f.T, L * 1.05), add(mul(out, .34 + r * .46), mul(f.U, .14 - wv))))
+    ], .125 + .030 * vary, cream, out, .30, .92, (i % 2 ? .4 : -.4) * side, .85);
+  }
+}
+
+// ============================================================================
+// GROUND STAGE & WEBGL2 PIPELINE
+// ============================================================================
+const dragonV = new Float32Array(verts), dragonI = new Uint32Array(inds);
+const dragonSkin = new Float32Array(skinData), dragonStyle = new Float32Array(styleData);
+verts = []; inds = []; skinData = []; styleData = []; binding = () => rigid(0);
+
+const floorMat = mat('0e121b', .05, .86);
+grid(56, 5, (u, v) => {
+  let a = u * TAU, r = v * 34;
+  return { p: V(Math.cos(a) * r, -3.55, Math.sin(a) * r), n: V(0, 1, 0), m: floorMat, c: mul(floorMat.c, .62 + .38 * (1 - v)) };
+});
+const floorV = new Float32Array(verts), floorI = new Uint32Array(inds);
+
+function shader(type, src) {
+  let s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) fail(gl.getShaderInfoLog(s));
+  return s;
+}
+function program(vs, fs) {
+  let p = gl.createProgram();
+  gl.attachShader(p, shader(gl.VERTEX_SHADER, vs));
+  gl.attachShader(p, shader(gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) fail(gl.getProgramInfoLog(p));
+  return p;
+}
+
+const vert = `#version 300 es
+precision highp float;
+layout(location=0) in vec3 aP;
+layout(location=1) in vec3 aN;
+layout(location=2) in vec3 aC;
+layout(location=3) in vec3 aM;
+layout(location=4) in vec4 aSkin;
+layout(location=5) in vec4 aStyle;
+uniform mat4 uVP;
+uniform mat4 uBones[${bones.length}];
+uniform float uMotion;
+out vec3 vP, vN, vC, vM, vRest;
+out vec2 vEx;
+flat out highp int vSlot;
+out float vStyle;
+void main() {
+  vec3 p = aP, n = aN;
+  if (uMotion > .5) {
+    mat4 m = uBones[int(aSkin.x)] * aSkin.z + uBones[int(aSkin.y)] * aSkin.w;
+    p = (m * vec4(p, 1.)).xyz;
+    n = normalize(mat3(m) * n);
+  }
+  vP = p; vN = n; vC = aC; vM = aM; vRest = aP;
+  vSlot = int(aStyle.x); vStyle = aStyle.y; vEx = aStyle.zw;
+  gl_Position = uVP * vec4(p, 1.);
+}`;
+
+const frag = `#version 300 es
+precision highp float;
+in vec3 vP, vN, vC, vM, vRest;
+in vec2 vEx;
+flat in highp int vSlot;
+in float vStyle;
+uniform vec3 uPalette[13];
+uniform vec2 uFinish[13];
+uniform vec3 uEye, uDragonCenter;
+uniform float uLight, uFloor, uWire;
+uniform mat4 uLightVP;
+uniform sampler2D uShadow;
+out vec4 outColor;
+
+const float PI = 3.14159265;
+float hash(vec3 p) {
+  p = fract(p * .3183099 + vec3(.17, .31, .53));
+  p *= 17.;
+  return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+}
+float noise(vec3 p) {
+  vec3 i = floor(p), f = fract(p);
+  f = f * f * (3. - 2. * f);
+  return mix(
+    mix(mix(hash(i), hash(i + vec3(1,0,0)), f.x), mix(hash(i + vec3(0,1,0)), hash(i + vec3(1,1,0)), f.x), f.y),
+    mix(mix(hash(i + vec3(0,0,1)), hash(i + vec3(1,0,1)), f.x), mix(hash(i + vec3(0,1,1)), hash(i + vec3(1,1,1)), f.x), f.y),
+    f.z
+  );
+}
+
+vec3 light(vec3 n, vec3 v, vec3 l, vec3 radiance, vec3 base, float metal, float rough, float wrap) {
+  vec3 h = normalize(v + l);
+  float nv = max(dot(n, v), .001);
+  float nlRaw = dot(n, l);
+  float nl = max(nlRaw, 0.);
+  float nlDiff = clamp((nlRaw + wrap) / (1. + wrap), 0., 1.);
+  float nh = max(dot(n, h), 0.), vh = max(dot(v, h), 0.);
+  float a = rough * rough, a2 = a * a;
+  float D = a2 / (PI * pow(nh * nh * (a2 - 1.) + 1., 2.));
+  float k = pow(rough + 1., 2.) / 8.;
+  float G = (nv / (nv * (1. - k) + k)) * (nl / (nl * (1. - k) + k));
+  vec3 F0 = mix(vec3(.04), base, metal), F = F0 + (1. - F0) * pow(1. - vh, 5.);
+  vec3 diff = (1. - F) * (1. - metal) * base / PI * nlDiff;
+  vec3 spec = D * G * F / max(4. * nv * nl, .001) * nl;
+  return (diff + spec) * radiance;
+}
+
+float shadowAt(vec3 p, vec3 n) {
+  vec4 q = uLightVP * vec4(p, 1.);
+  vec3 s = q.xyz / q.w * .5 + .5;
+  if (any(lessThan(s, vec3(0.))) || any(greaterThan(s, vec3(1.)))) return 1.;
+  float bias = max(.00045, .0014 * (1. - dot(n, normalize(vec3(-.58, .86, .64)))));
+  ${quality.pcf === 0 ? 'return 1.;' :
+    quality.pcf === 4 ?
+    'float a = 0.; for(int i=0;i<2;i++) for(int j=0;j<2;j++){ float d = texture(uShadow, s.xy + (vec2(float(i), float(j)) - .5) / 1024.).r; a += s.z - bias <= d ? 1. : 0.; } return mix(.26, 1., a * .25);' :
+    'float a = 0.; for(int i=-1;i<=1;i++) for(int j=-1;j<=1;j++){ float d = texture(uShadow, s.xy + vec2(float(i), float(j)) / 2048.).r; a += s.z - bias <= d ? 1. : 0.; } return mix(.26, 1., a / 9.);'}
+}
+
+vec3 tone(vec3 x) { return clamp((x * (2.51 * x + .03)) / (x * (2.43 * x + .59) + .14), 0., 1.); }
+
+// Procedural studio environment: soft sky, warm horizon, two softboxes (key + cool rim) for believable gold reflections
+vec3 envMap(vec3 r, float rough) {
+  float up = r.y;
+  vec3 sky = mix(vec3(.060, .078, .130), vec3(.26, .33, .52), smoothstep(-.10, 1., up));
+  vec3 horizon = vec3(.58, .38, .19) * exp(-pow((up - .04) * 3.4, 2.));
+  vec3 c = sky + horizon * .70;
+  c = mix(c, vec3(.075, .062, .055), smoothstep(.02, -.45, up));
+  float soft = mix(1., .20, rough);
+  vec3 k = normalize(vec3(-.58, .86, .64));
+  vec3 rm = normalize(vec3(.74, .52, -.84));
+  vec3 fl = normalize(vec3(.78, .22, .80));
+  c += vec3(3.0, 2.6, 2.0) * pow(max(dot(r, k), 0.), 16. * soft + 5.) * mix(1., .38, rough);
+  c += vec3(.9, 1.4, 2.3) * pow(max(dot(r, rm), 0.), 12. * soft + 4.) * mix(1., .45, rough);
+  c += vec3(.45, .56, .90) * pow(max(dot(r, fl), 0.), 8. * soft + 3.) * .45;
+  return c;
+}
+
+void main() {
+  if (uWire > .5) { outColor = vec4(.78, .61, .37, 1.); return; }
+  vec3 n = normalize(vN), ng = n, v = normalize(uEye - vP), base = vC;
+  float metal = vM.x, rough = vM.y, emissive = vM.z;
+  bool dragon = uFloor < .5;
+
+  // Screen-space derivatives are always taken in uniform control flow
+  vec3 dpx = dFdx(vP), dpy = dFdy(vP);
+  vec3 dnx = dFdx(n), dny = dFdy(n);
+
+  float hgt = 0., bumpOn = 0., scaleMask = 0., sparkle = 0., ao = 1., rimAmt = 1.;
+
+  if (dragon && vSlot >= 0 && vSlot < 13) {
+    vec3 tint = uPalette[vSlot];
+    vec2 finish = uFinish[vSlot];
+    if (vSlot == 10) {
+      tint = mix(tint, uPalette[11], vStyle);
+      finish = mix(finish, uFinish[11], vStyle);
+    } else if (vSlot == 6 && vStyle > .001) {
+      tint = mix(tint, uPalette[7], clamp(vStyle, 0., 1.));
+      finish = mix(finish, uFinish[7], clamp(vStyle, 0., 1.));
+    } else if (vSlot == 3 && vStyle > .001) {
+      // Antler: dark horn-root -> golden-bone shaft -> polished ivory tips, with growth rings
+      bool tine = vStyle > 1.5;
+      float hs = clamp(tine ? vStyle - 2. : vStyle, 0., 1.);
+      vec3 shaft = mix(tint, uPalette[2] * 1.15, .42);
+      tint = mix(uPalette[4] * .62, shaft, smoothstep(.0, .62, hs));
+      tint = mix(tint, uPalette[6] * 1.0, smoothstep(.62, 1., hs) * .70);
+      finish.y = clamp(mix(finish.y + .14, finish.y - .08, smoothstep(.15, 1., hs)), .14, .9);
+      hgt = tine ? .0030 * sin(hs * 70.) : .0058 * sin(hs * 150.) * (1. - .5 * hs);
+      bumpOn = 1.;
+    } else if (vSlot == 2 && vStyle > .04) {
+      // Dragon scale: gilded rim, darker warm spine, paler flanks, keel highlight, micro grooves
+      float sv = clamp((vStyle - .05) / .95, 0., 1.);
+      float ux = abs(2. * vEx.x - 1.);
+      float dors = vEx.y;
+      scaleMask = 1.;
+      float tipEdge = smoothstep(.48, 1., sv);
+      vec3 gild = uPalette[11] * 1.10 + tint * .12;
+      tint = mix(tint, uPalette[10] * 1.55, dors * dors * .30);
+      tint = mix(tint, uPalette[5] * .92, pow(1. - dors, 2.2) * .26);
+      tint = mix(tint, gild, tipEdge * (.26 + .34 * dors));
+      tint *= 1. + .12 * exp(-ux * ux * 14.) * smoothstep(.1, .8, sv);
+      hgt = .0022 * cos(ux * 7.) * (.35 + .65 * sv) + .0045 * exp(-ux * ux * 9.) * sv;
+      bumpOn = 1.;
+      sparkle = smoothstep(.80, .97, noise(vRest * 48.));
+      finish.y = clamp(finish.y - .07 * sv, .14, .95);
+    }
+    ao = clamp(vC.r * 1.08, .18, 1.);
+    base = tint * vC.r;
+    metal = finish.x;
+    rough = finish.y;
+    if (vSlot == 9) rimAmt = 0.;
+  }
+  if (dragon && vSlot < 0) rimAmt = 0.;
+
+  float patina1 = ${quality.lights === 1 ? '.5' : 'noise(vRest * 4.2)'};
+  float patina2 = ${quality.lights >= 3 ? 'noise(vRest * 11.5)' : '.5'};
+  float organic = patina1 * .65 + patina2 * .35;
+  if (dragon && vSlot != 9) {
+    base *= .92 + .16 * organic;
+    rough = clamp(rough + (organic - .5) * .12, .14, .95);
+  }
+
+  if (dragon && vSlot != 9) {
+    float variance = clamp(dot(dnx, dnx) + dot(dny, dny), 0., .35);
+    rough = sqrt(clamp(rough * rough + min(1.8 * variance, .18), .03, .92));
+  }
+
+  // Derivative bump mapping (fades out when the detail would be sub-pixel)
+  float dhx = dFdx(hgt), dhy = dFdy(hgt);
+  if (bumpOn > .5) {
+    float fade = 1. - smoothstep(.022, .070, length(dpx) + length(dpy));
+    vec3 r1 = cross(dpy, n), r2 = cross(n, dpx);
+    float det = dot(dpx, r1);
+    vec3 grad = sign(det) * (dhx * r1 + dhy * r2) * fade;
+    n = normalize(abs(det) * n - grad);
+  }
+
+  // Thin-film sheen on scales: subtle warm/green shift with view angle
+  if (scaleMask > .5) {
+    float nv0 = max(dot(n, v), 0.);
+    vec3 film = .5 + .5 * cos(6.2832 * (vec3(0., .33, .67) + nv0 * 1.25 + vEx.x * .15));
+    base = mix(base, base * (.55 + film * 1.10), .20);
+  }
+
+  float wrap = (dragon && (vSlot == 6 || vSlot == 10 || vSlot == 5 || vSlot == 0)) ? .18 : .04;
+
+  vec3 keyDir = normalize(vec3(-.58, .86, .64));
+  vec3 rimDir = normalize(vec3(.74, .52, -.84));
+  float sh = shadowAt(vP, ng);
+  vec3 col = vec3(0.);
+  col += sh * light(n, v, keyDir, vec3(3.05, 2.82, 2.48) * uLight, base, metal, rough, wrap);
+  ${quality.lights >= 2 ? 'col += light(n, v, rimDir, vec3(1.65, 2.10, 2.85) * uLight, base, metal, rough, wrap);' : ''}
+  ${quality.lights >= 3 ? 'col += light(n, v, normalize(vec3(.78, .22, .80)), vec3(.62, .74, 1.05) * uLight, base, metal, rough, wrap);' : ''}
+  ${quality.lights >= 4 ? 'col += light(n, v, normalize(vec3(-.15, -.55, -.30)), vec3(.52, .28, .15) * uLight, base, metal, rough, .20);' : ''}
+
+  float hemi = .16 + .24 * (n.y * .5 + .5);
+  vec3 refl = reflect(-v, n);
+  float nvv = max(dot(n, v), 0.);
+  float fres = pow(1. - nvv, 4.2);
+  vec3 F0 = mix(vec3(.04), base, metal);
+  float envSpecWeight = (1. - rough * .72);
+  if (dragon) {
+    vec3 envD = envMap(refl, rough);
+    col += base * (1. - metal) * hemi * ao + envD * (F0 + (1. - F0) * fres * .22) * envSpecWeight * mix(.35, 1., sh) * mix(.45, 1., ao);
+    // Glitter: tiny facets flash when they face the key light
+    vec3 hk = normalize(v + keyDir);
+    col += scaleMask * sparkle * pow(max(dot(n, hk), 0.), 36.) * sh * vec3(1.5, 1.25, .85) * (.45 + .55 * vEx.y) * uLight;
+    // Silhouette rim light (cool for organic parts, gilded for metal) separates the dragon from the dark stage
+    float rimF = pow(1. - nvv, 3.0);
+    float rimMask = smoothstep(-.30, .60, dot(n, rimDir));
+    vec3 rimCol = mix(vec3(.30, .44, .82), base * 2.0 + .06, clamp(metal * 1.7, 0., .8));
+    if (vSlot == 10 || vSlot == 6 || vSlot == 7) rimCol = base * 1.7 + vec3(.05, .035, .02);
+    col += rimCol * rimF * rimMask * .5 * uLight * ao * rimAmt;
+  } else {
+    vec3 envOld = mix(vec3(.11, .15, .24), vec3(.44, .34, .24), smoothstep(-.3, .95, refl.y));
+    col += base * (1. - metal) * hemi + envOld * (F0 + fres * .18 * envSpecWeight) * envSpecWeight;
+  }
+
+  if (dragon && vSlot == 9) {
+    float irisCore = 1. - smoothstep(.15, .82, vStyle);
+    col += base * emissive * (.60 + 1.05 * irisCore);
+  } else {
+    col += base * emissive;
+  }
+
+  if (dragon && (vSlot == 10 || vSlot == 6)) {
+    float backLit = pow(max(0., dot(v, -keyDir)), 2.2) * .38 + fres * .45;
+    float tipWeight = vSlot == 10 ? (.30 + .70 * vStyle) : (1. - .55 * vStyle);
+    col += base * vec3(1.10, .86, .62) * backLit * tipWeight * .30 * uLight;
+  }
+
+  if (uFloor > .5) {
+    float d = length(vP.xz);
+    vec2 rel = vP.xz - uDragonCenter.xz;
+    float shd = exp(-dot(rel, rel) / 48.0);
+    col *= 1. - .26 * shd;
+    // Arena scale rings (5m, 10m, 15m) for judging skill AoE & lunge distance
+    float r1 = exp(-abs(d - 5.5) * 90.) * .10;
+    float r2 = exp(-abs(d - 11.0) * 95.) * .18 + exp(-abs(d - 11.3) * 110.) * .06;
+    float r3 = exp(-abs(d - 17.5) * 85.) * .10;
+    float crossHair = (exp(-abs(vP.x) * 45.) + exp(-abs(vP.z) * 45.)) * .045 * smoothstep(18., 2., d);
+    col += vec3(.50, .31, .14) * (r1 + r2 + r3 + crossHair);
+    float f = smoothstep(7., 33., d);
+    col = mix(col, vec3(.007, .010, .019), f);
+  }
+
+  float dist = length(vP - uEye);
+  float fog = 1. - exp(-max(0., dist - 34.) * .0048);
+  col = mix(col, vec3(.009, .013, .023), fog * .74);
+  outColor = vec4(pow(tone(col), vec3(1. / 2.2)), 1.);
+}`;
+
+const pr = program(vert, frag), uniforms = {};
+for (let k of ['uVP','uEye','uDragonCenter','uMotion','uFloor','uLight','uWire','uLightVP','uShadow','uBones[0]','uPalette[0]','uFinish[0]']) {
+  uniforms[k] = gl.getUniformLocation(pr, k);
+}
+
+function mesh(v, i, sk = null, style = null) {
+  let vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+  let b = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, b);
+  gl.bufferData(gl.ARRAY_BUFFER, v, gl.STATIC_DRAW);
+  for (let k = 0; k < 4; k++) { gl.enableVertexAttribArray(k); gl.vertexAttribPointer(k, 3, gl.FLOAT, false, 48, k * 12); }
+  if (sk) {
+    let sb = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, sb);
+    gl.bufferData(gl.ARRAY_BUFFER, sk, gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(4);
+    gl.vertexAttribPointer(4, 4, gl.FLOAT, false, 16, 0);
+  }
+  if (style) {
+    let sb = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, sb);
+    gl.bufferData(gl.ARRAY_BUFFER, style, gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(5);
+    gl.vertexAttribPointer(5, 4, gl.FLOAT, false, 16, 0);
+  }
+  let ib = gl.createBuffer();
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ib);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, i, gl.STATIC_DRAW);
+  gl.bindVertexArray(null);
+  return { vao, ib, count: i.length };
+}
+
+const dragon = mesh(dragonV, dragonI, dragonSkin, dragonStyle);
+const floor = mesh(floorV, floorI);
+
+const shadowProg = program(vert, `#version 300 es
+precision highp float;void main(){}`);
+const shadowTex = gl.createTexture(), shadowFbo = gl.createFramebuffer();
+gl.bindTexture(gl.TEXTURE_2D, shadowTex);
+gl.texImage2D(gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT24, Math.max(1, quality.shadow), Math.max(1, quality.shadow), 0, gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, null);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+gl.bindFramebuffer(gl.FRAMEBUFFER, shadowFbo);
+gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, shadowTex, 0);
+gl.drawBuffers([gl.NONE]);
+gl.readBuffer(gl.NONE);
+if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) fail('Shadow framebuffer không hoàn chỉnh');
+gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+gl.bindTexture(gl.TEXTURE_2D, null);
+
+let wireBuffer = null, wireCount = 0;
+function initWire() {
+  if (wireBuffer) return;
+  let lines = new Uint32Array(dragonI.length * 2);
+  for (let j = 0, k = 0; j < dragonI.length; j += 3) {
+    let a = dragonI[j], b = dragonI[j + 1], c = dragonI[j + 2];
+    lines[k++] = a; lines[k++] = b; lines[k++] = b; lines[k++] = c; lines[k++] = c; lines[k++] = a;
+  }
+  wireBuffer = gl.createBuffer();
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, wireBuffer);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, lines, gl.STATIC_DRAW);
+  wireCount = lines.length;
+}
+
+const bg = program(
+  `#version 300 es
+precision highp float;out vec2 uv;void main(){vec2 p=vec2(float((gl_VertexID<<1)&2),float(gl_VertexID&2));uv=p;gl_Position=vec4(p*2.-1.,0.,1.);}`,
+  `#version 300 es
+precision highp float;in vec2 uv;uniform float t,aspect;out vec4 o;
+   float h(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
+   float n(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(h(i),h(i+vec2(1,0)),f.x),mix(h(i+vec2(0,1)),h(i+vec2(1,1)),f.x),f.y);}
+   void main(){vec2 p=uv-vec2(.5);p.x*=aspect;float v=exp(-dot(p*vec2(.76,1.12),p*vec2(.76,1.12))*4.2);
+   float mist=n(p*3.8+vec2(t*.010,0.))*.5+n(p*8.5)*.25+n(p*19.)*.125;
+   vec3 c=mix(vec3(.018,.025,.045),vec3(.10,.13,.19),v*.72);
+   c+=vec3(.09,.068,.045)*exp(-length(p-vec2(-.36,.22))*3.2);
+   c+=mist*vec3(.028,.034,.055)*v;c*=1.-.26*length(p);o=vec4(c,1.);}`
+);
+
+const particleProg = program(
+  `#version 300 es
+precision highp float;layout(location=0)in vec3 p;layout(location=1)in float s;uniform mat4 vp;uniform float time;out float a;
+   void main(){vec3 q=p;q.y+=sin(time*.24+s*18.)*.24;q.x+=sin(time*.35+s*7.)*.16;gl_Position=vp*vec4(q,1.);gl_PointSize=1.4+2.6*s;a=(.20+.75*s)*(.7+.3*sin(time*.8+s*70.));}`,
+  `#version 300 es
+precision highp float;in float a;out vec4 o;void main(){float d=length(gl_PointCoord-.5)*2.;o=vec4(.98,.66,.32,exp(-d*d*5.)*a*.50*(1.-smoothstep(.6,1.,d)));}`
+);
+let pv = [];
+for (let i = 0; i < (quality.lights === 1 ? 0 : 64); i++) pv.push(range(-16, 16), range(-2.5, 7.5), range(-12, 12), rnd());
+let pvao = gl.createVertexArray();
+gl.bindVertexArray(pvao);
+let pb = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, pb);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(pv), gl.STATIC_DRAW);
+gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 16, 0);
+gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 1, gl.FLOAT, false, 16, 12);
+gl.bindVertexArray(null);
+
+// ============================================================================
+// MATH, QUATERNIONS & SPLINE-FOLLOW SERPENTINE SOLVER
+// ============================================================================
+function perspective(fov, aspect, near, far) {
+  let f = 1 / Math.tan(fov / 2), nf = 1 / (near - far);
+  return [f / aspect, 0, 0, 0, 0, f, 0, 0, 0, 0, (far + near) * nf, -1, 0, 0, 2 * far * near * nf, 0];
+}
+function lookAt(e, c) {
+  let z = norm(sub(e, c)), x = norm(cross(V(0, 1, 0), z)), y = cross(z, x);
+  return [x[0], y[0], z[0], 0, x[1], y[1], z[1], 0, x[2], y[2], z[2], 0, -dot(x, e), -dot(y, e), -dot(z, e), 1];
+}
+function mm(a, b) {
+  let r = [];
+  for (let j = 0; j < 4; j++)
+    for (let i = 0; i < 4; i++)
+      r[j * 4 + i] = a[i] * b[j * 4] + a[4 + i] * b[j * 4 + 1] + a[8 + i] * b[j * 4 + 2] + a[12 + i] * b[j * 4 + 3];
+  return r;
+}
+function ortho(l, r, b, t, n, f) {
+  return [2 / (r - l), 0, 0, 0, 0, 2 / (t - b), 0, 0, 0, 0, -2 / (f - n), 0, -(r + l) / (r - l), -(t + b) / (t - b), -(f + n) / (f - n), 1];
+}
+
+const shadowU = {};
+for (const k of ['uVP', 'uMotion', 'uBones[0]']) shadowU[k] = gl.getUniformLocation(shadowProg, k);
+
+const identity = () => [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+function trans(p) { let m = identity(); m[12] = p[0]; m[13] = p[1]; m[14] = p[2]; return m; }
+function rot(a, ang) {
+  let [x, y, z] = a, c = Math.cos(ang), s = Math.sin(ang), t = 1 - c;
+  return [t*x*x+c, t*x*y+s*z, t*x*z-s*y, 0, t*x*y-s*z, t*y*y+c, t*y*z+s*x, 0, t*x*z+s*y, t*y*z-s*x, t*z*z+c, 0, 0, 0, 0, 1];
+}
+function transform(m, p) {
+  return V(m[0]*p[0] + m[4]*p[1] + m[8]*p[2] + m[12], m[1]*p[0] + m[5]*p[1] + m[9]*p[2] + m[13], m[2]*p[0] + m[6]*p[1] + m[10]*p[2] + m[14]);
+}
+function rotVec(v, axis, ang) {
+  let c = Math.cos(ang), s = Math.sin(ang), d = dot(axis, v), cr = cross(axis, v);
+  return add(mul(v, c), add(mul(cr, s), mul(axis, d * (1 - c))));
+}
+
+// Right-handed column-major frame [T, U, R, P] and its exact rigid inverse
+function invFrameMat(T, U, R, P) {
+  return [
+    T[0], U[0], R[0], 0,
+    T[1], U[1], R[1], 0,
+    T[2], U[2], R[2], 0,
+    -dot(T, P), -dot(U, P), -dot(R, P), 1
+  ];
+}
+function frameToQuat(T, U, R) {
+  let m00 = T[0], m01 = U[0], m02 = R[0];
+  let m10 = T[1], m11 = U[1], m12 = R[1];
+  let m20 = T[2], m21 = U[2], m22 = R[2];
+  let tr = m00 + m11 + m22, x, y, z, w, s;
+  if (tr > 0) {
+    s = Math.sqrt(tr + 1) * 2; w = .25 * s; x = (m21 - m12) / s; y = (m02 - m20) / s; z = (m10 - m01) / s;
+  } else if (m00 > m11 && m00 > m22) {
+    s = Math.sqrt(1 + m00 - m11 - m22) * 2; w = (m21 - m12) / s; x = .25 * s; y = (m01 + m10) / s; z = (m02 + m20) / s;
+  } else if (m11 > m22) {
+    s = Math.sqrt(1 + m11 - m00 - m22) * 2; w = (m02 - m20) / s; x = (m01 + m10) / s; y = .25 * s; z = (m12 + m21) / s;
+  } else {
+    s = Math.sqrt(1 + m22 - m00 - m11) * 2; w = (m10 - m01) / s; x = (m02 + m20) / s; y = (m12 + m21) / s; z = .25 * s;
+  }
+  let l = Math.hypot(x, y, z, w) || 1;
+  return [x / l, y / l, z / l, w / l];
+}
+function slerpQuat(a, b, t) {
+  let bx = b[0], by = b[1], bz = b[2], bw = b[3];
+  let cosom = a[0]*bx + a[1]*by + a[2]*bz + a[3]*bw;
+  if (cosom < 0) { cosom = -cosom; bx = -bx; by = -by; bz = -bz; bw = -bw; }
+  let s0, s1;
+  if (1 - cosom > 1e-4) {
+    let om = Math.acos(clamp(cosom, -1, 1)), sinom = Math.sin(om);
+    s0 = Math.sin((1 - t) * om) / sinom; s1 = Math.sin(t * om) / sinom;
+  } else { s0 = 1 - t; s1 = t; }
+  let q = [s0*a[0] + s1*bx, s0*a[1] + s1*by, s0*a[2] + s1*bz, s0*a[3] + s1*bw];
+  let l = Math.hypot(q[0], q[1], q[2], q[3]) || 1;
+  return [q[0]/l, q[1]/l, q[2]/l, q[3]/l];
+}
+function quatPosToMat(q, P) {
+  let [x, y, z, w] = q, xx = x*x, yy = y*y, zz = z*z, xy = x*y, xz = x*z, yz = y*z, wx = w*x, wy = w*y, wz = w*z;
+  return [
+    1 - 2*(yy + zz), 2*(xy + wz),     2*(xz - wy),     0,
+    2*(xy - wz),     1 - 2*(xx + zz), 2*(yz + wx),     0,
+    2*(xz + wy),     2*(yz - wx),     1 - 2*(xx + yy), 0,
+    P[0],            P[1],            P[2],            1
+  ];
+}
+
+// Precompute inverse bind frames for all NS=24 spine bones so skinning maps cleanly from bind->live curve
+const bindSpineFrames = [], bindSpineInv = [];
+for (let i = 0; i < NS; i++) {
+  let f = F(i / (NS - 1));
+  bindSpineFrames.push(f);
+  bindSpineInv.push(invFrameMat(f.T, f.U, f.R, f.p));
+}
+
+// Resample any 3D curve C(s) by EXACT arc-length = total so the dragon NEVER stretches or compresses
+function resampleSpineArcLength(curveFn, sampleSteps = 104, maxParam = total * 1.38) {
+  let pts = new Array(sampleSteps + 1), dists = new Float32Array(sampleSteps + 1);
+  let acc = 0;
+  for (let k = 0; k <= sampleSteps; k++) {
+    let s = (k / sampleSteps) * maxParam;
+    pts[k] = curveFn(s);
+    if (k > 0) acc += len(sub(pts[k], pts[k - 1]));
+    dists[k] = acc;
+  }
+  let out = new Array(NS);
+  let segLen = total / (NS - 1);
+  let k = 0;
+  for (let i = 0; i < NS; i++) {
+    let targetD = i * segLen;
+    while (k < sampleSteps - 1 && dists[k + 1] < targetD) k++;
+    if (targetD <= dists[sampleSteps]) {
+      let span = dists[k + 1] - dists[k];
+      let alpha = span > 1e-6 ? (targetD - dists[k]) / span : 0;
+      out[i] = mix(pts[k], pts[k + 1], alpha);
+    } else {
+      let dir = norm(sub(pts[sampleSteps], pts[sampleSteps - 1]));
+      out[i] = add(pts[sampleSteps], mul(dir, targetD - dists[sampleSteps]));
+    }
+  }
+  return out;
+}
+
+// Parallel-Transport (Bishop) frame solver along NS spine positions + controlled uprightness & banking
+function solveSpineFrames(pos, opts = {}) {
+  const upright = opts.upright ?? 0.22;
+  const refUp = opts.refUp || V(0, 1, 0);
+  const bankFn = opts.bankFn || null;
+  const tangents = new Array(NS);
+  for (let i = 0; i < NS; i++) {
+    let a = pos[Math.max(0, i - 1)], b = pos[Math.min(NS - 1, i + 1)];
+    tangents[i] = norm(sub(b, a));
+  }
+
+  const baseU = new Array(NS);
+  // Seed U[0] perpendicular to T[0]
+  let u0 = sub(refUp, mul(tangents[0], dot(refUp, tangents[0])));
+  if (len(u0) < .10) {
+    let alt = Math.abs(tangents[0][2]) < .85 ? V(0, 0, 1) : V(1, 0, 0);
+    u0 = sub(alt, mul(tangents[0], dot(alt, tangents[0])));
+  }
+  baseU[0] = norm(u0);
+
+  for (let i = 1; i < NS; i++) {
+    let tPrev = tangents[i - 1], tCurr = tangents[i];
+    let ax = cross(tPrev, tCurr), sinA = len(ax);
+    let u = baseU[i - 1];
+    if (sinA > 1e-5) {
+      let ang = Math.atan2(sinA, clamp(dot(tPrev, tCurr), -1, 1));
+      u = rotVec(u, mul(ax, 1 / sinA), ang);
+    }
+    u = norm(sub(u, mul(tCurr, dot(u, tCurr))));
+    // Gentle upright righting when flying horizontally (vanishes smoothly on vertical climb/dive -> zero flip!)
+    let horiz = Math.max(0, 1 - tCurr[1] * tCurr[1]);
+    if (upright > 0 && horiz > .04) {
+      let worldU = norm(sub(V(0, 1, 0), mul(tCurr, tCurr[1])));
+      if (dot(u, worldU) > -.15) {
+        u = norm(mix(u, worldU, upright * horiz));
+        u = norm(sub(u, mul(tCurr, dot(u, tCurr))));
+      }
+    }
+    baseU[i] = u;
+  }
+
+  const quats = new Array(NS);
+  for (let i = 0; i < NS; i++) {
+    let T = tangents[i], U = baseU[i], R = norm(cross(T, U));
+    // Auto curvature banking + explicit clip bank function
+    let roll = 0;
+    if (bankFn) {
+      // Lateral curvature approximation from adjacent tangents
+      let curv = 0;
+      if (i > 0 && i < NS - 1) {
+        let dT = sub(tangents[i + 1], tangents[i - 1]);
+        curv = dot(dT, R);
+      }
+      roll = bankFn(i / (NS - 1), curv, T, U, R);
+    }
+    if (Math.abs(roll) > 1e-5) {
+      let c = Math.cos(roll), s = Math.sin(roll);
+      let nU = norm(add(mul(U, c), mul(R, s)));
+      let nR = norm(cross(T, nU));
+      U = nU; R = nR;
+    }
+    quats[i] = frameToQuat(T, U, R);
+  }
+  return quats;
+}
+
+// ============================================================================
+// 10 SERPENTINE MOTIONS & COMBAT SKILL TEMPLATES (EXTENSIBLE REGISTRY)
+// ============================================================================
+const motionParams = { ampX: 1.0, ampY: 1.0, freq: 1.0, bank: 1.0 };
+const pulse = (x, a, b, c, d) => smooth((x - a) / (b - a)) * (1 - smooth((x - c) / (d - c)));
+
+const clips = {
+  // 1. DU LONG — Majestic cloud-riding serpentine glide (steady head, progressive neck->tail wave, zero hip-wiggle)
+  swim_s: {
+    name: 'Du Long · Uốn chữ S',
+    duration: 3.6,
+    loop: true,
+    events: [],
+    solve(u, p) {
+      const ph = u * TAU;
+      const ax = 0.78 * p.ampX, ay = 0.56 * p.ampY, fr = 1.10 * p.freq;
+      const pos = resampleSpineArcLength(s => {
+        let x = s / total;
+        let w = ph - x * fr * TAU;
+        // True anguilliform envelope: poised head & chest, fluid curve growing progressively toward tail
+        let envZ = .14 + .58 * Math.pow(x, 1.25) + .65 * Math.pow(x, 2.4);
+        let envY = .22 + .55 * smooth(x / .55) + .35 * x * x;
+        let px = -7.4 + s * .96;
+        let pz = Math.sin(w) * ax * envZ;
+        let neckArch = .92 * Math.exp(-x * 4.2) - .32 * Math.exp(-Math.pow((x - .24) / .18, 2));
+        let py = .85 + neckArch + Math.sin(w - .95) * ay * envY + .14 * Math.sin(ph);
+        return V(px, py, pz);
+      });
+      const quats = solveSpineFrames(pos, {
+        upright: .38,
+        bankFn: (x, curv) => clamp(-curv * .48 * p.bank, -.28, .28) * smooth(x / .35)
+      });
+      // Gaze-stabilized head: gently counter-steers against neck tangent so head glides focused forward
+      let fwd = norm(sub(pos[0], pos[1]));
+      let neckYaw = Math.atan2(fwd[2], -fwd[0]);
+      let neckPitch = Math.asin(clamp(fwd[1], -.7, .7));
+      return {
+        pos, quats,
+        head: [-neckPitch * .55 + .03 * Math.sin(ph), neckYaw * .68, -neckYaw * .16 * p.bank],
+        jaw: (jawDegrees + 1.5 * Math.sin(ph)) * PI / 180,
+        limbs: (isFront, side) => {
+          let lv = Math.sin(ph - (isFront ? .25 : 1.55) + side * .35);
+          return [(-.30 + .09 * lv), (.22 - .11 * lv), (.05 * lv)];
+        },
+        previewPath: (k) => {
+          let x = k, w = ph - x * fr * TAU;
+          let envZ = .14 + .58 * Math.pow(x, 1.25) + .65 * Math.pow(x, 2.4);
+          let envY = .22 + .55 * smooth(x / .55) + .35 * x * x;
+          let neckArch = .92 * Math.exp(-x * 4.2) - .32 * Math.exp(-Math.pow((x - .24) / .18, 2));
+          return V(-7.4 + x * total * .96, .85 + neckArch + Math.sin(w - .95) * ay * envY + .14 * Math.sin(ph), Math.sin(w) * ax * envZ);
+        }
+      };
+    }
+  },
+
+  // 2. VÂN LONG — Regal hovering idle with seamless breathing waves & poised head
+  idle_float: {
+    name: 'Vân Long · Lơ lửng',
+    duration: 4.4,
+    loop: true,
+    events: [],
+    solve(u, p) {
+      const ph = u * TAU;
+      const ax = .44 * p.ampX, ay = .38 * p.ampY, fr = 1.0 * p.freq;
+      const pos = resampleSpineArcLength(s => {
+        let x = clamp(s / total, 0, 1);
+        let bp = spine(x);
+        let w = ph - x * fr * TAU;
+        let tailGain = .12 + .88 * Math.pow(x, 1.25);
+        return V(
+          bp[0] + .10 * Math.sin(ph - x * 2.0) * p.ampX,
+          bp[1] + .24 * Math.sin(ph) + Math.sin(w - .6) * ay * tailGain,
+          bp[2] + Math.sin(w) * ax * tailGain
+        );
+      }, 96, total * 1.06);
+      const quats = solveSpineFrames(pos, {
+        upright: .38,
+        bankFn: (x) => .07 * p.bank * Math.cos(ph - x * fr * TAU) * smooth(x / .4)
+      });
+      return {
+        pos, quats,
+        head: [.04 * Math.sin(ph), .05 * Math.sin(ph - .4), .02 * Math.cos(ph)],
+        jaw: (jawDegrees + 1.4 * Math.sin(ph)) * PI / 180,
+        limbs: (isFront, side) => {
+          let lv = Math.sin(ph + side * .35 + (isFront ? 0 : 1.3));
+          return [.05 * lv, -.08 * lv, .03 * lv];
+        }
+      };
+    }
+  },
+
+  // 3. BÁT TỰ PHIÊN VÂN — 3D Figure-8 Follow-the-Leader Weave
+  figure8: {
+    name: 'Bát Tự · Lượn số 8',
+    duration: 6.8,
+    loop: true,
+    events: [],
+    solve(u, p, withRoot) {
+      const headTheta = u * TAU;
+      const Rx = 10.6, Rz = 9.8, Ry = 1.55 + .85 * p.ampY;
+      const waveAmp = .58 * p.ampX, fr = 1.65 * p.freq;
+      function lemniscate(th, s) {
+        let x = s / total;
+        let px = Rx * Math.sin(th);
+        let pz = Rz * Math.sin(th) * Math.cos(th);
+        let py = 1.6 + Ry * Math.sin(th * 2.0 + .45);
+        // Subtle lateral serpentine propulsion along local curve normal
+        let dx = Rx * Math.cos(th), dz = Rz * Math.cos(2 * th);
+        let nl = Math.hypot(dx, dz) || 1;
+        let nx = -dz / nl, nz = dx / nl;
+        let ripple = Math.sin(headTheta * 3.0 - x * fr * TAU) * waveAmp * (.3 + .7 * x);
+        return V(px + nx * ripple, py, pz + nz * ripple);
+      }
+      const pos = resampleSpineArcLength(s => lemniscate(headTheta - s * .142, s), 120, total * 1.45);
+      if (!withRoot) {
+        let c = pos[0];
+        for (let i = 0; i < NS; i++) pos[i] = sub(pos[i], V(c[0] + 6.5, c[1] - 1.8, c[2]));
+      }
+      const quats = solveSpineFrames(pos, {
+        upright: .22,
+        bankFn: (x, curv) => clamp(-curv * 1.35 * p.bank, -.68, .68)
+      });
+      return {
+        pos, quats,
+        head: [.06 * Math.cos(headTheta * 2), 0, clamp(-Math.sin(headTheta) * .22 * p.bank, -.35, .35)],
+        jaw: (jawDegrees + 2.5 * Math.sin(headTheta * 2)) * PI / 180,
+        limbs: (isFront, side) => {
+          let lv = Math.sin(headTheta * 3 + (isFront ? 0 : 1.5) + side * .3);
+          return [-.42 + .08 * lv, .32 - .08 * lv, .10 * lv]; // aerodynamic tuck
+        },
+        previewPath: (k) => lemniscate(k * TAU, 0)
+      };
+    }
+  },
+
+  // 4. BÀN LONG QUẤN TRỤ — Coiling Protective Orbit
+  coil_orbit: {
+    name: 'Bàn Long · Quấn trụ',
+    duration: 5.2,
+    loop: true,
+    events: [],
+    solve(u, p, withRoot) {
+      const headTheta = u * TAU;
+      const R = 5.4 + .65 * p.ampX;
+      const fr = 1.4 * p.freq;
+      function orbitPt(th, s) {
+        let x = s / total;
+        let rLocal = R + .42 * p.ampX * Math.sin(headTheta * 2 - x * fr * TAU);
+        let py = 1.35 + (1.35 * p.ampY) * Math.sin(th * 2.0) + .55 * Math.cos(x * PI);
+        return V(Math.cos(th) * rLocal, py, Math.sin(th) * rLocal);
+      }
+      const pos = resampleSpineArcLength(s => orbitPt(headTheta - s / R, s), 110, total * 1.35);
+      if (!withRoot) {
+        let c = pos[0];
+        for (let i = 0; i < NS; i++) pos[i] = sub(pos[i], V(c[0] + 5.5, c[1] - 1.6, c[2]));
+      }
+      const quats = solveSpineFrames(pos, {
+        upright: .24,
+        bankFn: (x, curv) => clamp(-.34 * p.bank - curv * .75 * p.bank, -.65, .65)
+      });
+      return {
+        pos, quats,
+        head: [.08 * Math.cos(headTheta * 2), .18, -.22 * p.bank],
+        jaw: (jawDegrees + 3.0) * PI / 180,
+        limbs: (isFront, side) => {
+          let lv = Math.sin(headTheta * 2 + (isFront ? 0 : 1.4) + side * .4);
+          return [-.25 + .10 * lv, .18 - .10 * lv, .06 * lv];
+        },
+        previewPath: (k) => orbitPt(k * TAU, 0)
+      };
+    }
+  },
+
+  // 5. THANH LONG THĂNG THIÊN — Ascending Dragon Vortex / Summon
+  spiral_rise: {
+    name: 'Thanh Long Thăng Thiên',
+    duration: 3.8,
+    loop: false,
+    events: [[.35, 'emerge'], [1.55, 'vortex_ascend'], [2.55, 'roar_peak'], [3.40, 'ready']],
+    solve(u, p, withRoot) {
+      const climb = smoother(clamp(u / .82, 0, 1));
+      const roar = pulse(u, .58, .72, .86, .98);
+      const settle = smoother(clamp((u - .72) / .28, 0, 1));
+      const headProgress = -1.2 + climb * 12.6; // arc parameter moving up the helix
+      function helixPt(h) {
+        let prog = clamp(h / 11.4, -.5, 1.2);
+        let th = h * (.46 * p.freq) - .9;
+        let r = lerp(4.8, 2.5, smooth(prog)) * (.72 + .28 * p.ampX);
+        // Smoothly level out into a proud horizontal circle at the top
+        let y = -4.2 + h * (.82 * (.75 + .25 * p.ampY)) - 1.4 * Math.pow(Math.max(0, prog - .75), 2) * 3.0;
+        return V(Math.cos(th) * r, y, Math.sin(th) * r);
+      }
+      const pos = resampleSpineArcLength(s => helixPt(headProgress - s * .56), 120, total * 1.45);
+      if (!withRoot) {
+        let c = pos[0];
+        for (let i = 0; i < NS; i++) pos[i] = sub(pos[i], V(c[0] + 5.0, c[1] - 2.2, c[2]));
+      }
+      const quats = solveSpineFrames(pos, {
+        upright: .14,
+        refUp: V(0, 1, 0),
+        bankFn: (x) => -.38 * p.bank * (1 - .4 * settle)
+      });
+      return {
+        pos, quats,
+        head: [-.36 * roar + .12 * (1 - climb), .12 * Math.sin(u * TAU), -.18 * p.bank],
+        jaw: (jawDegrees + 34 * roar + 8 * climb) * PI / 180,
+        limbs: (isFront, side) => {
+          let splay = roar * .35;
+          return [-.28 + splay, .22 - splay * .6, .12 * roar];
+        },
+        previewPath: (k) => helixPt(-1.2 + k * 12.6)
+      };
+    }
+  },
+
+  // 6. THẦN LONG PHÁ KHÔNG — Coiled Anticipation -> Corkscrew Piercing Lunge
+  coil_lunge: {
+    name: 'Thần Long Phá Không',
+    duration: 2.2,
+    loop: false,
+    events: [[.22, 'coil_windup'], [.68, 'launch'], [1.05, 'pierce_impact'], [1.65, 'recover']],
+    solve(u, p, withRoot) {
+      const wind = pulse(u, .02, .26, .34, .44);
+      const dash = smoother(clamp((u - .28) / .30, 0, 1)) * (1 - smoother(clamp((u - .66) / .34, 0, 1)));
+      const strike = pulse(u, .30, .44, .58, .76);
+      const corkscrew = smoother(clamp((u - .30) / .45, 0, 1)) * TAU * 1.0 * p.bank;
+      const headX = withRoot ? (-7.2 + 3.8 * wind - 9.4 * dash) : -7.2;
+      const ax = (1.1 + 2.35 * wind - .85 * strike) * p.ampX;
+      const fr = (1.1 + 1.05 * wind - .42 * strike) * p.freq;
+      const pos = resampleSpineArcLength(s => {
+        let x = s / total;
+        let compression = 1 - .30 * wind + .12 * strike;
+        let px = headX + s * .88 * compression;
+        let w = x * fr * TAU + .4 * wind - u * 8.5 * strike;
+        let env = Math.sin(PI * Math.min(1, .12 + x * .92));
+        let pz = Math.sin(w) * ax * env;
+        let py = 1.25 - .65 * wind * Math.exp(-x * 3) + .35 * Math.cos(w) * (.5 + .5 * wind) * p.ampY;
+        return V(px, py, pz);
+      }, 110, total * 1.45);
+      const quats = solveSpineFrames(pos, {
+        upright: strike > .2 ? .05 : .28,
+        bankFn: (x, curv) => corkscrew * strike * (.35 + .65 * x) - curv * 1.2 * p.bank
+      });
+      return {
+        pos, quats,
+        head: [.18 * wind - .12 * strike, 0, .25 * Math.sin(corkscrew) * strike],
+        jaw: (jawDegrees + 26 * strike + 8 * wind) * PI / 180,
+        limbs: (isFront) => {
+          // Tuck tightly back during piercing strike, brace on windup
+          let tuck = -.68 * strike + .22 * wind;
+          return [tuck, .48 * strike - .15 * wind, .15 * strike];
+        },
+        previewPath: (k) => V(-7.2 + 3.8 * pulse(k,.02,.26,.34,.44) - 9.4 * smoother(clamp((k-.28)/.30,0,1))*(1-smoother(clamp((k-.66)/.34,0,1))), 1.25, 0)
+      };
+    }
+  },
+
+  // 7. THIÊN LONG GIÁNG THẾ — High Arc -> Predatory Dive Impact -> Pull-up Swoop
+  dive_strike: {
+    name: 'Thiên Long Giáng Thế',
+    duration: 3.0,
+    loop: false,
+    events: [[.45, 'climb_apex'], [1.05, 'dive_commit'], [1.62, 'ground_impact'], [2.35, 'pull_up']],
+    solve(u, p, withRoot) {
+      const headS = u * 30.0;
+      const diveDepth = 1.0 + .35 * p.ampY;
+      function arcPath(d) {
+        // d in [-12 .. 32]: rises high on +X, swoops down to ground impact near origin, rockets out to -X
+        let t = d / 30.0;
+        let px = 11.5 - d * .92;
+        let py = 2.6 + (4.2 * Math.sin(t * PI * 1.35) - 4.4 * Math.exp(-Math.pow((t - .55) / .17, 2))) * diveDepth;
+        let pz = Math.sin(d * .26 * p.freq) * (1.25 * p.ampX) * (1 - .55 * Math.exp(-Math.pow((t - .55) / .18, 2)));
+        return V(px, Math.max(-2.15, py), pz);
+      }
+      const pos = resampleSpineArcLength(s => arcPath(headS - s * .92), 120, total * 1.35);
+      if (!withRoot) {
+        let c = pos[0];
+        for (let i = 0; i < NS; i++) pos[i] = sub(pos[i], V(c[0] + 6.0, c[1] - 1.5, c[2]));
+      }
+      const impact = pulse(u, .46, .54, .62, .75);
+      const quats = solveSpineFrames(pos, {
+        upright: .20,
+        bankFn: (x, curv) => clamp(-curv * 1.5 * p.bank, -.75, .75)
+      });
+      return {
+        pos, quats,
+        head: [.14 * impact, 0, 0],
+        jaw: (jawDegrees + 32 * impact) * PI / 180,
+        limbs: (isFront) => {
+          let reach = isFront ? (.42 * impact - .38 * (1 - impact)) : (-.35);
+          return [reach, -.25 * impact + .25 * (1 - impact), .18 * impact];
+        },
+        previewPath: (k) => arcPath(k * 30.0)
+      };
+    }
+  },
+
+  // 8. LONG TỨC QUÉT NGANG — Elevated Pillar Stance + Wide Sweeping Breath Beam
+  breath_sweep: {
+    name: 'Long Tức Quét Ngang',
+    duration: 3.6,
+    loop: false,
+    events: [[.45, 'inhale'], [1.00, 'breath_start'], [1.85, 'sweep_center'], [2.75, 'breath_end']],
+    solve(u, p) {
+      const inhale = pulse(u, .04, .22, .28, .38);
+      const breath = pulse(u, .25, .34, .74, .92);
+      const sweepT = smoother(clamp((u - .28) / .52, 0, 1));
+      const sweepAngle = lerp(-0.92, 0.92, sweepT) * p.ampX * breath;
+      const ph = u * TAU;
+      const pos = resampleSpineArcLength(s => {
+        let x = clamp(s / total, 0, 1);
+        let bp = spine(x);
+        // Elevate chest/neck into commanding turret, sweep upper third horizontally
+        let neckMask = Math.exp(-x * 5.2);
+        let chestLift = (2.1 * breath + 1.4 * inhale) * Math.exp(-x * 3.4);
+        let recoilX = (1.6 * inhale - .6 * breath) * neckMask;
+        let sweepZ = Math.sin(sweepAngle) * 4.4 * neckMask + Math.sin(ph - x * 1.3 * p.freq * TAU) * (.85 * p.ampX) * x;
+        let counterY = Math.sin(ph * 1.5 - x * 4.0) * (.45 * p.ampY) * x;
+        return V(bp[0] + recoilX, bp[1] + chestLift + counterY, bp[2] + sweepZ);
+      }, 104, total * 1.25);
+      const quats = solveSpineFrames(pos, {
+        upright: .32,
+        bankFn: (x) => -sweepAngle * .22 * p.bank * Math.exp(-x * 3)
+      });
+      return {
+        pos, quats,
+        head: [-.22 * inhale + .14 * breath, sweepAngle * .52, -sweepAngle * .15],
+        jaw: (jawDegrees + 6 * inhale + 38 * breath) * PI / 180,
+        limbs: (isFront, side) => {
+          let brace = (isFront ? .28 : -.16) * (breath + inhale);
+          return [brace + .05 * Math.sin(ph + side), -.18 * breath, .12 * breath];
+        }
+      };
+    }
+  },
+
+  // 9. THẦN LONG BÃI VĨ — Anchored Front Torque -> Massive Horizontal Tail Whip
+  tail_whip: {
+    name: 'Thần Long Bãi Vĩ',
+    duration: 2.4,
+    loop: false,
+    events: [[.30, 'wind_coil'], [.88, 'whip_snap'], [1.18, 'hit_arc'], [1.85, 'follow_through']],
+    solve(u, p) {
+      const wind = pulse(u, .02, .28, .36, .48);
+      const whip = pulse(u, .34, .48, .58, .92);
+      const snapWave = smoother(clamp((u - .32) / .40, 0, 1));
+      const pos = resampleSpineArcLength(s => {
+        let x = clamp(s / total, 0, 1);
+        let bp = spine(x);
+        // Whip travels down x > 0.25 with huge lateral & sweeping arc amplitude
+        let tailMask = smooth((x - .18) / .55);
+        let delayed = clamp(snapWave * 1.55 - x * .65, 0, 1);
+        let swingAng = (-1.15 * wind + 2.35 * smoother(delayed) * whip) * (.75 + .25 * p.ampX);
+        // Pivot the posterior spine around mid-torso anchor (~x=0.25)
+        let pivot = spine(.24);
+        let relX = bp[0] - pivot[0], relZ = bp[2] - pivot[2];
+        let c = Math.cos(swingAng * tailMask), sn = Math.sin(swingAng * tailMask);
+        let rx = pivot[0] + relX * c - relZ * sn;
+        let rz = pivot[2] + relX * sn + relZ * c;
+        let ry = bp[1] + .65 * p.ampY * Math.sin(PI * tailMask) * (whip - .35 * wind);
+        return V(rx, ry, rz);
+      }, 110, total * 1.32);
+      const quats = solveSpineFrames(pos, {
+        upright: .26,
+        bankFn: (x) => (whip * .75 - wind * .35) * smooth((x - .2) / .6) * p.bank
+      });
+      return {
+        pos, quats,
+        head: [.10 * whip, -.32 * wind + .28 * whip, -.18 * whip],
+        jaw: (jawDegrees + 20 * whip) * PI / 180,
+        limbs: (isFront, side) => [(.22 * whip - .15 * wind) * side, -.18 * whip, .10 * whip]
+      };
+    }
+  },
+
+  // 10. LONG NGÂM CHẤN THIÊN — King-Cobra Rearing Stance + Skyward Roar Shockwave
+  rear_roar: {
+    name: 'Long Ngâm Chấn Thiên',
+    duration: 3.0,
+    loop: false,
+    events: [[.45, 'rear_up'], [1.05, 'roar_start'], [1.50, 'shockwave_peak'], [2.45, 'roar_end']],
+    solve(u, p) {
+      const rear = pulse(u, .04, .28, .72, .96);
+      const charge = pulse(u, .14, .30, .38, .48);
+      const roar = pulse(u, .32, .44, .74, .94);
+      const tremor = Math.sin(u * 42.0) * .14 * roar;
+      const pos = resampleSpineArcLength(s => {
+        let x = clamp(s / total, 0, 1);
+        let bp = spine(x);
+        let frontMask = Math.exp(-x * 3.8);
+        let midCoil = Math.sin(PI * clamp((x - .18) / .65, 0, 1));
+        let lift = (3.45 * rear + .55 * roar) * frontMask * (.75 + .25 * p.ampY);
+        let pullBack = (2.2 * rear + .9 * charge - .7 * roar) * frontMask;
+        let coilWide = (1.65 * rear * p.ampX) * Math.sin(x * 1.45 * p.freq * TAU) * midCoil;
+        return V(bp[0] + pullBack, bp[1] + lift - .55 * midCoil * rear, bp[2] + coilWide + tremor * frontMask);
+      }, 110, total * 1.32);
+      const quats = solveSpineFrames(pos, {
+        upright: .30,
+        bankFn: (x) => .18 * p.bank * Math.sin(x * TAU) * rear
+      });
+      return {
+        pos, quats,
+        head: [.26 * charge - .42 * roar, tremor * .6, tremor * .4],
+        jaw: (jawDegrees + 41 * roar + 5 * charge) * PI / 180,
+        limbs: (isFront, side) => {
+          let flair = isFront ? (.48 * roar - .22 * charge) : (-.18 * rear);
+          return [flair, -.30 * roar, .20 * roar * side];
+        }
+      };
+    }
+  }
+};
+
+// ============================================================================
+// RUNTIME RIG STATE, SMOOTH BLENDING & SOCKET / GUIDE VISUALIZER
+// ============================================================================
+let showBones = false, showGuides = false, restPose = false, jawDegrees = 4;
+let clipName = 'swim_s', lastSkill = 'spiral_rise', clipTime = 0, clipSpeed = 1;
+let rootMotion = true, followCam = true, loopSkill = false;
+let posed = new Array(bones.length).fill(null).map(identity);
+let poseArray = new Float32Array(bones.length * 16);
+let currentSpinePos = bindSpineFrames.map(f => f.p);
+let currentPreviewFn = null;
+let dragonCenter = V(0, 0.5, 0);
+let eventListeners = new Set(), blendFrom = null, blendTime = 0;
+let bannerTimer = 0;
+
+function evaluateCurrentPose(name, time) {
+  let spec = clips[name];
+  let u = (spec.loop || loopSkill)
+    ? (((time % spec.duration) + spec.duration) % spec.duration) / spec.duration
+    : clamp(time / spec.duration, 0, 1);
+  return spec.solve(u, motionParams, rootMotion);
+}
+
+function applyPoseToRig(pose) {
+  currentSpinePos = pose.pos;
+  currentPreviewFn = pose.previewPath || null;
+
+  // Compute centroid for shadow frustum & follow camera
+  let c = V(0, 0, 0);
+  for (let idx of [0, 5, 11, 17, 23]) c = add(c, pose.pos[idx]);
+  dragonCenter = mul(c, 0.2);
+
+  // 1. Spine bones (0..NS-1): map bind frame -> live curve frame
+  for (let i = 0; i < NS; i++) {
+    let liveM = quatPosToMat(pose.quats[i], pose.pos[i]);
+    let m = restPose ? identity() : mm(liveM, bindSpineInv[i]);
+    posed[i] = m;
+    poseArray.set(m, i * 16);
+  }
+
+  // 2. Head & Jaw (local Euler around anatomical HX/HY/HZ attached to neck_00)
+  const [hp, hy, hr] = restPose ? [0, 0, 0] : (pose.head || [0, 0, 0]);
+  let headRot = mm(rot(HY, hy), mm(rot(HX, hp), rot(HZ, hr)));
+  let localHead = mm(mm(trans(bones[HEAD].p), headRot), trans(mul(bones[HEAD].p, -1)));
+  posed[HEAD] = restPose ? identity() : mm(posed[0], localHead);
+  poseArray.set(posed[HEAD], HEAD * 16);
+
+  let jAng = restPose ? 0 : (pose.jaw ?? (jawDegrees * PI / 180));
+  let localJaw = mm(mm(trans(bones[JAW].p), rot(bones[JAW].axis, jAng)), trans(mul(bones[JAW].p, -1)));
+  posed[JAW] = restPose ? identity() : mm(posed[HEAD], localJaw);
+  poseArray.set(posed[JAW], JAW * 16);
+
+  // 3. Articulated 4 Limbs (attached to their spine parent bones)
+  const limbMap = new Map();
+  for (let i = JAW + 1; i < bones.length; i++) {
+    let b = bones[i];
+    let isFront = b.name.startsWith('fore');
+    let side = b.name.includes('_L') ? -1 : 1;
+    let key = (isFront ? 'f' : 'h') + side;
+    if (!limbMap.has(key)) {
+      limbMap.set(key, (!restPose && pose.limbs) ? pose.limbs(isFront, side) : [0, 0, 0]);
+    }
+    let arr = limbMap.get(key);
+    let ang = restPose ? 0 : (b.kind === 'upper' ? arr[0] : b.kind === 'lower' ? arr[1] : arr[2]);
+    let local = mm(mm(trans(b.p), rot(b.axis, ang)), trans(mul(b.p, -1)));
+    let m = restPose ? identity() : mm(posed[b.parent], local);
+    posed[i] = m;
+    poseArray.set(m, i * 16);
+  }
+}
+
+function blendPoses(a, b, k) {
+  let pos = new Array(NS), quats = new Array(NS);
+  for (let i = 0; i < NS; i++) {
+    pos[i] = mix(a.pos[i], b.pos[i], k);
+    quats[i] = slerpQuat(a.quats[i], b.quats[i], k);
+  }
+  let ah = a.head || [0,0,0], bh = b.head || [0,0,0];
+  let head = [lerp(ah[0], bh[0], k), lerp(ah[1], bh[1], k), lerp(ah[2], bh[2], k)];
+  let jaw = lerp(a.jaw || 0, b.jaw || 0, k);
+  let limbs = (isFront, side) => {
+    let la = a.limbs ? a.limbs(isFront, side) : [0,0,0];
+    let lb = b.limbs ? b.limbs(isFront, side) : [0,0,0];
+    return [lerp(la[0], lb[0], k), lerp(la[1], lb[1], k), lerp(la[2], lb[2], k)];
+  };
+  return { pos, quats, head, jaw, limbs, previewPath: b.previewPath };
+}
+
+function updateRig() {
+  let curr = evaluateCurrentPose(clipName, clipTime);
+  if (blendFrom && blendTime < .26) {
+    curr = blendPoses(blendFrom, curr, smoother(blendTime / .26));
+  }
+  applyPoseToRig(curr);
+}
+
+const $ = id => document.getElementById(id);
+function toggle(id, v) { $(id).classList.toggle('active', v); }
+
+function renderEventMarkers() {
+  const bar = $('eventsBar');
+  [...bar.querySelectorAll('.events-marker')].forEach(el => el.remove());
+  let spec = clips[clipName];
+  for (let [at, name] of spec.events) {
+    let mk = document.createElement('div');
+    mk.className = 'events-marker';
+    mk.style.left = (clamp(at / spec.duration, 0, 1) * 100) + '%';
+    mk.title = `${name} (${at.toFixed(2)}s)`;
+    bar.appendChild(mk);
+  }
+}
+
+function flashEvent(text) {
+  $('eventText').textContent = `${clipName} → ${text}`;
+  $('eventBanner').classList.add('show');
+  bannerTimer = 1.25;
+}
+
+function playClip(name, options = {}) {
+  if (!clips[name]) throw Error('Unknown clip ' + name);
+  if (options.speed !== undefined && (!Number.isFinite(options.speed) || options.speed <= 0)) throw Error('Invalid speed');
+  blendFrom = evaluateCurrentPose(clipName, clipTime);
+  blendTime = 0;
+  clipName = name;
+  if (!clips[name].loop) lastSkill = name;
+  clipTime = 0;
+  if (options.speed !== undefined) clipSpeed = options.speed;
+  if (options.rootMotion !== undefined) rootMotion = !!options.rootMotion;
+  restPose = false; anim = true;
+  renderEventMarkers();
+  syncSkillUI();
+  toggle('anim', true);
+  toggle('rest', false);
+  return clips[name].duration;
+}
+
+function advanceSkill(dt) {
+  blendTime += dt;
+  if (bannerTimer > 0) {
+    bannerTimer -= dt;
+    if (bannerTimer <= 0) $('eventBanner').classList.remove('show');
+  }
+  let spec = clips[clipName], prev = clipTime;
+  clipTime += dt * clipSpeed;
+  for (let [at, name] of spec.events) {
+    if (prev < at && clipTime >= at) {
+      let evt = { clip: clipName, event: name, time: at };
+      for (const cb of eventListeners) try { cb(evt); } catch (e) { console.error(e); }
+      $('skillStatus').textContent = `Event: ${name} (${at.toFixed(2)}s)`;
+      flashEvent(name);
+    }
+  }
+  if (!spec.loop && !loopSkill && clipTime >= spec.duration) {
+    clipTime = spec.duration;
+    playClip('swim_s');
+  } else if ((spec.loop || loopSkill) && clipTime >= spec.duration) {
+    clipTime %= spec.duration;
+  }
+  let frac = clamp(clipTime / spec.duration, 0, 1);
+  $('scrub').value = frac;
+  $('scrubVal').textContent = clipTime.toFixed(2) + 's';
+  $('eventsFill').style.width = (frac * 100) + '%';
+}
+
+function syncSkillUI() {
+  let spec = clips[clipName];
+  $('clip').value = clipName;
+  let frac = clamp(clipTime / spec.duration, 0, 1);
+  $('scrub').value = frac;
+  $('scrubVal').textContent = clipTime.toFixed(2) + 's';
+  $('eventsFill').style.width = (frac * 100) + '%';
+  $('speed').value = clipSpeed;
+  $('speedVal').textContent = clipSpeed.toFixed(2) + 'x';
+  $('rootMotion').checked = rootMotion;
+  $('followCam').checked = followCam;
+  $('showGuides').checked = showGuides;
+  $('loopSkill').checked = loopSkill;
+  $('skillStatus').textContent = `${spec.name} · ${spec.duration}s${spec.loop ? ' · loop' : ' · skill'}`;
+}
+
+function socket(name) {
+  const def = {
+    mouth:  [HEAD, H(V(0, -.07, 1.78)), HZ],
+    head:   [HEAD, H(V(0, .26, .55)), HZ],
+    chest:  [4, F(4 / (NS - 1)).p, mul(F(4 / (NS - 1)).T, -1)],
+    tail:   [NS - 1, F(1).p, F(1).T],
+    fore_L: [bones.findIndex(b => b.name === 'fore_L_foot'), null, HZ],
+    fore_R: [bones.findIndex(b => b.name === 'fore_R_foot'), null, HZ]
+  }[name];
+  if (!def) throw Error('Unknown socket ' + name);
+  let [id, p, dir] = def, m = posed[id] || identity();
+  let position = transform(m, p || bones[id].p);
+  let direction = norm(sub(transform(m, add(p || bones[id].p, dir)), position));
+  return { position, direction };
+}
+
+// Build a clean engine-ready Skill JSON blueprint (params + events + sampled sockets + spine path)
+function exportSkillBlueprint(name = clipName, fpsSample = 15) {
+  let spec = clips[name];
+  let steps = Math.max(8, Math.round(spec.duration * fpsSample));
+  let savedClip = clipName, savedTime = clipTime, savedRest = restPose;
+  clipName = name; restPose = false;
+  let samplesOut = [];
+  for (let i = 0; i <= steps; i++) {
+    let t = (i / steps) * spec.duration;
+    clipTime = t;
+    applyPoseToRig(evaluateCurrentPose(name, t));
+    samplesOut.push({
+      t: +t.toFixed(3),
+      headPos: currentSpinePos[0].map(v => +v.toFixed(3)),
+      tailPos: currentSpinePos[NS - 1].map(v => +v.toFixed(3)),
+      sockets: {
+        mouth: { pos: socket('mouth').position.map(v => +v.toFixed(3)), dir: socket('mouth').direction.map(v => +v.toFixed(3)) },
+        tail:  { pos: socket('tail').position.map(v => +v.toFixed(3)),  dir: socket('tail').direction.map(v => +v.toFixed(3)) }
+      }
+    });
+  }
+  clipName = savedClip; clipTime = savedTime; restPose = savedRest;
+  updateRig();
+  return {
+    skillId: name,
+    displayName: spec.name,
+    duration: spec.duration,
+    loop: !!spec.loop,
+    rootMotion,
+    speed: clipSpeed,
+    waveParams: { ...motionParams, jawDegrees },
+    events: spec.events.map(([time, event]) => ({ time, event })),
+    socketTracks: samplesOut
+  };
+}
+
+// Register custom user motions/skills at runtime!
+function registerClip(name, def) {
+  if (!name || typeof def?.solve !== 'function') throw Error('Clip requires a name and solve(u, params, withRoot) function');
+  clips[name] = { name: def.name || name, duration: def.duration || 3.0, loop: !!def.loop, events: def.events || [], solve: def.solve };
+  let opt = document.createElement('option');
+  opt.value = name; opt.textContent = clips[name].name + ' (Custom)';
+  $('clip').appendChild(opt);
+  return name;
+}
+
+window.dragonSkills = {
+  clips,
+  play: playClip,
+  stop: () => playClip('swim_s'),
+  register: registerClip,
+  onEvent: cb => { eventListeners.add(cb); return () => eventListeners.delete(cb); },
+  socket,
+  exportBlueprint: exportSkillBlueprint,
+  setParams: patch => { Object.assign(motionParams, patch); syncParamUI(); },
+  getParams: () => ({ ...motionParams, jawDegrees }),
+  getState: () => ({ name: clipName, time: clipTime, speed: clipSpeed, rootMotion, loopSkill }),
+  setSpeed: v => { if (!Number.isFinite(v) || v <= 0) throw Error('Invalid speed'); clipSpeed = v; syncSkillUI(); }
+};
+
+// ============================================================================
+// DEBUG RIG & TRAJECTORY / VFX SOCKET OVERLAY RENDERER
+// ============================================================================
+const lineProg = program(
+  `#version 300 es
+layout(location=0)in vec3 p;uniform mat4 vp;uniform float ptSize;void main(){gl_Position=vp*vec4(p,1.);gl_PointSize=ptSize;}`,
+  `#version 300 es
+precision highp float;uniform vec3 color;out vec4 o;void main(){o=vec4(color,1.);}`
+);
+const lineVAO = gl.createVertexArray(), lineBuf = gl.createBuffer();
+gl.bindVertexArray(lineVAO); gl.bindBuffer(gl.ARRAY_BUFFER, lineBuf);
+gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 12, 0);
+gl.bindVertexArray(null);
+
+function drawLines(vp, data, color, mode, ptSize = 7) {
+  if (!data.length) return;
+  gl.useProgram(lineProg);
+  gl.uniformMatrix4fv(gl.getUniformLocation(lineProg, 'vp'), false, vp);
+  gl.uniform3fv(gl.getUniformLocation(lineProg, 'color'), color);
+  gl.uniform1f(gl.getUniformLocation(lineProg, 'ptSize'), ptSize);
+  gl.bindVertexArray(lineVAO);
+  gl.bindBuffer(gl.ARRAY_BUFFER, lineBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(data), gl.DYNAMIC_DRAW);
+  gl.drawArrays(mode, 0, data.length / 3);
+}
+
+function drawRig(vp) {
+  let links = [], points = [];
+  for (let i = 0; i < bones.length; i++) {
+    let b = bones[i], p = transform(posed[i], b.p);
+    points.push(...p);
+    if (b.parent >= 0) links.push(...transform(posed[b.parent], bones[b.parent].p), ...p);
+  }
+  gl.disable(gl.DEPTH_TEST);
+  drawLines(vp, links, [.15, .95, .85], gl.LINES);
+  drawLines(vp, points, [1, .79, .32], gl.POINTS, 7);
+  gl.enable(gl.DEPTH_TEST);
+}
+
+function drawGuides(vp) {
+  gl.disable(gl.DEPTH_TEST);
+  // 1. Live spine ribbon centerline
+  let spineStrip = [];
+  for (let p of currentSpinePos) spineStrip.push(...p);
+  drawLines(vp, spineStrip, [.98, .76, .32], gl.LINE_STRIP);
+
+  // 2. Skill trajectory preview path (if clip provides one)
+  if (currentPreviewFn && rootMotion) {
+    let pathPts = [];
+    for (let i = 0; i <= 72; i++) pathPts.push(...currentPreviewFn(i / 72));
+    drawLines(vp, pathPts, [.32, .78, .98], gl.LINE_STRIP);
+  }
+
+  // 3. VFX Skill Sockets (position + forward direction vector)
+  let sockArrows = [], sockPts = [];
+  for (let sName of ['mouth', 'head', 'chest', 'tail', 'fore_L', 'fore_R']) {
+    let sk = socket(sName);
+    sockPts.push(...sk.position);
+    let tip = add(sk.position, mul(sk.direction, sName === 'mouth' ? 2.6 : 1.5));
+    sockArrows.push(...sk.position, ...tip);
+  }
+  drawLines(vp, sockArrows, [1.0, .42, .22], gl.LINES);
+  drawLines(vp, sockPts, [1.0, .88, .48], gl.POINTS, 9);
+  gl.enable(gl.DEPTH_TEST);
+}
+
+// ============================================================================
+// CAMERA, UI & PALETTE CONTROLS
+// ============================================================================
+let yaw = -.36, pitch = .22, distance = 25.5, target = V(0.4, 0.9, 0.2);
+let desired = null, anim = true, auto = false, wire = false, lightLevel = 1, clock = 0, last = performance.now(), fps = 60;
+
+function preset(mode) {
+  if (mode === 'head') {
+    let hk = socket('head');
+    desired = { yaw: Math.atan2(hk.direction[0], hk.direction[2]) - .68, pitch: .10, distance: 6.4, target: hk.position };
+  } else if (mode === 'top') {
+    desired = { yaw: -.02, pitch: 1.26, distance: 31.0, target: V(0, 0.5, 0) };
+  } else {
+    desired = { yaw: -.36, pitch: .22, distance: 25.5, target: V(dragonCenter[0], dragonCenter[1] * .5 + .4, dragonCenter[2]) };
+  }
+  toggle('fullview', mode === 'full');
+  toggle('headview', mode === 'head');
+  toggle('topview', mode === 'top');
+}
+
+function syncParamUI() {
+  $('ampX').value = motionParams.ampX; $('ampXVal').textContent = motionParams.ampX.toFixed(2);
+  $('ampY').value = motionParams.ampY; $('ampYVal').textContent = motionParams.ampY.toFixed(2);
+  $('freq').value = motionParams.freq; $('freqVal').textContent = motionParams.freq.toFixed(2);
+  $('bank').value = motionParams.bank; $('bankVal').textContent = motionParams.bank.toFixed(2);
+  $('jaw').value = jawDegrees; $('jawVal').textContent = jawDegrees + '°';
+}
+
+function paletteUI() {
+  $('variant').value = activeVariant;
+  $('dragonName').textContent = activeVariant === 'custom' ? 'THẦN LONG' : variants[activeVariant].name;
+  for (const [id, role] of [['colorScale','scale'], ['colorFin','fin'], ['colorMane','mane'], ['colorBelly','belly']]) {
+    $(id).value = currentPalette[role].color;
+  }
+}
+function getPalette() { return JSON.parse(JSON.stringify(currentPalette)); }
+function setVariant(key) { currentPalette = presetData(key); activeVariant = key; rebuildPalette(); paletteUI(); return getPalette(); }
+function setPalette(overrides) {
+  if (!overrides || typeof overrides !== 'object') throw Error('Palette must be an object');
+  let next = getPalette();
+  for (const [role, val] of Object.entries(overrides)) {
+    if (!roles.includes(role)) throw Error('Unknown material role: ' + role);
+    let patch = typeof val === 'string' ? { color: val } : val;
+    if (!patch || typeof patch !== 'object') throw Error('Invalid material: ' + role);
+    let p = { ...next[role], ...patch };
+    if (!/^#[0-9a-f]{6}$/i.test(p.color)) throw Error('Invalid hex color for ' + role);
+    if (!Number.isFinite(p.metallic) || !Number.isFinite(p.roughness)) throw Error('Invalid material finish');
+    p.metallic = clamp(p.metallic, 0, 1);
+    p.roughness = clamp(p.roughness, .12, .95);
+    next[role] = p;
+  }
+  currentPalette = next; activeVariant = 'custom'; rebuildPalette(); paletteUI(); return getPalette();
+}
+function deriveColor(color, mult) {
+  return '#' + [1, 3, 5].map(i => Math.round(clamp(parseInt(color.slice(i, i + 2), 16) * mult, 0, 255)).toString(16).padStart(2, '0')).join('');
+}
+async function copyText(str, statusEl, okMsg) {
+  try { await navigator.clipboard.writeText(str); statusEl.textContent = okMsg; }
+  catch {
+    let a = document.createElement('textarea'); a.value = str; a.style.cssText = 'position:fixed;left:0;top:0;opacity:0';
+    document.body.append(a); a.select(); let ok = document.execCommand('copy'); a.remove();
+    statusEl.textContent = ok ? okMsg : 'Không thể sao chép tự động; dùng console API.';
+  }
+}
+
+function initUI() {
+  $('quality').value = qualityKey;
+  $('quality').onchange = e => { let u = new URL(location.href); u.searchParams.set('quality', e.target.value); location.href = u.href; };
+  $('clip').onchange = e => playClip(e.target.value);
+  $('playSkill').onclick = () => playClip(clipName);
+  $('stopSkill').onclick = () => playClip('swim_s');
+  $('speed').oninput = e => { clipSpeed = +e.target.value; $('speedVal').textContent = clipSpeed.toFixed(2) + 'x'; };
+  $('rootMotion').onchange = e => rootMotion = e.target.checked;
+  $('followCam').onchange = e => followCam = e.target.checked;
+  $('showGuides').onchange = e => showGuides = e.target.checked;
+  $('loopSkill').onchange = e => loopSkill = e.target.checked;
+  $('scrub').oninput = e => {
+    anim = false; toggle('anim', false);
+    clipTime = +e.target.value * clips[clipName].duration;
+    blendFrom = null;
+    $('scrubVal').textContent = clipTime.toFixed(2) + 's';
+    $('eventsFill').style.width = (+e.target.value * 100) + '%';
+  };
+
+  $('ampX').oninput = e => { motionParams.ampX = +e.target.value; $('ampXVal').textContent = motionParams.ampX.toFixed(2); restPose = false; toggle('rest', false); };
+  $('ampY').oninput = e => { motionParams.ampY = +e.target.value; $('ampYVal').textContent = motionParams.ampY.toFixed(2); restPose = false; toggle('rest', false); };
+  $('freq').oninput = e => { motionParams.freq = +e.target.value; $('freqVal').textContent = motionParams.freq.toFixed(2); restPose = false; toggle('rest', false); };
+  $('bank').oninput = e => { motionParams.bank = +e.target.value; $('bankVal').textContent = motionParams.bank.toFixed(2); restPose = false; toggle('rest', false); };
+  $('jaw').oninput  = e => { jawDegrees = +e.target.value; $('jawVal').textContent = jawDegrees + '°'; restPose = false; toggle('rest', false); };
+
+  $('resetParams').onclick = () => {
+    Object.assign(motionParams, { ampX: 1.0, ampY: 1.0, freq: 1.0, bank: 1.0 });
+    jawDegrees = 4; clipSpeed = 1.0;
+    syncParamUI(); syncSkillUI();
+    $('exportStatus').textContent = 'Đã khôi phục thông số sóng.';
+  };
+
+  $('exportSkill').onclick = () => {
+    let bp = exportSkillBlueprint(clipName, 15);
+    copyText(JSON.stringify(bp, null, 2), $('exportStatus'), `Đã sao chép JSON skill "${clipName}" (${bp.socketTracks.length} frames).`);
+  };
+
+  $('variant').onchange = e => { if (e.target.value !== 'custom') setVariant(e.target.value); else { activeVariant = 'custom'; paletteUI(); } };
+  $('colorScale').oninput = e => setPalette({ scale: e.target.value, skin: deriveColor(e.target.value, .52), deep: deriveColor(e.target.value, .26), nose: deriveColor(e.target.value, .42), maneAccent: deriveColor(e.target.value, .72) });
+  $('colorFin').oninput   = e => setPalette({ fin: e.target.value, finTip: deriveColor(e.target.value, 1.55) });
+  $('colorMane').oninput  = e => setPalette({ mane: e.target.value });
+  $('colorBelly').oninput = e => setPalette({ belly: e.target.value });
+  $('copyPalette').onclick = () => copyText(JSON.stringify(getPalette(), null, 2), $('paletteStatus'), 'Đã sao chép bảng màu.');
+
+  $('bones').onclick = () => { showBones = !showBones; toggle('bones', showBones); };
+  $('rest').onclick  = () => { restPose = !restPose; toggle('rest', restPose); };
+  $('anim').onclick  = () => { anim = !anim; toggle('anim', anim); };
+  $('auto').onclick  = () => { auto = !auto; toggle('auto', auto); };
+  $('wire').onclick  = () => { wire = !wire; toggle('wire', wire); };
+  $('fullview').onclick = () => preset('full');
+  $('headview').onclick = () => preset('head');
+  $('topview').onclick  = () => preset('top');
+  $('light').oninput = e => { lightLevel = +e.target.value; $('lightVal').textContent = lightLevel.toFixed(2); };
+  $('screen').onclick = () => {
+    if (document.fullscreenElement) document.exitFullscreen?.();
+    else document.documentElement.requestFullscreen?.().catch(() => {});
+  };
+  $('reset').onclick = () => {
+    Object.assign(motionParams, { ampX: 1.0, ampY: 1.0, freq: 1.0, bank: 1.0 });
+    jawDegrees = 4; clipSpeed = 1.0; lightLevel = 1.0;
+    anim = true; auto = false; wire = false; showBones = false; restPose = false; followCam = true; rootMotion = true;
+    $('light').value = 1; $('lightVal').textContent = '1.00';
+    toggle('bones', false); toggle('rest', false); toggle('anim', true); toggle('auto', false); toggle('wire', false);
+    playClip('swim_s'); syncParamUI(); preset('full');
+  };
+
+  window.addEventListener('keydown', e => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+    if (e.code === 'Space') { e.preventDefault(); anim = !anim; toggle('anim', anim); }
+    else if (e.key === 'r' || e.key === 'R') playClip(clipName);
+  });
+
+  paletteUI();
+  syncParamUI();
+  renderEventMarkers();
+  syncSkillUI();
+}
+
+window.dragonMaterials = { setVariant, setPalette, getPalette, variants: Object.keys(variants), roles: [...roles] };
+
+let pointers = new Map(), pinch = 0;
+canvas.addEventListener('pointerdown', e => {
+  canvas.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId, [e.clientX, e.clientY]);
+  desired = null;
+  if (pointers.size === 2) {
+    let [a, b] = [...pointers.values()];
+    pinch = Math.hypot(a[0] - b[0], a[1] - b[1]);
+  }
+});
+canvas.addEventListener('pointermove', e => {
+  if (!pointers.has(e.pointerId)) return;
+  let prev = pointers.get(e.pointerId), dx = e.clientX - prev[0], dy = e.clientY - prev[1];
+  pointers.set(e.pointerId, [e.clientX, e.clientY]);
+  if (pointers.size === 2) {
+    let [a, b] = [...pointers.values()], d = Math.hypot(a[0] - b[0], a[1] - b[1]);
+    if (pinch > 0) distance = clamp(distance * pinch / d, 3.2, 68);
+    pinch = d;
+    return;
+  }
+  if (e.shiftKey || e.buttons === 2) {
+    followCam = false; $('followCam').checked = false;
+    let right = V(Math.cos(yaw), 0, -Math.sin(yaw));
+    target = add(target, add(mul(right, -dx * distance * .0015), V(0, dy * distance * .0015, 0)));
+  } else {
+    yaw -= dx * .006;
+    pitch = clamp(pitch + dy * .006, -1.35, 1.40);
+  }
+});
+for (let name of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+  canvas.addEventListener(name, e => { pointers.delete(e.pointerId); pinch = 0; });
+}
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+canvas.addEventListener('wheel', e => {
+  e.preventDefault(); desired = null;
+  distance = clamp(distance * Math.exp(e.deltaY * .001), 3.2, 68);
+}, { passive: false });
+
+function render(now) {
+  let rawDt = (now - last) / 1000, dt = Math.min(.08, rawDt);
+  last = now;
+  if (anim) { clock += dt; advanceSkill(dt); }
+  updateRig();
+  fps = fps * .95 + (rawDt > 0 ? 1 / rawDt : 60) * .05;
+  if (auto) yaw += dt * .19;
+
+  if (desired) {
+    let k = 1 - Math.exp(-dt * 7);
+    yaw = lerp(yaw, desired.yaw, k);
+    pitch = lerp(pitch, desired.pitch, k);
+    distance = lerp(distance, desired.distance, k);
+    target = mix(target, desired.target, k);
+    if (Math.abs(distance - desired.distance) < .02 && len(sub(target, desired.target)) < .02) desired = null;
+  } else if (followCam && !restPose) {
+    // Gently track dragon centroid so wide coils, figure-8 & lunges stay beautifully framed
+    let trackPt = V(dragonCenter[0] * .75, dragonCenter[1] * .55 + .45, dragonCenter[2] * .75);
+    target = mix(target, trackPt, 1 - Math.exp(-dt * 3.5));
+  }
+
+  let dpr = Math.min(devicePixelRatio, quality.dpr);
+  let w = Math.round(canvas.clientWidth * dpr), h = Math.round(canvas.clientHeight * dpr);
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+  gl.viewport(0, 0, w, h);
+
+  let aspect = w / Math.max(1, h), effective = distance * Math.max(1, 1.25 / aspect);
+  let eyePos = add(target, V(Math.sin(yaw) * Math.cos(pitch) * effective, Math.sin(pitch) * effective, Math.cos(yaw) * Math.cos(pitch) * effective));
+  let vp = new Float32Array(mm(perspective(PI / 4, aspect, .1, 150), lookAt(eyePos, target)));
+
+  // Dynamic shadow frustum centered on live dragon centroid
+  let shadowFocus = V(dragonCenter[0], Math.max(-1.0, dragonCenter[1]), dragonCenter[2]);
+  let lightVP = new Float32Array(mm(ortho(-17, 17, -14, 14, .1, 68), lookAt(add(shadowFocus, V(-14, 22, 16)), shadowFocus)));
+
+  if (quality.shadow) {
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, shadowFbo);
+    gl.viewport(0, 0, quality.shadow, quality.shadow);
+    gl.enable(gl.DEPTH_TEST); gl.depthMask(true); gl.clear(gl.DEPTH_BUFFER_BIT);
+    gl.useProgram(shadowProg);
+    gl.uniformMatrix4fv(shadowU.uVP, false, lightVP);
+    gl.uniformMatrix4fv(shadowU['uBones[0]'], false, poseArray);
+    gl.uniform1f(shadowU.uMotion, 1);
+    gl.bindVertexArray(dragon.vao);
+    gl.drawElements(gl.TRIANGLES, dragon.count, gl.UNSIGNED_INT, 0);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, w, h);
+  }
+
+  gl.disable(gl.DEPTH_TEST); gl.disable(gl.BLEND);
+  gl.useProgram(bg);
+  gl.uniform1f(gl.getUniformLocation(bg, 't'), clock);
+  gl.uniform1f(gl.getUniformLocation(bg, 'aspect'), aspect);
+  gl.bindVertexArray(null);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+  gl.clear(gl.DEPTH_BUFFER_BIT);
+  gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL);
+  gl.useProgram(pr);
+  gl.uniformMatrix4fv(uniforms.uVP, false, vp);
+  gl.uniform3fv(uniforms.uEye, eyePos);
+  gl.uniform3fv(uniforms.uDragonCenter, dragonCenter);
+  gl.uniformMatrix4fv(uniforms.uLightVP, false, lightVP);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, shadowTex);
+  gl.uniform1i(uniforms.uShadow, 0);
+  gl.uniform1f(uniforms.uLight, lightLevel);
+  gl.uniform3fv(uniforms['uPalette[0]'], paletteRGB);
+  gl.uniform2fv(uniforms['uFinish[0]'], paletteFinish);
+  gl.uniformMatrix4fv(uniforms['uBones[0]'], false, poseArray);
+
+  gl.uniform1f(uniforms.uMotion, 0); gl.uniform1f(uniforms.uFloor, 1); gl.uniform1f(uniforms.uWire, 0);
+  gl.bindVertexArray(floor.vao);
+  gl.drawElements(gl.TRIANGLES, floor.count, gl.UNSIGNED_INT, 0);
+
+  gl.uniform1f(uniforms.uFloor, 0); gl.uniform1f(uniforms.uMotion, 1);
+  gl.bindVertexArray(dragon.vao);
+  if (wire) {
+    initWire();
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, wireBuffer);
+    gl.uniform1f(uniforms.uWire, 1);
+    gl.drawElements(gl.LINES, wireCount, gl.UNSIGNED_INT, 0);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, dragon.ib);
+  } else {
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, dragon.ib);
+    gl.drawElements(gl.TRIANGLES, dragon.count, gl.UNSIGNED_INT, 0);
+  }
+
+  if (showGuides) drawGuides(vp);
+  if (showBones) drawRig(vp);
+
+  gl.useProgram(particleProg);
+  gl.uniformMatrix4fv(gl.getUniformLocation(particleProg, 'vp'), false, vp);
+  gl.uniform1f(gl.getUniformLocation(particleProg, 'time'), clock);
+  gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE); gl.depthMask(false);
+  gl.bindVertexArray(pvao);
+  gl.drawArrays(gl.POINTS, 0, pv.length / 4);
+  gl.depthMask(true); gl.disable(gl.BLEND); gl.bindVertexArray(null);
+
+  if (Math.floor(now / 500) !== Math.floor((now - dt * 1000) / 500)) {
+    $('stats').textContent = `${qualityKey} · ${(dragonI.length / 3).toLocaleString()} tris · ${bones.length} bones · ${Math.round(fps)} FPS`;
+  }
+  requestAnimationFrame(render);
+}
+
+window.__dragonReady = { vertices: dragonV.length / 12, triangles: dragonI.length / 3, bones: bones.length, materialRoles: roles.length, clips: Object.keys(clips) };
+window.dragonRig = { bones, updateRig, solveSpineFrames, resampleSpineArcLength };
+initUI();
+updateRig();
+$('stats').textContent = `WebGL 2 · ${(dragonI.length / 3000).toFixed(0)}k tam giác · 10 motions`;
+requestAnimationFrame(render);
+</script>
+</body>
+</html>

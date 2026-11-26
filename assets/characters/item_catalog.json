@@ -60,6 +60,35 @@
       }
     },
     {
+      "id": "male_body_v5",
+      "name": "Thân Thể Nam Võ Hiệp V5",
+      "description": "Hình thể nam võ hiệp điêu khắc giải phẫu chuẩn tỷ lệ 1.80m, khung xương Mixamo 20 khớp T-Pose khớp hoàn toàn với bộ động tác võ học.",
+      "source": "Mặc định nhân vật khởi đầu",
+      "unlock_type": "default",
+      "unlock_hint": "Khởi đầu giang hồ",
+      "slot": "base_body",
+      "item_type": "modular",
+      "element": "none",
+      "rarity": "rare",
+      "is_skinned": true,
+      "model_path": "assets/characters/bodies/male_body_v5.glb",
+      "ui_color": [
+        228,
+        186,
+        156,
+        255
+      ],
+      "stats": {
+        "bonus_health": 120.0,
+        "bonus_mana": 60.0,
+        "speed_multiplier": 1.0,
+        "elemental_bonus": 0.02,
+        "elemental_resist": 0.02,
+        "mana_regen_bonus": 0.0,
+        "special_perk": "Cân Cốt Tinh Kiện: Hình thể cân đối, tương thích trọn vẹn ngoại trang"
+      }
+    },
+    {
       "id": "ao_giao_linh",
       "name": "Áo Giao Lĩnh Lam Y",
       "description": "Trang phục truyền thống giao lĩnh thêu viền mây vàng, chất lụa xanh thẫm thoát tục như mây khói non xa.",
