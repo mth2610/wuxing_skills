@@ -1428,6 +1428,8 @@ typedef struct MapTreeSystem
     float drawDistance;
     float lod0Distance;
     float lod1Distance;
+    float effectiveLod0Dist;
+    float effectiveLod1Dist;
     float snowCoverage;  // -1.0 = auto per-archetype; 0.0..1.0 = explicit snow coverage ratio
     float globalDryness; // 0.0..1.0 global minimum dryness override (zero mesh rebuild)
     float globalScorch;  // 0.0..1.0 global minimum scorch override (zero mesh rebuild)

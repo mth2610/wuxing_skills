@@ -1093,16 +1093,32 @@ static void Tree_SweepBranchSpline(TreeMeshBuilder *b, const Vector3 *pts, const
         ringUV[i] = (Vector2){barkSentinelX, vCoord};
 
         float flareDecay = (rootFlare > 0.01f) ? expf(-t * 4.6f) : 0.0f;
+        // Early-Z gnarled bark silhouette displacement (replaces fragment silhouette clipping at 0 pixel cost)
+        bool gnarlBark = (branchOrder <= 1 && flareLobes >= 4.5f);
+        float gnarlAmp = gnarlBark ? (0.085f * (1.0f - t * 0.45f)) : 0.0f;
         for (int j = 0; j <= sides; j++)
         {
             float ang = ((float)(j % sides) / (float)sides) * (2.0f * PI);
-            Vector3 radial = Vector3Add(Vector3Scale(right, cosf(ang)), Vector3Scale(fwd, sinf(ang)));
+            float ca = cosf(ang), sa = sinf(ang);
+            Vector3 radial = Vector3Add(Vector3Scale(right, ca), Vector3Scale(fwd, sa));
+            Vector3 tangentTheta = Vector3Add(Vector3Scale(right, -sa), Vector3Scale(fwd, ca));
             float flute = (flareDecay > 0.01f)
                               ? (1.0f + rootFlare * flareDecay * (0.58f + 0.42f * cosf(ang * flareLobes + 0.4f)))
                               : 1.0f;
-            float rad = rads[i] * flute;
+            float gnarl = 1.0f;
+            float dGnarl = 0.0f;
+            if (gnarlAmp > 0.001f)
+            {
+                float p1 = ang * 3.0f + t * 5.2f;
+                float p2 = ang * 5.0f - t * 8.4f;
+                gnarl = 1.0f + gnarlAmp * (0.62f * sinf(p1) + 0.38f * cosf(p2));
+                dGnarl = gnarlAmp * (0.62f * 3.0f * cosf(p1) - 0.38f * 5.0f * sinf(p2));
+            }
+            float rad = rads[i] * flute * gnarl;
             ringP[i][j] = Vector3Add(pts[i], Vector3Scale(radial, rad));
-            ringN[i][j] = radial;
+            // Analytical azimuthal normal perturbation from bark fluting
+            Vector3 perturbedN = Vector3Subtract(radial, Vector3Scale(tangentTheta, dGnarl * 0.55f));
+            ringN[i][j] = Vector3Normalize(perturbedN);
         }
     }
 
@@ -2241,6 +2257,7 @@ static int s_treeLocBaseOffset = -1;
 static int s_treeLocSnowAmount = -1;
 static int s_treeLocGlobalDryness = -1;
 static int s_treeLocGlobalScorch = -1;
+static int s_treeLocLodFade = -1;
 static int s_treeShadowLocInstTex = -1;
 static int s_treeShadowLocAtlasTex = -1;
 static int s_treeShadowLocBaseOffset = -1;
@@ -2264,6 +2281,7 @@ static Shader Tree_GetShader(void)
             s_treeLocSnowAmount = GetShaderLocation(s_treeShader, "u_treeSnowAmount");
             s_treeLocGlobalDryness = GetShaderLocation(s_treeShader, "u_treeGlobalDryness");
             s_treeLocGlobalScorch = GetShaderLocation(s_treeShader, "u_treeGlobalScorch");
+            s_treeLocLodFade = GetShaderLocation(s_treeShader, "u_treeLodFade");
         }
         if (s_treeShadowShader.id != 0)
         {
@@ -2404,20 +2422,24 @@ MapTreeSystem MapProp_CreateTreeSystem(const MapTreePlacement *placements, int c
         sys.modelLoaded[a] = true;
 
         int typeCount = counts[a];
-        int texelsNeeded = typeCount * 2;
+        // Reserve 2x instance slots in visibleTexels/instanceTextures so trees in the 6m LOD cross-fade band
+        // can safely emit into both adjacent LOD ranges without ever overflowing the GPU texture.
+        int visCap = typeCount * 2;
+        int texelsNeeded = visCap * 2;
         int rows = (texelsNeeded + 511) / 512;
         if (rows < 1) rows = 1;
-        size_t bufFloats = (size_t)512 * (size_t)rows * 4u;
-        float *allPx = (float *)MemAlloc((unsigned int)(bufFloats * sizeof(float)));
-        float *visPx = (float *)MemAlloc((unsigned int)(bufFloats * sizeof(float)));
+        size_t allFloats = (size_t)typeCount * 8u;
+        size_t visFloats = (size_t)512 * (size_t)rows * 4u;
+        float *allPx = (float *)MemAlloc((unsigned int)(allFloats * sizeof(float)));
+        float *visPx = (float *)MemAlloc((unsigned int)(visFloats * sizeof(float)));
         if (!allPx || !visPx)
         {
             if (allPx) MemFree(allPx);
             if (visPx) MemFree(visPx);
             continue;
         }
-        memset(allPx, 0, bufFloats * sizeof(float));
-        memset(visPx, 0, bufFloats * sizeof(float));
+        memset(allPx, 0, allFloats * sizeof(float));
+        memset(visPx, 0, visFloats * sizeof(float));
 
         int k = 0;
         for (int i = 0; i < count; i++)
@@ -2440,7 +2462,7 @@ MapTreeSystem MapProp_CreateTreeSystem(const MapTreePlacement *placements, int c
             allPx[b + 7] = (float)packedRGB;
             k++;
         }
-        memcpy(visPx, allPx, bufFloats * sizeof(float));
+        memcpy(visPx, allPx, allFloats * sizeof(float));
 
         Image instImg = {
             .data = visPx,
@@ -2527,9 +2549,16 @@ void MapProp_PrepareTreeSystem(MapTreeSystem *sys, Camera3D cam)
     float zoomFactor = tanf(22.5f * DEG2RAD) / fmaxf(tanf(cam.fovy * 0.5f * DEG2RAD), 0.15f);
     float lod0Dist = focalDist + sys->lod0Distance * zoomFactor;
     float lod1Dist = focalDist + sys->lod1Distance * zoomFactor;
+    float fadeHalf = 3.0f; // 6m Bayer screen-door cross-fade band around LOD0/LOD1 and LOD1/LOD2
     float drawDistSq = sys->drawDistance * sys->drawDistance;
-    float lod0Sq = lod0Dist * lod0Dist;
-    float lod1Sq = lod1Dist * lod1Dist;
+    float lod0LoSq = fmaxf(0.0f, lod0Dist - fadeHalf) * fmaxf(0.0f, lod0Dist - fadeHalf);
+    float lod0HiSq = (lod0Dist + fadeHalf) * (lod0Dist + fadeHalf);
+    float lod1LoSq = fmaxf(0.0f, lod1Dist - fadeHalf) * fmaxf(0.0f, lod1Dist - fadeHalf);
+    float lod1HiSq = (lod1Dist + fadeHalf) * (lod1Dist + fadeHalf);
+
+    // Cache exact camera-scaled LOD thresholds on sys so DrawTreeSystem Bayer fade matches Prepare 1:1
+    sys->effectiveLod0Dist = lod0Dist;
+    sys->effectiveLod1Dist = lod1Dist;
 
     for (int a = 0; a < MAP_TREE_ARCHETYPE_COUNT; a++)
     {
@@ -2552,8 +2581,9 @@ void MapProp_PrepareTreeSystem(MapTreeSystem *sys, Camera3D cam)
             Vector3 center = {pos.x, pos.y + src[5] * 3.5f, pos.z};
             if (!Tree_SphereInCameraView(&camBasis, center, boundR))
                 continue;
-            int lod = (dSq <= lod0Sq) ? 0 : ((dSq <= lod1Sq) ? 1 : 2);
-            counts[lod]++;
+            if (dSq <= lod0HiSq) counts[0]++;
+            if (dSq >= lod0LoSq && dSq <= lod1HiSq) counts[1]++;
+            if (dSq >= lod1LoSq) counts[2]++;
         }
 
         sys->lodOffsets[a][0] = 0;
@@ -2582,9 +2612,12 @@ void MapProp_PrepareTreeSystem(MapTreeSystem *sys, Camera3D cam)
             Vector3 center = {pos.x, pos.y + src[5] * 3.5f, pos.z};
             if (!Tree_SphereInCameraView(&camBasis, center, boundR))
                 continue;
-            int lod = (dSq <= lod0Sq) ? 0 : ((dSq <= lod1Sq) ? 1 : 2);
-            int dstSlot = writeIdx[lod]++;
-            memcpy(&sys->visibleTexels[a][dstSlot * 8], src, 8u * sizeof(float));
+            if (dSq <= lod0HiSq)
+                memcpy(&sys->visibleTexels[a][(writeIdx[0]++) * 8], src, 8u * sizeof(float));
+            if (dSq >= lod0LoSq && dSq <= lod1HiSq)
+                memcpy(&sys->visibleTexels[a][(writeIdx[1]++) * 8], src, 8u * sizeof(float));
+            if (dSq >= lod1LoSq)
+                memcpy(&sys->visibleTexels[a][(writeIdx[2]++) * 8], src, 8u * sizeof(float));
         }
 
         unsigned int h = Tree_HashBytes(sys->visibleTexels[a], (size_t)totalVis * 8u * sizeof(float));
@@ -2675,6 +2708,13 @@ void MapProp_DrawTreeSystem(const MapTreeSystem *sys, float time, Vector2 windDi
             int offset = sys->lodOffsets[a][lod];
             if (s_treeLocBaseOffset >= 0)
                 SetShaderValue(sh, s_treeLocBaseOffset, &offset, SHADER_UNIFORM_INT);
+            if (s_treeLocLodFade >= 0)
+            {
+                float eLod0 = (sys->effectiveLod0Dist > 1.0f) ? sys->effectiveLod0Dist : sys->lod0Distance;
+                float eLod1 = (sys->effectiveLod1Dist > 1.0f) ? sys->effectiveLod1Dist : sys->lod1Distance;
+                float lodFade[4] = {eLod0, eLod1, 3.0f, (float)lod};
+                SetShaderValue(sh, s_treeLocLodFade, lodFade, SHADER_UNIFORM_VEC4);
+            }
             Tree_DrawMeshInstanced(&sys->models[a][lod].meshes[0], count);
         }
     }

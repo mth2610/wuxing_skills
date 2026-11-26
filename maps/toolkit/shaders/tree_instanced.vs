@@ -18,12 +18,14 @@ uniform float u_treeDrawDistSq;
 uniform int u_instanceBaseOffset;
 uniform float u_treeGlobalDryness;
 uniform float u_treeGlobalScorch;
+uniform vec4 u_treeLodFade; // x = lod0Dist, y = lod1Dist, z = fadeHalfWidth, w = activeLod (0, 1, 2)
 
 out vec3 fragPosition;
 out vec3 fragNormal;
 out vec4 fragColor;    // rgb = vertex color * instance tint, a = canopy mask (0=bark, 1=foliage)
 out vec2 fragTexCoord; // Clean [0..1] atlas UV for foliage; bark sentinel & continuous t for bark
 out float v_localY;
+out float v_lodVis;    // 0..1 screen-door Bayer cross-fade visibility across LOD boundaries
 out vec4 v_treeState;  // x = dryness, y = scorch, z = canopyShell [0..1], w = leafRank [0..1]
 out vec4 v_lightSpace;
 out vec4 v_staticLightSpace;
@@ -63,6 +65,7 @@ void main()
         fragColor = vec4(0.0);
         fragTexCoord = vec2(0.0);
         v_localY = 0.0;
+        v_lodVis = 0.0;
         v_treeState = vec4(0.0);
         v_lightSpace = vec4(0.0, 0.0, 0.0, -1.0);
         v_staticLightSpace = vec4(0.0, 0.0, 0.0, -1.0);
@@ -90,6 +93,7 @@ void main()
             fragColor = vec4(0.0);
             fragTexCoord = vec2(0.0);
             v_localY = 0.0;
+            v_lodVis = 0.0;
             v_treeState = vec4(dryness, scorch, canopyShell, leafRank);
             v_lightSpace = vec4(0.0, 0.0, 0.0, -1.0);
             v_staticLightSpace = vec4(0.0, 0.0, 0.0, -1.0);
@@ -152,6 +156,24 @@ void main()
     fragTexCoord = cleanUV;
     v_localY = lp.y;
     v_treeState = vec4(dryness, scorch, canopyShell, leafRank);
+
+    // Smooth Bayer screen-door LOD cross-fade factor (1.0 everywhere outside the 6m transition band)
+    float lodVis = 1.0;
+    float fadeHalf = u_treeLodFade.z;
+    if (fadeHalf > 0.01) {
+        float camDist = sqrt(max(distSq, 1e-4));
+        float lodIdx = u_treeLodFade.w;
+        if (lodIdx < 0.5) {
+            lodVis = 1.0 - smoothstep(u_treeLodFade.x - fadeHalf, u_treeLodFade.x + fadeHalf, camDist);
+        } else if (lodIdx < 1.5) {
+            float fadeIn = smoothstep(u_treeLodFade.x - fadeHalf, u_treeLodFade.x + fadeHalf, camDist);
+            float fadeOut = 1.0 - smoothstep(u_treeLodFade.y - fadeHalf, u_treeLodFade.y + fadeHalf, camDist);
+            lodVis = min(fadeIn, fadeOut);
+        } else {
+            lodVis = smoothstep(u_treeLodFade.y - fadeHalf, u_treeLodFade.y + fadeHalf, camDist);
+        }
+    }
+    v_lodVis = lodVis;
 
     if (distSq <= 68.0 * 68.0) {
         vec4 world4 = vec4(world, 1.0);

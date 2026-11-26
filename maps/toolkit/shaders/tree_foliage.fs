@@ -9,6 +9,7 @@ in vec3 fragNormal;
 in vec4 fragColor;    // .rgb = vertex albedo * tint, .a = canopy mask (0=bark, 1=foliage)
 in vec2 fragTexCoord; // .x < 0.0 => bark (y=continuous root-to-tip t); .x >= 0.0 => foliage atlas UV
 in float v_localY;
+in float v_lodVis;
 in vec4 v_treeState;  // x = dryness, y = scorch, z = canopyShell [0..1], w = leafRank [0..1]
 in vec4 v_lightSpace;
 in vec4 v_staticLightSpace;
@@ -50,8 +51,28 @@ float Tree_Noise3D(vec3 p)
     return mix(mix(nx00, nx10, f.y), mix(nx01, nx11, f.y), f.z);
 }
 
+float Tree_Bayer4x4(vec2 fragXY)
+{
+    int x = int(mod(floor(fragXY.x), 4.0));
+    int y = int(mod(floor(fragXY.y), 4.0));
+    int idx = y * 4 + x;
+    const float kBayer[16] = float[16](
+        0.0625, 0.5625, 0.1875, 0.6875,
+        0.8125, 0.3125, 0.9375, 0.4375,
+        0.2500, 0.7500, 0.1250, 0.6250,
+        1.0000, 0.5000, 0.8750, 0.3750
+    );
+    return kBayer[idx];
+}
+
 void main()
 {
+    // Screen-door Bayer dithered LOD cross-fade (zero overhead outside the 6m transition band!)
+    if (v_lodVis < 0.995) {
+        if (v_lodVis <= 0.005 || v_lodVis < Tree_Bayer4x4(gl_FragCoord.xy))
+            discard;
+    }
+
     float canopyMask = fragColor.a;
     vec3 albedo = fragColor.rgb;
     float dryness = v_treeState.x;
@@ -141,6 +162,19 @@ void main()
         }
     }
 
+    // Analytic leaf-vein micro-normal perturbation from atlas luminance derivatives (zero extra sampler!)
+    if (canopyMask > 0.5 && distSq < 900.0) {
+        float luma = dot(albedo, vec3(0.299, 0.587, 0.114));
+        float nearFade = 1.0 - smoothstep(225.0, 900.0, distSq);
+        vec3 dPdx = dFdx(fragPosition);
+        vec3 dPdy = dFdy(fragPosition);
+        vec3 bump = (dPdx * dFdx(luma) + dPdy * dFdy(luma));
+        float bLenSq = dot(bump, bump);
+        if (bLenSq > 1e-8) {
+            N = normalize(N - bump * (min(inversesqrt(bLenSq), 12.0) * 0.14 * nearFade));
+        }
+    }
+
     vec3 L = u_lightDir * inversesqrt(max(dot(u_lightDir, u_lightDir), 1e-8));
 
     // Crisp World-Space Snow Accumulation calibrated so u_treeSnowAmount=0.70 => ~70% snow / ~30% green needles
@@ -187,6 +221,17 @@ void main()
     vec3 sss = u_lightColor * sssTint * ((backLit * 0.46 + rimDot * 0.16) * sssAmt * directVis)
              + albedo * u_lightColor * leafTransmit;
 
+    // GPU Gems 3 Ch.4 waxy leaf cuticle specular (broad modified Blinn-Phong + Fresnel grazing sheen)
+    vec3 leafSpec = vec3(0.0);
+    if (canopyMask > 0.5 && distSq < 1600.0) {
+        vec3 H = normalize(L + V);
+        float ndh = max(dot(N, H), 0.0);
+        float specPow = pow(ndh, 24.0);
+        float waxyMask = (1.0 - dryness * 0.72) * (1.0 - snowMask * 0.85) * smoothstep(0.0, 0.35, ndlRaw);
+        float fresnelSheen = rimDot * 0.18;
+        leafSpec = u_lightColor * ((specPow * 0.24 + fresnelSheen) * waxyMask * directVis * (0.45 + 0.55 * canopyShell));
+    }
+
     // Sunlit snow micro-crystal sparkle glints
     vec3 sparkle = vec3(0.0);
     if (snowMask > 0.15 && distSq < 900.0) {
@@ -198,7 +243,7 @@ void main()
 
     vec3 treeBounce = mix(vec3(0.55, 0.45, 0.40), vec3(0.82, 0.89, 1.00), smoothstep(0.25, 0.70, u_treeSnowAmount));
     vec3 hemi = Environment_HemisphereIrradianceTinted(N, u_ambientColor, treeBounce);
-    vec3 lit = albedo * (hemi + u_lightColor * (ndl * directVis)) * ao + sss + sparkle + emberGlow;
+    vec3 lit = albedo * (hemi + u_lightColor * (ndl * directVis)) * ao + sss + leafSpec + sparkle + emberGlow;
 
     if (distSq < 1600.0) {
         lit += VFXLights_Accumulate(fragPosition, N, albedo);
