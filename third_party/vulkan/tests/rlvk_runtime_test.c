@@ -90,12 +90,78 @@ static void testDiskCacheContract(const char *rejectedFile)
     }
 }
 
+// Exercise the real mesh descriptor writer without a window. Capture just the
+// stage ranges the command would bind, then inspect their immutable arena bytes.
+static VkDescriptorBufferInfo capturedUbo[2];
+static void VKAPI_CALL captureUboBindings(VkCommandBuffer command, VkPipelineBindPoint point,
+                                          VkPipelineLayout layout, uint32_t set, uint32_t count,
+                                          const VkWriteDescriptorSet *writes)
+{
+    (void)command;
+    (void)point;
+    (void)layout;
+    (void)set;
+    for (uint32_t i = 0; i < count; i++)
+        capturedUbo[writes[i].dstBinding - RLVK_UBO_BINDING_VS] = *writes[i].pBufferInfo;
+}
+
+static void testUboSnapshotReuse(void)
+{
+    unsigned char bytes[4096] = {0};
+    unsigned char aVs = 1, aFs = 2, bVs = 3, bFs = 4;
+    rlvkShaderSlot a = {.usesUbo = true, .vsStage = &aVs, .fsStage = &aFs, .vsBlockSize = 1, .fsBlockSize = 1};
+    rlvkShaderSlot b = {.usesUbo = true, .vsStage = &bVs, .fsStage = &bFs, .vsBlockSize = 1, .fsBlockSize = 1};
+    PFN_vkCmdPushDescriptorSetKHR original = vk.CmdPushDescriptorSetKHR;
+    vk.CmdPushDescriptorSetKHR = captureUboBindings;
+    RLVK.arena[0].mapped = bytes;
+    RLVK.arena[0].sizeBytes = sizeof(bytes);
+    RLVK.State.cbEpoch = 1;
+
+    rlvkBindShaderUbos(VK_NULL_HANDLE, &a);
+    VkDeviceSize firstVs = capturedUbo[0].offset, firstFs = capturedUbo[1].offset;
+    rlvkBindShaderUbos(VK_NULL_HANDLE, &b);
+    VkDeviceSize afterSwitch = RLVK.arenaOffset[0];
+    CHECK(bytes[capturedUbo[0].offset] == bVs && bytes[capturedUbo[1].offset] == bFs,
+          "shader switch binds the second shader's stage data");
+    rlvkBindShaderUbos(VK_NULL_HANDLE, &a);
+    CHECK(RLVK.arenaOffset[0] == afterSwitch && capturedUbo[0].offset == firstVs &&
+          capturedUbo[1].offset == firstFs, "switch back rebinds both original slices without arena growth");
+
+    rlvkBindShaderUbos(VK_NULL_HANDLE, &b);
+    rlvkUniform uniform = {.vsOffset = 0, .fsOffset = -1};
+    a.uniforms = &uniform;
+    a.uniformCount = 1;
+    unsigned char changed = 5;
+    rlvkShaderWriteUniform(&a, 0, &changed, sizeof(changed));
+    rlvkBindShaderUbos(VK_NULL_HANDLE, &a);
+    CHECK(capturedUbo[0].offset != firstVs && bytes[capturedUbo[0].offset] == changed &&
+          bytes[firstVs] == 1 && capturedUbo[1].offset == firstFs,
+          "changed vertex uniform snapshots fresh bytes and preserves the previous draw and fragment slice");
+
+    // Same shader on the next command buffer. Start at a different aligned offset
+    // and poison the old bytes as a frame-ring recycle or mid-frame drain could.
+    RLVK.State.cbEpoch++;
+    RLVK.arenaOffset[0] = 256;
+    memset(bytes, 0, sizeof(bytes));
+    rlvkBindShaderUbos(VK_NULL_HANDLE, &a);
+    CHECK(capturedUbo[0].offset == 256 && bytes[capturedUbo[0].offset] == changed &&
+          bytes[capturedUbo[1].offset] == aFs, "new command buffer snapshots both stages after arena reuse");
+
+    vk.CmdPushDescriptorSetKHR = original;
+    memset(&RLVK.arena[0], 0, sizeof(RLVK.arena[0]));
+    RLVK.lastUboShader = NULL;
+    RLVK.State.cbEpoch = 0;
+    RLVK.arenaWanted[0] = RLVK.arenaOffset[0] = 0;
+}
+
 int main(int argc, char **argv)
 {
     setvbuf(stdout, NULL, _IOLBF, 0);
     printf("=== rlvk headless runtime test ===\n");
     testDiskCacheContract(argc >= 2 && strcmp(argv[1], "--cache-contract-only") == 0 && argc == 3 ? argv[2] : NULL);
     if (argc >= 2 && strcmp(argv[1], "--cache-contract-only") == 0) return g_failures ? 1 : 0;
+
+    testUboSnapshotReuse();
 
     // Zero/coarse timestamps and host-drained frames must never enter the GPU
     // average denominator. A fresh window cannot inherit a startup sample sum.

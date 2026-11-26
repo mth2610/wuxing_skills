@@ -192,9 +192,7 @@ void UpdateIceCrystalLanceSkill(float dt, Vector3 enemyPos, float enemyRadius) {
                         inst->hitDealt = true;
                         Entity_ApplyAoEDamageFrom(inst->ownerAgentId, inst->headPos, 2.3f * inst->sizeScale,
                                                   inst->damage, inst->knockback);
-                        VFX_SpawnGroundWave((Vector3){ inst->headPos.x, inst->headPos.y - 0.5f, inst->headPos.z },
-                                            VC_MAT_WATER, 2.4f * inst->sizeScale, 0.40f);
-                        PlayImpactSound(EFFECT_PRESET_ICE_SHATTER);
+PlayImpactSound(EFFECT_PRESET_ICE_SHATTER);
                     }
                 }
             }

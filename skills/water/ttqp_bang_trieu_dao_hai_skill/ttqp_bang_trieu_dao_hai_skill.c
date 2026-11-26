@@ -171,8 +171,7 @@ void UpdateTtqpBangTrieuDaoHaiSkill(float dt, Vector3 enemyPos, float enemyRadiu
             if (!inst->splash1Done && frac >= 0.45f) {
                 inst->splash1Done = true;
                 SpawnWaveCrashSSF(crest, inst->dir, 0.80f, 1.20f * inst->sizeScale);
-                VFX_SpawnGroundWave(crest, VC_MAT_WATER, 2.2f * inst->sizeScale, 0.36f);
-            }
+}
             if (!inst->splash2Done && frac >= 0.88f) {
                 inst->splash2Done = true;
                 SpawnWaveCrashSSF(crest, inst->dir, 0.90f, 1.35f * inst->sizeScale);

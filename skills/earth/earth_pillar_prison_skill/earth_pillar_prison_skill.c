@@ -167,8 +167,7 @@ void CastEarthPillarPrisonSkill(int agentId, Vector3 startPos, Vector3 target, S
     Skill_RequestAnim(agentId, "hell_slammer_a", PILLAR_PRISON_CAST_SECS);
 
     // Seismic wave + 3 ground-hugging earth trails racing from caster's stomp to target
-    VFX_ComposeGroundWave(groundStart, VC_MAT_EARTH, 1.6f * scale, 0.60f, VFX_GroundHeightFromMap, NULL);
-    VFX_ComposeImpactDust(groundStart, VC_MAT_EARTH, 1.15f * scale, 0.65f);
+VFX_ComposeImpactDust(groundStart, VC_MAT_EARTH, 1.15f * scale, 0.65f);
     for (int k = 0; k < PILLAR_TRAIL_COUNT; k++) {
         p->trailMats[k] = MatrixTranslate(groundStart.x, groundStart.y, groundStart.z);
         p->trailHandles[k] = VFX_ComposeTrail(&p->trailMats[k], VC_MAT_EARTH,

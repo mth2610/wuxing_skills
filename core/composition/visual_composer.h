@@ -1562,21 +1562,10 @@ void VFX_DrawMeshSurfaceAura(Mesh mesh, Matrix transform,
 void VFX_DrawModelSurfaceAura(Model model, Matrix transform,
                               const VFX_MeshSurfaceAuraParams *params);
 
-// ── E6.5f. 3D Vacuum Suction Vortex Converge (VFX 3) ─────────────────────────
-void VFX_ComposeVacuumConverge(Vector3 focalPoint, float sphereRadius,
-                              float progress, Camera3D camera);
-void VFX_ComposeVacuumArc(Vector3 pos, float yaw, float progress, float duration, Camera3D camera);
-
-
 // ── E6.5g. Thin Expanding Vacuum Ground Ring (VFX 4) ─────────────────────────
 void VFX_DrawExpandingVacuumRing(Vector3 center, float radius, float bandWidth,
                                  Color ringColor, float alpha01);
 void VFX_ComposeVacuumRing(Vector3 center, float radius, float progress);
-
-// ── E6.5h. Composite: Iaido Quick-Draw / Counter Stance (VFX 5) ──────────────
-void VFX_ComposeIaidoStance(Vector3 playerPos, float yaw, float progress,
-                            float duration, Camera3D camera,
-                            const void *animStatePtr);
 
 // ── E6.5i. Ghost of Tsushima Guiding Wind Ribbon (VFX 6) ─────────────────────
 void VFX_ComposeGuidingWind(Vector3 startPos, Vector3 targetPos, float progress, Camera3D camera);
@@ -1762,14 +1751,6 @@ void VFX_KillVolumeTrail(int handle);
 // wave follows a slope instead of clipping through it; pass NULL for flat at
 // `center.y`. Additive and unlit with an AUTHORED shading gradient — a lit
 // material on ground geometry is black-on-black in the night arena
-// (ENGINE_LANDMINES §3).
-//
-// CONTINUOUS: call every frame from a draw path with t01 running 0 -> 1. Called
-// once it draws a single frame and looks like nothing happened.
-void VFX_ComposeGroundWave(Vector3 center, VC_MaterialId mat, float radius,
-                           float t01, GroundHeightSampleFn heightFn, void *ud);
-int  VFX_SpawnGroundWave(Vector3 center, VC_MaterialId mat, float radius,
-                         float duration);
 // The terrain sampler almost every caller wants: the ACTIVE map's ground height.
 // Pass it as `heightFn` (with ud = NULL). Passing NULL instead gives a flat ring
 // at center.y, which looks correct on level ground and wrong on any slope.
@@ -1847,46 +1828,6 @@ bool VFX_GroundSurfaceFromMap(float worldX, float worldZ, Vector3 *outPosition,
 //
 // ONE-SHOT + POOLED (6). Call once from a state transition, keep the handle,
 // release it. Stop ends the FEED — shell and ribbons each fade over their own
-// ramp; Kill is the cancellation cut.
-//
-//   static Matrix xf;   // updated by the skill each frame
-//   int bolt = VFX_ComposeRiftBolt(&xf, VC_MAT_FIRE, 0.08f);
-//   ...
-//   VFX_RiftBolt_Stop(bolt);
-//
-// THE WAKE is one MAIN spine plus TWO threads, and they do different jobs: the
-// spine rides the flight axis dead straight and is the longest thing in the
-// effect (0.95 s of memory); the threads are thinner, shorter than it and than
-// each other (0.78 / 0.48 s), on opposite sides of their own helices about that
-// axis at 0.45 and 1.00 of the shell's RADIUS.
-//
-// TWO AND NOT THREE, because three constraints compete for the room between the
-// axis and the shell's surface — 20 px at the authored size. A thread must stay
-// inside the shell (orbit <= 1 radius) or it visibly detaches; it must not
-// narrow to sub-pixel or it breaks into dashes (>= ~5 px); and for N threads to
-// read as N rather than as one rope, their orbit SPACING must exceed their
-// ribbon WIDTH. Three demand 15-21 px of the 20 available and came out as a
-// single braided rope. Two, at 9 and 20 px with 10 and 8 px ribbons, have 11 px
-// of clear air. Three would need a shell around 0.14 m.
-//
-// Four things keep the helices from reading as machined springs: non-harmonic
-// rates, a wandering angular rate, an inward-only breathing orbit radius, and a
-// pitch clamp against the bolt's actual speed. The threads use MAIN at thread
-// width rather than WISP: WISP's `strand.gain` is the only one above 1 in the
-// swept table, which pushes the sheet's hairs APART — correct for an inner core
-// inside another ribbon, and a row of dots when it is the whole ribbon.
-//
-// How many ribbons a bolt gets is decided ONCE at spawn from the live bolt
-// count: a lone bolt takes all three, two bolts take spine + longer thread,
-// three or more take the spine alone, and the composition never commits more
-// than 6 of the shared 8-trail pool.
-//
-// It also spawns a moving VFXLight; that needs no wiring.
-int  VFX_ComposeRiftBolt(const Matrix *followTransform, VC_MaterialId mat, float radius);
-void VFX_RiftBolt_SetIntensity(int handle, float intensity01);
-void VFX_RiftBolt_Stop(int handle);   // wind-down: the husk dims out
-void VFX_KillRiftBolt(int handle);    // immediate cut, for cancellation
-
 // Batch helpers for the restored water stream: bind the tube shader once and
 // draw N streams inside, instead of a Begin/End per projectile. Not generated —
 // the scan only picks up VFX_Compose* entry points.
@@ -2521,7 +2462,6 @@ int VFX_ComposeRefParticles(Vector3 pos, float scale);
 int VFX_ComposeShieldShell(Vector3 pos, VC_MaterialId mat, float radius, float intensity);
 int VFX_ComposeSmokeTrail(const Matrix *followTransform, VC_MaterialId mat, float radius, float lifetime, VFX_ColumnKind kind, bool funnel);
 void VFX_ComposeStonePillar(Vector3 basePos, float progress);
-void VFX_ComposeSurfaceImpact(Vector3 pos, VFX_ImpactSurface surface);
 void VFX_ComposeSurfaceParticleRing(Vector3 pos, VC_MaterialId matId, float scale, float severity01, VFX_SurfaceParticleRingVariant variant);
 void VFX_ComposeWaterRing(Vector3 center, float radius, float t01);
 void VFX_ComposeWaterStream(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float radius, float progress, float time);
@@ -2596,5 +2536,48 @@ void VFX_FirePhoenixWard_Stop(int handle);
 int  VFX_FireScorchFormation_Spawn(Vector3 center, float radius, float duration);
 void VFX_FireScorchFormation_SetPulse(int handle, float pulse01);
 void VFX_FireScorchFormation_Stop(int handle);
+
+// ── Daoist Talisman VFX (Phù Chỉ 3D — 6-DOF Paper Aerodynamics) ─────────────
+typedef enum {
+    VFX_TALISMAN_MODE_CLOSEUP = 0,
+    VFX_TALISMAN_MODE_FALLING,
+    VFX_TALISMAN_MODE_VORTEX,
+    VFX_TALISMAN_MODE_THROW,
+    VFX_TALISMAN_MODE_COUNT
+} VFX_TalismanFlightMode;
+
+typedef enum {
+    VFX_TALISMAN_VISUAL_HANDMADE = 0,
+    VFX_TALISMAN_VISUAL_GLOW,
+    VFX_TALISMAN_VISUAL_COUNT
+} VFX_TalismanVisualMode;
+
+typedef enum {
+    VFX_TALISMAN_PALETTE_IMPERIAL = 0,
+    VFX_TALISMAN_PALETTE_FIRE,
+    VFX_TALISMAN_PALETTE_THUNDER,
+    VFX_TALISMAN_PALETTE_MIXED,
+    VFX_TALISMAN_PALETTE_COUNT
+} VFX_TalismanPalette;
+
+typedef struct VFX_TalismanConfig {
+    Vector3                origin;
+    VFX_TalismanFlightMode flightMode;
+    VFX_TalismanVisualMode visualMode;
+    VFX_TalismanPalette    palette;
+    int                    count;
+    float                  windStrength;
+    float                  paperSoftness;
+    float                  glowIntensity;
+    bool                   castShadow;
+} VFX_TalismanConfig;
+
+VFX_TalismanConfig  VFX_Talisman_DefaultConfig(void);
+VFX_TalismanConfig *VFX_Talisman_GetLiveConfig(void);
+int                 VFX_Talisman_GetParams(VFX_TalismanConfig *cfg, VFX_ParamDef *outParams, int maxParams);
+void                VFX_ComposeTalisman(const VFX_TalismanConfig *config);
+void                VFX_Talisman_Throw(Vector3 origin, Vector3 aimDir);
+void                VFX_Talisman_Reset(void);
+void                VC_Talisman_DrawShadowPass(void);
 
 #endif // VISUAL_COMPOSER_H

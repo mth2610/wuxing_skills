@@ -212,9 +212,7 @@ void CastTubeSkill(int agentId, Vector3 startPos, Vector3 target, float twistPha
     st->tsunamiHandle = VFX_ComposeTsunamiEx(groundStart, streamTarget, &tcfg);
 
     // Rich cast details: ground ripple + hydro mist + initial spray
-    VFX_SpawnGroundWave((Vector3){ groundStart.x, groundStart.y + 0.05f, groundStart.z },
-                        VC_MAT_WATER, 2.2f * scale, 0.38f);
-    VFX_ComposeMistVeilEx(groundStart, VC_MAT_WATER, 1.8f * scale, 0.55f);
+VFX_ComposeMistVeilEx(groundStart, VC_MAT_WATER, 1.8f * scale, 0.55f);
     SpawnStreamDroplets(groundStart, fwd, scale, 18);
     PlayCastSound(EFFECT_PRESET_WATER_SPLASH);
 }
@@ -261,9 +259,7 @@ void UpdateTubeSkill(float dt) {
                     st->hitDealt = true;
                     Entity_ApplyAoEDamageFrom(st->ownerAgentId, st->headPos, 2.4f * st->sizeScale,
                                               st->damage, st->knockback);
-                    VFX_SpawnGroundWave((Vector3){ st->headPos.x, st->headPos.y - 0.35f, st->headPos.z },
-                                        VC_MAT_WATER, 2.8f * st->sizeScale, 0.42f);
-                    SpawnStreamDroplets(st->headPos, st->dir, st->sizeScale * 1.2f, 22);
+SpawnStreamDroplets(st->headPos, st->dir, st->sizeScale * 1.2f, 22);
                     PlayImpactSound(EFFECT_PRESET_WATER_SPLASH);
                 }
             }

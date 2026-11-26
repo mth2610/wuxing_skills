@@ -105,8 +105,11 @@ typedef struct rlvkShaderSlot
     int attribLocs[RLVK_ATTRIB_COUNT];          // canonical attribute -> shader input location (-1 absent)
     u32 vsBlockSize, fsBlockSize;               // Default uniform block sizes per stage
     u32 vsWriteGen, fsWriteGen;                 // Bumped when a stage block is written (rlSetUniform*)
-    u32 vsPushedGen, fsPushedGen;               // Write generation last snapshotted+pushed
-    u32 uboPushedEpoch;                         // Command-buffer epoch of the last push (pushes die with the cb)
+    struct {
+        u64 epoch;                              // Frame begin and mid-frame drains invalidate arena offsets
+        VkDeviceSize offset;
+        u32 generation;
+    } uboSnapshot[2];                           // Immutable VS and FS slices within one recording epoch
     int uniformCount;                           // Entries in the reflected uniform table
     u32 ssboMask;                               // bit i: shader reads graphics SSBO index i (set0 binding RLVK_SSBO_BINDING_BASE+i)
     bool usesUbo;                               // runtime-compiled (reflected uniforms); false = embedded push-constant shader
@@ -324,7 +327,7 @@ typedef struct rlvkData
         int currentMatrixMode;                                                    // Current matrix mode (modelview/projection)
         u32 currentTextureSlot;                                                   // Batch draw texture (rlSetTexture)
         u32 stateGeneration;                                                      // Bumped by every setter feeding the pipeline key or viewport/scissor
-        u32 cbEpoch;                                                              // Bumped at every command-buffer restart (push descriptors reset)
+        u64 cbEpoch;                                                              // Bumped at every command-buffer restart (push descriptors reset)
         u32 currentShaderSlot;                                                    // BATCH shader (rlgl currentShaderId): rlSetShader only
         u32 activeShaderSlot;                                                     // "glUseProgram" shader: uniform writes + mesh/quad draws
         u32 currentFramebufferSlot;                                               // 0 = swapchain

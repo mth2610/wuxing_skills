@@ -75,9 +75,7 @@ static void ShatterSlabAt(Vector3 pos, Vector3 dir, float scale) {
     Vector3 vel = { -dir.x * 2.5f, 3.2f, -dir.z * 2.5f };
     VFX_ComposeDebrisShards(pos, vel, VC_MAT_EARTH, 0.058f * scale, 6);
     VFX_ComposeImpactDustVariant(pos, VC_MAT_EARTH, 0.68f * scale, 0.45f, VFX_IMPACT_DUST_VARIANT_DUST_PUFF);
-    VFX_SpawnGroundWave(pos, VC_MAT_EARTH, 1.15f * scale, 0.28f);
-
-    VFX_EarthCrackConfig ccfg = VFX_EarthCrack_DefaultConfig();
+VFX_EarthCrackConfig ccfg = VFX_EarthCrack_DefaultConfig();
     ccfg.spreadDuration = 0.12f;
     ccfg.holdDuration = 0.90f;
     ccfg.fadeDuration = 0.45f;

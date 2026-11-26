@@ -178,9 +178,7 @@ static void TriggerPhiHoaImpact(PhiHoaInst *inst, Vector3 impactPos)
     VFX_ComposeFireballBurst(impactPos, VC_MAT_FIRE, 0.95f * inst->sizeScale, 0.88f);
     VFX_MartialShockCone_Spawn(impactPos, inst->dir, VC_MAT_FIRE,
                                2.4f * inst->sizeScale, 1.05f * inst->sizeScale, 0.28f);
-    VFX_SpawnGroundWave((Vector3){ impactPos.x, MapManager_GetGroundHeightAt(impactPos.x, impactPos.z) + 0.05f, impactPos.z },
-                        VC_MAT_FIRE, PHXC_HIT_RADIUS * inst->sizeScale * 1.15f, 0.32f);
-    VFX_ComposeEmberBurst(impactPos, (Vector3){ 0.0f, 1.0f, 0.0f }, VC_MAT_FIRE, 1.15f * inst->sizeScale, 0.90f);
+VFX_ComposeEmberBurst(impactPos, (Vector3){ 0.0f, 1.0f, 0.0f }, VC_MAT_FIRE, 1.15f * inst->sizeScale, 0.90f);
     Wind_SpawnRadialBlast(impactPos, 2.4f * inst->sizeScale, 7.0f, 0.18f);
 
     int targets[12];

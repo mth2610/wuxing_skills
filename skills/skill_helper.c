@@ -1139,6 +1139,5 @@ void SkillHelper_SpawnMeleeImpact(int agentId, Vector3 hitPos)
 
     VFX_ComposeContactSpark(chestPos, mat, 1.15f, 0.85f);
     VFX_ComposeImpactDust(groundPos, mat, 0.85f, 0.60f);
-    VFX_SpawnGroundWave(groundPos, mat, 1.45f, 0.34f);
-    Wind_SpawnRadialBlast(chestPos, 4.5f, 4.5f, 0.45f);
+Wind_SpawnRadialBlast(chestPos, 4.5f, 4.5f, 0.45f);
 }

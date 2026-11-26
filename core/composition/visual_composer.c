@@ -48,6 +48,7 @@
 // The surviving compositions. F0 (28/07/2026) deleted the rest; see
 // visual_composer.h for what remains and why.
 #include "common/common.inl"
+#include "common/vc_talisman.inl"
 #include "common/vc_combat_readability.inl"
 #include "common/vc_martial_shockcone.inl"
 #include "fire/flame_volume.inl"   // F3 — reads vc_smoke_puff.inl's sheet, so it comes after it
@@ -80,7 +81,6 @@
 #include "common/vc_debris_shards.inl"
 #include "common/vc_shield_shell.inl"
 #include "common/vc_smoke_column.inl"
-#include "common/vc_rift_bolt.inl"
 #include "common/vc_gas_plume.inl"
 #include "common/vc_gas_vortex.inl"
 #include "common/vc_gas_shockwave.inl"
@@ -117,7 +117,6 @@ void VFX_Compose_Update(float dt)
     VC_DebrisShards_Update(dt);
     VC_ShieldShell_Update(dt);
     VC_SmokeColumn_Update(dt);
-    VC_RiftBolt_Update(dt);
     VC_GasPlume_Update(dt);
     VC_GasVortex_Update(dt);
     VC_GasShockwave_Update(dt);
@@ -159,12 +158,12 @@ void VFX_Compose_Update(float dt)
     VC_MetalResonanceArray_Update(dt);
     VC_MetalParryGuard_Update(dt);
     VC_MetalMagneticZone_Update(dt);
-    VC_GroundWavePool_Update(dt);
     VC_ShockRingPool_Update(dt);
     VC_MartialShockCone_Update(dt);
     VC_HydroTether_Update(dt);
     VC_WaterMirror_Update(dt);
     VC_FireMartial_Update(dt);
+    VC_Talisman_Update(dt);
     /* Five-body liquid stress lab (WUXING_LIQUID_BENCH=1). The heartbeat keeps
      * the fixture alive; simulation and surface submission stay in the engine's
      * normal update/composite phases. */
@@ -194,7 +193,6 @@ void VFX_Compose_Draw3D(Camera3D cam)
     VC_DebrisShards_Draw3D(cam);
     VC_ShieldShell_Draw3D(cam);
     VC_SmokeColumn_Draw3D(cam);
-    VC_RiftBolt_Draw3D(cam);
     VC_GasPlume_Draw3D(cam);
     VC_GasVortex_Draw3D(cam);
     VC_GasShockwave_Draw3D(cam);
@@ -226,12 +224,12 @@ void VFX_Compose_Draw3D(Camera3D cam)
     VC_MetalResonanceArray_Draw3D(cam);
     VC_MetalParryGuard_Draw3D(cam);
     VC_MetalMagneticZone_Draw3D(cam);
-    VC_GroundWavePool_Draw3D(cam);
     VC_ShockRingPool_Draw3D(cam);
     VC_MartialShockCone_Draw3D(cam);
     VC_HydroTether_Draw3D(cam);
     VC_WaterMirror_Draw3D(cam);
     VC_FireMartial_Draw3D(cam);
+    VC_Talisman_Draw3D(cam);
 }
 
 void VFX_Compose_DrawRefraction(Camera3D cam)
@@ -249,4 +247,27 @@ void VFX_Compose_SubmitScreenSpaceVFX(void)
     WaterRing_SubmitSurface();
     VC_Tsunami_SubmitSurface();
     if (LiquidBench_EnvEnabled()) LiquidBench_SubmitSurface();
+}
+
+float VFX_GroundHeightFromMap(float worldX, float worldZ, void *unused)
+{
+    (void)unused;
+    return MapManager_GetGroundHeightAt(worldX, worldZ);
+}
+
+bool VFX_GroundSurfaceFromMap(float worldX, float worldZ, Vector3 *outPosition,
+                              Vector3 *outNormal, void *unused)
+{
+    (void)unused;
+    Vector3 pos = { worldX, MapManager_GetGroundHeightAt(worldX, worldZ), worldZ };
+    if (outPosition) *outPosition = pos;
+    if (outNormal) {
+        const float eps = 0.25f;
+        float hL = MapManager_GetGroundHeightAt(worldX - eps, worldZ);
+        float hR = MapManager_GetGroundHeightAt(worldX + eps, worldZ);
+        float hD = MapManager_GetGroundHeightAt(worldX, worldZ - eps);
+        float hU = MapManager_GetGroundHeightAt(worldX, worldZ + eps);
+        *outNormal = Vector3Normalize((Vector3){ hL - hR, 2.0f * eps, hD - hU });
+    }
+    return true;
 }

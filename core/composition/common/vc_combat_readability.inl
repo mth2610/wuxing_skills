@@ -61,8 +61,7 @@ void VFX_ComposeCleanseBurst(Vector3 pos, VC_MaterialId mat, float radius)
     if (radius <= 0.1f) radius = 1.4f;
     Vector3 gp = { pos.x, VFX_GroundHeightFromMap(pos.x, pos.z, NULL) + 0.05f, pos.z };
     Vector3 chest = { pos.x, pos.y + 0.95f, pos.z };
-    VFX_SpawnGroundWave(gp, mat, radius, 0.36f);
-    VFX_SpawnShockRing(chest, (Vector3){ 0.0f, 1.0f, 0.0f }, mat, radius * 0.78f, 0.30f);
+VFX_SpawnShockRing(chest, (Vector3){ 0.0f, 1.0f, 0.0f }, mat, radius * 0.78f, 0.30f);
     VFXLight_Spawn(chest, VFX_Material(mat)->soft, radius * 1.4f, 0.25f, VFX_PRIORITY_LOW);
 }
 

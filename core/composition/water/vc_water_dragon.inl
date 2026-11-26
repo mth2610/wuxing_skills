@@ -340,14 +340,12 @@ void VC_WaterDragon_Update(float dt)
 
             // Environmental wind blast & ground wave shock ring
             Wind_SpawnRadialBlast(inst->groundPuddlePos, cfg->puddleRadius * 1.6f, 18.0f, 0.45f);
-            VFX_ComposeGroundWave(inst->groundPuddlePos, VC_MAT_WATER, cfg->puddleRadius * 1.35f, 0.45f, VFX_GroundHeightFromMap, NULL);
 
             if (cfg->impactDecal && !inst->decalSpawned) {
                 inst->decalSpawned = true;
                 VFX_ComposeDecal(inst->groundPuddlePos, VC_MAT_WATER, cfg->puddleRadius, 0.85f, 1.0f);
             }
 
-            VFX_ComposeSurfaceImpact(inst->groundPuddlePos, VFX_IMPACT_SURFACE_WATER);
             VFX_ComposeMistVeil(inst->groundPuddlePos, cfg->puddleRadius * 0.9f, 2.0f);
         }
 

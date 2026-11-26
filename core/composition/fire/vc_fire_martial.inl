@@ -247,8 +247,7 @@ int VFX_FireScorchFormation_Spawn(Vector3 center, float radius, float duration)
     inst->duration = (duration > 0.2f) ? duration : 5.0f;
     inst->pulse01  = 1.0f;
     VFX_ComposeDecalVariant(center, VC_MAT_FIRE, inst->radius * 0.92f, 0.72f, inst->duration / 4.0f, VFX_DECAL_VARIANT_SCORCH);
-    VFX_SpawnGroundWave(center, VC_MAT_FIRE, inst->radius, 0.36f);
-    return inst->id;
+return inst->id;
 }
 
 void VFX_FireScorchFormation_SetPulse(int handle, float pulse01)

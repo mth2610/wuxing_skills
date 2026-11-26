@@ -130,9 +130,7 @@ void CastTtqpThuyKinhQuyenThuanSkill(int agentId, Vector3 startPos, Vector3 targ
     inst->shieldHandle = VFX_FlowShield_Spawn(anchor, VC_MAT_WATER, 1.45f * scale, 1.0f);
     inst->mirrorHandle = VFX_WaterMirror_Spawn(anchor, 1.15f * scale, 2, 4.0f);
     VFX_ComposeCleanseBurst(anchor, VC_MAT_WATER, 1.55f * scale);
-    VFX_SpawnGroundWave(anchor, VC_MAT_WATER, 5.0f * scale, 0.42f);
-
-    LiquidSWEDesc desc = LiquidSWE_DefaultDesc();
+LiquidSWEDesc desc = LiquidSWE_DefaultDesc();
     desc.pattern = LIQUID_SWE_PATTERN_ORBITAL_CHAKRAM;
     desc.source = anchor;
     desc.target = anchor;

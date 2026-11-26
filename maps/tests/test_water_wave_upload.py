@@ -87,7 +87,33 @@ static void UnloadModel(Model model) {(void)model;}
 """
 
 MAIN = r"""
+static void TestWaterGridScroll(void)
+{
+    enum { n = 7 };
+    float field[n*n];
+    for (int dz = 1-n; dz < n; dz++)
+    {
+        for (int dx = 1-n; dx < n; dx++)
+        {
+            for (int i = 0; i < n*n; i++)
+                field[i] = (float)i;
+            Water_ShiftField(field, n, dx, dz, -0.85f);
+            for (int z = 0; z < n; z++)
+            {
+                for (int x = 0; x < n; x++)
+                {
+                    int sx = x + dx, sz = z + dz;
+                    float expected = sx >= 0 && sx < n && sz >= 0 && sz < n
+                                         ? (float)(sz*n + sx) : -0.85f;
+                    assert(field[z*n + x] == expected);
+                }
+            }
+        }
+    }
+}
+
 int main(void) {
+    TestWaterGridScroll();
     MapWaterSurface water=CreateWake();
     assert(water.ready && water.waveUploadedPixels && liveCaches==1);
     assert(water.waveUploadedTextureId==water.waveFieldTex.id);
@@ -138,6 +164,7 @@ def main():
     init = function(source, "Water_InitializeWaveUploadCache")
     init_field = function(source, "Water_InitializeWaveField")
     upload = function(source, "Water_UploadWaveField")
+    shift = function(source, "Water_ShiftField")
     destroy = function(source, "MapProp_UnloadWaterSurface")
     create = "static MapWaterSurface CreateWake(void)\n{\n    MapWaterSurface water = {0};\n    Water_InitializeWaveField(&water);\n    water.ready = true;\n    return water;\n}\n"
     draw = function(source, "MapProp_DrawWaterOverlay")
@@ -147,7 +174,7 @@ def main():
         def run(body, name):
             path = work / (name + ".c")
             binary = work / name
-            path.write_text(STUBS + init + init_field + body + create + destroy + MAIN)
+            path.write_text(STUBS + init + init_field + body + create + destroy + shift + MAIN)
             subprocess.run(["cc", "-std=c99", "-O2", "-Wall", "-Wextra", "-Werror", str(path), "-o", str(binary)], check=True)
             return subprocess.run([str(binary)], capture_output=True, text=True)
         result = run(upload, "water")

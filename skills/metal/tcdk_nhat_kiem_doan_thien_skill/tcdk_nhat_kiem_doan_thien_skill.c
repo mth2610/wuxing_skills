@@ -192,8 +192,7 @@ void UpdateTcdkNhatKiemDoanThienSkill(float dt, Vector3 enemyPos, float enemyRad
                 VFX_ComposeContactSparkMode(cur, VC_MAT_METAL, 1.0f * inst->sizeScale, 1.0f, CONTACT_SPARK_CENTRIFUGAL);
                 if (mult > 1.01f) {
                     VFX_SpawnShockRing((Vector3){ cur.x, cur.y + 0.95f, cur.z }, (Vector3){ 0.0f, 1.0f, 0.0f }, VC_MAT_METAL, 2.4f * inst->sizeScale, 0.34f);
-                    VFX_SpawnGroundWave(cur, VC_MAT_METAL, 2.6f * inst->sizeScale, 0.36f);
-                }
+}
                 PlayImpactSound(EFFECT_PRESET_METAL_SHARD);
                 break; /* Single-target finisher (N = 1.0) */
             }

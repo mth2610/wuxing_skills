@@ -215,8 +215,7 @@ static void Water_InitializeWaveUploadCache(MapWaterSurface *water)
     water->waveUploadedTextureId = water->waveFieldTex.id;
 }
 
-// Sử dụng bộ đệm waveNextField (vốn chỉ dùng làm scratch khi dịch chuyển lưới)
-// để lưu cache mặt nạ bờ & vật cản tĩnh, loại bỏ hoàn toàn vòng lặp kiểm tra vật cản mỗi frame.
+// Cache the shoreline and obstacle mask until the grid moves or obstacles change.
 static void Water_RebuildBlockedMask(MapWaterSurface *water)
 {
     if (!water || !water->waveNextField)
@@ -1730,23 +1729,35 @@ void MapProp_AddWaterObstacle(MapWaterSurface *water, Vector3 position, float ra
         water->waveNextField[0] = -1.0f;
 }
 
-static void Water_ShiftField(float *field, float *temp, int n, int shiftX, int shiftZ, float defaultVal)
+static void Water_ShiftField(float *field, int n, int shiftX, int shiftZ, float defaultVal)
 {
-    if (!field || !temp)
+    if (!field)
         return;
-    for (int z = 0; z < n; z++)
+
+    // The caller handles jumps larger than the grid. Slide contiguous storage
+    // once, then clear the exposed rows and the wrapped cells at each row edge.
+    const int offset = shiftZ * n + shiftX;
+    const int src = offset > 0 ? offset : 0;
+    const int dst = offset < 0 ? -offset : 0;
+    memmove(field + dst, field + src, (size_t)(n * n - abs(offset)) * sizeof(*field));
+
+    const int firstRow = shiftZ < 0 ? -shiftZ : 0;
+    const int endRow = shiftZ > 0 ? n - shiftZ : n;
+    const int exposedRow = shiftZ > 0 ? endRow : 0;
+    for (int i = exposedRow * n; i < (exposedRow + abs(shiftZ)) * n; i++)
+        field[i] = defaultVal;
+
+    if (shiftX != 0)
     {
-        int sz = z + shiftZ;
-        bool validZ = (sz >= 0 && sz < n);
-        int dstRow = z * n;
-        int srcRow = sz * n;
-        for (int x = 0; x < n; x++)
+        const int edge = shiftX > 0 ? n - shiftX : 0;
+        const int width = abs(shiftX);
+        for (int z = firstRow; z < endRow; z++)
         {
-            int sx = x + shiftX;
-            temp[dstRow + x] = (validZ && sx >= 0 && sx < n) ? field[srcRow + sx] : defaultVal;
+            float *rowEdge = field + z * n + edge;
+            for (int x = 0; x < width; x++)
+                rowEdge[x] = defaultVal;
         }
     }
-    memcpy(field, temp, (size_t)(n * n) * sizeof(float));
 }
 
 void MapProp_UpdateWaterSurface(MapWaterSurface *water, float dt)
@@ -1813,21 +1824,21 @@ void MapProp_UpdateWaterSurface(MapWaterSurface *water, float dt)
                     hydroStrip = true;
                     hydroShiftX = shiftX;
                     hydroShiftZ = shiftZ;
-                    Water_ShiftField(water->waterDepth, water->waveNextField, n, shiftX, shiftZ, baseDepth);
-                    Water_ShiftField(water->bedHeight, water->waveNextField, n, shiftX, shiftZ, -baseDepth);
+                    Water_ShiftField(water->waterDepth, n, shiftX, shiftZ, baseDepth);
+                    Water_ShiftField(water->bedHeight, n, shiftX, shiftZ, -baseDepth);
                     if (water->eqDepth)
-                        Water_ShiftField(water->eqDepth, water->waveNextField, n, shiftX, shiftZ, 0.0f);
-                    Water_ShiftField(water->smoothEta, water->waveNextField, n, shiftX, shiftZ, 0.0f);
-                    Water_ShiftField(water->fluxL, water->waveNextField, n, shiftX, shiftZ, 0.0f);
-                    Water_ShiftField(water->fluxR, water->waveNextField, n, shiftX, shiftZ, 0.0f);
-                    Water_ShiftField(water->fluxT, water->waveNextField, n, shiftX, shiftZ, 0.0f);
-                    Water_ShiftField(water->fluxB, water->waveNextField, n, shiftX, shiftZ, 0.0f);
-                    Water_ShiftField(water->velU, water->waveNextField, n, shiftX, shiftZ, 0.0f);
-                    Water_ShiftField(water->velV, water->waveNextField, n, shiftX, shiftZ, 0.0f);
+                        Water_ShiftField(water->eqDepth, n, shiftX, shiftZ, 0.0f);
+                    Water_ShiftField(water->smoothEta, n, shiftX, shiftZ, 0.0f);
+                    Water_ShiftField(water->fluxL, n, shiftX, shiftZ, 0.0f);
+                    Water_ShiftField(water->fluxR, n, shiftX, shiftZ, 0.0f);
+                    Water_ShiftField(water->fluxT, n, shiftX, shiftZ, 0.0f);
+                    Water_ShiftField(water->fluxB, n, shiftX, shiftZ, 0.0f);
+                    Water_ShiftField(water->velU, n, shiftX, shiftZ, 0.0f);
+                    Water_ShiftField(water->velV, n, shiftX, shiftZ, 0.0f);
                     if (water->waveHeightField)
-                        Water_ShiftField(water->waveHeightField, water->waveNextField, n, shiftX, shiftZ, 0.0f);
+                        Water_ShiftField(water->waveHeightField, n, shiftX, shiftZ, 0.0f);
                     if (water->waveVelocityField)
-                        Water_ShiftField(water->waveVelocityField, water->waveNextField, n, shiftX, shiftZ, 0.0f);
+                        Water_ShiftField(water->waveVelocityField, n, shiftX, shiftZ, 0.0f);
                 }
                 water->waveGridCenter.x += (float)shiftX * dx;
                 water->waveGridCenter.z += (float)shiftZ * dx;

@@ -140,8 +140,7 @@ static void TriggerChanAmEruption(ChanAmInst *inst)
     if (hitAny) {
         TimeFX_Hitstop(0.055f, 0.08f);
     }
-    VFX_SpawnGroundWave(inst->targetPos, VC_MAT_METAL, r * 1.15f, 0.36f);
-    VFX_SpawnShockRing((Vector3){ inst->targetPos.x, inst->targetPos.y + 0.35f, inst->targetPos.z },
+VFX_SpawnShockRing((Vector3){ inst->targetPos.x, inst->targetPos.y + 0.35f, inst->targetPos.z },
                        (Vector3){ 0.0f, 1.0f, 0.0f }, VC_MAT_METAL, r, 0.34f);
     PlayImpactSound(EFFECT_PRESET_METAL_SHARD);
 }

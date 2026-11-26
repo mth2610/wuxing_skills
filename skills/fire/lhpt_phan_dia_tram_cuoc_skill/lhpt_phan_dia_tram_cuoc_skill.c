@@ -170,8 +170,7 @@ void CastLhptPhanDiaTramCuocSkill(int agentId, Vector3 startPos, Vector3 target,
     inst->sizeScale    = scale;
 
     /* Initial ground-clinging Shader-Tongue + ground ripple telegraph */
-    VFX_SpawnGroundWave(tgtGround, VC_MAT_FIRE, PDTC_RADIUS * scale * 0.92f, 0.36f);
-    EmitGroundTelegraphTongue(tgtGround, PDTC_RADIUS * scale * 0.88f, 0.36f, 70);
+EmitGroundTelegraphTongue(tgtGround, PDTC_RADIUS * scale * 0.88f, 0.36f, 70);
     PlayCastSound(EFFECT_PRESET_FIRE_EXPLOSION);
 }
 
@@ -186,8 +185,7 @@ static void TriggerPhanDiaEruption(PhanDiaInst *inst)
     EmitAirbornePuff(liftPos, 0.46f * inst->sizeScale, r * 0.55f, 10.5f, 0.48f, 180, true);
     VFX_ComposeFireballBurst(liftPos, VC_MAT_FIRE, 1.25f * inst->sizeScale, 0.95f);
     VFX_ComposeDecalVariant(inst->targetPos, VC_MAT_FIRE, r * 0.95f, 0.90f, 1.2f, VFX_DECAL_VARIANT_SCORCH);
-    VFX_SpawnGroundWave(inst->targetPos, VC_MAT_FIRE, r * 1.15f, 0.38f);
-    VFX_FireKickArc_Spawn(liftPos, (Vector3){ 0.0f, 1.0f, 0.0f }, (Vector3){ 1.0f, 0.0f, 0.0f },
+VFX_FireKickArc_Spawn(liftPos, (Vector3){ 0.0f, 1.0f, 0.0f }, (Vector3){ 1.0f, 0.0f, 0.0f },
                           1.35f * inst->sizeScale, 150.0f, 0.28f, inst->sizeScale);
     EmitGroundTelegraphTongue(inst->targetPos, r * 0.92f, 0.50f, 80);
     VFX_ComposeEmberBurst(liftPos, (Vector3){ 0.0f, 1.0f, 0.0f }, VC_MAT_FIRE, 1.35f * inst->sizeScale, 0.95f);

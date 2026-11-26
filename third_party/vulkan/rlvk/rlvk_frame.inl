@@ -1067,7 +1067,6 @@ static void rlvkPushSet0Batch(VkCommandBuffer cmdBuffer, rlvkShaderSlot *shader,
         vk.CmdPushDescriptorSetKHR(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, RLVK.pipelineLayout, 0, n, writes);
     if (rlvkDebugFlag("RLVK_EXP_REBIND_PIPE", &s_expRebindPipe) && RLVK.boundPipeline)
         vkCmdBindPipeline(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, RLVK.boundPipeline);
-    shader->uboPushedEpoch = RLVK.State.cbEpoch;
     RLVK.lastUboShader = shader;
 }
 

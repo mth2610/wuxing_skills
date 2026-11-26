@@ -134,9 +134,7 @@ static void TriggerToaiGiapCleave(ToaiGiapInst *inst)
     VFX_MartialShockCone_Spawn(pivot, slashDir, VC_MAT_METAL, r * 0.95f, 0.95f * inst->sizeScale, 0.24f);
 
     Vector3 hitCenter = Vector3Add(anchor, Vector3Scale(inst->dir, r * 0.55f));
-    VFX_SpawnGroundWave((Vector3){ hitCenter.x, MapManager_GetGroundHeightAt(hitCenter.x, hitCenter.z) + 0.05f, hitCenter.z },
-                        VC_MAT_METAL, r * 0.85f, 0.30f);
-    Wind_SpawnRadialBlast(hitCenter, r * 0.95f, 6.0f, 0.18f);
+Wind_SpawnRadialBlast(hitCenter, r * 0.95f, 6.0f, 0.18f);
 
     int targets[12];
     int cnt = Entity_GetNearbyTargets(hitCenter, r * 0.65f, targets, 12);

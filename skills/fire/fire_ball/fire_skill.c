@@ -113,9 +113,7 @@ static void DetonateInferno(InfernoInstance *inst, Vector3 at) {
     VFX_ComposeGuidedFire(at, &burstCfg);
 
     VFX_ComposeEmberBurst(at, (Vector3){ 0.0f, 1.0f, 0.0f }, VC_MAT_FIRE, 1.35f * inst->sizeScale, 0.95f);
-    VFX_ComposeGroundWave(inst->groundImpact, VC_MAT_FIRE, 3.1f * inst->sizeScale, 0.90f,
-                          VFX_GroundHeightFromMap, NULL);
-    VFX_ComposeImpactDust(inst->groundImpact, VC_MAT_FIRE, 1.05f * inst->sizeScale, 0.65f);
+VFX_ComposeImpactDust(inst->groundImpact, VC_MAT_FIRE, 1.05f * inst->sizeScale, 0.65f);
 
     Entity_ApplyAoEDamageFrom(inst->ownerAgentId, at, 2.75f * inst->sizeScale,
                               inst->damage, inst->knockback);

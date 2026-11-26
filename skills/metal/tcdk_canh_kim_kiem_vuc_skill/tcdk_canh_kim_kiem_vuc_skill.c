@@ -106,9 +106,7 @@ void CastTcdkCanhKimKiemVucSkill(int agentId, Vector3 startPos, Vector3 target, 
     inst->markAccum    = 0.50f;
     inst->sizeScale    = scale;
     inst->zoneHandle   = VFX_MetalMagneticZone_Spawn(center, CKKV_RADIUS * scale, CKKV_DURATION);
-    VFX_SpawnGroundWave(center, VC_MAT_METAL, CKKV_RADIUS * scale, 0.42f);
-
-    PlayCastSound(EFFECT_PRESET_METAL_SHARD);
+PlayCastSound(EFFECT_PRESET_METAL_SHARD);
 }
 
 void UpdateTcdkCanhKimKiemVucSkill(float dt, Vector3 enemyPos, float enemyRadius)

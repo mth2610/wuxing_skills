@@ -562,8 +562,7 @@ void VC_SeismicWave_Update(float dt)
 
                 // Expansive Ground Shockwave Ring
                 if (cfg->impactBurst) {
-                    VFX_ComposeGroundWave(tgt, VC_MAT_EARTH, cfg->impactRadius * 1.2f, 0.35f, VFX_GroundHeightFromMap, NULL);
-                }
+}
 
                 // Small Soil Burst
                 if (cfg->emitDebris) {

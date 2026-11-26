@@ -73,8 +73,7 @@ float VoHoc_OnNoHaiConsume(int casterId, int targetId, int noHaiSkillIndex, floa
         if (tgt) {
             VFX_CrystalShatter_Spawn((Vector3){ tgt->position.x, tgt->position.y + 1.0f, tgt->position.z },
                                      (Vector3){ 0.0f, 1.0f, 0.0f }, 5.2f, 14, 0.18f, VFX_CRYSTAL_STYLE_ICE);
-            VFX_SpawnGroundWave(tgt->position, VC_MAT_ICE, 2.4f, 0.38f);
-        }
+}
         if (casterId >= 0 && casterId < MAX_AGENTS) {
             double now = GetTime();
             if (s_noHaiResetLastTime[casterId] <= 0.0 || (now - s_noHaiResetLastTime[casterId]) >= 10.0) {
@@ -111,8 +110,7 @@ bool VoHoc_ApplyEarthMark(int casterId, int targetId, int stacks) {
         if (tgt) {
             Vector3 gp = { tgt->position.x, VFX_GroundHeightFromMap(tgt->position.x, tgt->position.z, NULL) + 0.04f, tgt->position.z };
             VFX_ComposeEarthCrackRadial(gp, 1.65f, NULL);
-            VFX_SpawnGroundWave(gp, VC_MAT_EARTH, 1.95f, 0.36f);
-            VFX_ComposeDebrisShards((Vector3){ tgt->position.x, tgt->position.y + 0.25f, tgt->position.z },
+VFX_ComposeDebrisShards((Vector3){ tgt->position.x, tgt->position.y + 0.25f, tgt->position.z },
                                     (Vector3){ 0.0f, 4.2f, 0.0f }, VC_MAT_EARTH, 0.16f, 8);
         }
 
@@ -151,8 +149,7 @@ bool VoHoc_OnBangSonConsume(int casterId, int targetId, int bangSonSkillIndex,
         }
         Entity_ApplyAoEDamageFrom(casterId, impactPos, 2.2f, 8.0f, 2.5f);
         VFX_ComposeEarthCrackRadial(impactPos, 2.4f, NULL);
-        VFX_SpawnGroundWave(impactPos, VC_MAT_EARTH, 2.6f, 0.42f);
-        return true;
+return true;
     }
     return false;
 }

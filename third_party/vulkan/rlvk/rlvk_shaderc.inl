@@ -1317,43 +1317,51 @@ static u32 rlvkAppendUboWrites(rlvkShaderSlot *shader, VkDescriptorBufferInfo *b
     if (!shader->usesUbo)
         return 0;
 
-    // Snapshot a stage's block ONLY when its uniforms changed since the last push in this command
-    // buffer (pushes persist until overwritten); both stages ride the caller's one push call.
-    bool cbFresh = (shader->uboPushedEpoch != RLVK.State.cbEpoch) || (RLVK.lastUboShader != shader);
-    bool wantVs = shader->vsBlockSize && shader->vsStage && (cbFresh || (shader->vsPushedGen != shader->vsWriteGen));
-    bool wantFs = shader->fsBlockSize && shader->fsStage && (cbFresh || (shader->fsPushedGen != shader->fsWriteGen));
-    if (!wantVs && !wantFs)
-        return 0;
-
     u32 frameIndex = (u32)(RLVK.frameCounter % RLVK_FRAME_INDEX_COUNT);
     rlvkBatchBackingBuffer *arena = &RLVK.arena[frameIndex];
     u32 writeCount = 0;
     for (int stage = 0; stage < 2; stage++)
     {
-        if (stage ? !wantFs : !wantVs)
-            continue;
         u32 size = stage ? shader->fsBlockSize : shader->vsBlockSize;
         unsigned char *src = stage ? shader->fsStage : shader->vsStage;
-        VkDeviceSize off = (RLVK.arenaOffset[frameIndex] + 255) & ~(VkDeviceSize)255; // minUniformBufferOffsetAlignment
-        if (off + size > arena->sizeBytes)
+        if (!size || !src)
+            continue;
+
+        u32 generation = stage ? shader->fsWriteGen : shader->vsWriteGen;
+        bool cached = shader->uboSnapshot[stage].epoch == RLVK.State.cbEpoch &&
+                      shader->uboSnapshot[stage].generation == generation;
+        if (cached && RLVK.lastUboShader == shader)
+            continue;
+
+        // Switching shaders overwrites the bound descriptor, but the arena slice
+        // remains immutable until the command buffer is submitted and drained.
+        VkDeviceSize off = shader->uboSnapshot[stage].offset;
+        if (!cached)
         {
-            static bool s_warned = false;
-            if (!s_warned)
+            off = (RLVK.arenaOffset[frameIndex] + 255) & ~(VkDeviceSize)255;
+            if (off + size > arena->sizeBytes)
             {
-                s_warned = true;
-                TRACELOG(RL_LOG_WARNING, "RLVK: UBO push skipped, arena full (%u bytes) - draw uses STALE uniforms; arena will grow", arena->sizeBytes);
+                static bool s_warned = false;
+                if (!s_warned)
+                {
+                    s_warned = true;
+                    TRACELOG(RL_LOG_WARNING, "RLVK: UBO push skipped, arena full (%u bytes) - draw uses STALE uniforms; arena will grow", arena->sizeBytes);
+                }
+                RLVK.arenaWanted[frameIndex] += size + 256;
+                return writeCount;
             }
-            RLVK.arenaWanted[frameIndex] += size + 256; // demand grows even when the push is skipped
-            return writeCount;
+            if (rlvkDebugFlag("RLVK_PROFILE", &s_dbgProfile))
+            {
+                s_profileUboUploads++;
+                s_profileUboBytes += size;
+            }
+            memcpy((char *)arena->mapped + off, src, size);
+            RLVK.arenaOffset[frameIndex] = off + size;
+            RLVK.arenaWanted[frameIndex] += size + 256;
+            shader->uboSnapshot[stage].epoch = RLVK.State.cbEpoch;
+            shader->uboSnapshot[stage].generation = generation;
+            shader->uboSnapshot[stage].offset = off;
         }
-        if (rlvkDebugFlag("RLVK_PROFILE", &s_dbgProfile))
-        {
-            s_profileUboUploads++;
-            s_profileUboBytes += size;
-        }
-        memcpy((char *)arena->mapped + off, src, size);
-        RLVK.arenaOffset[frameIndex] = off + size;
-        RLVK.arenaWanted[frameIndex] += size + 256;
         bufferInfos[writeCount] = (VkDescriptorBufferInfo){arena->buffer, off, size};
         writes[writeCount] = (VkWriteDescriptorSet){
             VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
@@ -1363,10 +1371,6 @@ static u32 rlvkAppendUboWrites(rlvkShaderSlot *shader, VkDescriptorBufferInfo *b
             .pBufferInfo = &bufferInfos[writeCount],
         };
         writeCount++;
-        if (stage)
-            shader->fsPushedGen = shader->fsWriteGen;
-        else
-            shader->vsPushedGen = shader->vsWriteGen;
     }
     return writeCount;
 }
@@ -1384,7 +1388,6 @@ static void rlvkBindShaderUbos(VkCommandBuffer cmdBuffer, rlvkShaderSlot *shader
     if (rlvkDebugFlag("RLVK_PROFILE", &s_dbgProfile))
         s_profileDescriptors += writeCount;
     vk.CmdPushDescriptorSetKHR(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, RLVK.pipelineLayout, 0, writeCount, writes);
-    shader->uboPushedEpoch = RLVK.State.cbEpoch;
     RLVK.lastUboShader = shader;
 }
 

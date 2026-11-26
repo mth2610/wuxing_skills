@@ -110,8 +110,7 @@ void CastBtbcBanThachKimCangGiapSkill(int agentId, Vector3 startPos, Vector3 tar
 
     VFX_ComposeGroundDustRing(anchor, VC_MAT_EARTH, 0.75f * scale, 0.35f);
     VFX_ComposeCleanseBurst(anchor, VC_MAT_EARTH, 1.50f * scale);
-    VFX_SpawnGroundWave(anchor, VC_MAT_EARTH, 4.5f * scale, 0.38f);
-    PlayCastSound(EFFECT_PRESET_EARTH_CRACK);
+PlayCastSound(EFFECT_PRESET_EARTH_CRACK);
 }
 
 void UpdateBtbcBanThachKimCangGiapSkill(float dt, Vector3 enemyPos, float enemyRadius) {

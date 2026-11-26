@@ -172,8 +172,7 @@ static void TriggerThachTruEruption(ThachTruInst *inst) {
     inst->ringSpikeHandle = VFX_ComposeEarthSpikeEx(inst->targetPos, inst->targetPos, &ringCfg);
 
     CameraFX_Shake(0.45f);
-    VFX_SpawnGroundWave(inst->targetPos, VC_MAT_EARTH, r * 1.15f, 0.38f);
-    Wind_SpawnRadialBlast(inst->targetPos, r * 1.35f, 8.5f, 0.35f);
+Wind_SpawnRadialBlast(inst->targetPos, r * 1.35f, 8.5f, 0.35f);
     PlayImpactSound(EFFECT_PRESET_EARTH_CRACK);
 
     /* Apply 27.5 dmg, Launch 0.85s (v_y = 4.17), Weaken 35% (2.5s), +2 Chấn Ấn */

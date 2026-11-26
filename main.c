@@ -1952,6 +1952,7 @@ int main(int argc, char **argv) {
             VC_Crystal_DrawShadowPass();
             VC_IceCrystal_DrawShadowPass();
             GranularSim_DrawShadowPass();
+            VC_Talisman_DrawShadowPass();
             EndShaderMode();
         }
         if (CharacterModel_IsLoaded()) {

@@ -1026,8 +1026,7 @@ static void GuidedEarth_TriggerImpact(VC_GuidedEarthInstance *inst, VC_GuidedRoc
 
     // 5. Ground wave seismic shock ring
     if (cfg->impactShockRing && isFinisher) {
-        VFX_ComposeGroundWave(impactPos, cfg->matId, cfg->rockRadius * 2.8f, 0.5f, VFX_GroundHeightFromMap, NULL);
-    }
+}
 }
 
 void VC_GuidedEarth_Update(float dt)

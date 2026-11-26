@@ -148,8 +148,7 @@ static void TriggerThietSonImpact(ThietSonInst *inst, Vector3 hitPos) {
 
     if (hitAny) TimeFX_Hitstop(0.045f, 0.08f);
     CameraFX_Shake(0.32f);
-    VFX_SpawnGroundWave(hitPos, VC_MAT_EARTH, 1.85f * inst->sizeScale, 0.32f);
-    VFX_MartialShockCone_Spawn((Vector3){ hitPos.x, hitPos.y + 0.95f, hitPos.z }, inst->dir,
+VFX_MartialShockCone_Spawn((Vector3){ hitPos.x, hitPos.y + 0.95f, hitPos.z }, inst->dir,
                                VC_MAT_EARTH, 2.5f * inst->sizeScale, 1.15f * inst->sizeScale, 0.28f);
     VFX_ComposeGroundDustRing(hitPos, VC_MAT_EARTH, 1.15f * inst->sizeScale, 0.55f);
     VFX_ComposeImpactDustVariant(hitPos, VC_MAT_EARTH, 1.10f * inst->sizeScale, 0.60f, VFX_IMPACT_DUST_VARIANT_DUST_PUFF);

@@ -128,8 +128,7 @@ void CastLhptChuocDiaHoaTranSkill(int agentId, Vector3 startPos, Vector3 target,
 
     float r = CDHT_RADIUS * scale;
     inst->formHandle   = VFX_FireScorchFormation_Spawn(center, r, CDHT_DURATION);
-    VFX_SpawnGroundWave(center, VC_MAT_FIRE, r, 0.42f);
-    EmitGroundRingTongue(center, r * 0.92f, 0.50f, 90);
+EmitGroundRingTongue(center, r * 0.92f, 0.50f, 90);
     PlayCastSound(EFFECT_PRESET_FIRE_EXPLOSION);
 }
 

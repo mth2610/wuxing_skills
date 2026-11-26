@@ -216,9 +216,7 @@ void UpdateVineSnareSkill(float dt, Vector3 enemyPos, float enemyRadius) {
                 v->timer = 0.0f;
                 v->growth = 0.08f;
 
-                VFX_ComposeGroundWave((Vector3){ v->targetPos.x, v->targetPos.y + 0.05f, v->targetPos.z },
-                                      VC_MAT_WOOD, v->radius, 0.70f, VFX_GroundHeightFromMap, NULL);
-                VFX_ComposeImpactDust(v->targetPos, VC_MAT_WOOD, 1.05f * v->sizeScale, 0.60f);
+VFX_ComposeImpactDust(v->targetPos, VC_MAT_WOOD, 1.05f * v->sizeScale, 0.60f);
                 VFX_ComposeContactSpark((Vector3){ v->targetPos.x, v->targetPos.y + 0.35f, v->targetPos.z },
                                         VC_MAT_WOOD, 1.15f * v->sizeScale, 0.75f);
                 PlayImpactSound(EFFECT_PRESET_WOOD_BLOOM);

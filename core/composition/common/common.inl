@@ -24,7 +24,6 @@
 #include "vc_light_shaft.inl"
 #include "vc_guided_motion.inl"
 #include "vc_particle_upgrades_test.inl"
-#include "vc_ground_wave.inl"
 #include "vc_shock_ring.inl"
 #include "vc_impact_dust.inl"
 #include "vc_contact_spark.inl"
@@ -34,7 +33,6 @@
 #include "vc_mist_veil.inl"
 #include "vc_ember_burst.inl"
 #include "vc_surface_particle_ring.inl"
-#include "vc_surface_impact.inl"
 // @gen:common_includes end
 
 // Pool-owned one-shot primitive; its public API is VFX_LightningArc_* rather
@@ -43,8 +41,6 @@
 #include "vc_lightning_trail.inl"
 #include "vc_optical_flare.inl"
 #include "vc_mesh_surface_aura.inl"
-#include "vc_vacuum_arc.inl"
 #include "vc_vacuum_ring.inl"
-#include "vc_iaido_stance.inl"
 #include "vc_guiding_wind.inl"
 #include "vc_crystal.inl"

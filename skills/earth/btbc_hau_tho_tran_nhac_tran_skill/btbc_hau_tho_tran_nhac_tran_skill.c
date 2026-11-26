@@ -105,8 +105,7 @@ void CastBtbcHauThoTranNhacTranSkill(int agentId, Vector3 startPos, Vector3 targ
 
     Skill_RequestAnim(agentId, "standing_2h_cast_spell_01", 0.40f);
     VFX_ComposeGroundDustRing(center, VC_MAT_EARTH, 1.4f * scale, 0.35f);
-    VFX_SpawnGroundWave(center, VC_MAT_EARTH, HTTNT_RADIUS * scale, 0.42f);
-    PlayCastSound(EFFECT_PRESET_EARTH_CRACK);
+PlayCastSound(EFFECT_PRESET_EARTH_CRACK);
 }
 
 void UpdateBtbcHauThoTranNhacTranSkill(float dt, Vector3 enemyPos, float enemyRadius) {

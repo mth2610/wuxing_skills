@@ -178,9 +178,7 @@ static void TriggerPhanThienImpact(PhanThienInst *inst, Vector3 center)
     Vector3 midPos = { center.x, center.y + 0.95f, center.z };
     EmitVortexPuff(midPos, r, 0.45f, 190, true);
     VFX_ComposeFireballBurst(midPos, VC_MAT_FIRE, 1.05f * inst->sizeScale, 0.90f);
-    VFX_SpawnGroundWave((Vector3){ center.x, MapManager_GetGroundHeightAt(center.x, center.z) + 0.05f, center.z },
-                        VC_MAT_FIRE, r * 1.15f, 0.34f);
-    VFX_ComposeEmberBurst(midPos, (Vector3){ 0.0f, 1.0f, 0.0f }, VC_MAT_FIRE, 1.30f * inst->sizeScale, 0.95f);
+VFX_ComposeEmberBurst(midPos, (Vector3){ 0.0f, 1.0f, 0.0f }, VC_MAT_FIRE, 1.30f * inst->sizeScale, 0.95f);
     Wind_SpawnRadialBlast(midPos, r * 1.25f, 8.5f, 0.22f);
 
     int targets[12];

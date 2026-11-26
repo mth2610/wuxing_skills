@@ -196,6 +196,7 @@ add_executable(wuxing
     core/force_field.c
     core/motion/motion_fields.c
     core/motion/analytic_flow.c
+    core/motion/sheet_aerodynamics.c
     core/particles/particle_system.c
     core/particles/particle_manager.c
     core/particles/gpu/particle_gpu_backend.c
@@ -371,7 +372,10 @@ foreach(shared_motion_shader
     core/trails/shaders/trail_ribbon_material_gpu.vs
     core/trails/shaders/trail_ribbon_vertex.glsl
     core/trails/shaders/trail_ribbon_gpu.fs
-    core/shaders/common/vfx_composite.glsl)
+    core/shaders/common/vfx_composite.glsl
+    core/shaders/common/sheet_deform.glsl
+    core/shaders/talisman.vs
+    core/shaders/talisman.fs)
     configure_file(${shared_motion_shader} ${CMAKE_CURRENT_BINARY_DIR}/${shared_motion_shader} COPYONLY)
 endforeach()
 configure_file(core/particles/shaders/gpu/particle_gpu.comp    ${CMAKE_CURRENT_BINARY_DIR}/core/particles/shaders/gpu/particle_gpu.comp    COPYONLY)
@@ -441,8 +445,6 @@ configure_file(core/shaders/tsunami_swe.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shad
 configure_file(core/shaders/tsunami_swe.vs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/tsunami_swe.vs COPYONLY)
 configure_file(core/shaders/freeze_patch.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/freeze_patch.fs COPYONLY)
 configure_file(core/shaders/freeze_patch.vs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/freeze_patch.vs COPYONLY)
-configure_file(core/shaders/ground_wave.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/ground_wave.fs COPYONLY)
-configure_file(core/shaders/ground_wave.vs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/ground_wave.vs COPYONLY)
 configure_file(core/shaders/shock_ring.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/shock_ring.fs COPYONLY)
 configure_file(core/shaders/shock_ring.vs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/shock_ring.vs COPYONLY)
 configure_file(core/shaders/glass_shell.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/glass_shell.fs COPYONLY)

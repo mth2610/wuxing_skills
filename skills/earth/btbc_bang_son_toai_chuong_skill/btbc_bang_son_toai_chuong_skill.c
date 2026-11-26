@@ -166,8 +166,7 @@ static void TriggerBangSonImpact(BangSonInst *inst) {
     VFX_ComposeGroundDustRing(impactPos, VC_MAT_EARTH, 1.45f * inst->sizeScale, 0.60f);
     VFX_ComposeImpactDustVariant(impactPos, VC_MAT_EARTH, 1.25f * inst->sizeScale, 0.65f, VFX_IMPACT_DUST_VARIANT_DUST_PUFF);
     VFX_ComposeDebrisShards(impactPos, (Vector3){ 0.0f, 3.8f, 0.0f }, VC_MAT_EARTH, 0.058f * inst->sizeScale, 12);
-    VFX_SpawnGroundWave(impactPos, VC_MAT_EARTH, 2.1f * inst->sizeScale, 0.34f);
-    VFX_MartialShockCone_Spawn((Vector3){ impactPos.x, impactPos.y + 0.95f, impactPos.z }, inst->dir,
+VFX_MartialShockCone_Spawn((Vector3){ impactPos.x, impactPos.y + 0.95f, impactPos.z }, inst->dir,
                                VC_MAT_EARTH, 2.8f * inst->sizeScale, 1.35f * inst->sizeScale, 0.30f);
     Wind_SpawnRadialBlast(impactPos, 2.8f * inst->sizeScale, 8.0f, 0.30f);
     PlayImpactSound(EFFECT_PRESET_EARTH_CRACK);
@@ -187,8 +186,7 @@ static void TriggerBangSonImpact(BangSonInst *inst) {
 
         if (aftershock) {
             VFX_ComposeGroundDustRing(impactPos, VC_MAT_EARTH, 2.4f * inst->sizeScale, 0.70f);
-            VFX_SpawnGroundWave(impactPos, VC_MAT_EARTH, 2.6f * inst->sizeScale, 0.38f);
-        }
+}
     }
 }
 
