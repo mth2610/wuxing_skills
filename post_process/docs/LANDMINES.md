@@ -177,3 +177,15 @@ Debugging lessons learned in post-processing. Format: **Symptom → Cause → Ru
   unconverted request would have been `(608.8, 345.4) 222.8x207.3`, missing the plume's left 23 px
   and arming ~170 px of empty ground to its right. The fixture capture is byte-identical before and
   after (flat depth), so this is correctness, not a picture change — do not expect a diff.
+
+### Temporal history smears during normal camera movement
+
+- **Symptom:** Terrain and foliage lose definition as the camera follows the player.
+- **Cause:** The temporal resolve reprojected the entire frame using the regional soft-particle depth snapshot. Texels outside the requested rectangle could contain older depth, and the shader retained substantial history weight during movement.
+- **Rule:** Select AA before setting the scene projection. Use spatial AA with zero projection jitter during camera motion. Invalidate history on pose changes and resume same-pixel HDR accumulation after the camera settles (`taa.c`).
+
+## Patch Log
+
+| Date | Editor | Section edited | Based on which source | Tier |
+|---|---|---|---|---|
+| 2026-11-26 | Codex | Temporal AA during camera movement | scene_targets.c, taa.c, shaders/taa.fs | Ground-truth |

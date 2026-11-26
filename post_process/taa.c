@@ -9,11 +9,6 @@ extern bool rlvkSetFramebufferDiscardOnBegin(unsigned int fbId, bool discard) __
 static RenderTexture2D s_history[2] = {0};
 static Shader s_taaShader = {0};
 static int s_locHistoryTex = -1;
-static int s_locDepthTex = -1;
-static int s_locInvCurrViewProj = -1;
-static int s_locPrevViewProj = -1;
-static int s_locCamPos = -1;
-static int s_locViewForward = -1;
 static int s_locTexelSize = -1;
 static int s_locFirstFrame = -1;
 
@@ -22,13 +17,15 @@ static int s_height = 0;
 static int s_writeIdx = 0;
 static int s_frameIdx = 0;
 static bool s_enabled = true;
+static bool s_frameActive = false;
 static bool s_historyValid = false;
-static Camera3D s_previousCamera;
+// Compare against a fixed pose to catch gradual camera drift across frames.
+static Camera3D s_cameraAnchor;
+static bool s_hasCameraAnchor = false;
+static int s_steadyFrames = 0;
+enum { TAA_SETTLE_FRAMES = 5 };
 static float s_jitterX = 0.0f;
 static float s_jitterY = 0.0f;
-static Matrix s_currViewProj = {0};
-static Matrix s_prevViewProj = {0};
-static bool s_hasViewProj = false;
 
 static float Halton(int index, int base)
 {
@@ -89,27 +86,17 @@ static void CreateTargets(int width, int height)
     for (int i = 0; i < 2; i++)
         s_history[i] = LoadHdrTarget(width, height);
     s_writeIdx = 0;
-    s_historyValid = false;
+    TAA_InvalidateHistory();
 }
 
-static Matrix ComputeUnjitteredViewProj(Camera3D camera, int width, int height)
+static bool SameCameraPose(Camera3D current, Camera3D anchor)
 {
-    Matrix matView = MatrixLookAt(camera.position, camera.target, camera.up);
-    float aspect = (height > 0) ? ((float)width / (float)height) : 1.0f;
-    Matrix matProj;
-    if (camera.projection == CAMERA_ORTHOGRAPHIC)
-    {
-        double top = camera.fovy * 0.5;
-        double right = top * aspect;
-        matProj = MatrixOrtho(-right, right, -top, top, 0.0001, 150.0);
-    }
-    else
-    {
-        double top = 1.0 * tan(camera.fovy * 0.5 * DEG2RAD);
-        double right = top * aspect;
-        matProj = MatrixFrustum(-right, right, -top, top, 1.0, 1000.0);
-    }
-    return MatrixMultiply(matView, matProj);
+    const float epsilonSquared = 0.0001f * 0.0001f;
+    return current.projection == anchor.projection &&
+           Vector3DistanceSqr(current.position, anchor.position) <= epsilonSquared &&
+           Vector3DistanceSqr(current.target, anchor.target) <= epsilonSquared &&
+           Vector3DistanceSqr(current.up, anchor.up) <= epsilonSquared &&
+           fabsf(current.fovy - anchor.fovy) <= 0.001f;
 }
 
 void TAA_Init(int width, int height)
@@ -120,19 +107,15 @@ void TAA_Init(int width, int height)
 
     if (s_taaShader.id == 0)
     {
-#ifdef __ANDROID__
         s_taaShader = LoadShader(0, "post_process/shaders/taa.fs");
-#else
-        s_taaShader = LoadShader(0, "post_process/shaders/taa.fs");
-#endif
-        s_locHistoryTex = GetShaderLocation(s_taaShader, "u_historyTex");
-        s_locDepthTex = GetShaderLocation(s_taaShader, "u_depthTex");
-        s_locInvCurrViewProj = GetShaderLocation(s_taaShader, "u_invCurrViewProj");
-        s_locPrevViewProj = GetShaderLocation(s_taaShader, "u_prevViewProj");
-        s_locCamPos = GetShaderLocation(s_taaShader, "u_camPos");
-        s_locViewForward = GetShaderLocation(s_taaShader, "u_viewForward");
-        s_locTexelSize = GetShaderLocation(s_taaShader, "u_texelSize");
-        s_locFirstFrame = GetShaderLocation(s_taaShader, "u_firstFrame");
+        if (s_taaShader.id == rlGetShaderIdDefault())
+            s_taaShader = (Shader){0};
+        if (s_taaShader.id != 0)
+        {
+            s_locHistoryTex = GetShaderLocation(s_taaShader, "u_historyTex");
+            s_locTexelSize = GetShaderLocation(s_taaShader, "u_texelSize");
+            s_locFirstFrame = GetShaderLocation(s_taaShader, "u_firstFrame");
+        }
     }
     CreateTargets(width, height);
 }
@@ -157,14 +140,18 @@ void TAA_Shutdown(void)
     }
     s_width = 0;
     s_height = 0;
-    s_hasViewProj = false;
+    TAA_InvalidateHistory();
 }
 
 void TAA_InvalidateHistory(void)
 {
     s_historyValid = false;
-    s_hasViewProj = false;
+    s_hasCameraAnchor = false;
+    s_frameActive = false;
+    s_steadyFrames = 0;
     s_frameIdx = 0;
+    s_jitterX = 0.0f;
+    s_jitterY = 0.0f;
 }
 
 void TAA_SetEnabled(bool enabled)
@@ -181,43 +168,39 @@ void TAA_SetEnabled(bool enabled)
 
 bool TAA_IsEnabled(void)
 {
-    return s_enabled && s_taaShader.id != 0 && s_history[0].id != 0 && s_history[1].id != 0;
+    return s_frameActive;
 }
 
 void TAA_NextFrame(Camera3D camera, int width, int height)
 {
-    if (!TAA_IsEnabled())
+    if (!s_enabled || s_taaShader.id == 0 || !s_history[0].texture.id ||
+        !s_history[1].texture.id || width != s_width || height != s_height ||
+        camera.projection != CAMERA_PERSPECTIVE)
     {
-        s_jitterX = 0.0f;
-        s_jitterY = 0.0f;
+        TAA_InvalidateHistory();
         return;
     }
-    if (s_hasViewProj)
+
+    if (!s_hasCameraAnchor || !SameCameraPose(camera, s_cameraAnchor))
     {
-        Vector3 previousView = Vector3Subtract(s_previousCamera.target, s_previousCamera.position);
-        Vector3 currentView = Vector3Subtract(camera.target, camera.position);
-        float viewRadius = fmaxf(Vector3Length(previousView), 1.0f);
-        float travel = Vector3Distance(camera.position, s_previousCamera.position);
-        float facing = Vector3DotProduct(Vector3Normalize(previousView), Vector3Normalize(currentView));
-        if (camera.projection != s_previousCamera.projection ||
-            fabsf(camera.fovy - s_previousCamera.fovy) > 8.0f ||
-            travel > viewRadius * 0.65f || facing < 0.5f)
-            TAA_InvalidateHistory();
-    }
-    s_previousCamera = camera;
-    if (s_hasViewProj)
-        s_prevViewProj = s_currViewProj;
-    s_currViewProj = ComputeUnjitteredViewProj(camera, width, height);
-    if (!s_hasViewProj)
-    {
-        s_prevViewProj = s_currViewProj;
-        s_hasViewProj = true;
+        TAA_InvalidateHistory();
+        s_cameraAnchor = camera;
+        s_hasCameraAnchor = true;
+        return;
     }
 
-    int idx = (s_frameIdx & 7) + 1; // 8-sample Halton(2, 3)
-    s_jitterX = Halton(idx, 2) - 0.5f;
-    s_jitterY = Halton(idx, 3) - 0.5f;
-    s_frameIdx++;
+    if (s_steadyFrames < TAA_SETTLE_FRAMES)
+    {
+        s_steadyFrames++;
+        if (s_steadyFrames < TAA_SETTLE_FRAMES)
+            return;
+    }
+
+    s_frameActive = true;
+    int index = s_frameIdx + 1;
+    s_jitterX = Halton(index, 2) - 0.5f;
+    s_jitterY = Halton(index, 3) - 0.5f;
+    s_frameIdx = (s_frameIdx + 1) & 7;
 }
 
 void TAA_GetJitterPixels(float *outJitterX, float *outJitterY)
@@ -232,32 +215,23 @@ void TAA_GetJitterPixels(float *outJitterX, float *outJitterY)
     if (outJitterY) *outJitterY = s_jitterY;
 }
 
-Texture2D TAA_Resolve(Texture2D currHdr, Texture2D linearDepth, Camera3D camera)
+Texture2D TAA_Resolve(Texture2D currHdr)
 {
-    if (!TAA_IsEnabled() || camera.projection == CAMERA_ORTHOGRAPHIC ||
-        currHdr.id == 0 || currHdr.width <= 0 || currHdr.height <= 0)
+    if (!TAA_IsEnabled() || currHdr.id == 0 ||
+        currHdr.width != s_width || currHdr.height != s_height)
         return currHdr;
-    if (currHdr.width != s_width || currHdr.height != s_height)
-        TAA_Resize(currHdr.width, currHdr.height);
 
     int writeIdx = s_writeIdx;
     int readIdx = 1 - writeIdx;
     RenderTexture2D dst = s_history[writeIdx];
     Texture2D histTex = s_history[readIdx].texture;
 
-    Matrix invCurrVP = MatrixInvert(s_currViewProj);
-    Vector3 viewFwd = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
     float texel[2] = {1.0f / (float)currHdr.width, 1.0f / (float)currHdr.height};
     float firstFrame = s_historyValid ? 0.0f : 1.0f;
 
     BeginTextureMode(dst);
     BeginShaderMode(s_taaShader);
     if (s_locHistoryTex >= 0) SetShaderValueTexture(s_taaShader, s_locHistoryTex, histTex);
-    if (s_locDepthTex >= 0 && linearDepth.id != 0) SetShaderValueTexture(s_taaShader, s_locDepthTex, linearDepth);
-    if (s_locInvCurrViewProj >= 0) SetShaderValueMatrix(s_taaShader, s_locInvCurrViewProj, invCurrVP);
-    if (s_locPrevViewProj >= 0) SetShaderValueMatrix(s_taaShader, s_locPrevViewProj, s_prevViewProj);
-    if (s_locCamPos >= 0) SetShaderValue(s_taaShader, s_locCamPos, &camera.position, SHADER_UNIFORM_VEC3);
-    if (s_locViewForward >= 0) SetShaderValue(s_taaShader, s_locViewForward, &viewFwd, SHADER_UNIFORM_VEC3);
     if (s_locTexelSize >= 0) SetShaderValue(s_taaShader, s_locTexelSize, texel, SHADER_UNIFORM_VEC2);
     if (s_locFirstFrame >= 0) SetShaderValue(s_taaShader, s_locFirstFrame, &firstFrame, SHADER_UNIFORM_FLOAT);
 

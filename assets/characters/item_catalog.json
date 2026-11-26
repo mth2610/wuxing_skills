@@ -158,7 +158,36 @@
       "element": "water",
       "rarity": "epic",
       "is_skinned": true,
-      "model_path": "assets/characters/equipment/torso/ao_giao_linh_3.glb",
+      "model_path": "assets/characters/equipment/torso/tieu_long_nu_tuyet_lien.glb",
+      "ui_color": [
+        58,
+        132,
+        148,
+        255
+      ],
+      "stats": {
+        "bonus_health": 70.0,
+        "bonus_mana": 60.0,
+        "speed_multiplier": 1.04,
+        "elemental_bonus": 0.12,
+        "elemental_resist": 0.10,
+        "mana_regen_bonus": 0.16,
+        "special_perk": "Thanh Vân Điệp Vũ: Tăng 16% tốc độ hồi phục chân khí, tà áo điểm một tầng linh khí hộ thân"
+      }
+    },
+    {
+      "id": "ao_giao_linh_jade_v2",
+      "name": "Áo Giao Lĩnh Jade V2",
+      "description": "Áo giao lĩnh lụa lam ngọc thêu vân mây, viền lụa ngà chạy dọc cổ áo và tay thụng, điểm kim tuyến vàng ở đai lưng. Tà áo hai lớp mềm rủ, tay áo thụng buông dài, dải lụa thắt lưng bay theo gió.",
+      "source": "Di vật tại Tiên Vân Đỉnh",
+      "unlock_type": "exploration",
+      "unlock_hint": "Khám phá thạch thất trên Tiên Vân Đỉnh",
+      "slot": "torso",
+      "item_type": "modular",
+      "element": "water",
+      "rarity": "epic",
+      "is_skinned": true,
+      "model_path": "assets/characters/equipment/torso/ao_giao_linh_jade_v2.glb",
       "ui_color": [
         58,
         132,

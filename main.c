@@ -1992,6 +1992,7 @@ int main(int argc, char **argv) {
     }
     const bool vfxBgActive = s_vfxBgOn && currentScreen == SCREEN_VFX_TESTER;
 
+    TAA_SetEnabled(GfxQuality_Get() >= GFX_HIGH);
     TAA_NextFrame(camera, SceneTargets_GetWidth() > 0 ? SceneTargets_GetWidth() : GetScreenWidth(),
                   SceneTargets_GetHeight() > 0 ? SceneTargets_GetHeight() : GetScreenHeight());
     PostFX_SetCamera(camera);

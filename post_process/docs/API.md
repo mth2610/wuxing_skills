@@ -16,7 +16,8 @@ Documents the **Post-Processing** module (`post_process/post_fx.h` and `post_pro
 | `PostFX_SetMonochrome(intensity)` | `post_process/post_fx.h` | Overrides saturation towards greyscale (used for Cảnh Giới Thái Cực). |
 | `PostFXMapProfile` | `post_process/post_fx.h` | Optional per-map artistic color-grade, split-toning, bloom, and exposure profile. |
 | `PostFX_SetMapProfile(profile)` / `PostFX_ClearMapProfile()` | `post_process/post_fx.h` | Activates or clears a map-scoped post-processing profile without mutating global `PostFXConfig`. Clearing the profile also invalidates temporal AA history. |
-| `TAA_NextFrame(camera, width, height)` | `post_process/taa.h` | Advances subpixel jitter and rejects history on abrupt camera or projection changes. |
+| `TAA_NextFrame(camera, width, height)` | `post_process/taa.h` | Selects temporal AA before scene rendering. Camera motion resets history and subpixel jitter, and post FX uses FXAA until a perspective camera settles. |
+| `TAA_Resolve(currHdr)` | `post_process/taa.h` | Accumulates HDR color at a stable camera pose. Returns the source when temporal AA is inactive or its targets are unready. |
 | `PostFX_RadialBurst(pos, str, dur)` | `post_process/post_fx.h` | Triggers a transient screen-space burst/shockwave centered at a 3D world position. |
 | `PostFX_UpdateTransient(cam, dt)` | `post_process/post_fx.h` | Decays active bursts and projects world positions to screen UV coordinates. |
 | `ColorGradeLut_Init()` | `post_process/color_grade_lut.h` | Builds and binds the default neutral 16x16 strip LUT. |
@@ -162,3 +163,9 @@ step. Both were observed in play.
   the starting rung; `WUXING_RENDER_SCALE_MIN` moves the floor (default 0.80).
 - **Headless captures are pinned to a fixed scale** so a capture is reproducible;
   `WUXING_RENDER_SCALE_ADAPTIVE=1` forces the controller on there for testing.
+
+## Patch Log
+
+| Date | Editor | Section edited | Based on which source | Tier |
+|---|---|---|---|---|
+| 2026-11-26 | Codex | Temporal AA quick reference | taa.h, taa.c, post_fx.c | Ground-truth |

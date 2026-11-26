@@ -59,6 +59,7 @@
 - When capping fog opacity, bound interval extinction before accumulating in-scattering so premultiplied radiance and opacity remain consistent.
 - Opaque cloud seas write native surface depth to hide submerged cliffs consistently with fog; transparent rim mist preserves depth. Draw sky before clouds and flush both sides of depth-mask changes.
 - Linear scene depth is view-axis Z: convert it to ray distance before reconstructing volumetric samples.
+- Choose temporal AA and projection jitter together before drawing the scene. Regional soft-particle depth only represents its requested rectangle.
 - Fog reconstruction filters premultiplied radiance and opacity together, normalizes weights, and rejects unrelated depth layers; validate silhouettes as well as sky grain.
 - Distant volumetric framing uses focus-relative ground depth and projected span; keep local fog sampling independent of the distant haze fade.
 - Include order: `fs_header.glsl` → `noise.glsl` (if needed) → `lighting.glsl` → `fx.glsl` → `triplanar.glsl` (if needed; depends on `noise.glsl` for `triplanarNoise`).
@@ -184,6 +185,7 @@
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-11-26 | Codex | §7 Temporal AA and regional depth | post_process/taa.c, post_process/scene_targets.c | Ground-truth |
 | 2026-10-12 | Codex | §10.1 DEM units and terrain/water correspondence | maps/pipeline/dem_pipeline.py; maps/toolkit/map_props_heightfield.inl; focused numerical tests | Ground-truth |
 | 2026-10-09 | Codex | §10.1 Adaptive quality and lit Low fallback | core/gfx_quality.h; core/volumetric/volumetric_fog_quality.h; core/shaders/surface_lit.fs | Ground-truth |
 | 2026-10-09 | Codex | §10.1 Meadow visibility and shared solar scale | maps/toolkit/shaders/nature_parametric.glsl; core/map_manager.h; environment/environment_system.h | Ground-truth |

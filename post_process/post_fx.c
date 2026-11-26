@@ -724,9 +724,9 @@ void PostFX_Draw(const PostFXConfig *config)
   if (width != s_targetWidth || height != s_targetHeight)
     PostFX_Resize(width, height);
 
-  TAA_SetEnabled(GfxQuality_Get() >= GFX_HIGH);
-  if (TAA_IsEnabled())
-    srcTex = TAA_Resolve(srcTex, SceneTargets_GetDepthTexture(), s_taaCamera);
+  Texture2D resolved = TAA_Resolve(srcTex);
+  const bool taaActive = resolved.id != srcTex.id;
+  srcTex = resolved;
 
   Texture2D gtaoTex = {0};
   if (GfxQuality_Get() >= GFX_HIGH && GTAO_IsEnabled())
@@ -807,7 +807,6 @@ void PostFX_Draw(const PostFXConfig *config)
   }
 
   // PASS 6: Composite → screen (hoặc ldrTex nếu dùng FXAA khi TAA tắt)
-  const bool taaActive = TAA_IsEnabled();
   if (!taaActive && s_fxaa > 0.5f)
     PostFX_EnsureLdrTarget();
   const bool useFxaa = !taaActive && (s_fxaa > 0.5f) && fxaaShader.id != 0 && ldrTex.id != 0;
