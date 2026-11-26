@@ -14,6 +14,9 @@ static double s_nhatKiemResetLastTime[MAX_AGENTS];
 /* Per-agent ICD for Tiểu Thành Dư Hỏa Phản Lực (6s) & Đại Thành Phần Thiên Liên Hoàn Cước (10s) */
 static double s_duHoaLastTime[MAX_AGENTS];
 static double s_phanThienResetLastTime[MAX_AGENTS];
+/* Per-agent ICD for Giáng Long Tiểu Thành (6s) & Đại Thành (10s) */
+static double s_longUyLastTime[MAX_AGENTS];
+static double s_khangLongResetLastTime[MAX_AGENTS];
 
 int VoHoc_GetAgentSetTier(int agentId, VoHocSetId setId) {
     const Agent *a = Entity_GetAgent(agentId);
@@ -281,6 +284,69 @@ bool VoHoc_OnPhanThienConsume(int casterId, int targetId, int phanThienSkillInde
                 SkillManager_TriggerCooldown(phanThienSkillIndex, casterId, baseCd * 0.55f);
                 if (xichDiemSkillIndex >= 0) {
                     SkillManager_TriggerCooldown(xichDiemSkillIndex, casterId, 0.0f);
+                }
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool VoHoc_ApplyDragonMark(int casterId, int targetId, int stacks) {
+    if (stacks <= 0) return false;
+    int tier = VoHoc_GetAgentSetTier(casterId, VH_SET_GIANG_LONG_THAP_BAT_CHUONG);
+
+    int bonus = 0;
+    if (Entity_GetMarkStacks(targetId, 1) > 0) {
+        Entity_ConsumeMarks(targetId, 1);
+        Entity_RestoreMana(casterId, 5.0f);
+        bonus = 1;
+    } else if (Entity_HasStatus(targetId, STATUS_POISON)) {
+        Entity_RestoreMana(casterId, 5.0f);
+        bonus = 1;
+    }
+
+    int total = Entity_AddMark(targetId, 2, stacks + bonus, 3, 4.5f);
+    if (total >= 3) {
+        Entity_ConsumeMarks(targetId, 2);
+        Entity_ApplyStatus(targetId, STATUS_BURN, 12.5f / 3.0f, 3.0f, casterId);
+        Entity_SetMarkImmune(targetId, 2, 3.0f);
+
+        const Agent *tgt = Entity_GetAgent(targetId);
+        if (tgt) {
+            Vector3 burstPos = { tgt->position.x, tgt->position.y + 0.95f, tgt->position.z };
+            VFX_ComposeDragonSlam(burstPos, 0.85f, false);
+        }
+
+        if (tier >= VO_HOC_TIER_MINOR_COUNT && casterId >= 0 && casterId < MAX_AGENTS) {
+            double now = GetTime();
+            if (s_longUyLastTime[casterId] <= 0.0 || (now - s_longUyLastTime[casterId]) >= 6.0) {
+                s_longUyLastTime[casterId] = now;
+                Entity_RestoreMana(casterId, 8.0f);
+                SkillManager_ReduceAgentCooldowns(casterId, 0.8f);
+            }
+        }
+        return true;
+    }
+    return false;
+}
+
+bool VoHoc_OnKhangLongConsume(int casterId, int targetId, int khangLongSkillIndex,
+                              int tiemLongSkillIndex, float *outMult) {
+    int consumed = Entity_ConsumeMarks(targetId, 2);
+    if (consumed > 3) consumed = 3;
+    if (outMult) {
+        *outMult = 1.0f + 0.12f * (float)consumed;
+    }
+    if (consumed >= 3 && VoHoc_GetAgentSetTier(casterId, VH_SET_GIANG_LONG_THAP_BAT_CHUONG) >= VO_HOC_TIER_MAJOR_COUNT) {
+        if (casterId >= 0 && casterId < MAX_AGENTS) {
+            double now = GetTime();
+            if (s_khangLongResetLastTime[casterId] <= 0.0 || (now - s_khangLongResetLastTime[casterId]) >= 10.0) {
+                s_khangLongResetLastTime[casterId] = now;
+                float baseCd = Skill_GetCooldown(khangLongSkillIndex);
+                SkillManager_TriggerCooldown(khangLongSkillIndex, casterId, baseCd * 0.50f);
+                if (tiemLongSkillIndex >= 0) {
+                    SkillManager_TriggerCooldown(tiemLongSkillIndex, casterId, 0.0f);
                 }
                 return true;
             }

@@ -246,6 +246,7 @@ add_executable(wuxing
     core/motion_controller.c
     core/status_vfx.c
     core/afterimage.c
+    core/vfx_model/vfx_model.c
     core/mesh_adjacency.c
     core/shading/shader_preprocessor.c
     core/metaball_fx.c
@@ -497,6 +498,10 @@ configure_file(core/uv/shaders/flow_map.glsl ${CMAKE_CURRENT_BINARY_DIR}/core/uv
 # header). Same missing-shader-file trap as the core/uv includes above.
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/core/deform/shaders)
 configure_file(core/deform/shaders/mesh_deform.glsl ${CMAKE_CURRENT_BINARY_DIR}/core/deform/shaders/mesh_deform.glsl COPYONLY)
+
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/core/vfx_model/shaders)
+configure_file(core/vfx_model/shaders/vfx_model.vs ${CMAKE_CURRENT_BINARY_DIR}/core/vfx_model/shaders/vfx_model.vs COPYONLY)
+configure_file(core/vfx_model/shaders/vfx_model.fs ${CMAKE_CURRENT_BINARY_DIR}/core/vfx_model/shaders/vfx_model.fs COPYONLY)
 
 
 # Liên kết tĩnh với thư viện Raylib vừa tải về

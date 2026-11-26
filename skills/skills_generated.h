@@ -25,10 +25,17 @@
 #include "skills/fire/lhpt_hoa_vu_hoi_phong_cuoc_skill/lhpt_hoa_vu_hoi_phong_cuoc_skill.h"
 #include "skills/fire/lhpt_phan_dia_tram_cuoc_skill/lhpt_phan_dia_tram_cuoc_skill.h"
 #include "skills/fire/lhpt_phan_thien_toan_phong_skill/lhpt_phan_thien_toan_phong_skill.h"
+#include "skills/fire/gltbc_phi_long_tai_thien_skill/gltbc_phi_long_tai_thien_skill.h"
+#include "skills/fire/gltbc_mat_van_bat_vu_skill/gltbc_mat_van_bat_vu_skill.h"
+#include "skills/fire/gltbc_tiem_long_vat_dung_skill/gltbc_tiem_long_vat_dung_skill.h"
 #include "skills/fire/lhpt_phi_hoa_xung_cuoc_skill/lhpt_phi_hoa_xung_cuoc_skill.h"
 #include "skills/fire/lhpt_xich_diem_trac_cuoc_skill/lhpt_xich_diem_trac_cuoc_skill.h"
 #include "skills/fire/lhpt_chuoc_dia_hoa_tran_skill/lhpt_chuoc_dia_hoa_tran_skill.h"
+#include "skills/fire/gltbc_than_long_bai_vi_skill/gltbc_than_long_bai_vi_skill.h"
+#include "skills/fire/gltbc_long_chien_vu_da_skill/gltbc_long_chien_vu_da_skill.h"
+#include "skills/fire/gltbc_khang_long_huu_hoi_skill/gltbc_khang_long_huu_hoi_skill.h"
 #include "skills/fire/lhpt_viem_ho_ban_nguyet_cuoc_skill/lhpt_viem_ho_ban_nguyet_cuoc_skill.h"
+#include "skills/fire/gltbc_kien_long_tai_dien_skill/gltbc_kien_long_tai_dien_skill.h"
 #include "skills/earth/btbc_dia_liet_chan_ba_skill/btbc_dia_liet_chan_ba_skill.h"
 #include "skills/earth/earth_disc_volley_skill/earth_disc_volley_skill.h"
 #include "skills/earth/btbc_bang_son_toai_chuong_skill/btbc_bang_son_toai_chuong_skill.h"
@@ -62,10 +69,17 @@ static inline void RegisterGeneratedSkills(void) {
     RegisterSkill("LHPT_HOA_VU_HOI_PHONG_CUOC", ELEMENT_COLOR_FIRE, InitLhptHoaVuHoiPhongCuocSkill, CastLhptHoaVuHoiPhongCuocSkill, UpdateLhptHoaVuHoiPhongCuocSkill, DrawLhptHoaVuHoiPhongCuocSkill, UnloadLhptHoaVuHoiPhongCuocSkill);
     RegisterSkill("LHPT_PHAN_DIA_TRAM_CUOC", ELEMENT_COLOR_FIRE, InitLhptPhanDiaTramCuocSkill, CastLhptPhanDiaTramCuocSkill, UpdateLhptPhanDiaTramCuocSkill, DrawLhptPhanDiaTramCuocSkill, UnloadLhptPhanDiaTramCuocSkill);
     RegisterSkill("LHPT_PHAN_THIEN_TOAN_PHONG", ELEMENT_COLOR_FIRE, InitLhptPhanThienToanPhongSkill, CastLhptPhanThienToanPhongSkill, UpdateLhptPhanThienToanPhongSkill, DrawLhptPhanThienToanPhongSkill, UnloadLhptPhanThienToanPhongSkill);
+    RegisterSkill("GLTBC_PHI_LONG_TAI_THIEN", ELEMENT_COLOR_FIRE, InitGltbcPhiLongTaiThienSkill, CastGltbcPhiLongTaiThienSkill, UpdateGltbcPhiLongTaiThienSkill, DrawGltbcPhiLongTaiThienSkill, UnloadGltbcPhiLongTaiThienSkill);
+    RegisterSkill("GLTBC_MAT_VAN_BAT_VU", ELEMENT_COLOR_FIRE, InitGltbcMatVanBatVuSkill, CastGltbcMatVanBatVuSkill, UpdateGltbcMatVanBatVuSkill, DrawGltbcMatVanBatVuSkill, UnloadGltbcMatVanBatVuSkill);
+    RegisterSkill("GLTBC_TIEM_LONG_VAT_DUNG", ELEMENT_COLOR_FIRE, InitGltbcTiemLongVatDungSkill, CastGltbcTiemLongVatDungSkill, UpdateGltbcTiemLongVatDungSkill, DrawGltbcTiemLongVatDungSkill, UnloadGltbcTiemLongVatDungSkill);
     RegisterSkill("LHPT_PHI_HOA_XUNG_CUOC", ELEMENT_COLOR_FIRE, InitLhptPhiHoaXungCuocSkill, CastLhptPhiHoaXungCuocSkill, UpdateLhptPhiHoaXungCuocSkill, DrawLhptPhiHoaXungCuocSkill, UnloadLhptPhiHoaXungCuocSkill);
     RegisterSkill("LHPT_XICH_DIEM_TRAC_CUOC", ELEMENT_COLOR_FIRE, InitLhptXichDiemTracCuocSkill, CastLhptXichDiemTracCuocSkill, UpdateLhptXichDiemTracCuocSkill, DrawLhptXichDiemTracCuocSkill, UnloadLhptXichDiemTracCuocSkill);
     RegisterSkill("LHPT_CHUOC_DIA_HOA_TRAN", ELEMENT_COLOR_FIRE, InitLhptChuocDiaHoaTranSkill, CastLhptChuocDiaHoaTranSkill, UpdateLhptChuocDiaHoaTranSkill, DrawLhptChuocDiaHoaTranSkill, UnloadLhptChuocDiaHoaTranSkill);
+    RegisterSkill("GLTBC_THAN_LONG_BAI_VI", ELEMENT_COLOR_FIRE, InitGltbcThanLongBaiViSkill, CastGltbcThanLongBaiViSkill, UpdateGltbcThanLongBaiViSkill, DrawGltbcThanLongBaiViSkill, UnloadGltbcThanLongBaiViSkill);
+    RegisterSkill("GLTBC_LONG_CHIEN_VU_DA", ELEMENT_COLOR_FIRE, InitGltbcLongChienVuDaSkill, CastGltbcLongChienVuDaSkill, UpdateGltbcLongChienVuDaSkill, DrawGltbcLongChienVuDaSkill, UnloadGltbcLongChienVuDaSkill);
+    RegisterSkill("GLTBC_KHANG_LONG_HUU_HOI", ELEMENT_COLOR_FIRE, InitGltbcKhangLongHuuHoiSkill, CastGltbcKhangLongHuuHoiSkill, UpdateGltbcKhangLongHuuHoiSkill, DrawGltbcKhangLongHuuHoiSkill, UnloadGltbcKhangLongHuuHoiSkill);
     RegisterSkill("LHPT_VIEM_HO_BAN_NGUYET_CUOC", ELEMENT_COLOR_FIRE, InitLhptViemHoBanNguyetCuocSkill, CastLhptViemHoBanNguyetCuocSkill, UpdateLhptViemHoBanNguyetCuocSkill, DrawLhptViemHoBanNguyetCuocSkill, UnloadLhptViemHoBanNguyetCuocSkill);
+    RegisterSkill("GLTBC_KIEN_LONG_TAI_DIEN", ELEMENT_COLOR_FIRE, InitGltbcKienLongTaiDienSkill, CastGltbcKienLongTaiDienSkill, UpdateGltbcKienLongTaiDienSkill, DrawGltbcKienLongTaiDienSkill, UnloadGltbcKienLongTaiDienSkill);
     RegisterSkill("BTBC_DIA_LIET_CHAN_BA", ELEMENT_COLOR_EARTH, InitBtbcDiaLietChanBaSkill, CastBtbcDiaLietChanBaSkill, UpdateBtbcDiaLietChanBaSkill, DrawBtbcDiaLietChanBaSkill, UnloadBtbcDiaLietChanBaSkill);
     RegisterSkill("EARTH_DISC_VOLLEY", ELEMENT_COLOR_EARTH, InitEarthDiscVolleySkill, CastEarthDiscVolleySkill, UpdateEarthDiscVolleySkill, DrawEarthDiscVolleySkill, UnloadEarthDiscVolleySkill);
     RegisterSkill("BTBC_BANG_SON_TOAI_CHUONG", ELEMENT_COLOR_EARTH, InitBtbcBangSonToaiChuongSkill, CastBtbcBangSonToaiChuongSkill, UpdateBtbcBangSonToaiChuongSkill, DrawBtbcBangSonToaiChuongSkill, UnloadBtbcBangSonToaiChuongSkill);

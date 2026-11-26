@@ -80,6 +80,18 @@ bool VoHoc_ApplyFireMark(int casterId, int targetId, int stacks);
 bool VoHoc_OnPhanThienConsume(int casterId, int targetId, int phanThienSkillIndex,
                               int xichDiemSkillIndex, float *outMult);
 
+/* Giáng Long Thập Bát Chưởng: adds `stacks` of Long Ấn (element 2, duration 4.5s).
+ * - At 3 stacks (Long Uy Bạo Phát): triggers Burn + Dragon Slam ember burst.
+ * - Tiểu Thành (>= 4 pieces): refunds 8 Mana and reduces cooldowns by 0.8s (6s ICD). */
+bool VoHoc_ApplyDragonMark(int casterId, int targetId, int stacks);
+
+/* Kháng Long Hữu Hối finisher hook: consumes all Long Ấn on target.
+ * - Base: +12% damage multiplier per stack consumed (max +36%).
+ * - Đại Thành (7/7 pieces): if >= 3 stacks consumed, halves Kháng Long cooldown (10s ICD)
+ *   and resets Tiềm Long Vật Dụng cooldown. */
+bool VoHoc_OnKhangLongConsume(int casterId, int targetId, int khangLongSkillIndex,
+                              int tiemLongSkillIndex, float *outMult);
+
 #ifdef __cplusplus
 }
 #endif

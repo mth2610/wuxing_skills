@@ -37,7 +37,7 @@ HEADERS=(
   core/metaball_fx.h core/color_gradient.h
   core/float_curve.h core/uv/flow_map.h core/deform/mesh_deform.h core/uv/uv_deform.h core/uv/surface_flow.h core/uv/uv_fx.h core/path_spline.h core/sprite_anim.h
   core/vfx_light.h
-  core/debug_draw.h core/motion_controller.h core/status_vfx.h core/afterimage.h
+  core/debug_draw.h core/motion_controller.h core/status_vfx.h core/afterimage.h core/vfx_model/vfx_model.h
   core/surface_material.h core/gfx_quality.h
   core/material/material_system.h core/geometry/procedural_mesh_utils.h
   core/composition/visual_composer.h core/composition/vc_emission.h core/composition/vfx_sequence.h core/presets/vfx_presets.h core/utils_math.h

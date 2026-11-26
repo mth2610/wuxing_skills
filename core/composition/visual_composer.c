@@ -34,6 +34,7 @@
 #include "core/color_gradient.h"
 #include "core/utils_math.h"
 #include "core/mesh_adjacency.h"
+#include "core/vfx_model/vfx_model.h"
 #include "rlgl.h"
 #include "raymath.h"
 #include <stdlib.h>
@@ -49,6 +50,7 @@
 // visual_composer.h for what remains and why.
 #include "common/common.inl"
 #include "common/vc_talisman.inl"
+#include "common/vc_dragon_qi.inl"
 #include "common/vc_combat_readability.inl"
 #include "common/vc_martial_shockcone.inl"
 #include "fire/flame_volume.inl"   // F3 — reads vc_smoke_puff.inl's sheet, so it comes after it

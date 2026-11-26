@@ -2614,4 +2614,37 @@ void                VFX_Talisman_Throw(Vector3 origin, Vector3 aimDir);
 void                VFX_Talisman_Reset(void);
 void                VC_Talisman_DrawShadowPass(void);
 
+// ── Animated 3D Dragon Qi Spirit (Giáng Long Chưởng / 3D VFX Model) ─────────
+typedef enum {
+    VFX_DRAGON_CURVE_S_SURGE = 0,
+    VFX_DRAGON_CURVE_HELIX,
+    VFX_DRAGON_CURVE_RISING_ERUPT,
+    VFX_DRAGON_CURVE_DIVE_SLAM,
+    VFX_DRAGON_CURVE_ORBIT
+} VFX_DragonCurveKind;
+
+typedef struct VFX_DragonCurveSpec {
+    VFX_DragonCurveKind kind;
+    Vector3 origin;
+    Vector3 dir;
+    Vector3 right;
+    float   groundY;
+    float   scale;
+    float   range;
+    float   radius;
+    float   latAmp;
+    float   verAmp;
+    float   waveSign;
+    float   phaseOffset;
+    bool    impacted;
+    float   impactArc;
+} VFX_DragonCurveSpec;
+
+int     VFX_DragonQi_GetAsset(void);
+int     VFX_ComposeDragonQi(Vector3 origin, VC_MaterialId material);
+void    VFX_KillDragonQi(int handle);
+Vector3 VFX_DragonCurve_Evaluate(float s, void *userData);
+void    VFX_ComposeDragonSlam(Vector3 impactPos, float scale, bool withGroundCrack);
+void    VFX_ComposePalmPrint(Vector3 pos, Vector3 normal, float radius, float duration);
+
 #endif // VISUAL_COMPOSER_H

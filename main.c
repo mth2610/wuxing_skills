@@ -59,6 +59,7 @@
 #include "sandbox/gradient_probe.h"
 #include "core/status_vfx.h"
 #include "core/afterimage.h"
+#include "core/vfx_model/vfx_model.h"
 #include "game/game_screen.h"
 #include "entities/entities.h"
 #include "combat/combat.h"
@@ -748,6 +749,7 @@ int main(int argc, char **argv) {
   DamageVolume_Init();
   EmitterSystem_Init();
   Afterimage_Init();
+  VFXModel_Init();
   PoolStats_Init();
   RegisterStaticOccluder((Vector3){4.0f, 0.0f, 3.2f}, 0.25f, 0.625f);
   RegisterStaticOccluder((Vector3){8.0f, 0.0f, 5.2f}, 0.3f, 0.75f);
@@ -1851,6 +1853,7 @@ int main(int argc, char **argv) {
     EmitterSystem_Update(dt);
     StatusVFX_Update(dt);
     Afterimage_Update(dt);
+    VFXModel_Update(dt);
     if (benchmarkVisible) updateTime[4] = GetTime();
     LiquidImpact_Update(dt);
     ParticleManager_Update(dt);
@@ -2019,6 +2022,7 @@ int main(int argc, char **argv) {
     // once MyBeginMode3D has pushed it. See VFXLight_ShaderSpaceMatrix.
     VFXLight_BindAll(GfxQuality_Get() >= GFX_HIGH ? 4 : (GfxQuality_Get() >= GFX_MED ? 2 : 0));
     SurfaceMaterial_UpdateFrame(camera); // G2 — push sun/ambient/fog to lit models
+    VFXModel_UpdateFrame(camera);
     GroundShadow_UpdateFrame(); // Real Shading P6 — push shadow map to raw-immediate ground draws
     VolumetricFog_PreFrame();   // Ghost of Tsushima: arm depth snapshot for volumetric raymarch
     if (!(currentScreen == SCREEN_VFX_TESTER && s_vfxDarkMode) && !vfxBgActive) {
@@ -2097,6 +2101,7 @@ int main(int argc, char **argv) {
         Net_PumpSubFrame();
     }
     MapManager_DrawTransparent();
+    VFXModel_Draw();
     Afterimage_Draw();
     DrawParticleTrailVFXLayers(camera, globalParticleTex);
 
@@ -2464,6 +2469,7 @@ int main(int argc, char **argv) {
   DamageVolume_Unload();
   EmitterSystem_Unload();
   Audio_StopAllAndUnloadAliases();
+  VFXModel_Unload();
   ResourceManager_Unload();
   MapManager_Unload();
   Net_Shutdown();

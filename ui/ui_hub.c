@@ -67,6 +67,7 @@ static const char *VoHocFilterShortLabel(int filterId) {
         case VH_SET_BAN_THACH_BAT_CUC_QUYEN: return "Thổ";
         case VH_SET_THIEN_CANG_DOAN_KIM_KIEM: return "Kim";
         case VH_SET_LIET_HOA_PHAN_THIEN_CUOC: return "Hỏa";
+        case VH_SET_GIANG_LONG_THAP_BAT_CHUONG: return "Giáng Long";
         case VH_SET_NONE: return "Cơ Bản";
         default: return "Khác";
     }
@@ -78,6 +79,7 @@ static Color VoHocFilterColor(int filterId) {
         case VH_SET_BAN_THACH_BAT_CUC_QUYEN: return ELEMENT_COLOR_EARTH;
         case VH_SET_THIEN_CANG_DOAN_KIM_KIEM: return ELEMENT_COLOR_METAL;
         case VH_SET_LIET_HOA_PHAN_THIEN_CUOC: return ELEMENT_COLOR_FIRE;
+        case VH_SET_GIANG_LONG_THAP_BAT_CHUONG: return WUXIA_GOLD;
         case VH_SET_NONE: return WUXIA_TEXT_MUTED;
         default: return WUXIA_GOLD;
     }
@@ -226,19 +228,20 @@ void UI_Hub_UpdateDrawModal(void) {
                                     domSet, tierTxt, sum.avgQ, sum.radar[0], sum.radar[1], sum.radar[2], sum.radar[3]),
                          rightX, p.y + 104.0f, 12.0f, WUXIA_JADE);
 
-        // Set filter pills: Tất cả | Thủy | Thổ | Kim | Hỏa | Cơ Bản
-        static const int kFilters[6] = {
+        // Set filter pills: Tất cả | Thủy | Thổ | Kim | Hỏa | Giáng Long | Cơ Bản
+        static const int kFilters[7] = {
             -1,
             VH_SET_THUY_TRIEU_QUYEN_PHAP,
             VH_SET_BAN_THACH_BAT_CUC_QUYEN,
             VH_SET_THIEN_CANG_DOAN_KIM_KIEM,
             VH_SET_LIET_HOA_PHAN_THIEN_CUOC,
+            VH_SET_GIANG_LONG_THAP_BAT_CHUONG,
             VH_SET_NONE
         };
         float filterY = p.y + 126.0f;
-        float pillGap = 6.0f;
-        float pillW = (rightW - pillGap * 5.0f) / 6.0f;
-        for (int f = 0; f < 6; f++) {
+        float pillGap = 5.0f;
+        float pillW = (rightW - pillGap * 6.0f) / 7.0f;
+        for (int f = 0; f < 7; f++) {
             Rectangle fr = { rightX + f * (pillW + pillGap), filterY, pillW, 30.0f };
             bool active = (s_setFilter == kFilters[f]);
             if (WuxiaUI_DrawButton(fr, VoHocFilterShortLabel(kFilters[f]),

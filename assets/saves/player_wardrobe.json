@@ -2,7 +2,7 @@
   "player_id": "Player_1",
   "equipped": {
     "base_body": "male_body_v5",
-    "torso": "",
+    "torso": "ao_giao_linh",
     "legs": "",
     "boots": "chien_hai_van_du",
     "bracers": "",

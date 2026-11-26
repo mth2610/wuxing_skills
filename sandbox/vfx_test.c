@@ -1433,6 +1433,10 @@ static void VFXTest_StopFixtures(void)
         VFX_KillVolumeTrail(s_vfxFixtureHandle[33]);
     s_vfxFixtureHandle[33] = -1;
     s_vfxFixtureLastTime[33] = -1.0f;
+    if (s_vfxFixtureHandle[53] >= 0)
+        VFX_KillDragonQi(s_vfxFixtureHandle[53]);
+    s_vfxFixtureHandle[53] = -1;
+    s_vfxFixtureLastTime[53] = -1.0f;
 // @gen:newfx_stop end
 }
 
@@ -1570,7 +1574,7 @@ static const char* s_newFxNames[] = {
     "SWEEP SLASH", "MOTION RIBBON TRAIL", "VACUUM RING", "[TRAIL/FLOW] VOLUME TRAIL", "FISSURE STREAK", "STONE PILLAR",
     "GUIDED FIRE", "FIREBALL BURST", "BLACK HOLE", "ICE CRYSTAL", "WATER STREAM", "WOOD FLOWER",
     "WOOD LEAVES", "WOOD PETALS", "WOOD VINE", "GUIDED EARTH", "SEISMIC WAVE", "GUIDED LIQUID",
-    "WATER DRAGON", "TSUNAMI SWE", "METAL BLADES", "GRANULAR SAND", "TALISMAN"
+    "WATER DRAGON", "TSUNAMI SWE", "METAL BLADES", "GRANULAR SAND", "TALISMAN", "DRAGON QI"
 };
 // @gen:newfx_names end
 
@@ -1595,7 +1599,7 @@ static const int s_newFxCategories[] = {
     6, 1, 6, 6, 6, 6, 6, 6, 6, 6,
     6, 6, 6, 6, 6, 6, 6, 6, 6,
     4, 4, 0, 0, 5, 1, 1, 2, 2, 2,
-    2, 4, 4, 1, 1, 1, 3, 4, 5,
+    2, 4, 4, 1, 1, 1, 3, 4, 5, 6,
 };
 // @gen:newfx_categories end
 
@@ -3761,6 +3765,15 @@ void VFXTest_Draw3D(void)
                   VFX_TalismanConfig *tcfg = VFX_Talisman_GetLiveConfig();
                   tcfg->origin = s_prefabStartPos;
                   VFX_ComposeTalisman(tcfg);
+                  break;
+              }
+              case 53: {
+                  if (s_meshTime < s_vfxFixtureLastTime[53] && s_vfxFixtureHandle[53] >= 0)
+                      VFX_KillDragonQi(s_vfxFixtureHandle[53]);
+                  if (s_meshTime < s_vfxFixtureLastTime[53]) s_vfxFixtureHandle[53] = -1;
+                  s_vfxFixtureLastTime[53] = s_meshTime;
+                  if (s_vfxFixtureHandle[53] < 0)
+                      s_vfxFixtureHandle[53] = VFX_ComposeDragonQi(s_prefabStartPos, VC_MAT_FIRE);
                   break;
               }
           }

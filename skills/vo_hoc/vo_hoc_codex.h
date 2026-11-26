@@ -19,6 +19,7 @@ typedef enum {
     VH_SET_BAN_THACH_BAT_CUC_QUYEN = 2, /* Bộ Thổ 7 chiêu (Bát Cực Quyền) */
     VH_SET_THIEN_CANG_DOAN_KIM_KIEM = 3, /* Bộ Kim 7 chiêu (Thiên Cang Đoạn Kim Kiếm Pháp) */
     VH_SET_LIET_HOA_PHAN_THIEN_CUOC = 4, /* Bộ Hỏa 7 chiêu (Liệt Hỏa Phần Thiên Cước) */
+    VH_SET_GIANG_LONG_THAP_BAT_CHUONG = 5, /* Bộ Hỏa 7 chiêu (Giáng Long Thập Bát Chưởng) */
     VH_SET_COUNT
 } VoHocSetId;
 
