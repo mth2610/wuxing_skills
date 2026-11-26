@@ -3,14 +3,14 @@
 in vec2 fragTexCoord;
 in vec4 fragColor;
 
-uniform sampler2D texture0;   
-uniform sampler2D u_bloomTex; 
-// Texel size of u_bloomTex (a QUARTER-resolution target), for the tent below.
+uniform sampler2D texture0;
+uniform sampler2D u_bloomTex;
 uniform vec2 u_bloomTexel;
 
 // Cấu hình
 uniform float u_bloomEnabled;
 uniform float u_bloomIntensity;
+uniform float u_bloomVeil;
 
 uniform float u_chromaticEnabled;
 uniform float u_chromaticStrength;
@@ -30,54 +30,46 @@ uniform vec3 u_highlightTint;
 uniform float u_tonemapEnabled;
 uniform float u_exposure;
 
-/* AUTO EXPOSURE (§7.5). A 1x1 texture rather than a scalar, because the value is
- * produced on the GPU and never read back — a per-frame readback would stall the
- * pipeline for one number. Metered from the scene BEFORE any VFX and clamped to
- * <= 1.0, so it can only darken; a night scene meters low, asks for more than
- * 1.0, is clamped, and is unaffected. See core/scene_targets.h.
- * u_autoExposure 0 = ignore it entirely, which is the shipping default. */
 uniform sampler2D u_exposureTex;
 uniform float u_autoExposure;
 
 // ── Colour-grade LUT (Đợt G5) ────────────────────────────────────────────────
-// A 2D STRIP, not a sampler3D: GLES on Mali is a shipping target and 2D works
-// everywhere without a capability query or a second shader path.
 uniform sampler2D u_lutTex;
 uniform float u_lutEnabled;
 uniform float u_lutStrength;  // 0..1 blend toward the graded result
 uniform vec2  u_lutParams;    // (1/stripWidth, 1/stripHeight)
 uniform float u_lutSize;      // slices per axis (strip is size*size by size)
 
-// Radial blur (Đợt E1a) — screen-space smear away from a focal point. This is
-// what makes a burst read as VIOLENT rather than merely bright: brightness
-// alone says "there is light here", a directional smear says "something just
-// happened here". Folded into the composite rather than run as its own pass —
-// one extra pass costs a full-screen read/write, this costs 8 taps only while
-// it is on, and the whole loop sits behind a uniform branch so the OFF path is
-// a single branch on a value that is constant across the frame.
+// Radial blur (Đợt E1a)
 uniform float u_radialBlurEnabled;
 uniform vec2  u_radialBlurCenter;   // screen UV [0..1] of the focal point
 uniform float u_radialBlurStrength; // sample offset scale (~0.15 = strong)
 uniform float u_radialBlurFalloff;  // UV radius where the blur reaches full strength
+uniform vec4  u_heatHazeParams;     // .x = strength (0 = off), .y = time, .z = bandStartY, .w = bandEndY
+
+uniform float u_hueRestore;    // shipping default 0.6 (§12.1); 0 = the old per-channel curve
+uniform float u_shoulderView;  // diagnostic, 0 = off
+uniform vec2  u_sceneTexel;    // 1 / scene resolution
+uniform float u_rcasSharpness; // 0 = off, >0 = 5-tap RCAS sharpening in composite pass
+uniform sampler2D u_gtaoTex;   // Half-res denoised Ground-Truth AO
+uniform float u_gtaoEnabled;
+uniform float u_gtaoStrength;
+uniform vec3  u_gtaoTint;      // Multi-bounce occlusion tint (0 = legacy neutral black)
 
 out vec4 finalColor;
 
-// Strip-LUT lookup. Red/green come free from hardware bilinear because they map
-// to texel CENTRES inside a tile (0.5 .. size-0.5), which is also what keeps
-// filtering from bleeding across a tile edge into the next blue slice. Blue is
-// interpolated by hand between two adjacent slices — the one thing a 2D strip
-// costs over a real sampler3D.
 vec3 ApplyColorGradeLut(vec3 col) {
-    float size = u_lutSize;
+    float size = max(u_lutSize, 2.0);
+    float maxSlice = size - 1.0;
     vec3 c = clamp(col, 0.0, 1.0);
 
-    float b = c.b * (size - 1.0);
+    float b = c.b * maxSlice;
     float slice0 = floor(b);
-    float slice1 = min(slice0 + 1.0, size - 1.0);
+    float slice1 = min(slice0 + 1.0, maxSlice);
     float blend = b - slice0;
 
-    float uInTile = 0.5 + c.r * (size - 1.0);
-    float v = (0.5 + c.g * (size - 1.0)) * u_lutParams.y;
+    float uInTile = 0.5 + c.r * maxSlice;
+    float v = (0.5 + c.g * maxSlice) * u_lutParams.y;
 
     vec3 s0 = texture(u_lutTex, vec2((slice0 * size + uInTile) * u_lutParams.x, v)).rgb;
     vec3 s1 = texture(u_lutTex, vec2((slice1 * size + uInTile) * u_lutParams.x, v)).rgb;
@@ -85,210 +77,184 @@ vec3 ApplyColorGradeLut(vec3 col) {
 }
 
 vec3 acesFilmic(vec3 x) {
-    // Đã in-line các hằng số để tránh khai báo biến const trong hàm
     return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
 }
 
-// ── Hue-preserving highlight restoration (CANDIDATE, default OFF) ─────────────
-//
-// Why: the ACES fit above is applied PER CHANNEL, so as one channel enters the
-// shoulder the others keep climbing and the hue slides toward white. Measured on
-// the bright_vfx chart, a saturated body over a white background loses chroma
-// 0.539 -> 0.383 -> 0.222 across exposures 0.5/1/2. That is the single largest
-// remaining obstacle to bright-background VFX, and no amount of authoring fixes it.
-//
-// How this stays approvable: it is a BUMP, not a replacement.
-//   * peak < 1.0  -> w = 0 -> the branch is not taken and the result is BIT-IDENTICAL
-//                    to the curve every already-approved material was authored against.
-//                    This is what keeps a tone-mapper change from being a whole-scene
-//                    change; rlvk's `tonemap_shoulder` scenario asserts it.
-//   * 1.0 .. 5.0  -> hue restoration ramps in. This is where the saturated body and
-//                    corona live (§5.4) and where the chroma is currently lost.
-//   * above 5.0   -> it ramps back OUT, so a genuinely hot core still reaches white.
-//                    Pure hue preservation would keep the core saturated forever,
-//                    which contradicts §5.4's "the compact core may reach white".
-//
-// One knob only (`postfx_hue_restore`, 0..1) so the approval surface is one number.
 float acesFilmicScalar(float x) {
     return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
 }
 
-uniform float u_hueRestore;    // shipping default 0.6 (§12.1); 0 = the old per-channel curve
-uniform float u_shoulderView;  // diagnostic, 0 = off
-
 vec3 toneMapScene(vec3 x) {
+    x = max(x, vec3(0.0));
     vec3 perChannel = acesFilmic(x);
     if (u_hueRestore <= 0.0) return perChannel;
 
     float peak = max(x.r, max(x.g, x.b));
     if (peak <= 0.0) return perChannel;
 
-    // CANDIDATE H, APPLIED 18/08/2026. The weight is now CONSTANT in intensity, and the
-    // whitening that used to come from ramping it back out is a monotone desaturation of
-    // the hue-kept colour instead.
-    //
-    // WHY THE OLD FORM HAD TO GO. Hue keeping restores chroma by LOWERING the non-peak
-    // channels. If the weight VARIES along an intensity ramp, those channels are pulled
-    // down and then released — a trough with an edge on each side, which is a visible
-    // colour band. Measured on a plain rectangle through this exact pipeline
-    // (sandbox/gradient_probe.c): one hue at a rising level gave a G slope of
-    // +26 -> +9 -> -10 -> +9, a stall, a reversal and a re-acceleration, on an input that
-    // is smooth by construction. That is the "rainbow rim" reported on ShieldShell, and it
-    // belongs to this function, not to any effect.
-    //
-    // AND THE BANDING CAME FROM THE *LOWER* BOUND, NOT THE UPPER ONE. That is the opposite
-    // of what was assumed for two sessions. Any weight that transitions from 0 to non-zero
-    // WHILE THE INPUT IS STILL CLIMBING produces the trough; whether it later ramps back
-    // out is irrelevant. Verified by search over the whole family: widening the rise
-    // (smoothstep(1,2) -> (1,7)) makes it WORSE (15 -> 30 reversals), because the drop is
-    // ~max(w * (perChannel - hueKept)) and does not care how gently w got there; and
-    // bolting a bottom gate back onto this candidate restores the banding exactly
-    // (0 reversals -> 59). "Bit-identical below peak 1" and "monotone through the shoulder"
-    // are therefore mutually exclusive, and this file now chooses monotone.
-    //
-    // THE PRICE, STATED PLAINLY. (STALE CLAIM CORRECTED 19/08/2026: this used to say
-    // rlvk's `tonemap_shoulder` "now FAILS by design". It does not — the scenario was
-    // rewritten to assert MONOTONICITY instead of bit-identity, and it PASSES. A comment
-    // telling readers a suite is red on purpose is how a suite stops being read at all.)
-    // Every material below the
-    // shoulder shifts by up to ~0.03 at u_hueRestore = 1.0 (~0.015, about 4/255, at the
-    // shipping 0.5-0.6), and a hot core reaches white more completely. That is a
-    // whole-scene tone-map change, taken deliberately by the owner rather than a bounded
-    // bump. Reverting is this one block; the shader hot-loads, so no rebuild either way.
-    float w = clamp(u_hueRestore, 0.0, 1.0);
-    if (w <= 0.0) return perChannel;
-
-    // Tone map the PEAK and carry the channel ratios through, desaturating them toward
-    // white as the level climbs so a genuinely hot core still reaches white (§5.4) —
-    // monotonically, which is the whole point.
-    vec3 hueKept = mix(x / peak, vec3(1.0), smoothstep(5.0, 12.0, peak)) * acesFilmicScalar(peak);
+    float baseW = clamp(u_hueRestore, 0.0, 1.0);
+    // Keep SDR terrain/foliage identical (baseW ~ 0.62) while ramping HDR
+    // emissive highlights toward 0.90 hue preservation so glowing VFX retain
+    // their elemental chroma without ACES per-channel skew.
+    float hdrLift = smoothstep(1.0, 3.2, peak);
+    float w = mix(baseW, max(baseW, 0.90), hdrLift);
+    vec3 hueKept = mix(x / peak, vec3(1.0), smoothstep(4.5, 14.0, peak)) * acesFilmicScalar(peak);
     return mix(perChannel, hueKept, w);
 }
 
 void main() {
     vec2 uv = fragTexCoord;
     vec2 toCenter = uv - vec2(0.5);
+    float distSq = dot(toCenter, toCenter);
 
-    // [TỐI ƯU 1]: Chỉ lấy mẫu texture0 MỘT LẦN duy nhất làm gốc.
-    vec4 sceneCol = texture(texture0, uv);
+    // Jimenez sin-free Interleaved Gradient Noise (dùng chung cho cả Radial Blur jitter và Output Dither)
+    float d0 = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+    float d1 = fract(52.9829189 * fract(dot(gl_FragCoord.xy + 17.0, vec2(0.06711056, 0.00583715))));
 
-    // [TỐI ƯU 2]: Uniform Branching (Rẽ nhánh Uniform).
-    // Vì u_chromaticEnabled đồng nhất trên toàn màn hình, lệnh 'if' này có chi phí gần như bằng 0 
-    // và cứu GPU khỏi 2 lần fetch texture thừa khi hiệu ứng tắt.
-    if (u_chromaticEnabled > 0.5) {
-        
-        // [TỐI ƯU 3]: Thay length() bằng dot() để triệt tiêu hàm căn bậc 2 (sqrt) đắt đỏ.
-        // Falloff bằng bình phương (distSq) sẽ tạo cảm giác méo dồn ra viền màn hình tự nhiên hơn.
-        float distSq = dot(toCenter, toCenter);
-        vec2 offset = toCenter * (u_chromaticStrength * distSq * 0.05);
-        
-        sceneCol.r = texture(texture0, uv - offset).r;
-        // Kênh .g đã có sẵn trong sceneCol từ lần fetch trên cùng, KHÔNG FETCH LẠI!
-        sceneCol.b = texture(texture0, uv + offset).b;
+    // 0b. Subtle distant desert heat-haze shimmer (zero cost when strength <= 0)
+    if (u_heatHazeParams.x > 0.0001) {
+        float hBand = smoothstep(u_heatHazeParams.z, u_heatHazeParams.z + 0.14, uv.y)
+                    * (1.0 - smoothstep(u_heatHazeParams.w - 0.10, u_heatHazeParams.w, uv.y));
+        if (hBand > 0.001) {
+            float t = u_heatHazeParams.y;
+            float waveX = sin(uv.y * 95.0 - t * 4.2 + uv.x * 18.0) * 0.65
+                        + cos(uv.y * 165.0 + t * 6.5 - uv.x * 27.0) * 0.35;
+            float waveY = cos(uv.x * 78.0 - t * 3.4 + uv.y * 42.0) * 0.5;
+            uv = clamp(uv + vec2(waveX, waveY) * (u_heatHazeParams.x * hBand), vec2(0.001), vec2(0.999));
+            toCenter = uv - vec2(0.5);
+            distSq = dot(toCenter, toCenter);
+        }
     }
 
-    // 1b. Radial blur — AFTER chromatic (so it smears the aberrated image, not
-    // the other way round, which would re-sharpen the fringes) and BEFORE bloom,
-    // so the bloom that follows blooms the smear rather than the sharp source.
+    // 1. Fetch gốc + optional 5-tap RCAS (when TAA is active) + Chromatic Aberration
+    vec4 sceneCol = texture(texture0, uv);
+    if (u_rcasSharpness > 0.001 && u_chromaticEnabled <= 0.5) {
+        vec3 n = texture(texture0, uv + vec2(0.0, -u_sceneTexel.y)).rgb;
+        vec3 s = texture(texture0, uv + vec2(0.0,  u_sceneTexel.y)).rgb;
+        vec3 e = texture(texture0, uv + vec2( u_sceneTexel.x, 0.0)).rgb;
+        vec3 w = texture(texture0, uv + vec2(-u_sceneTexel.x, 0.0)).rgb;
+        vec3 c = max(sceneCol.rgb, vec3(0.0));
+        vec3 minN = min(c, min(min(n, s), min(e, w)));
+        vec3 maxN = max(c, max(max(n, s), max(e, w)));
+        vec3 amp = clamp(min(minN, 2.0 - maxN) / max(maxN, vec3(1e-4)), 0.0, 1.0);
+        float k = -0.18 * clamp(u_rcasSharpness, 0.0, 1.0);
+        vec3 w4 = sqrt(amp) * k;
+        vec3 sharpened = (c + (n + s + e + w) * w4) / max(vec3(1.0) + 4.0 * w4, vec3(1e-4));
+        sceneCol.rgb = clamp(sharpened, minN, maxN);
+    }
+    vec2 chromaOffset = vec2(0.0);
+    if (u_chromaticEnabled > 0.5) {
+        chromaOffset = toCenter * (u_chromaticStrength * distSq * 0.05);
+        sceneCol.r = texture(texture0, uv - chromaOffset).r;
+        sceneCol.b = texture(texture0, uv + chromaOffset).b;
+    }
+
+    // 1b. Radial blur
     if (u_radialBlurEnabled > 0.5) {
         vec2  dir = uv - u_radialBlurCenter;
-        // The focal point stays SHARP and the smear grows outward. Blurring
-        // uniformly reads as a camera fault; blurring around a fixed point
-        // reads as force radiating from that point.
-        float w = smoothstep(0.0, u_radialBlurFalloff, length(dir));
+        float w = smoothstep(0.0, max(u_radialBlurFalloff, 0.001), length(dir));
 
-        // FADE OUT AN OFF-SCREEN FOCAL POINT. Two reasons, one physical and one
-        // practical. Physical: a burst you cannot see should not smear the whole
-        // frame — the smear is supposed to say "the force came from THERE", and
-        // there is no there on screen. Practical: `dir` grows without bound as
-        // the centre leaves the view, and long taps stop reading as a smear and
-        // start reading as discrete GHOST COPIES of the frame. Both were found
-        // by the E3 TAIJI_LOI port, whose strike lands away from the camera.
         vec2  c   = u_radialBlurCenter;
-        float off = max(max(-c.x, c.x - 1.0), max(-c.y, c.y - 1.0)); // 0 inside the view
+        float off = max(max(-c.x, c.x - 1.0), max(-c.y, c.y - 1.0));
         w *= 1.0 - smoothstep(0.0, 0.35, off);
 
         if (w > 0.001) {
-            // CAP THE SMEAR LENGTH. `dir` grows without bound as the focal point
-            // moves off-screen — an effect 17 m to the side projects to a UV far
-            // outside [0,1], and the 8 taps then land so far apart that they read
-            // as discrete GHOST COPIES of the frame instead of a smear. Found by
-            // the E3 TAIJI_LOI port, where the strike lands away from the camera
-            // target. Capping keeps the tap spacing sane at any distance and
-            // costs one clamp.
             vec2 smear = dir * (u_radialBlurStrength * w);
             float smearLen = length(smear);
             if (smearLen > 0.08) smear *= (0.08 / smearLen);
-            vec3 acc = vec3(0.0);
-            for (int i = 1; i <= 8; i++) {
-                acc += texture(texture0, uv - smear * (float(i) / 8.0)).rgb;
+
+            // Bắt đầu tích lũy từ mẫu gốc (đã có chromatic aberration) và jitter nhẹ vị trí tap
+            // bằng d0 để xóa hiện tượng phân bậc (ghosting steps) khi blur mạnh.
+            vec3 acc = sceneCol.rgb;
+            for (int i = 1; i <= 7; i++) {
+                float t = (float(i) - 0.5 + (d0 - 0.5) * 0.75) * (1.0 / 7.0);
+                vec2 tapUv = clamp(uv - smear * t, vec2(0.001), vec2(0.999));
+                acc += texture(texture0, tapUv).rgb;
             }
             sceneCol.rgb = mix(sceneCol.rgb, acc * 0.125, w);
         }
     }
 
-    // 2. Bloom
-    if (u_bloomEnabled > 0.5) {
-        // TENT, NOT ONE TAP. u_bloomTex is a QUARTER-resolution target, so a single
-        // bilinear fetch magnifies it 4x — and bilinear magnification of a buffer that
-        // carries real detail reconstructs as piecewise-linear patches with a kink every
-        // 4 pixels. Along a bright curved silhouette those kinks read as stair-steps:
-        // the "hạt hạt pixel" report. It only surfaced once bloom_scatter went back to
-        // 0.65: at 1.0 the pyramid collapsed to its coarsest mip, so bloomTex held
-        // nothing but smooth low frequencies and there was no detail to alias.
-        //
-        // The same 3x3 tent the upsample chain already uses (bloom_upsample.fs) is the
-        // standard final-upsample filter for exactly this reason.
-        // 4 bilinear taps with half-texel offset evaluate the exact 3x3 tent filter
-        // (weights 1,2,1 / 2,4,2 / 1,2,1) using hardware texture filtering.
-        vec2 d = u_bloomTexel * 0.5;
-        vec3 bloomSum = (texture(u_bloomTex, uv + vec2(-d.x,  d.y)).rgb
-                       + texture(u_bloomTex, uv + vec2( d.x,  d.y)).rgb
-                       + texture(u_bloomTex, uv + vec2(-d.x, -d.y)).rgb
-                       + texture(u_bloomTex, uv + vec2( d.x, -d.y)).rgb) * 4.0;
-        sceneCol.rgb += (bloomSum / 16.0) * u_bloomIntensity;
+    // 1c. Half-res GTAO contact darkening in linear HDR space before bloom & tonemap
+    if (u_gtaoEnabled > 0.5) {
+        float ao = texture(u_gtaoTex, uv).r;
+        float strength = clamp(u_gtaoStrength, 0.0, 1.0);
+        float hasTint = step(0.001, dot(u_gtaoTint, u_gtaoTint));
+        if (hasTint > 0.5) {
+            // Jimenez-style multi-bounce colored AO: snow hollows shift toward luminous sky-cobalt
+            float occ = (1.0 - ao) * strength;
+            vec3 multiBounce = mix(vec3(1.0), u_gtaoTint + (vec3(1.0) - u_gtaoTint) * ao, occ);
+            sceneCol.rgb *= clamp(multiBounce, vec3(0.0), vec3(1.05));
+        } else {
+            sceneCol.rgb *= mix(1.0, ao, strength);
+        }
     }
 
-    // 2b. Tone mapping
+    // Resolve effective camera exposure once so bloom glare veil and tonemapping agree
     float exposure = u_exposure;
     if (u_autoExposure > 0.0) {
         float autoE = texture(u_exposureTex, vec2(0.5)).r;
-        if (autoE > 0.0) exposure *= mix(1.0, autoE, u_autoExposure);
+        if (!isnan(autoE) && !isinf(autoE) && autoE > 0.0) {
+            exposure *= mix(1.0, clamp(autoE, 0.1, 10.0), u_autoExposure);
+        }
     }
-    vec3 exposedScene = sceneCol.rgb * exposure;
+    exposure = clamp(exposure, 0.0, 16.0);
+
+    // 2. Bloom (4 bilinear taps = 3x3 tent filter) + Optical Chromatic Glare Veil
+    if (u_bloomEnabled > 0.5) {
+        vec4 d = u_bloomTexel.xyxy * vec4(-0.5, 0.5, 0.5, -0.5);
+        vec3 bloomAvg = (texture(u_bloomTex, uv + d.xy).rgb
+                       + texture(u_bloomTex, uv + d.zy).rgb
+                       + texture(u_bloomTex, uv + d.xw).rgb
+                       + texture(u_bloomTex, uv + d.zw).rgb) * 0.25;
+        if (any(isnan(bloomAvg)) || any(isinf(bloomAvg))) bloomAvg = vec3(0.0);
+        vec3 bloom = clamp(bloomAvg, vec3(0.0), vec3(64.0)) * u_bloomIntensity;
+        float bPeak = max(bloom.r, max(bloom.g, bloom.b));
+        if (bPeak > 1e-4 && u_bloomVeil > 0.001) {
+            float bMin = min(bloom.r, min(bloom.g, bloom.b));
+            float bSat = clamp((bPeak - bMin) / bPeak, 0.0, 1.0);
+            float bgLum = dot(max(sceneCol.rgb, vec3(0.0)), vec3(0.2126, 0.7152, 0.0722)) * exposure;
+            float veil = u_bloomVeil * bSat * smoothstep(0.28, 0.92, bgLum) * (bPeak / (0.38 + bPeak));
+            vec3 bTint = bloom / bPeak;
+            sceneCol.rgb *= mix(vec3(1.0), 0.32 + 0.68 * bTint, clamp(veil, 0.0, 0.62));
+        }
+        sceneCol.rgb += bloom;
+    }
+
+    // 2b. Tone mapping
+    if (any(isnan(sceneCol.rgb)) || any(isinf(sceneCol.rgb))) sceneCol.rgb = vec3(0.0);
+    vec3 exposedScene = clamp(sceneCol.rgb, vec3(0.0), vec3(64.0)) * exposure;
+    float exposedPeak = max(exposedScene.r, max(exposedScene.g, exposedScene.b));
+    float exposedMin  = min(exposedScene.r, min(exposedScene.g, exposedScene.b));
+    float exposedSat  = (exposedPeak > 1e-4) ? clamp((exposedPeak - exposedMin) / exposedPeak, 0.0, 1.0) : 0.0;
+    float emissiveProtect = smoothstep(1.05, 2.2, exposedPeak) * smoothstep(0.12, 0.40, exposedSat);
     if (u_tonemapEnabled > 0.5) {
         sceneCol.rgb = toneMapScene(exposedScene);
     }
 
     // 3. Color Grading
     if (u_colorGradeEnabled > 0.5) {
-        vec3 gradedCol = sceneCol.rgb;
-        
-        // Contrast
-        gradedCol = (gradedCol - vec3(0.5)) * u_contrast + vec3(0.5);
-        
-        // [TỐI ƯU 4]: Tính toán Luminance (độ sáng) ĐÚNG 1 LẦN.
-        // Chuyển vec3 magic number thành hằng số (const) để compiler tối ưu register.
+        vec3 gradedCol = clamp(sceneCol.rgb, 0.0, 1.0);
+
+        vec3 sCurve = gradedCol * gradedCol * (3.0 - 2.0 * gradedCol);
+        float sBlend = clamp((u_contrast - 1.0) * 0.55, -0.25, 0.35);
+        gradedCol = mix(gradedCol, sCurve, sBlend);
+        float linContrast = 1.0 + (u_contrast - 1.0) * 0.45;
+        gradedCol = clamp((gradedCol - vec3(0.5)) * linContrast + vec3(0.5), 0.0, 1.0);
+
         const vec3 LUMA_COEFF = vec3(0.2126, 0.7152, 0.0722);
         float luma = dot(gradedCol, LUMA_COEFF);
-        
-        // Saturation
-        gradedCol = mix(vec3(luma), gradedCol, u_saturation);
-        
-        // Split-tone
-        // [TỐI ƯU 5]: Xóa bỏ hàm clamp(). 
-        // Hàm smoothstep nội bộ đã tự động clamp giá trị đầu vào trong khoảng [edge0, edge1] rồi.
-        gradedCol *= mix(u_shadowTint, u_highlightTint, smoothstep(0.0, 1.0, luma));
-        
-        // Color Tint
-        sceneCol.rgb = gradedCol * u_colorTint;
+
+        float satProtection = 1.0 - 0.32 * smoothstep(0.58, 0.96, luma) * (1.0 - emissiveProtect);
+        float effSat = mix(1.0, max(u_saturation, mix(u_saturation, 1.0, emissiveProtect)), satProtection);
+        gradedCol = mix(vec3(luma), gradedCol, effSat);
+
+        vec3 toneTint = mix(u_shadowTint, mix(u_highlightTint, vec3(1.0), emissiveProtect * 0.85), smoothstep(0.0, 1.0, luma));
+        gradedCol *= toneTint;
+        sceneCol.rgb = clamp(gradedCol * u_colorTint, 0.0, 1.0);
     }
 
-    // 3b. Colour-grade LUT (Đợt G5). Deliberately LAST in the colour chain and
-    // AFTER tone mapping: a LUT is a display-referred lookup, so feeding it HDR
-    // values would sample outside its own domain and flatten every highlight
-    // into the top blue slice. The formula grade above stays as the coarse
-    // control; the LUT carries the "look".
+    // 3b. Colour-grade LUT
     if (u_lutEnabled > 0.5 && u_lutStrength > 0.0) {
         vec3 graded = ApplyColorGradeLut(sceneCol.rgb);
         sceneCol.rgb = mix(sceneCol.rgb, graded, clamp(u_lutStrength, 0.0, 1.0));
@@ -296,49 +262,13 @@ void main() {
 
     // 4. Vignette
     if (u_vignetteEnabled > 0.5) {
-        // [TỐI ƯU 6]: Tái sử dụng vector toCenter đã tính từ bước đầu tiên thay vì tính lại.
-        float len = length(toCenter);
+        float len = sqrt(distSq);
         float innerRadius = max(u_vignetteRadius - u_vignetteSoftness, 0.0);
-        float darkness = smoothstep(innerRadius, u_vignetteRadius, len);
+        float darkness = smoothstep(innerRadius, max(u_vignetteRadius, innerRadius + 0.001), len);
         sceneCol.rgb *= (1.0 - darkness);
     }
 
-    // 5. Output dither.
-    //
-    // The swapchain is 8-bit. The widest, flattest gradients in this game are
-    // exactly the things this pipeline is built to produce - a 32 px VFX halo and
-    // the bloom skirt around it - and on a bright background those quantise into
-    // visible concentric rings ("bet mau"). One LSB of triangular-PDF noise breaks
-    // the ring into dither and costs two hashes.
-    //
-    // NO sin() IN THE HASH. fract(sin(x)) noise degenerates on Mali at large
-    // domains (ENGINE_LANDMINES.md / the Mali hash landmine) and gl_FragCoord IS a
-    // large domain; this is Jimenez's interleaved-gradient hash, which is sin-free.
-    float d0 = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
-    float d1 = fract(52.9829189 * fract(dot(gl_FragCoord.xy + 17.0, vec2(0.06711056, 0.00583715))));
-    sceneCol.rgb = clamp(sceneCol.rgb + vec3((d0 + d1 - 1.0) * (1.0 / 255.0)), 0.0, 1.0);
-    // Clamp AFTER the dither, not before: the noise is added on top of an already
-    // tone-mapped value, so without this a channel that ACES had pinned at 1.0 comes
-    // back at 1.004. The UNORM swapchain hides it, but an HDR probe reading this pass
-    // sees post-tone-map values the curve cannot produce, which is exactly the kind of
-    // "impossible number" that sent bright_vfx chasing a phantom.
-
-    // ── Shoulder view (DIAGNOSTIC: tuning.cfg postfx_shoulder_view = 1) ──────
-    //
-    // Paints where the tone map's hue-restoration band is even allowed to act, so
-    // "which materials would need re-approving" is one capture instead of a diff and a
-    // judgement call. Anything not magenta is provably untouched.
-    //   magenta = exposed peak in [1, 9)  -> the active band, i.e. the whole surface
-    //   cyan    = exposed peak >= 9       -> above the band, the curve is identity
-    //   grey    = below 1.0               -> identity, nothing to approve
-    //
-    // KEPT after §12.1 was decided, not deleted, because §11b's gate 3 EXPIRES: it
-    // passed only because every map is night-time and exposure is pinned at 1.00. Add a
-    // daylight arena or auto-exposure and ground and sky cross 1.0, which regrows the
-    // approval surface — and this is how you find that out in one screenshot. It was a
-    // negative value of postfx_hue_restore while that knob was being A/B'd (no rebuild
-    // needed for a shader-only change); now that hue restore ships at 0.6 it gets its
-    // own knob rather than riding on a shipping one.
+    // Shoulder view diagnostic
     if (u_shoulderView > 0.5) {
         float peak = max(exposedScene.r, max(exposedScene.g, exposedScene.b));
         float g = dot(sceneCol.rgb, vec3(0.2126, 0.7152, 0.0722)) * 0.30;
@@ -347,9 +277,12 @@ void main() {
         else                  sceneCol.rgb = vec3(g);
     }
 
-    // Write perceptual luma into alpha so FXAA can read it directly from texture taps
-    // without computing 5 redundant dot products per pixel.
-    vec3 outRgb = sceneCol.rgb * fragColor.rgb;
-    float outLuma = dot(outRgb, vec3(0.299, 0.587, 0.114));
+    // Tính perceptual luma cho FXAA TRƯỚC khi cộng dither 8-bit để CAS sharpening
+    // trong fxaa.fs không khuếch đại hạt nhiễu dither.
+    vec3 cleanRgb = clamp(sceneCol.rgb * fragColor.rgb, 0.0, 1.0);
+    float outLuma = dot(cleanRgb, vec3(0.299, 0.587, 0.114));
+
+    // 5. Output dither (Triangular-PDF 1-LSB noise chống bệt màu trên swapchain 8-bit)
+    vec3 outRgb = clamp(cleanRgb + vec3((d0 + d1 - 1.0) * (1.0 / 255.0)), 0.0, 1.0);
     finalColor = vec4(outRgb, outLuma);
 }

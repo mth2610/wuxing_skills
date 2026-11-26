@@ -2807,7 +2807,7 @@ static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
                 SetShaderValue(fullShader, s_volLocs.debug, &s_volDebug, SHADER_UNIFORM_FLOAT);
             if (s_volLocs.bloom >= 0)
             {
-                float bloomGain = (groups[g].bm == BLEND_ADDITIVE) ? s_volBloom : 0.0f;
+                float bloomGain = (groups[g].bm == BLEND_ADDITIVE || groups[g].bm == BLEND_ALPHA_PREMULTIPLY) ? s_volBloom : 0.0f;
                 SetShaderValue(fullShader, s_volLocs.bloom, &bloomGain, SHADER_UNIFORM_FLOAT);
             }
             static bool announced = false;

@@ -116,8 +116,8 @@ void CastGltbcMatVanBatVuSkill(int agentId, Vector3 startPos, Vector3 target, Sk
     inst->curve.waveSign    = 1.0f;
     inst->curve.phaseOffset = 0.0f;
 
-    Color flameBody = ColorLerp(ELEMENT_COLOR_FIRE, ORANGE, 0.45f);
-    Color flameGlow = ColorLerp(ORANGE, GOLD, 0.52f);
+    Color flameBody = (Color){ 228, 192, 86, 255 };
+    Color flameGlow = (Color){ 255, 242, 166, 255 };
 
     int asset = VFX_DragonQi_GetAsset();
     if (asset >= 0) {
@@ -131,8 +131,8 @@ void CastGltbcMatVanBatVuSkill(int agentId, Vector3 startPos, Vector3 target, Sk
         mp.style         = VFX_MODEL_STYLE_QI_SPIRIT;
         mp.tint          = flameBody;
         mp.glowColor     = flameGlow;
-        mp.glowIntensity = 2.0f;
-        mp.opacity       = 0.78f;
+        mp.glowIntensity = 3.10f;
+        mp.opacity       = 0.80f;
         inst->modelHandle = VFXModel_Spawn(asset, &mp);
         if (inst->modelHandle >= 0) {
             VFXModel_SetSpinePathOverride(inst->modelHandle, MVBV_SPINE_BONES,
@@ -187,7 +187,7 @@ void UpdateGltbcMatVanBatVuSkill(float dt, Vector3 enemyPos, float enemyRadius)
             }
 
             VFX_SpawnShockRing((Vector3){ inst->center.x, inst->center.y + 0.05f, inst->center.z },
-                               (Vector3){ 0.0f, 1.0f, 0.0f }, VC_MAT_FIRE, rad * 0.85f, 0.45f);
+                               (Vector3){ 0.0f, 1.0f, 0.0f }, VC_MAT_HOLY, rad * 0.85f, 0.45f);
         }
 
         if (inst->elapsed >= MVBV_DURATION) ReleaseMatVan(inst);

@@ -263,39 +263,4 @@ void CrystalMaterialInstanced_Load(CrystalMaterialInstanced *outMat, const Cryst
 void CrystalMaterialInstanced_Begin(CrystalMaterialInstanced mat);
 void CrystalMaterialInstanced_SetGrowProgress(CrystalMaterialInstanced mat, float progress);
 void CrystalMaterialInstanced_End(void);
-
-/* ============================================================================
- * PLASMA MATERIAL SYSTEM
- * --------------------------------------------------------------------------
- * Wispy energy membrane (plasma_shell.vs/.fs): fresnel × animated fbm alpha,
- * fully transparent at the center — the shell look EffectMaterial's
- * translucency cannot do (it has a 0.3 alpha floor face-on). Draw spheres
- * with alpha blend for translucent shields; the caller owns the blend mode.
- * ==========================================================================*/
-
-typedef struct
-{
-    Color baseColor;    // deep body tint of the membrane (alpha = master alpha)
-    Color wispColor;    // bright filament-crest tint
-    float noiseScale;   // wisp frequency over the sphere (try 2.5-4.0)
-    float noiseSpeed;   // wisp scroll speed (try 0.3-0.8)
-    float fresnelPower; // rim sharpness 1..8 (higher = emptier center)
-    float rimStrength;  // extra rim brightness 0..~2
-    float emissive;     // HDR gain 0..8, applied only to narrow filament crests
-    float opacity;      // master alpha multiplier 0..1
-    float displaceAmp;  // world-units vertex undulation amplitude
-} PlasmaMaterialParams;
-
-typedef struct
-{
-    Shader shader;
-    PlasmaMaterialParams params;
-    const VfxParamDesc *layout;
-    int layoutCount;
-    int locs[VFX_MAT_MAX_PARAMS];
-} PlasmaMaterial;
-
-void PlasmaMaterial_Load(PlasmaMaterial *outMat, const PlasmaMaterialParams *params);
-void PlasmaMaterial_Begin(PlasmaMaterial mat);
-void PlasmaMaterial_End(void);
 #endif // MATERIAL_SYSTEM_H

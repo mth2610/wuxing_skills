@@ -613,25 +613,27 @@ void main()
 
         // 2. Cường độ trục lõi:
         // - Quầng mana bao ngoài: pow(d, 1.2) trải rộng êm dịu
-        // - Sợi tia plasma ở giữa: pow(d, 3.2) tập trung mảnh và cực nét ở tâm trục
+        // - Sợi tia plasma ở giữa: pow(d, 4.5) tập trung mảnh và cực nét ở tâm trục
         float spineGlow = pow(d, 1.2) * smoothstep(0.02, 0.85, fade);
-        float coreFilament = pow(d, 3.2) * smoothstep(0.05, 0.90, fade);
+        float coreFilament = pow(d, 4.5) * smoothstep(0.05, 0.90, fade);
 
         // 3. Chuyển động vân cuộn ma thuật từ texture khói kết hợp gợn sóng tơ điện
         float plasmaTexture = 0.45 + 0.55 * s1.r;
         float energyIntensity = spineGlow * plasmaTexture * shimmer;
 
-        // 4. Hệ số Bloom bao ngoài
-        float bloomFactor = smoothstep(0.15, 0.75, energyIntensity);
-        float hdrGain = 1.0 + u_volBloom * bloomFactor * 1.6;
-        vec3 bloomColour = colour * hdrGain;
+        // 4. Premultiplied Carrier + Chromatic Corona + Narrow Incandescent Filament:
+        // Deep chromatic body holds vivid silhouette on snow; HDR glow drives bloom.
+        float bloomFactor = smoothstep(0.18, 0.78, energyIntensity);
+        float hdrGain = 0.85 + u_volBloom * bloomFactor * 1.45;
+        vec3 coronaGlow = colour * (hdrGain * alpha);
 
-        // 5. Lõi tia plasma trắng nóng (White-hot Filament):
-        // Chỉ xuất hiện tập trung ở sợi tia trung tâm (coreFilament) chứ không tràn hết thân
-        float whiteHot = smoothstep(0.35, 0.85, coreFilament * (0.65 + 0.35 * s1.r) * shimmer);
-        bloomColour = mix(bloomColour, vec3(hdrGain * 1.15), whiteHot * 0.75);
+        float whiteHot = smoothstep(0.45, 0.92, coreFilament * (0.65 + 0.35 * s1.r) * shimmer);
+        vec3 hotCore = mix(colour, vec3(1.0, 0.97, 0.90), 0.78) * (hdrGain * 1.35 * whiteHot * alpha);
 
-        finalColor = VFX_ResolveBody(bloomColour, 1.0, alpha);
+        vec3 carrierRgb = colour * 0.48;
+        float carrierCov = clamp(alpha * 0.62, 0.0, 0.82);
+        finalColor = VFX_ResolvePremultiplied(carrierRgb, 1.0, carrierCov,
+                                              coronaGlow + hotCore, 1.0, 1.0);
     }
     else
     {

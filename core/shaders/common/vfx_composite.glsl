@@ -38,16 +38,18 @@ vec3 VFX_TonemapSafeHDR(vec3 hdr)
     if (peak <= 0.0) return vec3(0.0);
 
     // Tone-map the peak once, retain channel ratios, then analytically invert
-    // each target channel. The later per-channel ACES pass reconstructs the
-    // authored hue instead of rolling it toward cyan/white. A genuinely hot
-    // core still becomes white, monotonically, over the same 5..12 range used
-    // by the documented post-process candidate.
+    // each target channel. Because post_process.fs already applies HDR-adaptive
+    // hue restoration above 1.0, keep sub-threshold carrier ramps linear so
+    // internal density structure stays smooth, and blend calibrated residual
+    // inverse-ACES compensation above 1.0 HDR.
     vec3 ratio = hdr / peak;
     ratio = mix(ratio, vec3(1.0), smoothstep(5.0, 12.0, peak));
     vec3 target = ratio * VFX_AcesScalar(peak);
-    return VFX_Finite3(vec3(VFX_AcesInverse(target.r),
-                            VFX_AcesInverse(target.g),
-                            VFX_AcesInverse(target.b)));
+    vec3 inverseSolved = VFX_Finite3(vec3(VFX_AcesInverse(target.r),
+                                          VFX_AcesInverse(target.g),
+                                          VFX_AcesInverse(target.b)));
+    float excessWeight = smoothstep(1.0, 2.4, peak) * 0.45;
+    return mix(hdr, inverseSolved, excessWeight);
 }
 
 vec3 VFX_TonemapSafeEmission(vec3 emissionColor, float gain, float mask)
@@ -61,16 +63,20 @@ vec4 VFX_ResolveBody(vec3 bodyColor, float bodyIntensity, float coverage)
     return vec4(VFX_Finite3(bodyColor * max(bodyIntensity, 0.0)), a);
 }
 
-// Luminous opacity floor for premultiplied emissive VFX:
-// On dark backgrounds (dst ~ 0), (1 - a) * dst ~ 0 so this is invisible.
-// On bright snow/daylight backgrounds (dst ~ (0.85, 0.92, 1.15)), raising alpha
-// smoothly with emission peak blocks the background's complementary channels
-// (e.g. snow's blue) from leaking into the emitter and shifting amber-gold
-// fire/runes into salmon-pink or washing cyan shields into white.
+// Quadratic-onset chroma-weighted luminous opacity for premultiplied VFX:
+//   - On dark backgrounds (dst ~ 0), (1 - a) * dst ~ 0 so dark visuals stay airy.
+//   - On bright snow/daylight backgrounds (dst ~ (0.90, 0.95, 1.12)), alpha'(0) = 0
+//     and max(alpha') <= 0.463 guarantees strictly positive d(out)/dp > +0.42
+//     everywhere: zero dirty grey/brown outer rings and zero mid-tone flattening,
+//     while saturated HDR glow (p >= 1.0) still blocks snow's competing channels.
 float VFX_LuminousOpacity(vec3 glow)
 {
     float peak = max(glow.r, max(glow.g, glow.b));
-    return clamp(peak / (0.36 + peak), 0.0, 0.94);
+    if (peak <= 1e-4) return 0.0;
+    float minC = min(glow.r, min(glow.g, glow.b));
+    float sat  = clamp((peak - minC) / peak, 0.0, 1.0);
+    float p2   = peak * peak;
+    return clamp(0.82 * mix(0.18, 1.0, sat) * (p2 / (1.32 + p2)), 0.0, 0.88);
 }
 
 vec4 VFX_ResolvePremultiplied(vec3 bodyColor, float bodyIntensity,

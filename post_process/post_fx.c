@@ -50,6 +50,7 @@ static Shader compositeShader;
 // Uniform locations — composite
 static int bloomEnabledLoc;
 static int bloomIntensityLoc;
+static int bloomVeilLoc;
 static int bloomTexLoc;
 static int bloomTexelLoc;
 static int chromaticEnabledLoc;
@@ -116,6 +117,8 @@ static float s_burstCurrent;  // decayed strength this frame
 // Uniform locations — bright pass
 static int brightThresholdLoc;
 static int brightExposureLoc;
+static int brightExposureTexLoc;
+static int brightAutoExposureLoc;
 static int brightMaxEnergyLoc;
 static int brightKneeLoc;
 static int brightSourceTexelSizeLoc;
@@ -123,6 +126,7 @@ static float s_bloomMaxEnergy = 0.0f;
 static float s_bloomIntensityOverride = 0.0f;
 static float s_bloomThresholdOverride = 0.0f;
 static float s_bloomKnee = 0.0f; // 0 = shader default
+static float s_bloomVeil = 0.62f;
 static float s_hueRestore = 0.60f;
 static float s_shoulderView = 0.0f;
 static float s_fxaa = 1.0f;
@@ -298,6 +302,8 @@ void PostFX_Init(int width, int height)
 
   brightThresholdLoc = GetShaderLocation(brightShader, "u_threshold");
   brightExposureLoc = GetShaderLocation(brightShader, "u_exposure");
+  brightExposureTexLoc = GetShaderLocation(brightShader, "u_exposureTex");
+  brightAutoExposureLoc = GetShaderLocation(brightShader, "u_autoExposure");
   brightMaxEnergyLoc = GetShaderLocation(brightShader, "u_maxEnergy");
   brightKneeLoc = GetShaderLocation(brightShader, "u_knee");
   brightSourceTexelSizeLoc = GetShaderLocation(brightShader, "u_sourceTexelSize");
@@ -308,6 +314,7 @@ void PostFX_Init(int width, int height)
 
   bloomEnabledLoc = GetShaderLocation(compositeShader, "u_bloomEnabled");
   bloomIntensityLoc = GetShaderLocation(compositeShader, "u_bloomIntensity");
+  bloomVeilLoc = GetShaderLocation(compositeShader, "u_bloomVeil");
   bloomTexLoc = GetShaderLocation(compositeShader, "u_bloomTex");
   bloomTexelLoc = GetShaderLocation(compositeShader, "u_bloomTexel");
   chromaticEnabledLoc = GetShaderLocation(compositeShader, "u_chromaticEnabled");
@@ -698,6 +705,7 @@ void PostFX_Draw(const PostFXConfig *config)
     Tuning_RegisterFloat("bloom_intensity", &s_bloomIntensityOverride, 0.0f);
     Tuning_RegisterFloat("bloom_threshold", &s_bloomThresholdOverride, 0.0f);
     Tuning_RegisterFloat("bloom_knee", &s_bloomKnee, 0.0f);
+    Tuning_RegisterFloat("bloom_veil", &s_bloomVeil, 0.62f);
     Tuning_RegisterFloat("bloom_scatter", &s_bloomScatterOverride, 0.0f);
     Tuning_RegisterFloat("postfx_hue_restore", &s_hueRestore, 0.60f);
     Tuning_RegisterFloat("postfx_shoulder_view", &s_shoulderView, 0.0f);
@@ -747,6 +755,15 @@ void PostFX_Draw(const PostFXConfig *config)
                    SHADER_UNIFORM_FLOAT);
     SetShaderValue(brightShader, brightExposureLoc, &exposureVal,
                    SHADER_UNIFORM_FLOAT);
+    if (brightAutoExposureLoc >= 0)
+      SetShaderValue(brightShader, brightAutoExposureLoc, &s_autoExposure,
+                     SHADER_UNIFORM_FLOAT);
+    if (s_autoExposure > 0.001f && brightExposureTexLoc >= 0)
+    {
+      Texture2D et = SceneTargets_GetExposureTexture();
+      if (et.id != 0)
+        SetShaderValueTexture(brightShader, brightExposureTexLoc, et);
+    }
     SetShaderValue(brightShader, brightMaxEnergyLoc, &s_bloomMaxEnergy,
                    SHADER_UNIFORM_FLOAT);
     float kneeVal = (s_bloomKnee > 0.0f) ? s_bloomKnee : (s_mapProfile.bloomKnee > 0.0f ? s_mapProfile.bloomKnee : 0.0f);
@@ -834,6 +851,8 @@ void PostFX_Draw(const PostFXConfig *config)
     float bloomI = (s_bloomIntensityOverride > 0.0f) ? s_bloomIntensityOverride
                                                      : config->bloomIntensity;
     SetShaderValue(compositeShader, bloomIntensityLoc, &bloomI, SHADER_UNIFORM_FLOAT);
+    if (bloomVeilLoc >= 0)
+      SetShaderValue(compositeShader, bloomVeilLoc, &s_bloomVeil, SHADER_UNIFORM_FLOAT);
     if (bloomTexelLoc >= 0 && bloomTex.texture.width > 0 && bloomTex.texture.height > 0)
     {
       float bloomTexel[2] = {1.0f / (float)bloomTex.texture.width,

@@ -32,9 +32,17 @@ void main() {
         if (lit.a < 0.004) discard;
     }
 
-    // Separate alpha and additive draws share resident particle storage.
+    // Separate alpha, additive, and premultiplied draws share resident storage.
     // lit.a already contains coverage; do not multiply coverage twice.
-    finalColor = (u_blendLaw == 0)
-        ? VFX_ResolveBody(lit.rgb, 1.0, lit.a)
-        : VFX_ResolveEmission(lit.rgb, 1.0, 1.0, lit.a);
+    if (u_blendLaw == 0) {
+        finalColor = VFX_ResolveBody(lit.rgb, 1.0, lit.a);
+    } else if (u_blendLaw == 2) {
+        float corePin = smoothstep(0.72, 0.98, texel.a);
+        vec3 carrier = lit.rgb * 0.55;
+        vec3 coreRgb = mix(lit.rgb, mix(lit.rgb, vec3(1.0, 0.97, 0.90), 0.65) * 1.45, corePin * 0.65);
+        finalColor = VFX_ResolvePremultiplied(carrier, 1.0, clamp(lit.a * 0.52, 0.0, 0.78),
+                                              coreRgb * lit.a, 1.0, 1.0);
+    } else {
+        finalColor = VFX_ResolveEmission(lit.rgb, 1.0, 1.0, lit.a);
+    }
 }

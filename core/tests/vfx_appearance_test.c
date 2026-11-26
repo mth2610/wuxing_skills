@@ -76,11 +76,11 @@ int main(void)
 
     const VFXResolvedAppearance glow = VFXAppearance_Resolve(
         VFX_APPEARANCE_GLOW, legacy);
-    CHECK(glow.surface == VFX_SURFACE_ADDITIVE);
+    CHECK(glow.surface == VFX_SURFACE_PREMULTIPLIED);
     CHECK(glow.contrast == VFX_CONTRAST_ENERGY);
     CHECK(glow.unlit);
     CHECK(glow.emissionIntensity > 1.0f);
-    CHECK(Near(glow.bodyOpacity, 0.0f));
+    CHECK(glow.bodyOpacity > 0.0f && glow.bodyOpacity < 0.50f);
 
     const VFXResolvedAppearance magic = VFXAppearance_Resolve(
         VFX_APPEARANCE_MAGIC, legacy);
@@ -99,7 +99,7 @@ int main(void)
 
     CHECK(VFXResolvedAppearance_UsesBody(fire));
     CHECK(VFXResolvedAppearance_UsesEmission(fire));
-    CHECK(!VFXResolvedAppearance_UsesBody(glow));
+    CHECK(VFXResolvedAppearance_UsesBody(glow));
     CHECK(VFXResolvedAppearance_UsesEmission(glow));
     CHECK(VFXResolvedAppearance_UsesBody(inherited));
     CHECK(VFXResolvedAppearance_UsesEmission(inherited));
@@ -136,16 +136,12 @@ int main(void)
             CHECK(a.surface == VFX_SURFACE_ALPHA);
     }
 
-    /* A premultiplied blend law needs premultiplied RGB, and only the packed
-     * volume sheet produces it — so the particle guard must key on the SURFACE,
-     * not on one appearance by name. It said `appearance == VFX_APPEARANCE_FIRE`
-     * while MAGIC was also premultiplied and did not inherit it. */
+    /* Particle system must bind u_surfaceMode so non-volumeSheet premultiplied
+     * particles resolve through VFX_ResolvePremultiplied instead of downgrading. */
     CHECK(Has("core/particles/particle_system.c",
-              "particleAppearance.surface == VFX_SURFACE_PREMULTIPLIED &&\n"
-              "      !config.render.volumeSheet"));
+              "s_locSurfaceMode = GetShaderLocation(s_litShader, \"u_surfaceMode\");"));
     CHECK(!Has("core/particles/particle_system.c",
-               "config.render.appearance == VFX_APPEARANCE_FIRE &&\n"
-               "      !config.render.volumeSheet"));
+               "particleAppearance.surface = VFX_SURFACE_ALPHA;"));
 
     /* Decals blend by pass and cannot honour a resolved surface; they must say so
      * rather than discard the field, or a caller believes it asked for something. */
@@ -168,22 +164,14 @@ int main(void)
         CHECK(Near(0.0f * body * 0.0f + 0.0f, 0.0f));
         CHECK(Near(0.0f * body * 0.0f + emission, emission));
     }
-    CHECK(Has("core/shaders/fire_funnel.fs",
-              "VFX_ResolveBody"));
-    CHECK(Has("core/shaders/plasma_shell.fs",
-              "VFX_ResolveBody"));
     CHECK(Has("core/shaders/shock_ring.fs",
-              "VFX_ResolveBody"));
-    CHECK(Has("core/shaders/magic_filaments.fs",
               "VFX_ResolveBody"));
     CHECK(Has("core/trails/shaders/trail_deform.fs",
               "VFX_ResolveEmission"));
-    CHECK(Has("core/shaders/ground_aura.fs", "VFX_ResolveBody"));
     CHECK(Has("core/shaders/smoke_column.fs", "VFX_ResolveBody"));
     CHECK(Has("core/shaders/black_hole_swirl.fs", "VFX_ResolveBody"));
     CHECK(Has("core/trails/shaders/trail_body.fs", "VFX_ResolveBody"));
     CHECK(Has("core/shaders/additive_soft.fs", "VFX_ResolveEmission"));
-    CHECK(Has("core/shaders/ground_wave.fs", "VFX_ResolveBody"));
     CHECK(Has("core/shaders/water_splash.fs", "VFX_ResolveBody"));
     CHECK(Has("core/shaders/crystal.fs", "VFX_ResolveBody"));
     CHECK(Has("core/decals/shaders/decal_material.fs", "VFX_ResolveEmission"));

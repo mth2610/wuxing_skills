@@ -945,6 +945,7 @@ void VFXModel_Draw(void) {
     if (hasSpirit) {
         rlDrawRenderBatchActive();
         rlDisableDepthMask();
+        rlDisableBackfaceCulling();
         BeginBlendMode(BLEND_ALPHA_PREMULTIPLY);
         for (int i = 0; i < VFX_MODEL_MAX_INSTANCES; i++) {
             if (!s_instances[i].active) continue;
@@ -953,6 +954,7 @@ void VFXModel_Draw(void) {
         }
         rlDrawRenderBatchActive();
         EndBlendMode();
+        rlEnableBackfaceCulling();
         rlEnableDepthMask();
     }
 }

@@ -137,8 +137,8 @@ void CastGltbcLongChienVuDaSkill(int agentId, Vector3 startPos, Vector3 target, 
     inst->damage       = baseDmg * lvlMult;
     inst->sizeScale    = scale;
 
-    Color flameBody = ColorLerp(ELEMENT_COLOR_FIRE, ORANGE, 0.45f);
-    Color flameGlow = ColorLerp(ORANGE, GOLD, 0.50f);
+    Color flameBody = (Color){ 228, 192, 86, 255 };
+    Color flameGlow = (Color){ 255, 242, 166, 255 };
     int asset = VFX_DragonQi_GetAsset();
 
     for (int j = 0; j < 2; j++) {
@@ -165,7 +165,7 @@ void CastGltbcLongChienVuDaSkill(int agentId, Vector3 startPos, Vector3 target, 
             mp.style         = VFX_MODEL_STYLE_QI_SPIRIT;
             mp.tint          = flameBody;
             mp.glowColor     = flameGlow;
-            mp.glowIntensity = 2.05f;
+            mp.glowIntensity = 3.10f;
             mp.opacity       = 0.80f;
             inst->modelHandles[j] = VFXModel_Spawn(asset, &mp);
             if (inst->modelHandles[j] >= 0) {
@@ -175,8 +175,8 @@ void CastGltbcLongChienVuDaSkill(int agentId, Vector3 startPos, Vector3 target, 
             }
         }
         inst->ribbonXforms[j]  = MatrixTranslate(origin.x, origin.y, origin.z);
-        inst->ribbonHandles[j] = VFX_ComposeTrail(&inst->ribbonXforms[j], VC_MAT_FIRE,
-                                                  0.12f * scale, 0.35f, TRAIL_PRESET_MAIN);
+        inst->ribbonHandles[j] = VFX_ComposeTrail(&inst->ribbonXforms[j], VC_MAT_HOLY,
+                                                  0.12f * scale, 0.35f, TRAIL_PRESET_DRAGON);
     }
 
     VFX_ComposePalmPrint(origin, dir, 1.30f * scale, 0.25f);

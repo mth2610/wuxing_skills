@@ -1473,8 +1473,8 @@ static void TrailPresets_Build(void)
         r->layerCount = 1;
         r->radiusDefault = 0.22f;
         r->additive = true;
-        r->hdrGain = 1.8f;
-        r->bodyOpacity = 0.90f;
+        r->hdrGain = 2.2f;
+        r->bodyOpacity = 0.84f;
         r->tintAlpha = 255;
         r->style = 7.0f;
         r->cap = (Vector2){1.0f, 1.0f};
@@ -1485,10 +1485,10 @@ static void TrailPresets_Build(void)
         r->rollSpeed = 0.8f;
         r->p0 = (Vector4){5.0f, 1.5f, 8.0f, 1.0f};
         r->p1 = (Vector4){2.2f, 1.1f, 3.0f, 1.0f};
-        r->colRamp[0] = (Color){58, 32, 0, 255};
-        r->colRamp[1] = (Color){184, 112, 10, 255};
-        r->colRamp[2] = (Color){255, 192, 74, 255};
-        r->colRamp[3] = (Color){255, 241, 192, 255};
+        r->colRamp[0] = (Color){138, 108, 28, 255};
+        r->colRamp[1] = (Color){224, 188, 84, 255};
+        r->colRamp[2] = (Color){255, 238, 156, 255};
+        r->colRamp[3] = (Color){255, 252, 228, 255};
         r->add = 1.0f;
         r->alpha = 1.0f;
     }

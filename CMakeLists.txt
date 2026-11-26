@@ -374,6 +374,7 @@ foreach(shared_motion_shader
     core/trails/shaders/trail_ribbon_vertex.glsl
     core/trails/shaders/trail_ribbon_gpu.fs
     core/shaders/common/vfx_composite.glsl
+    core/shaders/common/vfx_contrast.glsl
     core/shaders/common/sheet_deform.glsl
     core/shaders/talisman.vs
     core/shaders/talisman.fs)

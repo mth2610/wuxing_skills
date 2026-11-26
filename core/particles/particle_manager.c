@@ -151,9 +151,10 @@ ParticleEmitterHandle ParticleManager_CreateEmitter(const ParticleEmitterDesc *d
         if (ParticleManager_RequiresCpuTexture(&e->desc.particle)) gpuOK = false;
         VFXResolvedAppearance appearance = ParticleManager_ResolveAppearance(&e->desc.particle);
         // Named appearances retain their material compatibility gate. Spatial
-        // INHERIT receivers use explicit alpha/additive GPU buckets.
+        // INHERIT receivers use explicit alpha/additive/premultiplied GPU buckets.
         if (e->desc.particle.render.appearance != VFX_APPEARANCE_INHERIT &&
-            appearance.surface != VFX_SURFACE_ADDITIVE)
+            appearance.surface != VFX_SURFACE_ADDITIVE &&
+            appearance.surface != VFX_SURFACE_PREMULTIPLIED)
             gpuOK = false;
         e->gpu = e->desc.simulationPolicy == PARTICLE_SIM_GPU_ONLY ||
                  (e->desc.simulationPolicy == PARTICLE_SIM_AUTO && gpuOK);
@@ -222,7 +223,8 @@ void ParticleManager_Emit(ParticleEmitterHandle handle, int count)
             bool defaultSpriteColors = p->render.texture.id == 0 &&
                                        p->render.gradient == NULL;
             VFXResolvedAppearance appearance = ParticleManager_ResolveAppearance(p);
-            VFXContrastLayer layer = appearance.surface == VFX_SURFACE_ADDITIVE
+            VFXContrastLayer layer = (appearance.surface == VFX_SURFACE_ADDITIVE ||
+                                      appearance.surface == VFX_SURFACE_PREMULTIPLIED)
                                          ? VFX_CONTRAST_EMISSION
                                          : VFX_CONTRAST_BODY;
             float boost = appearance.emissionIntensity > 0.0f
@@ -247,7 +249,7 @@ void ParticleManager_Emit(ParticleEmitterHandle handle, int count)
                 .initialImpulseNs=p->physics.initialImpulseNs,
                 .initialAccelerationMps2=p->physics.initialAccelerationMps2,
                 .constantForceNewtons=p->physics.constantForceNewtons,
-                .drag=p->physics.spatialMotionOnly?p->drag:0, .blendMode=p->render.blendMode })) {
+                .drag=p->physics.spatialMotionOnly?p->drag:0, .blendMode=(int)appearance.surface })) {
                 if(e->desc.simulationPolicy==PARTICLE_SIM_GPU_ONLY) {
                     e->status=PARTICLE_EMITTER_POOL_EXHAUSTED;
                     TraceLog(LOG_WARNING,"ParticleManager: GPU child emission resources unavailable");

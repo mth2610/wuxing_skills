@@ -204,7 +204,9 @@ vec4 ResolvePass(vec3 colour, float inten, float vAlpha, float gain)
     vec3 radiance = VFX_Finite3(colour * max(gain, 0.0) * cover);
     if (u_tonemapSafe > 0.5)
         radiance = TrailToneMapSafeRadiance(radiance);
-    return vec4(radiance, cover);
+    return VFX_ResolvePremultiplied(clamp(colour, 0.0, 1.0) * 0.52, 1.0,
+                                    clamp(cover * 0.68, 0.0, 0.86),
+                                    radiance, 1.0, 1.0);
 }
 
 vec4 ResolvePassEx(vec3 bodyCol, vec3 emissiveCol, float inten, float vAlpha, float gain, bool isAdditive)
@@ -217,11 +219,15 @@ vec4 ResolvePassEx(vec3 bodyCol, vec3 emissiveCol, float inten, float vAlpha, fl
         if (coverage < 1e-4) discard;
         return VFX_ResolveBody(bodyCol, 1.0, coverage);
     }
-    float outAlpha = isAdditive ? 0.0 : a;
     vec3 radiance = VFX_Finite3(emissiveCol * max(gain, 0.0) * a);
     if (u_tonemapSafe > 0.5)
         radiance = TrailToneMapSafeRadiance(radiance);
-    return vec4(radiance, outAlpha);
+    // Provide chromatic carrier coverage even for procedural additive styles
+    // (drawn under BLEND_ALPHA_PREMULTIPLY) so complementary blue snow cannot
+    // leak through and turn fire/gold ribbons into muddy peach.
+    float carrierCov = clamp(a * (isAdditive ? 0.68 : 0.78), 0.0, 0.88);
+    return VFX_ResolvePremultiplied(bodyCol * 0.55, 1.0, carrierCov,
+                                    radiance, 1.0, 1.0);
 }
 
 void main()

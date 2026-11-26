@@ -562,15 +562,19 @@ void VFX_ComposeCentripetalSlashEx(Vector3 origin, float yaw, Color coreColor, C
         planarPts[i].v = u;
     }
 
-    BeginBlendMode(BLEND_ADDITIVE);
+    // Pass 1: BODY (BLEND_ALPHA) — deep chromatic crescent carrier for snow/daylight silhouette
+    BeginBlendMode(BLEND_ALPHA);
     rlDisableDepthMask();
-
     DrawRibbonStrip(outerPts, pointCount, ribbonTex, camera);
-    DrawRibbonStrip(innerPts, pointCount, ribbonTex, camera);
-
     Vector3 slashPlaneNormal = Vector3Normalize((Vector3){ 0.22f, 0.95f, 0.20f });
     DrawRibbonStripEx(planarPts, pointCount, ribbonTex, camera, RIBBON_FIXED_NORMAL, slashPlaneNormal);
+    rlDrawRenderBatchActive();
+    EndBlendMode();
 
+    // Pass 2: EMISSION (BLEND_ADDITIVE) — narrow incandescent cutting edge over the chromatic body
+    BeginBlendMode(BLEND_ADDITIVE);
+    DrawRibbonStrip(innerPts, pointCount, ribbonTex, camera);
+    rlDrawRenderBatchActive();
     rlEnableDepthMask();
     EndBlendMode();
 

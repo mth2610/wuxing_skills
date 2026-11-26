@@ -59,7 +59,7 @@ int main(void)
     static char effectMatBuf[24000], effectVsBuf[12000], crystalMatBuf[24000];
     static char generatorBuf[30000], generatedBuf[24000], compositeBuf[18000];
     static char headerBuf[30000], implBuf[40000];
-    static char fixtureBuf[70000];
+    static char fixtureBuf[512000];
     const char *effectMat = ReadFile("core/shading/materials/effect_material.mat",
                                      effectMatBuf, sizeof(effectMatBuf));
     const char *effectVs = ReadFile("core/shaders/effect_material.vs",

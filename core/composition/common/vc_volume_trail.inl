@@ -251,7 +251,7 @@ static int VolumeTrail_Spawn(VC_VolumeTrail *c, int slot, const Matrix *followTr
     cfg.layerCount = 2;
     cfg.uvMetresPerTile = (s_volTrailTile > 0.05f) ? s_volTrailTile : 0.05f;
     cfg.uvScrollSpeed = k_volumeTrailScroll[c->kind] * s_volTrailScrollMul;
-    cfg.blendMode = (c->kind == VFX_VOLUME_FIRE || c->kind == VFX_VOLUME_ENERGY) ? BLEND_ADDITIVE : BLEND_ALPHA;
+    cfg.blendMode = (c->kind == VFX_VOLUME_FIRE || c->kind == VFX_VOLUME_ENERGY) ? BLEND_ALPHA_PREMULTIPLY : BLEND_ALPHA;
     cfg.useCustomBlendMode = true;
 
     cfg.minVertexDistance = 0.005f;
@@ -386,7 +386,7 @@ static void VC_VolumeTrail_Update(float dt)
             if (c->kind != targetKind)
             {
                 c->kind = targetKind;
-                t->blendMode = (c->kind == VFX_VOLUME_FIRE || c->kind == VFX_VOLUME_ENERGY) ? BLEND_ADDITIVE : BLEND_ALPHA;
+                t->blendMode = (c->kind == VFX_VOLUME_FIRE || c->kind == VFX_VOLUME_ENERGY) ? BLEND_ALPHA_PREMULTIPLY : BLEND_ALPHA;
                 const VFX_ElementMaterial *m = VFX_Material(c->matId);
                 if (m != NULL)
                 {

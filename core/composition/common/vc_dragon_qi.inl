@@ -28,10 +28,10 @@ int VFX_ComposeDragonQi(Vector3 origin, VC_MaterialId material)
     params.fadeInTime    = 0.25f;
     params.fadeOutTime   = 0.35f;
     params.style         = VFX_MODEL_STYLE_QI_SPIRIT;
-    params.tint          = (Color){ 242, 130, 38, 255 };
-    params.glowColor     = (Color){ 255, 192, 58, 255 };
-    params.glowIntensity = 2.15f;
-    params.opacity       = 0.84f;
+    params.tint          = (Color){ 228, 192, 86, 255 };
+    params.glowColor     = (Color){ 255, 242, 166, 255 };
+    params.glowIntensity = 3.10f;
+    params.opacity       = 0.80f;
 
     return VFXModel_Spawn(asset, &params);
 }
@@ -121,14 +121,14 @@ void VFX_ComposeDragonSlam(Vector3 impactPos, float scale, bool withGroundCrack)
 {
     float sc = (scale > 0.1f) ? scale : 1.0f;
     Vector3 gp = { impactPos.x, MapManager_GetGroundHeightAt(impactPos.x, impactPos.z) + 0.04f, impactPos.z };
-    VFX_ComposeFireballBurst(impactPos, VC_MAT_FIRE, 1.05f * sc, 0.92f);
-    VFX_SpawnShockRing(gp, (Vector3){ 0.0f, 1.0f, 0.0f }, VC_MAT_FIRE, 2.2f * sc, 0.34f);
-    VFX_ComposeEmberBurst(impactPos, (Vector3){ 0.0f, 1.0f, 0.0f }, VC_MAT_FIRE, 1.25f * sc, 0.95f);
+    VFX_ComposeFireballBurst(impactPos, VC_MAT_HOLY, 1.05f * sc, 0.92f);
+    VFX_SpawnShockRing(gp, (Vector3){ 0.0f, 1.0f, 0.0f }, VC_MAT_HOLY, 2.2f * sc, 0.34f);
+    VFX_ComposeEmberBurst(impactPos, (Vector3){ 0.0f, 1.0f, 0.0f }, VC_MAT_HOLY, 1.25f * sc, 0.95f);
     if (withGroundCrack) {
         VFX_ComposeEarthCrackRadial(gp, 1.95f * sc, NULL);
     }
     Wind_SpawnRadialBlast(impactPos, 3.2f * sc, 8.5f, 0.22f);
-    VFXLight_Spawn(impactPos, (Color){ 255, 165, 48, 255 }, 4.2f * sc, 0.35f, VFX_PRIORITY_HIGH_ULTIMATE);
+    VFXLight_Spawn(impactPos, (Color){ 255, 240, 162, 255 }, 4.2f * sc, 0.35f, VFX_PRIORITY_HIGH_ULTIMATE);
 }
 
 void VFX_ComposePalmPrint(Vector3 pos, Vector3 normal, float radius, float duration)
@@ -136,8 +136,8 @@ void VFX_ComposePalmPrint(Vector3 pos, Vector3 normal, float radius, float durat
     float r = (radius > 0.1f) ? radius : 1.4f;
     float d = (duration > 0.05f) ? duration : 0.32f;
     Vector3 n = (Vector3Length(normal) > 1e-4f) ? Vector3Normalize(normal) : (Vector3){ 0.0f, 1.0f, 0.0f };
-    VFX_SpawnShockRing(pos, n, VC_MAT_FIRE, r, d);
-    VFX_SpawnShockRing(pos, n, VC_MAT_FIRE, r * 0.58f, d * 0.78f);
-    VFX_ComposeEmberBurst(pos, n, VC_MAT_FIRE, r * 0.62f, 0.85f);
-    VFXLight_Spawn(pos, (Color){ 255, 182, 56, 255 }, r * 2.1f, d, VFX_PRIORITY_HIGH_ULTIMATE);
+    VFX_SpawnShockRing(pos, n, VC_MAT_HOLY, r, d);
+    VFX_SpawnShockRing(pos, n, VC_MAT_HOLY, r * 0.58f, d * 0.78f);
+    VFX_ComposeEmberBurst(pos, n, VC_MAT_HOLY, r * 0.62f, 0.85f);
+    VFXLight_Spawn(pos, (Color){ 255, 242, 168, 255 }, r * 2.1f, d, VFX_PRIORITY_HIGH_ULTIMATE);
 }

@@ -10,6 +10,7 @@ uniform vec2 u_bloomTexel;
 // Cấu hình
 uniform float u_bloomEnabled;
 uniform float u_bloomIntensity;
+uniform float u_bloomVeil;
 
 uniform float u_chromaticEnabled;
 uniform float u_chromaticStrength;
@@ -91,8 +92,13 @@ vec3 toneMapScene(vec3 x) {
     float peak = max(x.r, max(x.g, x.b));
     if (peak <= 0.0) return perChannel;
 
-    float w = clamp(u_hueRestore, 0.0, 1.0);
-    vec3 hueKept = mix(x / peak, vec3(1.0), smoothstep(5.0, 12.0, peak)) * acesFilmicScalar(peak);
+    float baseW = clamp(u_hueRestore, 0.0, 1.0);
+    // Keep SDR terrain/foliage identical (baseW ~ 0.62) while ramping HDR
+    // emissive highlights toward 0.90 hue preservation so glowing VFX retain
+    // their elemental chroma without ACES per-channel skew.
+    float hdrLift = smoothstep(1.0, 3.2, peak);
+    float w = mix(baseW, max(baseW, 0.90), hdrLift);
+    vec3 hueKept = mix(x / peak, vec3(1.0), smoothstep(4.5, 14.0, peak)) * acesFilmicScalar(peak);
     return mix(perChannel, hueKept, w);
 }
 
@@ -184,18 +190,7 @@ void main() {
         }
     }
 
-    // 2. Bloom (4 bilinear taps = 3x3 tent filter)
-    if (u_bloomEnabled > 0.5) {
-        vec4 d = u_bloomTexel.xyxy * vec4(-0.5, 0.5, 0.5, -0.5);
-        vec3 bloomAvg = (texture(u_bloomTex, uv + d.xy).rgb
-                       + texture(u_bloomTex, uv + d.zy).rgb
-                       + texture(u_bloomTex, uv + d.xw).rgb
-                       + texture(u_bloomTex, uv + d.zw).rgb) * 0.25;
-        if (any(isnan(bloomAvg)) || any(isinf(bloomAvg))) bloomAvg = vec3(0.0);
-        sceneCol.rgb += clamp(bloomAvg, vec3(0.0), vec3(64.0)) * u_bloomIntensity;
-    }
-
-    // 2b. Tone mapping
+    // Resolve effective camera exposure once so bloom glare veil and tonemapping agree
     float exposure = u_exposure;
     if (u_autoExposure > 0.0) {
         float autoE = texture(u_exposureTex, vec2(0.5)).r;
@@ -203,8 +198,36 @@ void main() {
             exposure *= mix(1.0, clamp(autoE, 0.1, 10.0), u_autoExposure);
         }
     }
+    exposure = clamp(exposure, 0.0, 16.0);
+
+    // 2. Bloom (4 bilinear taps = 3x3 tent filter) + Optical Chromatic Glare Veil
+    if (u_bloomEnabled > 0.5) {
+        vec4 d = u_bloomTexel.xyxy * vec4(-0.5, 0.5, 0.5, -0.5);
+        vec3 bloomAvg = (texture(u_bloomTex, uv + d.xy).rgb
+                       + texture(u_bloomTex, uv + d.zy).rgb
+                       + texture(u_bloomTex, uv + d.xw).rgb
+                       + texture(u_bloomTex, uv + d.zw).rgb) * 0.25;
+        if (any(isnan(bloomAvg)) || any(isinf(bloomAvg))) bloomAvg = vec3(0.0);
+        vec3 bloom = clamp(bloomAvg, vec3(0.0), vec3(64.0)) * u_bloomIntensity;
+        float bPeak = max(bloom.r, max(bloom.g, bloom.b));
+        if (bPeak > 1e-4 && u_bloomVeil > 0.001) {
+            float bMin = min(bloom.r, min(bloom.g, bloom.b));
+            float bSat = clamp((bPeak - bMin) / bPeak, 0.0, 1.0);
+            float bgLum = dot(max(sceneCol.rgb, vec3(0.0)), vec3(0.2126, 0.7152, 0.0722)) * exposure;
+            float veil = u_bloomVeil * bSat * smoothstep(0.28, 0.92, bgLum) * (bPeak / (0.38 + bPeak));
+            vec3 bTint = bloom / bPeak;
+            sceneCol.rgb *= mix(vec3(1.0), 0.32 + 0.68 * bTint, clamp(veil, 0.0, 0.62));
+        }
+        sceneCol.rgb += bloom;
+    }
+
+    // 2b. Tone mapping
     if (any(isnan(sceneCol.rgb)) || any(isinf(sceneCol.rgb))) sceneCol.rgb = vec3(0.0);
-    vec3 exposedScene = clamp(sceneCol.rgb, vec3(0.0), vec3(64.0)) * clamp(exposure, 0.0, 16.0);
+    vec3 exposedScene = clamp(sceneCol.rgb, vec3(0.0), vec3(64.0)) * exposure;
+    float exposedPeak = max(exposedScene.r, max(exposedScene.g, exposedScene.b));
+    float exposedMin  = min(exposedScene.r, min(exposedScene.g, exposedScene.b));
+    float exposedSat  = (exposedPeak > 1e-4) ? clamp((exposedPeak - exposedMin) / exposedPeak, 0.0, 1.0) : 0.0;
+    float emissiveProtect = smoothstep(1.05, 2.2, exposedPeak) * smoothstep(0.12, 0.40, exposedSat);
     if (u_tonemapEnabled > 0.5) {
         sceneCol.rgb = toneMapScene(exposedScene);
     }
@@ -222,11 +245,12 @@ void main() {
         const vec3 LUMA_COEFF = vec3(0.2126, 0.7152, 0.0722);
         float luma = dot(gradedCol, LUMA_COEFF);
 
-        float satProtection = 1.0 - 0.32 * smoothstep(0.58, 0.96, luma);
-        float effSat = mix(1.0, u_saturation, satProtection);
+        float satProtection = 1.0 - 0.32 * smoothstep(0.58, 0.96, luma) * (1.0 - emissiveProtect);
+        float effSat = mix(1.0, max(u_saturation, mix(u_saturation, 1.0, emissiveProtect)), satProtection);
         gradedCol = mix(vec3(luma), gradedCol, effSat);
 
-        gradedCol *= mix(u_shadowTint, u_highlightTint, smoothstep(0.0, 1.0, luma));
+        vec3 toneTint = mix(u_shadowTint, mix(u_highlightTint, vec3(1.0), emissiveProtect * 0.85), smoothstep(0.0, 1.0, luma));
+        gradedCol *= toneTint;
         sceneCol.rgb = clamp(gradedCol * u_colorTint, 0.0, 1.0);
     }
 

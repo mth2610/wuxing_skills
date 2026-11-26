@@ -56,13 +56,11 @@ int main(void)
 
     failed += Require(shader, "uniform vec2 u_sourceTexelSize",
                       "bright prefilter needs full-resolution source texel size");
-    failed += Require(shader, "for (int y = 0; y < 4; ++y)",
-                      "bright prefilter must gather the complete quarter-res source cell");
-    failed += Require(shader, "for (int x = 0; x < 4; ++x)",
-                      "bright prefilter must gather horizontally as well as vertically");
-    failed += Require(shader, "bestBrightness",
+    failed += Require(shader, "for (int i = 0; i < 5; ++i)",
+                      "bright prefilter must gather the 5-tap Karis cross across the 4x4 cell");
+    failed += Require(shader, "bestRawBrightness",
                       "bright prefilter must retain the strongest HDR sample");
-    failed += Require(shader, "sampleColor = texture(texture0, fragTexCoord + cellOffset).rgb",
+    failed += Require(shader, "texture(texture0, fragTexCoord + cellOffset).rgb",
                       "bright prefilter must sample the HDR scene before extraction");
     failed += Require(postFx, "brightSourceTexelSizeLoc",
                       "post FX must cache the thin-emitter prefilter uniform");

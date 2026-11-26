@@ -1004,14 +1004,16 @@ void GpuParticleSystem_DrawLayer(Camera3D camera, Texture2D texture, int layer)
         return;
     }
     unsigned int combinedMask = s_blendMask | EmissionGpu_BlendMask();
-    for (int blend = VFX_BLEND_ALPHA; blend <= VFX_BLEND_ADDITIVE; blend++) {
+    for (int blend = VFX_BLEND_ALPHA; blend <= VFX_BLEND_PREMULTIPLIED; blend++) {
         if (!(combinedMask & (1u << blend)) ||
             (layer == 1 && blend != VFX_BLEND_ALPHA) ||
-            (layer == 2 && blend != VFX_BLEND_ADDITIVE))
+            (layer == 2 && blend == VFX_BLEND_ALPHA))
             continue;
         s_drawBlend = blend;
         rlDrawRenderBatchActive();
-        BeginBlendMode(blend == VFX_BLEND_ALPHA ? BLEND_ALPHA : BLEND_ADDITIVE);
+        BeginBlendMode(blend == VFX_BLEND_ALPHA        ? BLEND_ALPHA
+                       : blend == VFX_BLEND_PREMULTIPLIED ? BLEND_ALPHA_PREMULTIPLY
+                                                          : BLEND_ADDITIVE);
         GpuParticleSystem_DrawPass(camera, texture);
         if (EmissionGpu_HasChildren()) {
             s_drawingChildren = true;

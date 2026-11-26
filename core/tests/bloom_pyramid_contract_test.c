@@ -87,10 +87,9 @@ int main(void)
     if (!up) up = ReadFile("core/shaders/bloom_upsample.fs");
 
     /* ---- 1. Pyramid depth ------------------------------------------------ */
-    /* 5 levels below the 1/4 bright target = 6 total, reaching 1/128. Anything
-     * shallower cannot produce a wide bleed no matter how the mix is tuned. */
-    failed += Require(postFx, "#define DUAL_FILTER_LEVELS 5",
-                      "bloom pyramid must keep 5 levels below the 1/4 bright pass");
+    /* 4 levels below the 1/4 bright target = 5 total, reaching 1/64. */
+    failed += Require(postFx, "#define DUAL_FILTER_LEVELS 4",
+                      "bloom pyramid must keep 4 levels below the 1/4 bright pass");
     failed += Require(postFx, "s_dfLevels",
                       "the allocated level count must be resolved at init, not assumed");
     failed += Require(postFx, "if (w < 4 || h < 4)",
@@ -105,7 +104,7 @@ int main(void)
                       "scatter must be reachable from the public config");
     /* The downsample must still overwrite (mixAlpha < 0) — blending there would
      * accumulate the previous frame's pyramid, since nothing clears these. */
-    failed += Require(postFx, "dstW, dstH,\n                     config, karis, -1.0f",
+    failed += Require(postFx, "dstW, dstH,\n                     (i == 0) ? config : NULL, karis, -1.0f",
                       "the downsample pass must overwrite, not blend");
 
     /* Numeric: a fold is a lerp, so folding a level into itself is a no-op and
@@ -129,7 +128,7 @@ int main(void)
                       "the bright pass must use the asymptotic soft ceiling");
     failed += Require(bright, "uniform float u_exposure",
                       "bloom threshold must be evaluated in camera exposure space");
-    failed += Require(bright, "* max(u_exposure, 0.0001)",
+    failed += Require(bright, "float baseExp = max(u_exposure, 0.0001)",
                       "exposure must affect bloom classification without writing exposed HDR");
     failed += Require(postFx, "brightExposureLoc",
                       "post FX must upload exposure to the bright prefilter");
@@ -144,16 +143,11 @@ int main(void)
             failed++;
         }
     }
-    failed += Require(bright, "col.rgb * weight * 2.2 * coverage",
+    failed += Require(bright, "col * (weight * 2.2 * coverage)",
                       "the historical extraction gain must stay, or every effect dims ~2x");
-    /* The max-tap prefilter preserves a thin feature's PRESENCE but inflates its
-     * ENERGY by up to 16x (one hot texel treated as a full 4x4 cell). The old
-     * hard clamp hid that; lifting the ceiling exposed it as thin lightning
-     * blooming into a fat white tube. Coverage scales the energy back without
-     * touching fully-lit cells. */
-    failed += Require(bright, "float coverage = sqrt(max(brightCount / 16.0, 1.0 / 16.0));",
+    failed += Require(bright, "float coverage = sqrt(max(brightCount * 0.20, 0.0625));",
                       "thin features must be energy-corrected by cell coverage");
-    failed += Require(bright, "if (sampleBrightness > u_threshold) brightCount += 1.0;",
+    failed += Require(bright, "brightCount += step(u_threshold, tapBrightness);",
                       "coverage must be counted against the same threshold the pass uses");
 
     /* Numeric: coverage must leave a FULL cell untouched (that is the whole
@@ -206,14 +200,14 @@ int main(void)
                       "the downsample must expose the firefly weighting switch");
     failed += Require(down, "1.0 + Luma(g0)",
                       "Karis weighting must divide by 1+luma per tap group");
-    failed += Require(down, "/ max(wSum, 1e-5)",
+    failed += Require(down, "invWSum = 1.0 / max(w0 + w1 + w2 + w3 + w4, 1e-5)",
                       "Karis weights must be renormalised or large bright areas dim");
     failed += Require(postFx, "float karis = (i == 0) ? s_bloomKaris : 0.0f",
                       "Karis must run on the first downsample only");
-    failed += Require(down, "vec2(-2.0,  2.0) * t",
+    failed += Require(down, "vec2(-t2.x,  t2.y)",
                       "the downsample must keep the 13-tap footprint");
-    failed += Require(up, "* 4.0",
-                      "the upsample must keep the 3x3 tent's centre weight");
+    failed += Require(up, "vec2 h = t * 0.5",
+                      "the upsample must keep the 4-tap bilinear tent filter");
 
     /* Numeric: the renormalised form leaves a uniformly bright cell EXACTLY
      * unchanged (so a big glow does not dim) while pulling down a lone spike
@@ -267,8 +261,8 @@ int main(void)
     if (!composite) composite = ReadFile("core/shaders/post_process.fs");
     failed += Require(composite, "uniform vec2 u_bloomTexel",
                       "the composite must know the bloom target's texel size");
-    failed += Require(composite, "bloomSum / 16.0",
-                      "the composite must reconstruct the quarter-res bloom with a tent");
+    failed += Require(composite, "vec4 d = u_bloomTexel.xyxy * vec4(-0.5, 0.5, 0.5, -0.5);",
+                      "the composite must reconstruct the quarter-res bloom with a 4-tap bilinear tent");
     failed += Reject(composite, "texture(u_bloomTex, uv).rgb * u_bloomIntensity",
                      "a single bilinear fetch magnifies a quarter-res target into blocks");
     failed += Require(postFx, "bloomTexelLoc",

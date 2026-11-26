@@ -821,12 +821,9 @@ _Inline helpers / macros only — see header._
   void CrystalMaterialInstanced_Begin(CrystalMaterialInstanced mat);
   void CrystalMaterialInstanced_SetGrowProgress(CrystalMaterialInstanced mat, float progress);
   void CrystalMaterialInstanced_End(void);
-  void PlasmaMaterial_Load(PlasmaMaterial *outMat, const PlasmaMaterialParams *params);
-  void PlasmaMaterial_Begin(PlasmaMaterial mat);
-  void PlasmaMaterial_End(void);
 ```
 **Enums:** MaterialPreset { MAT_FIRE,MAT_ICE,MAT_WATER,MAT_PORTAL,MAT_ROCK,MAT_METAL,MAT_GLASS,MAT_CUSTOM };VfxMaterialClass { VFX_MAT_CLASS_EMISSIVE,VFX_MAT_CLASS_ABSORPTIVE } EffectMaterialGeometryMode { EFFECT_MATERIAL_GEOMETRY_MESH,EFFECT_MATERIAL_GEOMETRY_IMMEDIATE }
-**Structs** (fields in header): EffectMaterialParams, RadiantMaterialConfig, AbsorptiveMaterialConfig, EffectMaterialVFXOutput, EffectMaterial, CrystalMaterialParams, CrystalMaterial, PlasmaMaterialParams, PlasmaMaterial, VfxParamDesc
+**Structs** (fields in header): EffectMaterialParams, RadiantMaterialConfig, AbsorptiveMaterialConfig, EffectMaterialVFXOutput, EffectMaterial, CrystalMaterialParams, CrystalMaterial, VfxParamDesc
 
 ### `core/geometry/procedural_mesh_utils.h`
 ```c

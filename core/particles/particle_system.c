@@ -445,9 +445,6 @@ void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int r
                                    : 1.0f,
           .emissionThreshold = 1.0f,
           .unlit = config.render.unlit != 0});
-  if (particleAppearance.surface == VFX_SURFACE_PREMULTIPLIED &&
-      !config.render.volumeSheet)
-    particleAppearance.surface = VFX_SURFACE_ALPHA;
   p->blendMode = (int)particleAppearance.surface;
   p->unlit = particleAppearance.unlit ? 1 : 0;
   p->contrastProfile = particleAppearance.contrast;
@@ -480,7 +477,7 @@ void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int r
     }
     p->volumeSheet = 0;
   }
-  if (p->blendMode == VFX_BLEND_ADDITIVE)
+  if (p->blendMode == VFX_BLEND_ADDITIVE || p->blendMode == VFX_BLEND_PREMULTIPLIED)
     p->emissiveBoost = VFXContrast_ApplyEmissionIntensity(
         p->emissiveBoost, p->contrastProfile);
   p->radiusCurve = config.radiusCurve;
@@ -1166,6 +1163,7 @@ static int s_locSixWayLighting = -1, s_locSixWayTexB = -1,
 static int s_locNormalTex = -1;
 static int s_locUseMotionVectors = -1, s_locMotionTex = -1, s_locMotionWarp = -1;
 static int s_locTime = -1;
+static int s_locSurfaceMode = -1;
 
 #define PARTICLE_MAX_VFX_LIGHTS 4
 
@@ -1292,6 +1290,7 @@ static void ParticleLighting_Begin(Camera3D camera)
       s_locMotionTex = GetShaderLocation(s_litShader, "u_motionTex");
       s_locMotionWarp = GetShaderLocation(s_litShader, "u_motionWarp");
       s_locTime = GetShaderLocation(s_litShader, "u_time");
+      s_locSurfaceMode = GetShaderLocation(s_litShader, "u_surfaceMode");
     }
     else
     {
@@ -1802,6 +1801,8 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
         BeginBlendMode(drawBlend == VFX_BLEND_ADDITIVE        ? BLEND_ADDITIVE
                        : drawBlend == VFX_BLEND_PREMULTIPLIED ? BLEND_ALPHA_PREMULTIPLY
                                                               : BLEND_ALPHA);
+        if (s_litActive && s_locSurfaceMode >= 0)
+          SetShaderValue(s_litShader, s_locSurfaceMode, &drawBlend, SHADER_UNIFORM_INT);
         curBlend = drawBlend;
       }
       if (s_litActive)

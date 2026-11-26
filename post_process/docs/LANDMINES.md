@@ -184,6 +184,12 @@ Debugging lessons learned in post-processing. Format: **Symptom → Cause → Ru
 - **Cause:** The temporal resolve reprojected the entire frame using the regional soft-particle depth snapshot. Texels outside the requested rectangle could contain older depth, and the shader retained substantial history weight during movement.
 - **Rule:** Select AA before setting the scene projection. Use spatial AA with zero projection jitter during camera motion. Invalidate history on pose changes and resume same-pixel HDR accumulation after the camera settles (`taa.c`).
 
+### Bloom extraction decoupled from auto-exposure & pure additive bloom on snow
+
+- **Symptom:** On bright snow maps (`mau_son`), diffuse snow self-blooms into a milky veil while colored VFX halos turn faint/white.
+- **Cause:** `bloom_bright.fs` evaluated thresholds using raw `local.exposure` without `u_exposureTex` (`autoExposure`), picked bleached white-core `peakCol` for 65% of halo RGB, and `post_process.fs` added bloom purely additively onto `HDR ~ 1.0` snow where ACES slope is compressed 5×.
+- **Rule:** Bind `u_exposureTex` + `u_autoExposure` into `bloom_bright.fs`, lift thresholds gently for achromatic diffuse snow, separate peak thin-emitter energy from corona chromaticity (`chromaMatchedPeak`), and apply the chroma-weighted optical glare veil (`u_bloomVeil`) only on bright backgrounds (`bgLum > 0.28`, zero change on dark arenas). Guard: `core/tests/vfx_snow_radiance_contract_test.c`.
+
 ## Patch Log
 
 | Date | Editor | Section edited | Based on which source | Tier |

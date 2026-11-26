@@ -4,103 +4,108 @@ in vec2 fragTexCoord;
 in vec4 fragColor;
 
 uniform sampler2D texture0;
+uniform sampler2D u_exposureTex;
 uniform float u_threshold;
-// Exposure is applied only for threshold/weight decisions. The written bloom
-// colour stays in raw scene-linear HDR so post_process.fs applies exposure once
-// to scene+bloom together (no double exposure in the pyramid).
 uniform float u_exposure;
-// Bloom is authored at quarter resolution, but the scene source is full size.
-// A single sample here would skip a one-pixel HDR mesh core completely. This
-// footprint gathers the full 4x4 source-pixel cell before thresholding.
+uniform float u_autoExposure;
 uniform vec2 u_sourceTexelSize;
-// SOFT ceiling on how much energy one pixel may contribute to the bloom.
-//
-// This used to be a HARD clamp at 4.0: past it, raising a particle's
-// emissiveBoost changed nothing at all, because every pixel of the core was
-// already cut to the same length. That was the real trần on "make the core glow
-// harder". It is now an asymptote instead — strictly increasing, so more
-// emissive always reads as more bloom, with diminishing returns rather than a
-// wall. Isolated fireflies are handled where they belong, by the Karis-weighted
-// first downsample (bloom_downsample.fs, u_karis), which can tell a one-texel
-// spike from a genuinely bright core; this shader cannot.
-// tuning.cfg -> bloom_max_energy. <= 0 falls back to the default below.
 uniform float u_maxEnergy;
-// Width of the smooth ramp below the threshold. Wider = bloom fades in over a
-// range of brightness instead of switching on, which is most of what stops a
-// moving highlight from crawling. tuning.cfg -> bloom_knee.
 uniform float u_knee;
 
 out vec4 finalColor;
 
 void main() {
-    // Preserve sub-pixel / thin HDR features (lightning cores, rune lines,
-    // mesh glints) while keeping bloom itself at quarter resolution. The
-    // brightest source sample owns the prefilter; the Karis-weighted downsample
-    // that follows is the firefly guard, so this cannot inject an unbounded
-    // spike into the blur.
-    vec3 col = vec3(0.0);
-    float bestBrightness = -1.0;
-    float brightCount = 0.0;
-    for (int y = 0; y < 4; ++y) {
-        for (int x = 0; x < 4; ++x) {
-            vec2 cellOffset = (vec2(float(x), float(y)) - vec2(1.5)) * u_sourceTexelSize;
-            vec3 sampleColor = texture(texture0, fragTexCoord + cellOffset).rgb;
-            float sampleBrightness = max(sampleColor.r, max(sampleColor.g, sampleColor.b)) * max(u_exposure, 0.0001);
-            if (sampleBrightness > bestBrightness) {
-                bestBrightness = sampleBrightness;
-                col = sampleColor;
-            }
-            if (sampleBrightness > u_threshold) brightCount += 1.0;
+    float baseExp = max(u_exposure, 0.0001);
+    float expAchromatic = baseExp;
+    if (u_autoExposure > 0.0) {
+        float autoE = texture(u_exposureTex, vec2(0.5)).r;
+        if (!isnan(autoE) && !isinf(autoE) && autoE > 0.0) {
+            expAchromatic *= mix(1.0, clamp(autoE, 0.1, 10.0), u_autoExposure);
         }
     }
-    // How much of the 4x4 cell is actually lit. Taking the max above preserves a
-    // one-pixel feature's PRESENCE, but on its own it also inflates that
-    // feature's ENERGY by up to 16x, because a single hot texel is then treated
-    // as though it filled the cell. While the old hard clamp existed that
-    // inflation was capped and invisible; lifting the ceiling exposed it, and a
-    // thin lightning filament bloomed into a fat white tube with its blue core
-    // washed out.
-    //
-    // sqrt, not linear: linear coverage is energy-exact but reduces a one-pixel
-    // core to 1/16, which is how thin emitters vanished from bloom in the first
-    // place (core/docs/LANDMINES.md). sqrt(1/16) = 1/4 keeps them clearly
-    // present while removing most of the over-contribution.
-    //
-    // A FULLY covered cell is multiplied by exactly 1.0 — but that is not the
-    // same as "broad glows are unaffected", and the difference was measured,
-    // not assumed: a large emissive body still loses roughly 10-15% of its
-    // bloom, because its rim and its mid-brightness regions are partially
-    // covered cells too. bloomIntensity is the knob that compensates; the point
-    // of this factor is that thin and broad features now scale TOGETHER, so one
-    // intensity setting can serve both.
-    float coverage = sqrt(max(brightCount / 16.0, 1.0 / 16.0));
-
-    // 1. Tính toán độ sáng dựa trên kênh màu lớn nhất (max-channel) để các màu bão hòa (lam, tím) cũng bloom rực rỡ
-    float brightness = max(col.r, max(col.g, col.b)) * max(u_exposure, 0.0001);
-
-    // 2. Thuật toán chống ảo ảnh cho vật thể mảnh (Knee Anti-Aliasing)
-    // Tạo một vùng đệm mượt mờ quanh ngưỡng threshold để triệt tiêu răng cưa
     float knee = (u_knee > 0.0) ? u_knee : 0.15;
+
+    vec3 peakCol = vec3(0.0);
+    vec3 weightedCol = vec3(0.0);
+    float weightSum = 0.0;
+    float bestRawBrightness = 0.0;
+    float bestEffectiveBrightness = 0.0;
+    float brightCount = 0.0;
+
+    // 5-tap Karis cross (center + 4 diagonal bilinear taps across the 4x4 cell):
+    // preserves 1-pixel hot HDR emitters while cutting prefilter texture fetches by 44%.
+    const vec2 kOffsets[5] = vec2[5](
+        vec2( 0.00,  0.00),
+        vec2(-0.85, -0.85),
+        vec2( 0.85, -0.85),
+        vec2(-0.85,  0.85),
+        vec2( 0.85,  0.85)
+    );
+    for (int i = 0; i < 5; ++i) {
+        vec2 cellOffset = kOffsets[i] * u_sourceTexelSize;
+        vec3 sampleColor = clamp(texture(texture0, fragTexCoord + cellOffset).rgb,
+                                 vec3(0.0), vec3(65000.0));
+
+        float maxComp = max(sampleColor.r, max(sampleColor.g, sampleColor.b));
+        float minComp = min(sampleColor.r, min(sampleColor.g, sampleColor.b));
+        float sampleSat = (maxComp > 1e-4) ? clamp((maxComp - minComp) / maxComp, 0.0, 1.0) : 0.0;
+        float luma = dot(sampleColor, vec3(0.2126, 0.7152, 0.0722));
+        float rawBrightness = mix(maxComp, luma, 0.2);
+
+        // Apply autoExposure dimming only to near-SDR achromatic diffuse snow/sand
+        // (rawBrightness * baseExp <= 1.35) so bright terrain never self-blooms,
+        // while ALL true HDR VFX emitters — including pale champagne-gold and
+        // white-gold cores — evaluate at full base exposure on snow and night alike.
+        float diffuseGate = 1.0 - smoothstep(1.35, 2.15, rawBrightness * baseExp);
+        float achromaticMask = (1.0 - smoothstep(0.10, 0.32, sampleSat)) * diffuseGate;
+        float tapExp = mix(baseExp, expAchromatic, achromaticMask);
+        float achromaticLift = (1.0 - smoothstep(0.08, 0.28, sampleSat)) * diffuseGate * 0.28;
+        float tapBrightness = max(0.0, rawBrightness * tapExp - achromaticLift);
+
+        if (tapBrightness > bestEffectiveBrightness) {
+            bestEffectiveBrightness = tapBrightness;
+            bestRawBrightness = rawBrightness;
+            peakCol = sampleColor;
+        }
+
+        float tapFloor = max(0.0, u_threshold - knee);
+        float tapExcess = max(0.0, tapBrightness - tapFloor);
+        // Weight chromaticity toward saturated corona taps so a bleached white-hot
+        // 1px core surrounded by colored plasma radiates a saturated elemental halo.
+        float chromaBoost = 1.0 + 2.2 * sampleSat;
+        float tapWeight = (tapExcess * chromaBoost) / (1.0 + rawBrightness * 0.25);
+        weightedCol += sampleColor * tapWeight;
+        weightSum += tapWeight;
+
+        brightCount += step(u_threshold, tapBrightness);
+    }
+
+    float brightness = bestEffectiveBrightness;
     float soft = brightness - u_threshold + knee;
     if (soft <= 0.0) {
         finalColor = vec4(0.0, 0.0, 0.0, 1.0);
         return;
     }
+
+    // Decouple thin-emitter energy from bleached-core whiteness: keep peakCol's
+    // HDR magnitude while inheriting the saturated corona's hue when peakCol is white.
+    vec3 avgBrightCol = (weightSum > 1e-5) ? (weightedCol / weightSum) : peakCol;
+    float peakMax = max(peakCol.r, max(peakCol.g, peakCol.b));
+    float peakMin = min(peakCol.r, min(peakCol.g, peakCol.b));
+    float peakSat = (peakMax > 1e-4) ? clamp((peakMax - peakMin) / peakMax, 0.0, 1.0) : 0.0;
+    float avgMax  = max(avgBrightCol.r, max(avgBrightCol.g, avgBrightCol.b));
+    vec3 chromaMatchedPeak = (avgMax > 1e-4) ? (avgBrightCol * (peakMax / avgMax)) : peakCol;
+    vec3 col = mix(chromaMatchedPeak, peakCol, mix(0.22, 0.65, peakSat));
+
+    float coverage = sqrt(max(brightCount * 0.20, 0.0625));
+
     soft = clamp(soft, 0.0, 2.0 * knee);
-    soft = soft * soft / (4.0 * knee + 0.00001);
+    soft = (soft * soft) / (4.0 * knee + 0.00001);
 
-    // Cường độ ánh sáng được làm mượt bằng hàm bậc hai
-    float weight = max(soft, brightness - u_threshold);
-    weight /= max(brightness, 0.00001);
+    float weight = max(soft, brightness - u_threshold) / max(brightness, 0.00001);
 
-    // 3. Soft ceiling. Reinhard-shaped: out = e * M / (M + e), which is ~identity
-    // for e << M and approaches M asymptotically — never a flat cut, so the
-    // derivative w.r.t. emissive brightness stays positive everywhere.
-    // The 2.2 gain is kept from the clamped era ON PURPOSE: it is what makes
-    // mid-brightness bloom come out at the same level as before this change, so
-    // the only visible difference is that bright cores are no longer capped.
-    // Drop it and every existing effect quietly dims by ~2x.
-    vec3 brightColor = col.rgb * weight * 2.2 * coverage;
+    // Soft ceiling (Reinhard-shaped asymptote)
+    vec3 brightColor = col * (weight * 2.2 * coverage);
     float maxEnergy = (u_maxEnergy > 0.0) ? u_maxEnergy : 12.0;
     float energy = max(brightColor.r, max(brightColor.g, brightColor.b));
     brightColor *= maxEnergy / (maxEnergy + energy);

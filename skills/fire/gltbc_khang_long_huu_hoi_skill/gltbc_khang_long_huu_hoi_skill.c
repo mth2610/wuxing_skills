@@ -211,8 +211,8 @@ void CastGltbcKhangLongHuuHoiSkill(int agentId, Vector3 startPos, Vector3 target
     float targetRange  = Clamp(d - 0.85f, KLHH_MIN_RANGE_M, KLHH_MAX_RANGE_M);
     float flightSecs   = targetRange / KLHH_SPEED_MPS;
 
-    Color flameBody = ColorLerp(ELEMENT_COLOR_FIRE, ORANGE, 0.45f);
-    Color flameGlow = ColorLerp(ORANGE, GOLD, 0.48f);
+    Color flameBody = (Color){ 228, 192, 86, 255 };
+    Color flameGlow = (Color){ 255, 242, 166, 255 };
 
     KhangLongInst *inst = &s_inst[slot];
     *inst = (KhangLongInst){ 0 };
@@ -248,8 +248,8 @@ void CastGltbcKhangLongHuuHoiSkill(int agentId, Vector3 startPos, Vector3 target
         mp.style         = VFX_MODEL_STYLE_QI_SPIRIT;
         mp.tint          = flameBody;
         mp.glowColor     = flameGlow;
-        mp.glowIntensity = 2.20f;
-        mp.opacity       = 0.84f;
+        mp.glowIntensity = 3.10f;
+        mp.opacity       = 0.80f;
         inst->modelHandle = VFXModel_Spawn(asset, &mp);
         if (inst->modelHandle >= 0) {
             VFXModel_SetSpineReveal(inst->modelHandle, 0.0f, 0.25f);
@@ -260,7 +260,7 @@ void CastGltbcKhangLongHuuHoiSkill(int agentId, Vector3 startPos, Vector3 target
     }
 
     inst->ribbonXform  = MatrixTranslate(palmOrigin.x, palmOrigin.y, palmOrigin.z);
-    inst->ribbonHandle = VFX_ComposeTrail(&inst->ribbonXform, VC_MAT_FIRE, 0.16f * scale, 0.42f, TRAIL_PRESET_MAIN);
+    inst->ribbonHandle = VFX_ComposeTrail(&inst->ribbonXform, VC_MAT_HOLY, 0.16f * scale, 0.42f, TRAIL_PRESET_DRAGON);
 
     VFX_ComposePalmPrint(palmOrigin, dir, 1.15f * scale, 0.24f);
     PlayCastSound(EFFECT_PRESET_FIRE_EXPLOSION);
@@ -318,9 +318,9 @@ void UpdateGltbcKhangLongHuuHoiSkill(float dt, Vector3 enemyPos, float enemyRadi
             inst->sparkTimer += dt;
             if (inst->sparkTimer >= KLHH_SPARK_PERIOD) {
                 inst->sparkTimer = 0.0f;
-                VFX_ComposeEmberBurst(tailPos, (Vector3){ 0.0f, 1.0f, 0.0f }, VC_MAT_FIRE,
+                VFX_ComposeEmberBurst(tailPos, (Vector3){ 0.0f, 1.0f, 0.0f }, VC_MAT_HOLY,
                                       0.38f * inst->sizeScale, 0.55f);
-                Color auraLight = ColorLerp(ELEMENT_COLOR_FIRE, ORANGE, 0.55f);
+                Color auraLight = (Color){ 255, 240, 162, 255 };
                 VFXLight_Spawn(headPos, auraLight, 2.4f * inst->sizeScale, 0.12f, VFX_PRIORITY_LOW);
             }
 

@@ -164,10 +164,12 @@ vec3 calcRadiantEnergy(float energy, vec3 elementHue, vec3 coreHue, float blackb
     vec3 bb = calcBlackbodyNormalized(e);
     vec3 fireSpec = bb * normalizedHue;
 
-    // 2. Phổ năng lượng nguyên tố ma thuật với đường cong bão hòa trung gian rực rỡ
-    float coreTransition = smoothstep(0.58, 1.0, e);
-    float midGlow = e * (1.0 + 0.45 * e); // Tăng độ rực ở dải năng lượng trung bình
-    vec3 energySpec = mix(elementHue * midGlow, coreHue * (1.0 + coreTransition * 2.0), coreTransition);
+    // 2. Phổ năng lượng nguyên tố ma thuật: giữ nguyên sắc độ bão hòa cao ở vành
+    // corona (0.20..0.76) để Bloom nhận màu nguyên tố rực rỡ, chỉ đẩy trắng ở lõi hẹp.
+    float coreTransition = smoothstep(0.76, 1.0, e);
+    float midGlow = e * (1.0 + 0.55 * e);
+    vec3 tintedCore = mix(elementHue, coreHue, 0.82);
+    vec3 energySpec = mix(elementHue * midGlow, tintedCore * (1.15 + coreTransition * 2.2), coreTransition);
 
     // 3. Hòa trộn mượt mà giữa Lửa vật lý và Năng lượng nguyên tố
     vec3 finalSpec = mix(energySpec, fireSpec, clamp(blackbodyFactor, 0.0, 1.0));

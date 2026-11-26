@@ -102,19 +102,6 @@ VFX_STATIC_ASSERT(sizeof(EFFECT_PARAMS) / sizeof(EFFECT_PARAMS[0]) <= VFX_MAT_MA
 
 VFX_STATIC_ASSERT(sizeof(CRYSTAL_PARAMS) / sizeof(CRYSTAL_PARAMS[0]) <= VFX_MAT_MAX_PARAMS, crystal);
 
-static const VfxParamDesc PLASMA_PARAMS[] = {
-    P_COLOR("u_baseColor", PlasmaMaterialParams, baseColor),
-    P_COLOR("u_wispColor", PlasmaMaterialParams, wispColor),
-    P_FLOAT("u_noiseScale", PlasmaMaterialParams, noiseScale),
-    P_FLOAT("u_noiseSpeed", PlasmaMaterialParams, noiseSpeed),
-    P_FLOAT("u_fresnelPower", PlasmaMaterialParams, fresnelPower),
-    P_FLOAT("u_rimStrength", PlasmaMaterialParams, rimStrength),
-    P_FLOAT("u_emissive", PlasmaMaterialParams, emissive),
-    P_FLOAT("u_opacity", PlasmaMaterialParams, opacity),
-    P_FLOAT("u_displaceAmp", PlasmaMaterialParams, displaceAmp),
-};
-VFX_STATIC_ASSERT(sizeof(PLASMA_PARAMS) / sizeof(PLASMA_PARAMS[0]) <= VFX_MAT_MAX_PARAMS, plasma);
-
 
 /* ── The engine ──────────────────────────────────────────────────────────── */
 
@@ -513,33 +500,6 @@ void CrystalMaterialInstanced_SetGrowProgress(CrystalMaterialInstanced mat, floa
 }
 
 void CrystalMaterialInstanced_End(void)
-{
-    MatEndCommon();
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
- * PlasmaMaterial
- * ═══════════════════════════════════════════════════════════════════════════ */
-
-void PlasmaMaterial_Load(PlasmaMaterial *outMat, const PlasmaMaterialParams *params)
-{
-    if (!outMat) return;
-    *outMat = (PlasmaMaterial){0};
-    outMat->shader = ResourceManager_LoadShader("core/shaders/plasma_shell.vs",
-                                                "core/shaders/plasma_shell.fs");
-    outMat->layout = PLASMA_PARAMS;
-    outMat->layoutCount = (int)(sizeof(PLASMA_PARAMS) / sizeof(PLASMA_PARAMS[0]));
-    if (params) outMat->params = *params;
-    MatFetchLocs(outMat->shader, outMat->layout, outMat->layoutCount, outMat->locs);
-}
-
-void PlasmaMaterial_Begin(PlasmaMaterial mat)
-{
-    MatBeginCommon(mat.shader);
-    MatApply(mat.shader, mat.layout, mat.layoutCount, mat.locs, &mat.params);
-}
-
-void PlasmaMaterial_End(void)
 {
     MatEndCommon();
 }

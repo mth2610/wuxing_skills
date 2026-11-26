@@ -30,6 +30,7 @@ uniform vec2 u_resolution;
 #include "core/shaders/common/lighting.glsl"
 
 uniform float u_time;
+uniform int   u_surfaceMode; // 0 = ALPHA, 1 = ADDITIVE, 2 = PREMULTIPLIED
 
 /* BACKGROUND ADAPTATION — how bright is what this particle is in front of. */
 uniform sampler2D u_bgLuma;
@@ -383,24 +384,26 @@ vec4 ShadeTranslucentFire(vec3 rampCol, float heat, float mask, float heatBoost,
     float bg = (u_resolution.x > 0.0) ? texture(u_bgLuma, gl_FragCoord.xy / u_resolution).r : 0.0;
     float brightBg = smoothstep(0.12, 0.50, bg);
 
-    // Keep outer flame wisps warm tangerine-amber on snow (avoid dark blood-red paint)
-    vec3 warmRamp = mix(rampCol, vec3(1.0, 0.46, 0.06), brightBg * (1.0 - heat) * 0.35);
-    vec3 baseFlame = warmRamp * (0.62 + heatBoost * 0.85) * flicker * (0.28 + heat * 1.12);
+    // Keep outer flame wisps rich vermilion-tangerine on snow without muddy soot
+    vec3 warmRamp = mix(rampCol, vec3(1.0, 0.42, 0.05), brightBg * (1.0 - heat) * 0.35);
+    vec3 baseFlame = warmRamp * (0.64 + heatBoost * 0.85) * flicker * (0.30 + heat * 1.18);
 
-    float corePop = pow(smoothstep(0.56, 1.0, heat), 1.8);
-    vec3 hotCore  = mix(vec3(1.0, 0.80, 0.24), vec3(1.0, 0.98, 0.88), corePop)
-                  * (corePop * (1.65 + brightBg * 1.35));
+    // Narrow incandescent core so the flame corona radiates vivid orange bloom
+    float corePop = pow(smoothstep(0.66, 1.0, heat), 2.0);
+    vec3 hotCore  = mix(vec3(1.0, 0.78, 0.22), vec3(1.0, 0.96, 0.84), corePop)
+                  * (corePop * (1.85 + brightBg * 1.45));
 
     vec3 col = CompressFlameRadiance((baseFlame + hotCore) * u_emissiveBoost, heat);
 
-    // Soft feathered optical opacity: airy on dark backgrounds, warm chromatic
-    // displacement on snow (max 0.56 so flames stay luminous & translucent).
-    float alphaDark   = clamp(mask * 0.30, 0.0, 0.36);
-    float alphaBright = clamp(mask * mix(0.46, 0.58, smoothstep(0.15, 0.75, heat)), 0.0, 0.58);
+    // Monotonic soft opacity: airy on dark arenas, deeper chromatic carrier on snow
+    float alphaDark   = clamp(mask * 0.32, 0.0, 0.38);
+    float alphaBright = clamp(mask * mix(0.50, 0.64, smoothstep(0.15, 0.75, heat)), 0.0, 0.64);
     float flameAlpha  = mix(alphaDark, alphaBright, brightBg);
 
-    vec3 outRgb = min(col * mix(mask * 0.75, mask * 0.95, brightBg), vec3(6.5));
-    return vec4(max(outRgb, vec3(0.0)), flameAlpha);
+    vec3 outRgb = col * mix(mask * 0.78, mask * 0.98, brightBg);
+    float peak = max(outRgb.r, max(outRgb.g, outRgb.b));
+    if (peak > 8.0) outRgb *= (8.0 + (peak - 8.0) / (1.0 + (peak - 8.0) * 0.35)) / peak;
+    return vec4(VFX_Finite3(max(outRgb, vec3(0.0))), flameAlpha);
 }
 
 void main()
@@ -805,19 +808,32 @@ void main()
 
     if (effLightingStrength <= 0.0)
     {
-        float emisBoost = u_emissiveBoost;
-        if (u_bgAdapt > 0.0 && u_resolution.x > 0.0) {
-            float bg = texture(u_bgLuma, gl_FragCoord.xy / u_resolution).r;
-            emisBoost *= mix(1.0, 1.0 - smoothstep(0.15, 0.85, bg), u_bgAdapt);
-        }
         vec3 unlitRgb = (u_sixWayLighting > 1.5) ? vtxColor.rgb : base.rgb;
-        float lum = dot(unlitRgb, vec3(0.299, 0.587, 0.114));
-        if (lum > 0.05) {
-            vec3 coreTint = vec3(1.0, 0.98, 0.92);
-            float coreFactor = smoothstep(0.45, 1.0, lum);
-            unlitRgb = mix(unlitRgb, coreTint * (1.0 + coreFactor * 1.5), coreFactor * 0.7);
+        float rQuad = length(quadLocalUV * 2.0 - 1.0);
+        // Spatial core pin (<=20% center area): keeps the sprite's corona at
+        // 100% elemental saturation so bloom receives vivid color, while only
+        // the tight center warms toward an incandescent peak.
+        float corePin = smoothstep(0.62, 0.96, texelColor.a) * (1.0 - smoothstep(0.0, 0.52, rQuad));
+        vec3 coreTint = mix(unlitRgb, vec3(1.0, 0.97, 0.90), 0.72);
+        vec3 radiantRgb = mix(unlitRgb, coreTint * (1.25 + corePin * 0.95), corePin * 0.65);
+
+        if (u_surfaceMode == 2)
+        {
+            // Premultiplied Carrier + Chromatic Corona + Incandescent Core:
+            // Deep chromatic carrier holds silhouette on snow; HDR glow drives bloom.
+            vec3 carrierRgb = unlitRgb * 0.58;
+            float carrierCov = clamp(finalAlpha * 0.52, 0.0, 0.78);
+            vec3 glowRgb = radiantRgb * (u_emissiveBoost * finalAlpha);
+            finalColor = VFX_ResolvePremultiplied(carrierRgb, 1.0, carrierCov,
+                                                  glowRgb, 1.0, 1.0);
+            return;
         }
-        finalColor = VFX_ResolveEmission(unlitRgb, emisBoost, 1.0, finalAlpha);
+        if (u_surfaceMode == 0)
+        {
+            finalColor = VFX_ResolveBody(radiantRgb, u_emissiveBoost, finalAlpha);
+            return;
+        }
+        finalColor = VFX_ResolveEmission(radiantRgb, u_emissiveBoost, 1.0, finalAlpha);
         return;
     }
 

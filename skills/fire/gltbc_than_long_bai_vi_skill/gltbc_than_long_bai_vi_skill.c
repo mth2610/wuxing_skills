@@ -121,8 +121,8 @@ void CastGltbcThanLongBaiViSkill(int agentId, Vector3 startPos, Vector3 target, 
     inst->curve.waveSign    = 1.0f;
     inst->curve.phaseOffset = owner ? owner->facingYaw : 0.0f;
 
-    Color flameBody = ColorLerp(ELEMENT_COLOR_FIRE, ORANGE, 0.45f);
-    Color flameGlow = ColorLerp(ORANGE, GOLD, 0.55f);
+    Color flameBody = (Color){ 228, 192, 86, 255 };
+    Color flameGlow = (Color){ 255, 242, 166, 255 };
 
     int asset = VFX_DragonQi_GetAsset();
     if (asset >= 0) {
@@ -136,8 +136,8 @@ void CastGltbcThanLongBaiViSkill(int agentId, Vector3 startPos, Vector3 target, 
         mp.style         = VFX_MODEL_STYLE_QI_SPIRIT;
         mp.tint          = flameBody;
         mp.glowColor     = flameGlow;
-        mp.glowIntensity = 2.15f;
-        mp.opacity       = 0.82f;
+        mp.glowIntensity = 3.10f;
+        mp.opacity       = 0.80f;
         inst->modelHandle = VFXModel_Spawn(asset, &mp);
         if (inst->modelHandle >= 0) {
             VFXModel_SetSpinePathOverride(inst->modelHandle, TLBV_SPINE_BONES,
@@ -148,7 +148,7 @@ void CastGltbcThanLongBaiViSkill(int agentId, Vector3 startPos, Vector3 target, 
 
     Vector3 hp = VFX_DragonCurve_Evaluate(0.0f, &inst->curve);
     inst->ribbonXform  = MatrixTranslate(hp.x, hp.y, hp.z);
-    inst->ribbonHandle = VFX_ComposeTrail(&inst->ribbonXform, VC_MAT_FIRE, 0.15f * scale, 0.38f, TRAIL_PRESET_MAIN);
+    inst->ribbonHandle = VFX_ComposeTrail(&inst->ribbonXform, VC_MAT_HOLY, 0.16f * scale, 0.38f, TRAIL_PRESET_DRAGON);
     VFX_ComposePalmPrint((Vector3){ center.x, gY + 0.05f, center.z },
                          (Vector3){ 0.0f, 1.0f, 0.0f }, 2.1f * scale, 0.35f);
     Wind_SpawnRadialBlast(center, 2.5f * scale, 6.5f, 0.20f);

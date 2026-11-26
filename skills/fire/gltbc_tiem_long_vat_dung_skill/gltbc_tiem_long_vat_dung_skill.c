@@ -133,8 +133,8 @@ void CastGltbcTiemLongVatDungSkill(int agentId, Vector3 startPos, Vector3 target
     inst->curve.verAmp   = 0.20f * scale;
     inst->curve.waveSign = (GetRandomValue(0, 1) == 0) ? 1.0f : -1.0f;
 
-    Color flameBody = ColorLerp(ELEMENT_COLOR_FIRE, ORANGE, 0.45f);
-    Color flameGlow = ColorLerp(ORANGE, GOLD, 0.48f);
+    Color flameBody = (Color){ 228, 192, 86, 255 };
+    Color flameGlow = (Color){ 255, 242, 166, 255 };
 
     int asset = VFX_DragonQi_GetAsset();
     if (asset >= 0) {
@@ -148,7 +148,7 @@ void CastGltbcTiemLongVatDungSkill(int agentId, Vector3 startPos, Vector3 target
         mp.style         = VFX_MODEL_STYLE_QI_SPIRIT;
         mp.tint          = flameBody;
         mp.glowColor     = flameGlow;
-        mp.glowIntensity = 2.0f;
+        mp.glowIntensity = 3.10f;
         mp.opacity       = 0.80f;
         inst->modelHandle = VFXModel_Spawn(asset, &mp);
         if (inst->modelHandle >= 0) {
@@ -160,7 +160,7 @@ void CastGltbcTiemLongVatDungSkill(int agentId, Vector3 startPos, Vector3 target
     }
 
     inst->ribbonXform  = MatrixTranslate(eruptOrigin.x, gY + 0.5f, eruptOrigin.z);
-    inst->ribbonHandle = VFX_ComposeTrail(&inst->ribbonXform, VC_MAT_FIRE, 0.12f * scale, 0.32f, TRAIL_PRESET_MAIN);
+    inst->ribbonHandle = VFX_ComposeTrail(&inst->ribbonXform, VC_MAT_HOLY, 0.12f * scale, 0.32f, TRAIL_PRESET_DRAGON);
     VFX_ComposePalmPrint((Vector3){ eruptOrigin.x, gY + 0.05f, eruptOrigin.z },
                          (Vector3){ 0.0f, 1.0f, 0.0f }, 1.25f * scale, 0.28f);
     PlayCastSound(EFFECT_PRESET_FIRE_EXPLOSION);
@@ -213,7 +213,7 @@ void UpdateGltbcTiemLongVatDungSkill(float dt, Vector3 enemyPos, float enemyRadi
             if (hitAny) {
                 /* Next Station Jianghu 2 signature: Tiềm Long hit reduces cooldowns */
                 SkillManager_ReduceAgentCooldowns(inst->ownerAgentId, 0.55f);
-                VFX_ComposeEmberBurst(hitCenter, (Vector3){ 0.0f, 1.0f, 0.0f }, VC_MAT_FIRE,
+                VFX_ComposeEmberBurst(hitCenter, (Vector3){ 0.0f, 1.0f, 0.0f }, VC_MAT_HOLY,
                                       0.85f * inst->sizeScale, 0.85f);
                 TimeFX_Hitstop(0.035f, 0.10f);
                 PlayImpactSound(EFFECT_PRESET_FIRE_EXPLOSION);
