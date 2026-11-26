@@ -5,10 +5,9 @@
 // the ground. A ring in mid-air — an impact in the air, a parry, a barrier
 // breaking — shares none of that.
 //
-// Drawn as two swept lens sheets at ±normal so it survives edge-on viewing
-// (parry rings, vertical clashes) while keeping the front where the sheets
-// coincide (zero double-edge). All 6 presets + orthogonal arc/inward options
-// share this single primitive + `core/shaders/shock_ring.fs`.
+// The swept lens keeps the crest on the ring plane and raises the wake.
+// Most presets draw both faces for edge-on readability. Concussive uses
+// one curved face so its folds appear once.
 
 #define SHOCK_MAX_SLICES 96
 #define SHOCK_RADIALS      13
@@ -27,59 +26,44 @@ typedef struct
 {
     float radiusEase, arrive, fadeK;
     float coreRatio, canvasMul, flareRatio, thickRatio, hole;
-    float frontWidth, frontHard, wobble, coreLine;
-    float wake, rays, tear0, tear1;
-    float lensingAmp, breakup, vapour;
-    float bodyGain, sootCover, emissionGain, whiten;
+    float emissionGain, whiten;
 } ShockRingStyle;
 
 static const ShockRingStyle k_shockStyles[VFX_SHOCK_RING_VARIANT_COUNT] = {
-    // 0: IMPACT — razor leading edge + crisp torn Wuxia wake + soot body
-    { 3.8f, 0.08f, 1.8f,
-      0.22f, 5.2f, 0.12f, 0.24f, 0.14f,
-      0.90f, 1.25f, 1.10f, 1.15f,
-      1.05f, 1.15f, 0.14f, 0.62f,
-      0.00f, 0.12f, 0.00f,
-      1.05f, 0.58f, 4.60f, 0.06f },
-    // 1: PARRY — ultra-crisp, tight deflect rim, minimal wake, subtle flare
-    { 6.0f, 0.04f, 2.4f,
-      0.11f, 3.4f, 0.06f, 0.12f, 0.24f,
-      0.55f, 2.40f, 0.28f, 1.45f,
-      0.22f, 0.35f, 0.22f, 0.72f,
-      0.00f, 0.00f, 0.22f,
-      0.70f, 0.26f, 5.20f, 0.20f },
-    // 2: SONIC — cool-white vapour rim + visible dark pressure-drop trough
-    { 5.0f, 0.05f, 1.6f,
-      0.16f, 4.2f, 0.08f, 0.14f, 0.20f,
-      0.75f, 1.60f, 0.35f, 0.55f,
-      0.38f, 0.30f, 0.18f, 0.58f,
-      1.15f, 0.00f, 0.92f,
-      1.20f, 0.62f, 1.65f, 0.22f },
-    // 3: PULSE — soft feathered Qi wave, no harsh center hole, low emission
-    { 1.6f, 0.14f, 1.2f,
-      0.32f, 4.6f, 0.06f, 0.16f, 0.06f,
-      2.60f, 0.22f, 0.30f, 0.00f,
-      0.70f, 0.00f, 0.02f, 0.22f,
-      0.00f, 0.00f, 0.18f,
-      0.95f, 0.32f, 1.85f, 0.08f },
-    // 4: CONCUSSIVE — heavy blast, strong soot occlusion, deep torn streaks
-    { 3.0f, 0.06f, 1.4f,
-      0.30f, 5.4f, 0.14f, 0.28f, 0.10f,
-      1.35f, 1.15f, 1.35f, 1.20f,
-      1.45f, 1.35f, 0.10f, 0.54f,
-      0.00f, 0.18f, 0.00f,
-      1.30f, 0.85f, 4.20f, 0.05f },
-    // 5: SHATTER — sharp angular fracture arcs + spiky radial shatter streaks
-    { 4.5f, 0.05f, 1.8f,
-      0.18f, 4.4f, 0.09f, 0.18f, 0.18f,
-      0.85f, 1.80f, 0.65f, 1.30f,
-      0.65f, 0.95f, 0.20f, 0.65f,
-      0.00f, 0.52f, 0.00f,
-      1.10f, 0.58f, 4.80f, 0.08f },
+    [VFX_SHOCK_RING_IMPACT] = {
+        .radiusEase = 3.8f, .arrive = 0.08f, .fadeK = 1.8f,
+        .coreRatio = SHOCK_CORE_RATIO, .canvasMul = SHOCK_CANVAS_MUL,
+        .flareRatio = SHOCK_FLARE_RATIO, .thickRatio = SHOCK_THICK_RATIO, .hole = 0.12f,
+        .emissionGain = 5.10f, .whiten = 0.04f,
+    },
+    [VFX_SHOCK_RING_PARRY] = {
+        .radiusEase = 7.0f, .arrive = 0.035f, .fadeK = 2.4f,
+        .coreRatio = 0.16f, .canvasMul = 4.0f,
+        .flareRatio = 0.045f, .thickRatio = 0.13f, .hole = 0.11f,
+        .emissionGain = 5.60f, .whiten = 0.16f,
+    },
+    [VFX_SHOCK_RING_SONIC] = {
+        .radiusEase = 5.0f, .arrive = 0.05f, .fadeK = 1.6f,
+        .coreRatio = 0.18f, .canvasMul = 4.6f,
+        .flareRatio = 0.07f, .thickRatio = 0.15f, .hole = 0.08f,
+        .emissionGain = 1.35f, .whiten = 0.20f,
+    },
+    [VFX_SHOCK_RING_PULSE] = {
+        .radiusEase = 1.6f, .arrive = 0.12f, .fadeK = 1.2f,
+        .coreRatio = 0.29f, .canvasMul = 4.6f,
+        .flareRatio = 0.055f, .thickRatio = 0.14f, .hole = 0.04f,
+        .emissionGain = 1.24f, .whiten = 0.02f,
+    },
+    [VFX_SHOCK_RING_CONCUSSIVE] = {
+        .radiusEase = 2.8f, .arrive = 0.06f, .fadeK = 1.4f,
+        .coreRatio = 0.32f, .canvasMul = 5.4f,
+        .flareRatio = 0.17f, .thickRatio = 0.30f, .hole = 0.065f,
+        .emissionGain = 2.85f, .whiten = 0.03f,
+    },
 };
 
 static const char *k_shockVariantNames[VFX_SHOCK_RING_VARIANT_COUNT] = {
-    "IMPACT", "PARRY", "SONIC", "PULSE", "CONCUSSIVE", "SHATTER"
+    "IMPACT", "PARRY", "SONIC", "PULSE", "CONCUSSIVE"
 };
 
 typedef struct
@@ -90,14 +74,11 @@ typedef struct
     int opacity;
     int emission;
     int t01;
-    int coreV;
     int seed;
     int hole;
     int premultiply;
-    int styleA;
-    int styleB;
-    int styleC;
-    int styleD;
+    int variant;
+    int direction;
     int arc;
 } ShockRingShader;
 
@@ -130,14 +111,11 @@ static void ShockRing_InitShader(void)
     s_shockShader.opacity     = GetShaderLocation(s_shockShader.shader, "u_opacity");
     s_shockShader.emission    = GetShaderLocation(s_shockShader.shader, "u_emission");
     s_shockShader.t01         = GetShaderLocation(s_shockShader.shader, "u_t01");
-    s_shockShader.coreV       = GetShaderLocation(s_shockShader.shader, "u_coreV");
     s_shockShader.seed        = GetShaderLocation(s_shockShader.shader, "u_seed");
     s_shockShader.hole        = GetShaderLocation(s_shockShader.shader, "u_hole");
     s_shockShader.premultiply = GetShaderLocation(s_shockShader.shader, "u_premultiply");
-    s_shockShader.styleA      = GetShaderLocation(s_shockShader.shader, "u_styleA");
-    s_shockShader.styleB      = GetShaderLocation(s_shockShader.shader, "u_styleB");
-    s_shockShader.styleC      = GetShaderLocation(s_shockShader.shader, "u_styleC");
-    s_shockShader.styleD      = GetShaderLocation(s_shockShader.shader, "u_styleD");
+    s_shockShader.variant     = GetShaderLocation(s_shockShader.shader, "u_variant");
+    s_shockShader.direction   = GetShaderLocation(s_shockShader.shader, "u_direction");
     s_shockShader.arc         = GetShaderLocation(s_shockShader.shader, "u_arc");
 }
 
@@ -145,11 +123,9 @@ static bool ShockRing_HasShader(void)
 {
     return s_shockShader.shader.id != 0 && s_shockShader.bodyColor >= 0 &&
            s_shockShader.glowColor >= 0 && s_shockShader.opacity >= 0 &&
-           s_shockShader.emission >= 0 && s_shockShader.t01 >= 0 &&
-           s_shockShader.coreV >= 0 && s_shockShader.seed >= 0 &&
+           s_shockShader.emission >= 0 && s_shockShader.t01 >= 0 && s_shockShader.seed >= 0 &&
            s_shockShader.hole >= 0 && s_shockShader.premultiply >= 0 &&
-           s_shockShader.styleA >= 0 && s_shockShader.styleB >= 0 &&
-           s_shockShader.styleC >= 0 && s_shockShader.styleD >= 0 &&
+           s_shockShader.variant >= 0 && s_shockShader.direction >= 0 &&
            s_shockShader.arc >= 0;
 }
 
@@ -226,6 +202,7 @@ static int ShockRing_Slices(void)
 {
     switch (GfxQuality_Get())
     {
+    case GFX_ULTRA:
     case GFX_HIGH: return SHOCK_MAX_SLICES;
     case GFX_MED:  return 64;
     case GFX_LOW:  return 40;
@@ -290,18 +267,13 @@ int VFX_ShockRing_GetParams(VFX_ShockRingDesc *cfg, VFX_ParamDef *out, int max)
 // ── Shader uniform upload ────────────────────────────────────────────────────
 
 static void ShockRing_SetUniforms(const VFX_ElementMaterial *m, const ShockRingStyle *st,
-                                  float opacity, float emission, float t01, float seed,
+                                  int variant, float opacity, float emission, float t01, float seed,
                                   float premultiply, float dirSign,
                                   float arcCenterU, float arcHalfSpanU)
 {
     Vector4 body = ColorNormalize(m->body);
     Vector4 glow = ColorNormalize(VC_Whiten(m->glow, st->whiten));
-    float coreV = SHOCK_CREST_U;
     float hole = st->hole * (s_shockHole / 0.16f);
-    Vector4 styleA = { st->frontWidth, st->frontHard, st->wobble, st->fadeK };
-    Vector4 styleB = { st->wake, st->rays, st->tear0, st->tear1 };
-    Vector4 styleC = { st->lensingAmp, 0.0f, st->breakup, st->vapour };
-    Vector4 styleD = { st->sootCover, st->coreLine, dirSign, st->bodyGain };
     Vector2 arcVec = { arcCenterU, arcHalfSpanU };
 
     SetShaderValue(s_shockShader.shader, s_shockShader.bodyColor, &body, SHADER_UNIFORM_VEC4);
@@ -309,14 +281,11 @@ static void ShockRing_SetUniforms(const VFX_ElementMaterial *m, const ShockRingS
     SetShaderValue(s_shockShader.shader, s_shockShader.opacity, &opacity, SHADER_UNIFORM_FLOAT);
     SetShaderValue(s_shockShader.shader, s_shockShader.emission, &emission, SHADER_UNIFORM_FLOAT);
     SetShaderValue(s_shockShader.shader, s_shockShader.t01, &t01, SHADER_UNIFORM_FLOAT);
-    SetShaderValue(s_shockShader.shader, s_shockShader.coreV, &coreV, SHADER_UNIFORM_FLOAT);
     SetShaderValue(s_shockShader.shader, s_shockShader.seed, &seed, SHADER_UNIFORM_FLOAT);
     SetShaderValue(s_shockShader.shader, s_shockShader.hole, &hole, SHADER_UNIFORM_FLOAT);
     SetShaderValue(s_shockShader.shader, s_shockShader.premultiply, &premultiply, SHADER_UNIFORM_FLOAT);
-    SetShaderValue(s_shockShader.shader, s_shockShader.styleA, &styleA, SHADER_UNIFORM_VEC4);
-    SetShaderValue(s_shockShader.shader, s_shockShader.styleB, &styleB, SHADER_UNIFORM_VEC4);
-    SetShaderValue(s_shockShader.shader, s_shockShader.styleC, &styleC, SHADER_UNIFORM_VEC4);
-    SetShaderValue(s_shockShader.shader, s_shockShader.styleD, &styleD, SHADER_UNIFORM_VEC4);
+    SetShaderValue(s_shockShader.shader, s_shockShader.variant, &variant, SHADER_UNIFORM_INT);
+    SetShaderValue(s_shockShader.shader, s_shockShader.direction, &dirSign, SHADER_UNIFORM_FLOAT);
     SetShaderValue(s_shockShader.shader, s_shockShader.arc, &arcVec, SHADER_UNIFORM_VEC2);
 }
 
@@ -324,7 +293,8 @@ static void ShockRing_SetUniforms(const VFX_ElementMaterial *m, const ShockRingS
 static void ShockRing_SweepFace(Vector3 center, Vector3 n, Vector3 axA, Vector3 axB,
                                 const float *ringRad, const float *ringOff,
                                 const Color *ringCol, int radials, int slices,
-                                float uStart, float uEnd, float sgn, bool clampGround)
+                                float uStart, float uEnd, float sgn, bool clampGround,
+                                float billowStrength, float phase)
 {
     static Vector3 prevRing[SHOCK_RADIALS];
     static Vector3 curRing[SHOCK_RADIALS];
@@ -335,6 +305,10 @@ static void ShockRing_SweepFace(Vector3 center, Vector3 n, Vector3 axA, Vector3 
         float u0 = uStart + (uEnd - uStart) * ((float)(s - 1) / (float)slices);
         float ang = u1 * 2.0f * PI;
         float ca = cosf(ang), sa = sinf(ang);
+        float loft = 1.0f;
+        if (billowStrength > 0.0f)
+            loft += billowStrength * (0.66f * sinf(ang * 5.0f + phase) +
+                                     0.34f * sinf(ang * 13.0f - phase * 1.9f));
 
         for (int i = 0; i < radials; i++)
         {
@@ -342,7 +316,7 @@ static void ShockRing_SweepFace(Vector3 center, Vector3 n, Vector3 axA, Vector3 
                                    Vector3Add(Vector3Scale(axA, ca * ringRad[i]),
                                               Vector3Scale(axB, sa * ringRad[i])));
             float off = (sgn < 0.0f && clampGround) ? fminf(ringOff[i], SHOCK_GROUND_LIFT * 0.8f) : ringOff[i];
-            curRing[i] = Vector3Add(p, Vector3Scale(n, sgn * off));
+            curRing[i] = Vector3Add(p, Vector3Scale(n, sgn * off * loft));
         }
 
         if (s > 0)
@@ -424,7 +398,7 @@ void VFX_ComposeShockRingEx(Vector3 center, Vector3 normal, VC_MaterialId mat,
         float ang = (fa * fa + fb * fb > 1e-6f) ? atan2f(fb, fa) : 0.0f;
         if (ang < 0.0f) ang += 2.0f * PI;
         arcCenterU = ang / (2.0f * PI);
-        arcHalfSpanU = Clamp(arcSpan / (2.0f * PI), 0.03f, 0.5f);
+        arcHalfSpanU = fmaxf(arcSpan, 0.001f) / (4.0f * PI);
         float marginHalf = fminf(arcHalfSpanU * 1.12f, 0.5f);
         uStart = arcCenterU - marginHalf;
         uEnd = arcCenterU + marginHalf;
@@ -452,7 +426,14 @@ void VFX_ComposeShockRingEx(Vector3 center, Vector3 normal, VC_MaterialId mat,
     }
 
     float dirSign = d.inward ? -1.0f : 1.0f;
-    for (int pass = 0; pass < 2; pass++)
+    bool shaded = ShockRing_HasShader();
+    int passes = shaded ? 2 : 1;
+    // Draw the dense pressure rolls once to avoid projecting overlapping folds.
+    bool concussive = d.variant == VFX_SHOCK_RING_CONCUSSIVE;
+    int faceCount = shaded && concussive ? 1 : 2;
+    float billowStrength = shaded && concussive ? 0.36f : 0.0f;
+    float billowPhase = seed + t01 * 1.23f;
+    for (int pass = 0; pass < passes; pass++)
     {
         VFXRenderScope renderScope = VFXRender_BeginDraw(
             pass == 0 ? VFX_RENDER_PASS_BODY : VFX_RENDER_PASS_EMISSION,
@@ -461,21 +442,21 @@ void VFX_ComposeShockRingEx(Vector3 center, Vector3 normal, VC_MaterialId mat,
         rlDisableBackfaceCulling();
         rlDrawRenderBatchActive();
 
-        bool shaded = ShockRing_HasShader();
-        if (shaded) SkillManager_BeginShader(s_shockShader.shader);
-
         if (shaded)
-            ShockRing_SetUniforms(m, st,
-                                  (pass == 0) ? arrival * 1.65f : arrival * 0.90f,
+        {
+            SkillManager_BeginShader(s_shockShader.shader);
+            ShockRing_SetUniforms(m, st, d.variant,
+                                  (pass == 0) ? arrival * 0.92f : arrival * 0.86f,
                                   (pass == 0) ? 1.0f : st->emissionGain,
                                   t01, seed, (pass == 0) ? 0.0f : 1.0f, dirSign,
                                   arcCenterU, arcHalfSpanU);
+        }
         rlBegin(RL_QUADS);
-        for (int side = 0; side < 2; side++)
+        for (int side = 0; side < faceCount; side++)
         {
             float sgn = (side == 0) ? 1.0f : -1.0f;
             ShockRing_SweepFace(center, n, axA, axB, ringRad, ringOff, ringCol,
-                                radials, slices, uStart, uEnd, sgn, horizontal);
+                                radials, slices, uStart, uEnd, sgn, horizontal, billowStrength, billowPhase);
         }
         rlEnd();
         rlDrawRenderBatchActive();

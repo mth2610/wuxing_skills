@@ -3,229 +3,195 @@
 #include "core/shaders/common/noise.glsl"
 #include "core/shaders/common/vfx_composite.glsl"
 
-// ── VFX_ComposeShockRing: razor-sharp leading edge + torn Wuxia wake ────────
-//
-// Everything is driven by u_t01, never by the wall clock: two rings alive at
-// different phases must not share a pattern, and a ring must look identical
-// wherever the frame lands in its life. (shock_ring_test.c enforces this by
-// grepping for the wall-clock uniform's name, so do not name it in a comment
-// either.)
-
-uniform vec4  u_bodyColor;
-uniform vec4  u_glowColor;
+uniform vec4 u_bodyColor;
+uniform vec4 u_glowColor;
 uniform float u_opacity;
 uniform float u_emission;
-uniform float u_t01;   // 0 -> 1 over the ring's life, drives the tear and the fade
-uniform float u_coreV; // where the section's centre-line sits across the canvas
-uniform float u_seed;  // per-ring, so two rings are not the same ring
-uniform float u_hole;  // inner fade threshold
-uniform float u_premultiply; // 0 = BODY (BLEND_ALPHA), 1 = EMISSION (premultiplied)
+uniform float u_t01;
+uniform float u_seed;
+uniform float u_hole;
+uniform float u_premultiply;
+uniform int u_variant;
+uniform vec2 u_arc;     // center and half span, in turns
+uniform float u_direction;
 
-// Variant style packs:
-//   u_styleA = (frontWidthScale, frontHard, wobble, fadeK)
-//   u_styleB = (wakeScale, raysScale, tear0, tear1)
-//   u_styleC = (lensingAmp, 0=reserved, breakup, vapour)
-//   u_styleD = (sootCover, coreLineScale, dir, bodyGain)
-//   u_arc    = (centerU, halfSpanU)
-uniform vec4  u_styleA;
-uniform vec4  u_styleB;
-uniform vec4  u_styleC;
-uniform vec4  u_styleD;
-uniform vec2  u_arc;
-
-// Periodic value noise with Quintic C2 continuous interpolation.
+// Polar value noise with an integer number of cells per turn. Wrap both
+// lattice corners so the silhouettes close even when the arc crosses zero.
 float ShockNoise(vec2 p, float period)
 {
     vec2 i = floor(p);
     vec2 f = fract(p);
-    vec2 w = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+    vec2 w = f * f * (3.0 - 2.0 * f);
     float x0 = mod(i.x, period);
     float x1 = mod(i.x + 1.0, period);
-    float y0 = i.y;
-    float y1 = i.y + 1.0;
-    return mix(mix(hash2(vec2(x0, y0)), hash2(vec2(x1, y0)), w.x),
-               mix(hash2(vec2(x0, y1)), hash2(vec2(x1, y1)), w.x), w.y);
+    return mix(mix(hash2(vec2(x0, i.y)), hash2(vec2(x1, i.y)), w.x),
+               mix(hash2(vec2(x0, i.y + 1.0)), hash2(vec2(x1, i.y + 1.0)), w.x), w.y);
 }
 
-// Octaves double the frequency AND the period together, so every octave stays
-// closed at the seam.
-float FbmRing(vec2 p, float period, int octaves)
+float Band(float distanceToCenter, float width, float pixel)
 {
-    float sum = 0.0, amp = 0.5, tot = 0.0;
-    for (int i = 0; i < 4; i++) {
-        if (i >= octaves) break;
-        sum += amp * ShockNoise(p, period);
-        tot += amp;
-        p *= 2.0;
-        period *= 2.0;
-        amp *= 0.5;
-    }
-    return sum / tot;
+    // Preserve integrated brightness as a narrow ridge becomes subpixel.
+    return (1.0 - smoothstep(0.0, width + pixel, abs(distanceToCenter))) *
+           (width / (width + pixel * 0.5));
+}
+
+// Density controls coverage. Light models the lit face within that coverage.
+// Heat feeds only the isolated emission pass.
+struct Wave {
+    float density;
+    float light;
+    float heat;
+};
+
+Wave Impact(float u, float x, float px, float angularPx, float macro)
+{
+    float t = u_t01;
+    float lobes = ShockNoise(vec2(u * 13.0, u_seed + t * 0.72), 13.0);
+    float lip = (lobes - 0.5) * 0.13 + (macro - 0.5) * 0.10;
+    float depth = lip - x;
+    float tail = max(depth, 0.0);
+    float curl = tail * ((macro - 0.5) * 0.22 + tail * 0.31);
+    float rolls = ShockNoise(vec2((u + curl) * 24.0, tail * 7.0 + u_seed - t * 1.3), 24.0);
+    rolls = mix(rolls, 0.5, smoothstep(0.25, 0.68, angularPx * 24.0));
+    float wisps = ShockNoise(vec2((u + curl * 0.64) * 58.0, tail * 6.0 + u_seed + 11.0), 58.0);
+    wisps = mix(wisps, 0.5, smoothstep(0.24, 0.65, angularPx * 58.0));
+
+    // Advect the broad lobes and let the narrow wisps trail from their shoulders.
+    float crest = smoothstep(-0.055 - px, 0.028 + px, depth);
+    float reach = mix(0.12, 0.33, lobes) + t * 0.062;
+    float veil = 1.0 - smoothstep(reach * 0.14, reach, tail);
+    float erosion = smoothstep(0.24, 0.76, rolls * 0.62 + wisps * 0.38 - t * 0.13);
+    float compression = smoothstep(0.15, 0.76, macro * 0.50 + lobes * 0.50);
+    float volume = crest * veil * (0.13 + compression * 0.64 + erosion * 0.43);
+    float feather = crest * erosion * (1.0 - smoothstep(reach * 0.45, reach * 1.35, tail));
+    float shoulder = Band(depth - mix(0.035, 0.092, rolls), mix(0.037, 0.096, lobes), px);
+    float ignition = smoothstep(0.42, 0.76, lobes * 0.63 + wisps * 0.37);
+    float flash = 1.0 - smoothstep(0.16, 0.78, t);
+    float ridge = Band(depth - 0.019, 0.024, px) *
+                  smoothstep(0.51, 0.80, rolls * 0.55 + lobes * 0.45);
+    float heat = Band(depth - 0.035, 0.04, px) * ignition * compression;
+    return Wave(volume + feather * 0.34,
+                shoulder * compression * 0.86 + feather * 0.28 + ridge * 0.48,
+                (heat * 0.84 + ridge * 0.78) * flash + shoulder * feather * 0.08);
+}
+
+Wave Parry(float u, float x, float px)
+{
+    float flash = 1.0 - smoothstep(0.20, 0.83, u_t01);
+    float streak = ShockNoise(vec2(u * 5.0 - u_t01 * 0.96, u_seed + 21.0), 5.0);
+    float sweep = smoothstep(0.27, 0.76, streak);
+    float blade = Band(x, mix(0.014, 0.033, sweep), px);
+    float bevel = Band(x + 0.024, 0.064, px);
+    float echo = Band(x + mix(0.055, 0.22, u_t01), 0.022, px) * sweep * flash;
+    return Wave(blade * 0.90 + bevel * 0.91 + echo * 0.35,
+                blade * 0.84 + bevel * 0.15 + echo * 0.43,
+                (blade * mix(0.36, 1.11, sweep) + echo * 0.49) * flash);
+}
+
+Wave Sonic(float x, float px, float macro)
+{
+    float compression = Band(x, 0.045, px);
+    float trough = Band(x + 0.058, 0.073, px);
+    float rebound = Band(x + mix(0.115, 0.257, u_t01), 0.085, px);
+    float condensation = mix(0.37, 0.95, macro);
+    return Wave(compression * 0.80 + trough * 0.72 + rebound * condensation * 0.57,
+                compression * 0.84 + rebound * 0.53,
+                compression * condensation * 0.45);
+}
+
+Wave Pulse(float u, float x, float px, float angularPx, float macro)
+{
+    float breadth = mix(0.13, 0.26, u_t01) * mix(0.79, 1.17, macro);
+    float veil = Band(x + 0.047, breadth, px);
+    float fold = ShockNoise(vec2(u * 11.0 + u_t01 * 0.23, u_seed + x * 7.0), 11.0);
+    fold = mix(fold, 0.5, smoothstep(0.24, 0.70, angularPx * 11.0));
+    float back = mix(0.12, 0.31, u_t01) + (macro - 0.5) * 0.135;
+    float undercurrent = Band(x + back, mix(0.068, 0.107, fold), px);
+    float sweep = smoothstep(0.20, 0.80, macro * 0.62 + fold * 0.38);
+    float satin = Band(x - (fold - 0.5) * 0.073, mix(0.031, 0.065, sweep), px);
+    float ripple = Band(x + back * 0.62 + (fold - 0.5) * 0.094, 0.022, px) * sweep;
+    return Wave(veil * 0.54 + undercurrent * 0.37,
+                satin * mix(0.25, 0.83, sweep) + undercurrent * 0.34 + ripple * 0.30,
+                satin * veil * mix(0.20, 0.61, sweep));
+}
+
+Wave Concussive(float u, float x, float px, float angularPx, float macro)
+{
+    float t = u_t01;
+    float crest = ShockNoise(vec2(u * 12.0, u_seed + t * 0.81), 12.0);
+    float front = (macro - 0.5) * 0.16 + (crest - 0.5) * 0.14;
+    float depth = front - x;
+    float tail = max(depth, 0.0);
+    float sweep = u + tail * (crest - 0.5) * 0.16;
+    float billows = ShockNoise(vec2(sweep * 20.0, tail * 9.0 + u_seed - t * 2.1), 20.0);
+    float grain = ShockNoise(vec2((sweep + tail * tail * 0.11) * 49.0,
+                                 tail * 24.0 + u_seed - t * 2.4), 49.0);
+    grain = mix(grain, 0.5, smoothstep(0.22, 0.61, angularPx * 49.0));
+    float turbulence = billows * 0.68 + grain * 0.32;
+    float reach = mix(0.17, 0.42, macro) + t * 0.045;
+    float mass = smoothstep(-0.10 - px, 0.046 + px, depth) *
+                 (1.0 - smoothstep(reach * 0.24, reach, tail));
+    float breakup = smoothstep(0.21, 0.74, turbulence + crest * 0.21 - t * 0.10);
+    float pressure = smoothstep(0.23, 0.72, mix(crest, macro, 0.47));
+    float coverage = mass * (0.29 + breakup * 0.89 + pressure * 0.33);
+    float shoulder = Band(depth - mix(0.06, 0.16, billows), 0.13, px);
+    float litFold = shoulder * smoothstep(0.36, 0.84, turbulence) * (0.41 + pressure * 0.49);
+    float flash = 1.0 - smoothstep(0.11, 0.53, t);
+    return Wave(coverage, litFold + breakup * mass * 0.21, litFold * pressure * flash * 0.62);
 }
 
 void main()
 {
-    float u = fragTexCoord.x; // around the ring, 0 -> 1, wraps
-    float v = fragTexCoord.y; // across the canvas, 0 = inner base, 1 = outer
+    float u = fragTexCoord.x;
+    float v = fragTexCoord.y;
+    float px = clamp(fwidth(v) * 0.65, 0.001, 0.16);
+    float angularPx = max(fwidth(u), 0.00005);
+    float crossSection = u_direction < 0.0 ? 1.0 - v : v;
+    float t = u_t01;
+    float macro = ShockNoise(vec2(u * 7.0, u_seed), 7.0);
+    float arcDistance = abs(fract(u - u_arc.x + 0.5) - 0.5);
+    float tip = u_arc.y >= 0.5 ? 0.0 : smoothstep(u_arc.y * 0.58, u_arc.y, arcDistance);
+    float arch = crossSection - 0.5 + tip * 0.085;
+    float rip = ShockNoise(vec2(u * 19.0, u_seed + 31.0), 19.0) - 0.5;
+    float x = arch - (macro - 0.5) * 0.059 - rip * 0.020;
 
-    // Screen-space AA floors in canvas & polar units (avoiding u=0/1 wrap spike).
-    float pxV = max(fwidth(v), 0.0005);
-    float pxU = max(min(fwidth(u), fwidth(fract(u + 0.5))), 0.00005);
-
-    // Implosion flips the radial coordinate so the front leads inward.
-    float vEff = (u_styleD.z < 0.0) ? (1.0 - v) : v;
-
-    // ── 1. ORGANIC WAVEFRONT CONTOUR & ANGULAR FRACTURE ──────────────────────
-    float wobbleAmp = u_styleA.z;
-    float frontWob  = FbmRing(vec2(u * 4.0, 7.0 + u_seed), 4.0, 2) - 0.5;
-    float frontRip  = FbmRing(vec2(u * 12.0, 31.0 + u_seed), 12.0, 2) - 0.5;
-    float frontFine = FbmRing(vec2(u * 36.0, 83.0 + u_seed), 36.0, 2) - 0.5;
-
-    // Sharp angular sawtooth/stepped kinks for SHATTER.
-    float kink = 0.0;
-    if (u_styleC.z > 0.01) {
-        float kNoise = FbmRing(vec2(u * 7.0, 53.0 + u_seed), 7.0, 2);
-        float tri = abs(fract(u * 14.0 + kNoise * 1.8) * 2.0 - 1.0) - 0.5;
-        kink = u_styleC.z * (tri * 0.075 + (floor(kNoise * 4.0) / 4.0 - 0.5) * 0.065);
-    }
-
-    // Directional arc distance & tip taper/pull-back (crescent shape for partial arcs).
-    float du = abs(fract(u - u_arc.x + 0.5) - 0.5);
-    float arcFade = (u_arc.y >= 0.499) ? 1.0 : (1.0 - smoothstep(u_arc.y * 0.68, u_arc.y, du));
-    float arcPull = (u_arc.y >= 0.499) ? 0.0 : smoothstep(u_arc.y * 0.60, u_arc.y, du) * 0.09;
-
-    float coreV = u_coreV + frontWob * 0.09 * wobbleAmp;
-    float frontV = coreV + 0.03 + (frontWob * 0.095 + frontRip * 0.048 + frontFine * 0.018) * wobbleAmp + kink - arcPull;
-
-    // ── 2. VARIABLE ARC ENERGY & BREAKUP ─────────────────────────────────────
-    float arcNoise = FbmRing(vec2(u * 3.0, 119.0 + u_seed), 3.0, 2);
-    float arcEnergy = mix(0.28, 1.55, smoothstep(0.18, 0.82, arcNoise));
-
-    float breakField = FbmRing(vec2(u * 6.0, 151.0 + u_seed), 6.0, 2);
-    float arcBreak = (u_styleC.z > 0.001)
-        ? smoothstep(u_styleC.z - 0.02, u_styleC.z + 0.06, breakField)
-        : 1.0;
-    arcEnergy *= arcBreak * arcFade;
-
-    // Dynamic leading edge thickness with pixel-width AA floor.
-    float rimT = FbmRing(vec2(u * 8.0, 101.0 + u_seed), 8.0, 2);
-    float frontWidth = max(mix(0.012, 0.030, rimT) * mix(1.0, 0.65, u_t01) * max(u_styleA.x, 0.05),
-                           1.4 * pxV);
-
-    // ── 3. RAZOR-THIN LEADING EDGE & CORE LINE ───────────────────────────────
-    float dR = vEff - frontV; // > 0: ahead of shock, < 0: behind shock (inside wake)
-    float hard = clamp(u_styleA.y, 0.12, 3.0);
-
-    float leadEdge = 0.0;
-    if (dR >= 0.0) {
-        leadEdge = exp(-dR / max(frontWidth * (0.28 / hard), pxV * 0.80)) *
-                   (1.0 - smoothstep(pxV * 0.5, max(0.032 / hard, pxV * 1.8), dR));
+    Wave wave;
+    float fade = 1.0 - t;
+    float vapour = 0.0;
+    float hotWhite = 0.23;
+    if (u_variant == 1) {
+        wave = Parry(u, arch, px);
+        fade *= mix(0.92, 0.44, t);
+        hotWhite = 0.64;
+    } else if (u_variant == 2) {
+        wave = Sonic(arch - (macro - 0.5) * 0.012, px, macro);
+        vapour = 0.80;
+        hotWhite = 0.38;
+    } else if (u_variant == 3) {
+        wave = Pulse(u, x, px, angularPx, macro);
+        fade = 1.0 - smoothstep(0.05, 1.0, t);
+        hotWhite = 0.04;
+    } else if (u_variant == 4) {
+        wave = Concussive(u, x, px, angularPx, macro);
+        fade = 1.0 - smoothstep(0.14, 1.0, t);
     } else {
-        leadEdge = exp(dR / max(frontWidth * (1.45 / clamp(hard, 0.5, 2.2)), pxV * 1.0));
+        wave = Impact(u, x, px, angularPx, macro);
     }
 
-    // Ultra-thin hot core (kept narrow so bloom only hits the razor leading edge).
-    float coreSigma = max(0.0036, pxV * 0.78);
-    float coreLine = exp(-abs(dR) / coreSigma) * arcEnergy * u_styleD.y;
+    // Feather the actual mesh boundary before applying angular fades.
+    float boundary = smoothstep(0.0, 0.05, v) * (1.0 - smoothstep(0.93, 1.0, v));
+    boundary *= smoothstep(u_hole * 0.45, max(u_hole + 0.13, 0.04), crossSection);
+    float envelope = boundary * (1.0 - tip) * fade * u_opacity * u_bodyColor.a;
 
-    // ── 4. CRISP DOMAIN-WARPED WAKE, JET RAYS & SONIC LENSING ────────────────
-    float wake = 0.0;
-    float rays = 0.0;
-    float lensingDark = 0.0;
-    float wd = max(-dR, 0.0);
-
-    if (dR <= 0.0)
-    {
-        float shear = (wd * 0.018 + wd * wd * 0.035) *
-                      (FbmRing(vec2(u * 4.0, 41.0 + u_seed), 4.0, 2) - 0.5) * wobbleAmp;
-        float uw = u + shear;
-
-        // Frequency-attenuated radial speedline rays (prevents sub-pixel aliasing).
-        float f28  = 1.0 - smoothstep(0.25, 0.50, pxU * 28.0);
-        float f64  = 1.0 - smoothstep(0.25, 0.50, pxU * 64.0);
-        float f128 = 1.0 - smoothstep(0.25, 0.50, pxU * 128.0);
-
-        float ray1 = ShockNoise(vec2(uw * 28.0, 17.0 + u_seed), 28.0);
-        float ray2 = ShockNoise(vec2(uw * 64.0, 59.0 + u_seed), 64.0);
-        float ray3 = ShockNoise(vec2(uw * 128.0, 113.0 + u_seed), 128.0);
-        float rayComb = pow(ray1 * 0.50 * f28 + ray2 * 0.35 * f64 + ray3 * 0.15 * f128, 2.3) * 3.4;
-
-        float tailReach = FbmRing(vec2(u * 6.0, 203.0 + u_seed), 6.0, 2);
-        float rayLen = mix(0.16, 0.34, u_t01) * mix(0.45, 1.60, tailReach);
-        float rayDecay = exp(-wd / max(rayLen * 0.48, 0.025));
-        rays = rayComb * rayDecay * arcEnergy * u_styleB.y;
-
-        // Domain-warped wake body so inner smoke/plasma forms crisp torn wisps.
-        float wdWarp = wd + (FbmRing(vec2(u * 9.0, 29.0 + u_seed), 9.0, 2) - 0.5) * 0.075 * max(wobbleAmp, 0.35);
-        wdWarp = max(wdWarp, 0.0);
-        float wakeBody = exp(-wdWarp * 9.5) * (1.0 - smoothstep(0.0, max(rayLen * 1.15, 0.22), wdWarp)) * u_styleB.x;
-
-        // Acoustic pressure ripple gated past early release.
-        float rippleGate = smoothstep(0.08, 0.20, u_t01);
-        float pressureRipple = (sin(wd * 65.0 - u_t01 * 10.0) * 0.5 + 0.5) * exp(-wd * 22.0) * rippleGate;
-
-        float shredNoise = ShockNoise(vec2(uw * 40.0, wdWarp * 12.0 + 77.0 + u_seed), 40.0);
-        float tearThreshold = mix(u_styleB.z, u_styleB.w, u_t01 * u_t01) + (1.0 - arcEnergy * 0.65) * 0.14;
-        float shredMask = smoothstep(tearThreshold, tearThreshold + 0.10, shredNoise);
-
-        wake = clamp((wakeBody * 0.90 + rays * 0.78 + pressureRipple * 0.18 * u_styleB.x) * shredMask, 0.0, 1.0);
-
-        // Dark pressure-drop lensing trough immediately behind SONIC front.
-        if (u_styleC.x > 0.01) {
-            float rw = max(0.022, 1.8 * pxV);
-            lensingDark = exp(-pow((wd - 0.055) / rw, 2.0)) * u_styleC.x;
-        }
-    }
-
-    float ember = pow(rays * 0.70 + leadEdge * 0.25, 2.2) * mix(1.1, 0.25, u_t01) * arcEnergy * clamp(u_styleB.y, 0.0, 1.5);
-
-    // Single life envelope (fadeK lives here; C side supplies arrival only).
-    float lifeAlpha = pow(max(1.0 - u_t01, 0.0), max(u_styleA.w, 0.1));
-    float frontIntensity = (leadEdge * 1.15 + coreLine * 1.55) * lifeAlpha * arcEnergy;
-    float wakeIntensity = wake * lifeAlpha * arcFade;
-    lensingDark *= lifeAlpha * arcFade;
-
-    // Soft canvas boundary & feathered inner fade (no harsh center circle cutout).
-    float edge = smoothstep(0.0, 0.05, v) * (1.0 - smoothstep(0.92, 1.0, v));
-    edge *= smoothstep(u_hole * 0.45, max(u_hole + 0.16, 0.04), vEff);
-
-    // Vapour desaturation for SONIC / PARRY / PULSE.
-    vec3 vapourTint = vec3(0.86, 0.91, 0.96);
-    vec3 baseBody = mix(u_bodyColor.rgb, vapourTint, clamp(u_styleC.w, 0.0, 1.0));
-    vec3 baseGlow = mix(u_glowColor.rgb, vapourTint, clamp(u_styleC.w * 0.80, 0.0, 1.0));
-
-    // ── 5. DUAL-PASS COMPOSITING (BRIGHT-BACKGROUND VFX CONTRACT) ────────────
-    if (u_premultiply > 0.5)
-    {
-        // Keep bloom strictly on the razor coreLine & hottest filament tips so
-        // the wake wisps, speedlines, and lensing trough stay crisp!
-        float glowMask = clamp(coreLine * 1.25 * lifeAlpha + ember * 0.95 * lifeAlpha + leadEdge * 0.35 * lifeAlpha * arcEnergy,
-                               0.0, 1.0) * edge * u_opacity * u_bodyColor.a;
-        float ga = clamp(coreLine * 0.55 * lifeAlpha + leadEdge * 0.38 * lifeAlpha * arcEnergy + ember * 0.30 * lifeAlpha,
-                         0.0, 1.0) * edge * u_opacity * u_bodyColor.a;
-
-        vec3 hotCol = mix(baseGlow, vec3(1.0, 0.98, 0.94),
-                          clamp(coreLine * 0.90 + ember * 0.30, 0.0, 1.0));
-        vec3 glow = VFX_TonemapSafeEmission(hotCol, u_emission, glowMask);
-        vec3 bodyPre = VFX_TonemapSafeEmission(hotCol, u_emission * 0.22, 1.0);
-
-        finalColor = VFX_ResolvePremultiplied(bodyPre, 1.0, ga, glow, 1.0, 1.0);
-    }
-    else
-    {
-        // BODY PASS: Rich elemental plasma + soot pigmentation for bright-bg attenuation.
-        float sootMask = clamp(wakeIntensity * 1.35 + leadEdge * 0.40 * arcEnergy + lensingDark * 1.15, 0.0, 1.0) *
-                         u_styleD.x * edge;
-        float cover = clamp((frontIntensity * 0.72 + wakeIntensity * 1.15 + ember * 0.35 + lensingDark * 0.90) * u_styleD.w + sootMask,
-                            0.0, 1.0) * edge;
-        float heat = clamp(1.0 - wd * 3.5, 0.0, 1.0);
-
-        vec3 sootCol = baseBody * 0.22;
-        vec3 deepPlasma = mix(baseBody * mix(0.45, 1.00, heat), sootCol,
-                              clamp(sootMask * 0.88 + lensingDark * 0.95, 0.0, 1.0));
-        vec3 bodyCol = mix(deepPlasma, baseGlow,
-                           clamp((leadEdge * 0.70 + ember * 0.55 + rays * 0.35) * (1.0 - lensingDark * 0.92), 0.0, 1.0));
-        float a = clamp(cover * u_opacity * u_bodyColor.a, 0.0, 1.0);
-        finalColor = VFX_ResolveBody(bodyCol, min(u_emission, 1.2), a);
+    if (u_premultiply > 0.5) {
+        vec3 hot = mix(u_glowColor.rgb, vec3(0.86, 0.95, 1.0), vapour);
+        hot = mix(hot, vec3(1.0, 0.98, 0.94), hotWhite);
+        vec3 glow = VFX_TonemapSafeEmission(hot, u_emission, wave.heat * envelope);
+        finalColor = VFX_ResolvePremultiplied(vec3(0.0), 1.0, 0.0, glow, 1.0, 1.0);
+    } else {
+        vec3 pigment = mix(u_bodyColor.rgb, vec3(0.22, 0.34, 0.47), vapour);
+        vec3 lit = mix(u_glowColor.rgb, vec3(0.78, 0.89, 0.98), vapour);
+        vec3 body = mix(pigment * 0.30, lit * 0.83, clamp(wave.light, 0.0, 1.0));
+        finalColor = VFX_ResolveBody(body, 1.0, wave.density * envelope);
     }
 }

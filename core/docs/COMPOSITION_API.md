@@ -435,16 +435,24 @@ Run `python3 scripts/sync_vfx_test.py` after every `VFX_Compose*` add/remove.
 ---
 
 ## Shock Ring Variants (`core/composition/common/vc_shock_ring.inl`)
-`VFX_ComposeShockRing` / `VFX_SpawnShockRing` remain unchanged and default to `VFX_SHOCK_RING_IMPACT`.
+`VFX_ComposeShockRing` / `VFX_SpawnShockRing` default to `VFX_SHOCK_RING_IMPACT`.
 Use `VFX_ComposeShockRingEx` / `VFX_SpawnShockRingEx` with `VFX_ShockRingDesc` (from `VFX_ShockRing_DefaultDesc(variant)`) for:
 
 | Variant | Use case | Character |
 |---|---|---|
-| `VFX_SHOCK_RING_IMPACT` | Normal hits, mid-air explosions | Razor leading edge + crisp torn Wuxia wake + soot body |
-| `VFX_SHOCK_RING_PARRY` | Block, parry, deflect | Ultra-crisp deflect rim, minimal wake, tight envelope |
-| `VFX_SHOCK_RING_SONIC` | Dash start, Mach punch, sword-qi | Cool-white vapour rim + dark pressure-drop trough |
-| `VFX_SHOCK_RING_PULSE` | Buff, cleanse, heal, Thiền Định | Soft feathered Qi wave, low emission |
-| `VFX_SHOCK_RING_CONCUSSIVE` | Heavy hits, boss slams, finishers | Heavy blast, strong soot occlusion, deep torn streaks |
-| `VFX_SHOCK_RING_SHATTER` | Guard/armour break, stagger | Sharp angular fracture arcs + spiky shatter streaks |
+| `VFX_SHOCK_RING_IMPACT` | Normal hits, mid-air explosions | Scalloped pressure front with localized ignition and a wake that disperses into wisps |
+| `VFX_SHOCK_RING_PARRY` | Block, parry, deflect | Narrow metal-like edge with travelling highlights and a falling echo |
+| `VFX_SHOCK_RING_SONIC` | Dash start, Mach punch, sword-qi | Cool compression front, dark trough and a widening vapour rebound |
+| `VFX_SHOCK_RING_PULSE` | Buff, cleanse, heal, Thiền Định | Slow, soft Qi veil with a broader trailing current |
+| `VFX_SHOCK_RING_CONCUSSIVE` | Heavy hits, boss slams, finishers | A raised pressure front that billows into smoke |
 
-Orthogonal `VFX_ShockRingDesc` fields: `intensity`, `thickness`, `arcSpan` + `arcForward` (directional crescent arc), `inward` (contract `R -> 0` implosion), `seed` (`0` = auto).
+`arcSpan` is the total angle in radians, centered on the projection of `arcForward` into the plane. `inward` contracts the ring from its target radius and puts the wake behind the inward-moving crest. `intensity` scales coverage and emission, `thickness` scales the lens section, and a `seed` of `0` selects the automatic seed.
+
+The preset profiles live in `core/shaders/shock_ring.fs`. Soft coverage and short-lived emission are resolved into the body and emission passes.
+
+## Patch Log
+
+| Date | Editor | Section edited | Based on source | Tier |
+|---|---|---|---|---|
+| 2026-11-26 | Codex | Shock Ring Variants | `vc_shock_ring.inl`, `shock_ring.fs` | Ground-truth |
+| 2026-11-26 | Codex | Remove Shatter from Shock Ring Variants | `visual_composer.h` | Ground-truth |

@@ -1,5 +1,5 @@
 {
-  "gold": 324298,
+  "gold": 324454,
   "daTauPoints": 42924,
   "daTauTokens": 179,
   "herbs": 328,
@@ -99,8 +99,8 @@
   "sk_lvl_GLTBC_MAT_VAN_BAT_VU": 1,
   "sk_xp_GLTBC_MAT_VAN_BAT_VU": 18,
   "sk_unl_GLTBC_TIEM_LONG_VAT_DUNG": 1,
-  "sk_lvl_GLTBC_TIEM_LONG_VAT_DUNG": 4,
-  "sk_xp_GLTBC_TIEM_LONG_VAT_DUNG": 289,
+  "sk_lvl_GLTBC_TIEM_LONG_VAT_DUNG": 5,
+  "sk_xp_GLTBC_TIEM_LONG_VAT_DUNG": 87,
   "sk_unl_LHPT_PHI_HOA_XUNG_CUOC": 1,
   "sk_lvl_LHPT_PHI_HOA_XUNG_CUOC": 6,
   "sk_xp_LHPT_PHI_HOA_XUNG_CUOC": 588,
@@ -123,8 +123,8 @@
   "sk_lvl_LHPT_VIEM_HO_BAN_NGUYET_CUOC": 6,
   "sk_xp_LHPT_VIEM_HO_BAN_NGUYET_CUOC": 357,
   "sk_unl_GLTBC_KIEN_LONG_TAI_DIEN": 1,
-  "sk_lvl_GLTBC_KIEN_LONG_TAI_DIEN": 1,
-  "sk_xp_GLTBC_KIEN_LONG_TAI_DIEN": 90,
+  "sk_lvl_GLTBC_KIEN_LONG_TAI_DIEN": 2,
+  "sk_xp_GLTBC_KIEN_LONG_TAI_DIEN": 134,
   "sk_unl_BTBC_DIA_LIET_CHAN_BA": 1,
   "sk_lvl_BTBC_DIA_LIET_CHAN_BA": 1,
   "sk_xp_BTBC_DIA_LIET_CHAN_BA": 0,
@@ -155,5 +155,5 @@
   "sk_unl_BTBC_BAN_THACH_KIM_CANG_GIAP": 1,
   "sk_lvl_BTBC_BAN_THACH_KIM_CANG_GIAP": 1,
   "sk_xp_BTBC_BAN_THACH_KIM_CANG_GIAP": 0,
-  "integrityHash": 1424361019
+  "integrityHash": 3873569287
 }

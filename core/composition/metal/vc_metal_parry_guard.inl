@@ -185,7 +185,9 @@ void VC_MetalParryGuard_Draw3D(Camera3D cam)
         if (inst->deflectFlash > 0.05f) {
             Vector3 toHit = Vector3Subtract(inst->deflectPos, center);
             if (Vector3LengthSqr(toHit) < 1e-4f) toHit = inst->forward;
-            VFX_ComposeShockRing(inst->deflectPos, Vector3Normalize(toHit), VC_MAT_METAL, 1.35f, 1.0f - inst->deflectFlash);
+            VFX_ShockRingDesc ring = VFX_ShockRing_DefaultDesc(VFX_SHOCK_RING_PARRY);
+            VFX_ComposeShockRingEx(inst->deflectPos, Vector3Normalize(toHit), VC_MAT_METAL,
+                                   1.35f, 1.0f - inst->deflectFlash, &ring);
         }
     }
 }

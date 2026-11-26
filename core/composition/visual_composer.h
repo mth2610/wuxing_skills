@@ -1458,7 +1458,6 @@ typedef enum {
     VFX_SHOCK_RING_SONIC,        // Cool-white vapour rim + dark pressure-drop trough
     VFX_SHOCK_RING_PULSE,        // Soft feathered Qi wave, low emission
     VFX_SHOCK_RING_CONCUSSIVE,   // Heavy blast, strong soot occlusion, deep streaks
-    VFX_SHOCK_RING_SHATTER,      // Sharp angular fracture arcs + spiky shatter streaks
     VFX_SHOCK_RING_VARIANT_COUNT
 } VFX_ShockRingVariant;
 

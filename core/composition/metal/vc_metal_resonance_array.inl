@@ -303,7 +303,9 @@ void VC_MetalResonanceArray_Draw3D(Camera3D cam)
             for (int k = 0; k < VC_RES_BLADE_COUNT; k++) {
                 ResArray_DrawVerticalSpire(inst->bladePts[k], 2.4f * hEnv, 0.16f, hEnv * 0.90f, cam);
             }
-            VFX_ComposeShockRing(inst->center, (Vector3){ 0.0f, 1.0f, 0.0f }, VC_MAT_METAL, inst->radius * 1.15f, e01);
+            VFX_ShockRingDesc ring = VFX_ShockRing_DefaultDesc(VFX_SHOCK_RING_SONIC);
+            VFX_ComposeShockRingEx(inst->center, (Vector3){ 0.0f, 1.0f, 0.0f }, VC_MAT_METAL,
+                                   inst->radius * 1.15f, e01, &ring);
         }
         (void)total;
     }

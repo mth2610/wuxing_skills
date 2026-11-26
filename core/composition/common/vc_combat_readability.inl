@@ -19,7 +19,8 @@ void VFX_ComposeDeflectFlash(Vector3 pos, Vector3 normal, VC_MaterialId mat, flo
     if (scale <= 0.05f) scale = 1.0f;
     Vector3 n = (Vector3LengthSqr(normal) > 1e-5f) ? Vector3Normalize(normal) : (Vector3){ 0.0f, 1.0f, 0.0f };
     const VFX_ElementMaterial *m = VFX_Material(mat);
-    VFX_SpawnShockRing(pos, n, mat, 1.05f * scale, 0.24f);
+    VFX_ShockRingDesc ring = VFX_ShockRing_DefaultDesc(VFX_SHOCK_RING_PARRY);
+    VFX_SpawnShockRingEx(pos, n, mat, 1.05f * scale, 0.24f, &ring);
     VFX_ComposeContactSparkMode(pos, mat, 0.80f * scale, 0.90f, CONTACT_SPARK_CENTRIFUGAL);
     ScreenDistort_Add(pos, 1.25f * scale, 0.032f, 0.16f, 1.4f);
     VFXLight_Spawn(pos, m ? m->glow : WHITE, 1.8f * scale, 0.14f, VFX_PRIORITY_LOW);
@@ -32,7 +33,8 @@ void VFX_ComposeClashBurst(Vector3 pos, int elemA, int elemB, int outcome)
     VC_MaterialId winMat = (outcome == 1) ? matA : ((outcome == 2) ? matB : VC_MAT_TAIJI);
     float sc = (outcome == 0) ? 1.15f : 1.0f;
 
-    VFX_SpawnShockRing(pos, (Vector3){ 0.0f, 1.0f, 0.0f }, winMat, 1.45f * sc, 0.28f);
+    VFX_ShockRingDesc ring = VFX_ShockRing_DefaultDesc(VFX_SHOCK_RING_CONCUSSIVE);
+    VFX_SpawnShockRingEx(pos, (Vector3){ 0.0f, 1.0f, 0.0f }, winMat, 1.45f * sc, 0.28f, &ring);
     VFX_SpawnShockRing(pos, (Vector3){ 1.0f, 0.0f, 0.0f }, matA, 1.10f * sc, 0.22f);
     VFX_ComposeContactSparkMode(pos, winMat, 0.95f * sc, 0.95f, CONTACT_SPARK_CENTRIFUGAL);
     ScreenDistort_Add(pos, 1.6f * sc, 0.038f, 0.20f, 1.3f);
@@ -61,7 +63,8 @@ void VFX_ComposeCleanseBurst(Vector3 pos, VC_MaterialId mat, float radius)
     if (radius <= 0.1f) radius = 1.4f;
     Vector3 gp = { pos.x, VFX_GroundHeightFromMap(pos.x, pos.z, NULL) + 0.05f, pos.z };
     Vector3 chest = { pos.x, pos.y + 0.95f, pos.z };
-VFX_SpawnShockRing(chest, (Vector3){ 0.0f, 1.0f, 0.0f }, mat, radius * 0.78f, 0.30f);
+    VFX_ShockRingDesc ring = VFX_ShockRing_DefaultDesc(VFX_SHOCK_RING_PULSE);
+    VFX_SpawnShockRingEx(chest, (Vector3){ 0.0f, 1.0f, 0.0f }, mat, radius * 0.78f, 0.30f, &ring);
     VFXLight_Spawn(chest, VFX_Material(mat)->soft, radius * 1.4f, 0.25f, VFX_PRIORITY_LOW);
 }
 
