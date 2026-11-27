@@ -1,17 +1,16 @@
-// Initialization-only packing for static blade meshes. Compare every authored
+// Initialization-only packing for static map meshes. Compare every authored
 // attribute byte; coincident positions with different normals/UVs stay distinct.
-static bool Nature_IndexBladeMesh(Mesh *mesh)
+static bool MapProp_IndexStaticMesh(Mesh *mesh)
 {
     if (!mesh || mesh->indices || mesh->vertexCount < 6 ||
         mesh->vertexCount > 196605 || mesh->vertexCount != mesh->triangleCount * 3 ||
-        !mesh->vertices || !mesh->normals || !mesh->texcoords ||
-        !mesh->texcoords2 || !mesh->colors)
+        !mesh->vertices || !mesh->normals)
         return false;
     int count = mesh->vertexCount;
     unsigned int capacity = 1;
     while (capacity < (unsigned int)count * 2u) capacity <<= 1;
     unsigned int *table = MemAlloc(capacity * sizeof(unsigned int));
-    unsigned int *originals = MemAlloc(65535u * sizeof(unsigned int));
+    unsigned int *originals = MemAlloc((unsigned int)(count < 65535 ? count : 65535) * sizeof(unsigned int));
     unsigned short *indices = MemAlloc((unsigned int)count * sizeof(unsigned short));
     if (!table || !originals || !indices) {
         MemFree(table); MemFree(originals); MemFree(indices);
@@ -29,6 +28,7 @@ static bool Nature_IndexBladeMesh(Mesh *mesh)
     for (int i = 0; i < count; i++) {
         unsigned int hash = 2166136261u;
         for (int stream = 0; stream < 5; stream++) {
+            if (!streams[stream]) continue;
             const unsigned char *bytes = streams[stream] + (unsigned int)i * sizes[stream];
             for (unsigned int byte = 0; byte < sizes[stream]; byte++)
                 hash = (hash ^ bytes[byte]) * 16777619u;
@@ -38,6 +38,7 @@ static bool Nature_IndexBladeMesh(Mesh *mesh)
             unsigned int original = table[slot] - 1u;
             bool equal = true;
             for (int stream = 0; stream < 5; stream++) {
+                if (!streams[stream]) continue;
                 if (memcmp(streams[stream] + (unsigned int)i * sizes[stream],
                            streams[stream] + original * sizes[stream], sizes[stream]) != 0) {
                     equal = false;
@@ -68,13 +69,16 @@ static bool Nature_IndexBladeMesh(Mesh *mesh)
     }
     for (unsigned int i = 0; i < unique; i++) {
         if (i == originals[i]) continue;
-        for (int stream = 0; stream < 5; stream++)
+        for (int stream = 0; stream < 5; stream++) {
+            if (!streams[stream]) continue;
             memcpy(streams[stream] + i * sizes[stream],
                    streams[stream] + originals[i] * sizes[stream], sizes[stream]);
+        }
     }
     MemFree(originals);
     // Reallocation failure only leaves an unused CPU tail, never lost geometry.
     for (int stream = 0; stream < 5; stream++) {
+        if (!streams[stream]) continue;
         void *smaller = MemRealloc(streams[stream], unique * sizes[stream]);
         if (smaller) streams[stream] = smaller;
     }
@@ -86,4 +90,11 @@ static bool Nature_IndexBladeMesh(Mesh *mesh)
     mesh->indices = indices;
     mesh->vertexCount = (int)unique;
     return true;
+}
+
+static bool Nature_IndexBladeMesh(Mesh *mesh)
+{
+    if (!mesh || !mesh->texcoords || !mesh->texcoords2 || !mesh->colors)
+        return false;
+    return MapProp_IndexStaticMesh(mesh);
 }

@@ -883,7 +883,6 @@ void DrawNinhThuanMap(void)
     if (!s_ready)
         return;
     MapProp_ResetNatureRenderStats();
-    PropLit_UpdateLighting();
 
     if (!(s_skipMask & MAP_SKIP_ROCKS))
         MapProp_DrawRockSystem(&s_rocks, false);

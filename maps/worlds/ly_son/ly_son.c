@@ -743,7 +743,6 @@ void DrawLySonMap(void)
     if (!s_ready)
         return;
     MapProp_ResetNatureRenderStats();
-    PropLit_UpdateLighting();
 
     if (!(s_skipMask & MAP_SKIP_ROCKS))
     {

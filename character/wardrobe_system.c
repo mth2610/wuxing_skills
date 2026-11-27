@@ -287,6 +287,10 @@ static ModularSlot Wardrobe_SlotFromFolderName(const char *folder)
         return MODULAR_SLOT_MASK;
     if (strcmp(folder, "hair") == 0)
         return MODULAR_SLOT_HAIR;
+    if (strcmp(folder, "eyebrows") == 0 || strcmp(folder, "brows") == 0)
+        return MODULAR_SLOT_EYEBROWS;
+    if (strcmp(folder, "beard") == 0 || strcmp(folder, "facial_hair") == 0)
+        return MODULAR_SLOT_BEARD;
     if (strcmp(folder, "waist") == 0)
         return MODULAR_SLOT_WAIST;
     if (strcmp(folder, "back") == 0)
@@ -305,7 +309,8 @@ static ModularSlot Wardrobe_SlotFromFolderName(const char *folder)
 static bool Wardrobe_FolderIsSkinned(ModularSlot slot)
 {
     return (slot == MODULAR_SLOT_TORSO || slot == MODULAR_SLOT_LEGS || slot == MODULAR_SLOT_BOOTS ||
-            slot == MODULAR_SLOT_BRACERS || slot == MODULAR_SLOT_FULL_OUTFIT || slot == MODULAR_SLOT_BASE_BODY);
+            slot == MODULAR_SLOT_BRACERS || slot == MODULAR_SLOT_FULL_OUTFIT || slot == MODULAR_SLOT_BASE_BODY ||
+            slot == MODULAR_SLOT_HAIR || slot == MODULAR_SLOT_EYEBROWS || slot == MODULAR_SLOT_BEARD);
 }
 
 static const char *Wardrobe_DefaultSocket(ModularSlot slot)
@@ -319,6 +324,8 @@ static const char *Wardrobe_DefaultSocket(ModularSlot slot)
     case MODULAR_SLOT_HEADGEAR:
     case MODULAR_SLOT_MASK:
     case MODULAR_SLOT_HAIR:
+    case MODULAR_SLOT_EYEBROWS:
+    case MODULAR_SLOT_BEARD:
         return "mixamorig:Head";
     case MODULAR_SLOT_WAIST:
         return "mixamorig:Spine";
@@ -502,6 +509,10 @@ static ModularSlot ParseSlotName(const char *name)
         return MODULAR_SLOT_BASE_BODY;
     if (strcmp(name, "hair") == 0)
         return MODULAR_SLOT_HAIR;
+    if (strcmp(name, "eyebrows") == 0)
+        return MODULAR_SLOT_EYEBROWS;
+    if (strcmp(name, "beard") == 0)
+        return MODULAR_SLOT_BEARD;
     if (strcmp(name, "headgear") == 0)
         return MODULAR_SLOT_HEADGEAR;
     if (strcmp(name, "mask") == 0)
@@ -1207,6 +1218,8 @@ bool PlayerWardrobe_SaveToFile(const PlayerWardrobe *pw, const char *filePath)
     fprintf(f, "    \"headgear\": \"%s\",\n", pw->equippedIds[MODULAR_SLOT_HEADGEAR]);
     fprintf(f, "    \"mask\": \"%s\",\n", pw->equippedIds[MODULAR_SLOT_MASK]);
     fprintf(f, "    \"hair\": \"%s\",\n", pw->equippedIds[MODULAR_SLOT_HAIR]);
+    fprintf(f, "    \"eyebrows\": \"%s\",\n", pw->equippedIds[MODULAR_SLOT_EYEBROWS]);
+    fprintf(f, "    \"beard\": \"%s\",\n", pw->equippedIds[MODULAR_SLOT_BEARD]);
     fprintf(f, "    \"waist\": \"%s\",\n", pw->equippedIds[MODULAR_SLOT_WAIST]);
     fprintf(f, "    \"back\": \"%s\",\n", pw->equippedIds[MODULAR_SLOT_BACK]);
     fprintf(f, "    \"weapon_r\": \"%s\",\n", pw->equippedIds[MODULAR_SLOT_WEAPON_R]);
@@ -1244,6 +1257,10 @@ static ModularSlot Wardrobe_SlotFromKey(const char *key)
         return MODULAR_SLOT_MASK;
     if (strcmp(key, "hair") == 0)
         return MODULAR_SLOT_HAIR;
+    if (strcmp(key, "eyebrows") == 0)
+        return MODULAR_SLOT_EYEBROWS;
+    if (strcmp(key, "beard") == 0)
+        return MODULAR_SLOT_BEARD;
     if (strcmp(key, "waist") == 0)
         return MODULAR_SLOT_WAIST;
     if (strcmp(key, "back") == 0)

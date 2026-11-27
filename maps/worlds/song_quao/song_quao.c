@@ -1102,7 +1102,6 @@ void DrawSongQuaoMap(void)
     if (!s_ready)
         return;
     MapProp_ResetNatureRenderStats();
-    PropLit_UpdateLighting();
 
     // Thứ tự chuẩn Early-Z / TBDR HSR:
     // Vẽ Đá & Địa hình mặt đất trước để Depth Buffer cắt bỏ toàn bộ cỏ/hoa bị khuất sau đồi.

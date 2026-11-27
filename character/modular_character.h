@@ -26,10 +26,12 @@
 #define MODULAR_MAX_ITEMS        128
 #define MODULAR_MAX_MINION_BATCH  64
 
-// Equipment slots (13 granular slots supporting Modular & Full Outfits)
+// Equipment slots (15 granular slots supporting Modular & Full Outfits)
 typedef enum {
     MODULAR_SLOT_BASE_BODY = 0, // Thân thể (Master skeleton & naked mesh)
     MODULAR_SLOT_HAIR,          // Mái tóc / Trâm cài (Hair & Hairpins)
+    MODULAR_SLOT_EYEBROWS,      // Lông mày & lông mi (Eyebrows & Eyelashes)
+    MODULAR_SLOT_BEARD,         // Râu & tóc mai (Beard, Mustache & Sideburns — optional)
     MODULAR_SLOT_HEADGEAR,      // Nón lá, mũ quan, khăn đóng
     MODULAR_SLOT_MASK,          // Mặt nạ, khăn che mặt dạ hành
     MODULAR_SLOT_TORSO,         // Y phục (Áo trong, áo giao lĩnh, giáp ngực)

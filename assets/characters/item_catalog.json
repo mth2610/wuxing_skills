@@ -113,7 +113,7 @@
         "speed_multiplier": 1.02,
         "elemental_bonus": 0.08,
         "elemental_resist": 0.06,
-        "mana_regen_bonus": 0.10,
+        "mana_regen_bonus": 0.1,
         "special_perk": "Lưu Thủy Du Thân: Tăng 10% tốc độ hồi phục chân khí"
       }
     },
@@ -140,7 +140,7 @@
         "bonus_health": 55.0,
         "bonus_mana": 45.0,
         "speed_multiplier": 1.03,
-        "elemental_bonus": 0.10,
+        "elemental_bonus": 0.1,
         "elemental_resist": 0.08,
         "mana_regen_bonus": 0.12,
         "special_perk": "Bạch Vân Phiêu Diêu: Tăng 12% tốc độ hồi phục chân khí"
@@ -170,7 +170,7 @@
         "bonus_mana": 60.0,
         "speed_multiplier": 1.04,
         "elemental_bonus": 0.12,
-        "elemental_resist": 0.10,
+        "elemental_resist": 0.1,
         "mana_regen_bonus": 0.16,
         "special_perk": "Thanh Vân Điệp Vũ: Tăng 16% tốc độ hồi phục chân khí, tà áo điểm một tầng linh khí hộ thân"
       }
@@ -187,7 +187,7 @@
       "element": "water",
       "rarity": "epic",
       "is_skinned": true,
-      "model_path": "assets/characters/equipment/torso/tieu_long_nu_tuyet_lien.glb",
+      "model_path": "assets/characters/equipment/torso/shaolin_male_robe.glb",
       "ui_color": [
         58,
         132,
@@ -199,7 +199,7 @@
         "bonus_mana": 60.0,
         "speed_multiplier": 1.04,
         "elemental_bonus": 0.12,
-        "elemental_resist": 0.10,
+        "elemental_resist": 0.1,
         "mana_regen_bonus": 0.16,
         "special_perk": "Thanh Vân Điệp Vũ: Tăng 16% tốc độ hồi phục chân khí, tà áo điểm một tầng linh khí hộ thân"
       }
@@ -228,7 +228,7 @@
         "bonus_mana": 60.0,
         "speed_multiplier": 1.04,
         "elemental_bonus": 0.12,
-        "elemental_resist": 0.10,
+        "elemental_resist": 0.1,
         "mana_regen_bonus": 0.16,
         "special_perk": "Thanh Vân Điệp Vũ: Tăng 16% tốc độ hồi phục chân khí, tà áo điểm một tầng linh khí hộ thân"
       }
@@ -257,7 +257,7 @@
         "bonus_mana": 60.0,
         "speed_multiplier": 1.04,
         "elemental_bonus": 0.12,
-        "elemental_resist": 0.10,
+        "elemental_resist": 0.1,
         "mana_regen_bonus": 0.16,
         "special_perk": "Thanh Vân Điệp Vũ: Tăng 16% tốc độ hồi phục chân khí, tà áo điểm một tầng linh khí hộ thân"
       }
@@ -463,7 +463,7 @@
         "bonus_health": 40.0,
         "bonus_mana": 60.0,
         "speed_multiplier": 1.0,
-        "elemental_bonus": 0.10,
+        "elemental_bonus": 0.1,
         "elemental_resist": 0.08,
         "mana_regen_bonus": 0.25,
         "special_perk": "Linh Mộc Dưỡng Tâm: Hồi phục 2.5 chân khí mỗi giây trong Thiền Định"
@@ -483,14 +483,14 @@
       "is_skinned": false,
       "bone_socket": "mixamorig:RightHand",
       "socket_offset_pos": [
-        0.030,
-        -0.070,
-        -0.010
+        -0.042,
+        0.130,
+        -0.024
       ],
       "socket_offset_rot": [
-        -4.0,
-        4.0,
-        0.0
+        0.0,
+        0.0,
+        32.0
       ],
       "model_path": "assets/characters/equipment/weapons/kiem_thuan_thien.glb",
       "ui_color": [
@@ -544,8 +544,8 @@
         "bonus_mana": 35.0,
         "speed_multiplier": 1.02,
         "elemental_bonus": 0.08,
-        "elemental_resist": 0.10,
-        "mana_regen_bonus": 0.10,
+        "elemental_resist": 0.1,
+        "mana_regen_bonus": 0.1,
         "special_perk": "Bạt Kiếm Thuật: Tăng 20% tốc độ rút kiếm xuất chiêu đầu tiên"
       }
     },
@@ -613,8 +613,385 @@
         "speed_multiplier": 1.12,
         "elemental_bonus": 0.22,
         "elemental_resist": 0.22,
-        "mana_regen_bonus": 0.30,
+        "mana_regen_bonus": 0.3,
         "special_perk": "Thái Cực Quy Nhất: Hóa giải 25% sát thương tương khắc từ mọi hệ Ngũ Hành"
+      }
+    },
+    {
+      "id": "toc_co_trang_kiem_hiep",
+      "name": "Tóc Búi Phát Quán Trâm Ngọc",
+      "description": "Mái tóc cổ trang kiếm khách búi cao với phát quán vàng cổ khảm ngọc bích, tóc mái rẽ lệch và đuôi ngựa dài bay theo gió.",
+      "source": "Túi đồ sơ nhập giang hồ",
+      "unlock_type": "default",
+      "unlock_hint": "Mặc định có sẵn",
+      "slot": "hair",
+      "item_type": "modular",
+      "element": "none",
+      "rarity": "uncommon",
+      "is_skinned": true,
+      "model_path": "assets/characters/equipment/hair/toc_co_trang_kiem_hiep.glb",
+      "ui_color": [
+        36,
+        40,
+        52,
+        255
+      ],
+      "stats": {
+        "bonus_health": 10.0,
+        "bonus_mana": 15.0,
+        "speed_multiplier": 1.0,
+        "elemental_bonus": 0.02,
+        "elemental_resist": 0.0,
+        "mana_regen_bonus": 0.03,
+        "special_perk": "Phong Độ Kiếm Khách: Tóc dài bay theo gió, tôn khí chất giang hồ"
+      }
+    },
+    {
+      "id": "long_may_kiem_mi",
+      "name": "Kiếm Mi & Lông Mi Hiệp Khách",
+      "description": "Đôi lông mày kiếm mi sắc sảo kết hợp hàng lông mi nam tính tự nhiên, tôn ánh mắt cương nghị.",
+      "source": "Túi đồ sơ nhập giang hồ",
+      "unlock_type": "default",
+      "unlock_hint": "Mặc định có sẵn",
+      "slot": "eyebrows",
+      "item_type": "modular",
+      "element": "none",
+      "rarity": "common",
+      "is_skinned": true,
+      "model_path": "assets/characters/equipment/eyebrows/long_may_kiem_mi.glb",
+      "ui_color": [
+        48,
+        42,
+        38,
+        255
+      ],
+      "stats": {
+        "bonus_health": 0.0,
+        "bonus_mana": 0.0,
+        "speed_multiplier": 1.0,
+        "elemental_bonus": 0.0,
+        "elemental_resist": 0.0,
+        "mana_regen_bonus": 0.0,
+        "special_perk": "Ánh Mắt Kiếm Sĩ: Tôn thần thái anh tuấn"
+      }
+    },
+    {
+      "id": "rau_kiem_khach",
+      "name": "Râu Mép & Râu Cằm Kiếm Khách",
+      "description": "Bộ râu mép gọn gàng, râu cằm cắt tỉa tinh tế và tóc mai tự nhiên, có thể tháo rời tùy ý.",
+      "source": "Túi đồ sơ nhập giang hồ",
+      "unlock_type": "default",
+      "unlock_hint": "Mặc định có sẵn",
+      "slot": "beard",
+      "item_type": "modular",
+      "element": "none",
+      "rarity": "common",
+      "is_skinned": true,
+      "model_path": "assets/characters/equipment/beard/rau_kiem_khach.glb",
+      "ui_color": [
+        46,
+        40,
+        36,
+        255
+      ],
+      "stats": {
+        "bonus_health": 0.0,
+        "bonus_mana": 0.0,
+        "speed_multiplier": 1.0,
+        "elemental_bonus": 0.0,
+        "elemental_resist": 0.0,
+        "mana_regen_bonus": 0.0,
+        "special_perk": "Phong Trần Giang Hồ: Tạo nét trầm ổn, lãng tử"
+      }
+    },
+    {
+      "id": "long_may_tuong_quan",
+      "name": "Ngọa Tằm Tướng Quân Mi",
+      "description": "Đôi lông mày rậm thẳng uy vũ kiểu võ tướng giang hồ, đầu mày vuông sắc nét.",
+      "source": "Bộ sưu tập diện mạo giang hồ",
+      "unlock_type": "default",
+      "unlock_hint": "Mặc định có sẵn",
+      "slot": "eyebrows",
+      "item_type": "modular",
+      "element": "none",
+      "rarity": "common",
+      "is_skinned": true,
+      "model_path": "assets/characters/equipment/eyebrows/long_may_tuong_quan.glb",
+      "ui_color": [
+        38,
+        34,
+        32,
+        255
+      ],
+      "stats": {
+        "bonus_health": 0.0,
+        "bonus_mana": 0.0,
+        "speed_multiplier": 1.0,
+        "elemental_bonus": 0.0,
+        "elemental_resist": 0.0,
+        "mana_regen_bonus": 0.0,
+        "special_perk": "Uy Nghi Võ Tướng"
+      }
+    },
+    {
+      "id": "long_may_thu_sinh",
+      "name": "Thư Sinh Thanh Tú Mi",
+      "description": "Đôi lông mày thanh mảnh, cong nhẹ tao nhã kiểu công tử thư sinh.",
+      "source": "Bộ sưu tập diện mạo giang hồ",
+      "unlock_type": "default",
+      "unlock_hint": "Mặc định có sẵn",
+      "slot": "eyebrows",
+      "item_type": "modular",
+      "element": "none",
+      "rarity": "common",
+      "is_skinned": true,
+      "model_path": "assets/characters/equipment/eyebrows/long_may_thu_sinh.glb",
+      "ui_color": [
+        54,
+        48,
+        44,
+        255
+      ],
+      "stats": {
+        "bonus_health": 0.0,
+        "bonus_mana": 0.0,
+        "speed_multiplier": 1.0,
+        "elemental_bonus": 0.0,
+        "elemental_resist": 0.0,
+        "mana_regen_bonus": 0.0,
+        "special_perk": "Khí Chất Nho Nhã"
+      }
+    },
+    {
+      "id": "long_may_dao_nhan",
+      "name": "Đạo Nhân Trường Mi",
+      "description": "Lông mày đạo sĩ đuôi dài xuôi nhẹ ánh bạc, đậm chất cao nhân đắc đạo.",
+      "source": "Bộ sưu tập diện mạo giang hồ",
+      "unlock_type": "default",
+      "unlock_hint": "Mặc định có sẵn",
+      "slot": "eyebrows",
+      "item_type": "modular",
+      "element": "none",
+      "rarity": "common",
+      "is_skinned": true,
+      "model_path": "assets/characters/equipment/eyebrows/long_may_dao_nhan.glb",
+      "ui_color": [
+        130,
+        128,
+        132,
+        255
+      ],
+      "stats": {
+        "bonus_health": 0.0,
+        "bonus_mana": 0.0,
+        "speed_multiplier": 1.0,
+        "elemental_bonus": 0.0,
+        "elemental_resist": 0.0,
+        "mana_regen_bonus": 0.0,
+        "special_perk": "Tiên Phong Đạo Cốt"
+      }
+    },
+    {
+      "id": "long_may_lieu_diep",
+      "name": "Liễu Diệp Mi (Lá Liễu)",
+      "description": "Đôi mày lá liễu cong mềm mại kèm hàng mi dài cong vút, thích hợp nữ hiệp.",
+      "source": "Bộ sưu tập diện mạo giang hồ",
+      "unlock_type": "default",
+      "unlock_hint": "Mặc định có sẵn",
+      "slot": "eyebrows",
+      "item_type": "modular",
+      "element": "none",
+      "rarity": "common",
+      "is_skinned": true,
+      "model_path": "assets/characters/equipment/eyebrows/long_may_lieu_diep.glb",
+      "ui_color": [
+        52,
+        44,
+        42,
+        255
+      ],
+      "stats": {
+        "bonus_health": 0.0,
+        "bonus_mana": 0.0,
+        "speed_multiplier": 1.0,
+        "elemental_bonus": 0.0,
+        "elemental_resist": 0.0,
+        "mana_regen_bonus": 0.0,
+        "special_perk": "Nhãn Thần Thanh Lệ"
+      }
+    },
+    {
+      "id": "long_may_phuong_vi",
+      "name": "Phượng Vĩ Mi (Đuôi Phượng)",
+      "description": "Đôi mày phượng vĩ vút cao kiêu sa kèm mi dài uốn cong sắc sảo.",
+      "source": "Bộ sưu tập diện mạo giang hồ",
+      "unlock_type": "default",
+      "unlock_hint": "Mặc định có sẵn",
+      "slot": "eyebrows",
+      "item_type": "modular",
+      "element": "none",
+      "rarity": "common",
+      "is_skinned": true,
+      "model_path": "assets/characters/equipment/eyebrows/long_may_phuong_vi.glb",
+      "ui_color": [
+        46,
+        40,
+        42,
+        255
+      ],
+      "stats": {
+        "bonus_health": 0.0,
+        "bonus_mana": 0.0,
+        "speed_multiplier": 1.0,
+        "elemental_bonus": 0.0,
+        "elemental_resist": 0.0,
+        "mana_regen_bonus": 0.0,
+        "special_perk": "Uy Nghi Phượng Hoàng"
+      }
+    },
+    {
+      "id": "rau_lang_tu",
+      "name": "Râu Lãng Tử Nhẹ",
+      "description": "Ria mép mảnh gọn cùng chút râu cằm tinh tế, phong thái thiếu hiệp lãng tử.",
+      "source": "Bộ sưu tập diện mạo giang hồ",
+      "unlock_type": "default",
+      "unlock_hint": "Mặc định có sẵn",
+      "slot": "beard",
+      "item_type": "modular",
+      "element": "none",
+      "rarity": "common",
+      "is_skinned": true,
+      "model_path": "assets/characters/equipment/beard/rau_lang_tu.glb",
+      "ui_color": [
+        50,
+        44,
+        40,
+        255
+      ],
+      "stats": {
+        "bonus_health": 0.0,
+        "bonus_mana": 0.0,
+        "speed_multiplier": 1.0,
+        "elemental_bonus": 0.0,
+        "elemental_resist": 0.0,
+        "mana_regen_bonus": 0.0,
+        "special_perk": "Phong Trần Thanh Tú"
+      }
+    },
+    {
+      "id": "rau_tam_chom",
+      "name": "Râu Tam Chòm Quân Tử",
+      "description": "Râu mép uốn dài kết hợp chòm râu cằm thuôn nhọn kiểu quân sư cổ trang.",
+      "source": "Bộ sưu tập diện mạo giang hồ",
+      "unlock_type": "default",
+      "unlock_hint": "Mặc định có sẵn",
+      "slot": "beard",
+      "item_type": "modular",
+      "element": "none",
+      "rarity": "common",
+      "is_skinned": true,
+      "model_path": "assets/characters/equipment/beard/rau_tam_chom.glb",
+      "ui_color": [
+        44,
+        38,
+        36,
+        255
+      ],
+      "stats": {
+        "bonus_health": 0.0,
+        "bonus_mana": 0.0,
+        "speed_multiplier": 1.0,
+        "elemental_bonus": 0.0,
+        "elemental_resist": 0.0,
+        "mana_regen_bonus": 0.0,
+        "special_perk": "Mưu Lược Quân Tử"
+      }
+    },
+    {
+      "id": "rau_quai_non",
+      "name": "Râu Quai Nón Võ Tướng",
+      "description": "Bộ râu quai nón ôm trọn quai hàm phong trần, mạnh mẽ đậm chất mãnh tướng.",
+      "source": "Bộ sưu tập diện mạo giang hồ",
+      "unlock_type": "default",
+      "unlock_hint": "Mặc định có sẵn",
+      "slot": "beard",
+      "item_type": "modular",
+      "element": "none",
+      "rarity": "common",
+      "is_skinned": true,
+      "model_path": "assets/characters/equipment/beard/rau_quai_non.glb",
+      "ui_color": [
+        40,
+        36,
+        34,
+        255
+      ],
+      "stats": {
+        "bonus_health": 0.0,
+        "bonus_mana": 0.0,
+        "speed_multiplier": 1.0,
+        "elemental_bonus": 0.0,
+        "elemental_resist": 0.0,
+        "mana_regen_bonus": 0.0,
+        "special_perk": "Hào Khí Mãnh Tướng"
+      }
+    },
+    {
+      "id": "rau_tien_ong",
+      "name": "Râu Trường Tu Tiên Phong",
+      "description": "Chòm râu dài trắng bạc rủ trước ngực kiểu chưởng môn đạo sĩ đắc đạo.",
+      "source": "Bộ sưu tập diện mạo giang hồ",
+      "unlock_type": "default",
+      "unlock_hint": "Mặc định có sẵn",
+      "slot": "beard",
+      "item_type": "modular",
+      "element": "none",
+      "rarity": "common",
+      "is_skinned": true,
+      "model_path": "assets/characters/equipment/beard/rau_tien_ong.glb",
+      "ui_color": [
+        190,
+        192,
+        198,
+        255
+      ],
+      "stats": {
+        "bonus_health": 0.0,
+        "bonus_mana": 0.0,
+        "speed_multiplier": 1.0,
+        "elemental_bonus": 0.0,
+        "elemental_resist": 0.0,
+        "mana_regen_bonus": 0.0,
+        "special_perk": "Tiên Phong Đắc Đạo"
+      }
+    },
+    {
+      "id": "rau_son_duong",
+      "name": "Râu Sơn Dương Hiệp Sĩ",
+      "description": "Ria mép vểnh nhẹ cùng chòm râu cằm nhọn sắc sảo kiểu hiệp sĩ quý tộc.",
+      "source": "Bộ sưu tập diện mạo giang hồ",
+      "unlock_type": "default",
+      "unlock_hint": "Mặc định có sẵn",
+      "slot": "beard",
+      "item_type": "modular",
+      "element": "none",
+      "rarity": "common",
+      "is_skinned": true,
+      "model_path": "assets/characters/equipment/beard/rau_son_duong.glb",
+      "ui_color": [
+        48,
+        42,
+        38,
+        255
+      ],
+      "stats": {
+        "bonus_health": 0.0,
+        "bonus_mana": 0.0,
+        "speed_multiplier": 1.0,
+        "elemental_bonus": 0.0,
+        "elemental_resist": 0.0,
+        "mana_regen_bonus": 0.0,
+        "special_perk": "Khí Phách Hiệp Sĩ"
       }
     }
   ]

@@ -4,6 +4,7 @@
 #include "core/surface_material.h"
 #include "environment/wind/wind_system.h"
 #include "raymath.h"
+#include "rlgl.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -23,6 +24,559 @@ typedef struct {
 } ModularInstanceVboCache;
 
 static ModularInstanceVboCache s_vboCache[MODULAR_MAX_UNIQUE_INSTANCES];
+
+// ============================================================================
+// Universal Runtime Body Auto-Fit (Grooming + Clothing + Rigid Sockets)
+// ============================================================================
+// Automatically adapts ALL modular slots (HAIR, EYEBROWS, BEARD, TORSO, LEGS,
+// BOOTS, BRACERS, FULL_OUTFIT, plus HEADGEAR/MASK/WAIST/BACK sockets) to ANY
+// arbitrary full-body GLB once on equip with 0 ms per-frame cost.
+
+#define BODY_REFIT_SLOTS 8
+typedef struct {
+    bool    valid;
+    Vector3 headBone;    // model-space bind position of mixamorig:Head
+    Vector3 center;      // head-bone-LOCAL center of skull
+    Vector3 halfExtents; // head-bone-LOCAL half extents (upper cranium X/Z, chin..top Y)
+    float   chinY;       // head-bone-LOCAL chin Y
+    // Torso & lower-body girth bounds (for clothing & waist/back sockets)
+    bool    bodyValid;
+    float   torsoHalfX, torsoHalfZ, torsoCenterZ;
+    float   legHalfX, legHalfZ, legCenterZ;
+} HeadBoundsInfo;
+
+typedef struct {
+    const ModularInstance *owner;
+    int   bodyIdx;
+    int   itemIdx[BODY_REFIT_SLOTS];
+    Model fitted[BODY_REFIT_SLOTS];
+    bool  hasOwnedVerts[BODY_REFIT_SLOTS];
+} GroomRefitEntry;
+
+static GroomRefitEntry s_groomRefit[MODULAR_MAX_UNIQUE_INSTANCES];
+
+static int GroomSlotToIdx(int slot)
+{
+    switch (slot)
+    {
+    case MODULAR_SLOT_HAIR:        return 0;
+    case MODULAR_SLOT_EYEBROWS:    return 1;
+    case MODULAR_SLOT_BEARD:       return 2;
+    case MODULAR_SLOT_TORSO:       return 3;
+    case MODULAR_SLOT_LEGS:        return 4;
+    case MODULAR_SLOT_BOOTS:       return 5;
+    case MODULAR_SLOT_BRACERS:     return 6;
+    case MODULAR_SLOT_FULL_OUTFIT: return 7;
+    default:                       return -1;
+    }
+}
+
+static void GroomRefit_UnloadSlot(GroomRefitEntry *e, int gi)
+{
+    if (!e || gi < 0 || gi >= BODY_REFIT_SLOTS)
+        return;
+    if (e->fitted[gi].meshCount > 0)
+    {
+        if (e->hasOwnedVerts[gi] && e->fitted[gi].meshes)
+        {
+            for (int m = 0; m < e->fitted[gi].meshCount; m++)
+            {
+                free(e->fitted[gi].meshes[m].vertices);
+                e->fitted[gi].meshes[m].vertices = NULL;
+            }
+        }
+        CharacterModel_UnloadSkinnedClone(&e->fitted[gi]);
+    }
+    e->itemIdx[gi] = -1;
+    e->hasOwnedVerts[gi] = false;
+}
+
+static void GroomRefit_ClearAll(void)
+{
+    for (int i = 0; i < MODULAR_MAX_UNIQUE_INSTANCES; i++)
+    {
+        for (int g = 0; g < BODY_REFIT_SLOTS; g++)
+            GroomRefit_UnloadSlot(&s_groomRefit[i], g);
+        s_groomRefit[i].owner = NULL;
+        s_groomRefit[i].bodyIdx = -1;
+    }
+}
+
+static Vector3 FindHeadBoneBindPos(Model m)
+{
+    Vector3 hp = { 0.0f, 1.66f, 0.0f };
+    if (m.skeleton.bones && m.skeleton.bindPose)
+    {
+        for (int b = 0; b < m.skeleton.boneCount; b++)
+        {
+            if (strstr(m.skeleton.bones[b].name, "Head") != NULL)
+            {
+                hp = m.skeleton.bindPose[b].translation;
+                break;
+            }
+        }
+    }
+    return hp;
+}
+
+static HeadBoundsInfo MeasureBodyHeadBounds(Model bodyModel)
+{
+    HeadBoundsInfo hb = {0};
+    if (bodyModel.meshCount <= 0 || !bodyModel.meshes || !bodyModel.meshes[0].vertices)
+        return hb;
+
+    Vector3 hpos = FindHeadBoneBindPos(bodyModel);
+    hb.headBone = hpos;
+
+    Mesh *bm = &bodyModel.meshes[0];
+    int vc = bm->vertexCount;
+    const float *verts = bm->vertices;
+
+    // Strict head-bone-local mask: |lx| <= 0.14m excludes T-pose shoulders/arms!
+    float minX = 1e9f, maxX = -1e9f, minY = 1e9f, maxY = -1e9f, minZ = 1e9f, maxZ = -1e9f;
+    int count = 0;
+    for (int i = 0; i < vc; i++)
+    {
+        float lx = verts[i * 3 + 0] - hpos.x;
+        float ly = verts[i * 3 + 1] - hpos.y;
+        float lz = verts[i * 3 + 2] - hpos.z;
+        if (ly < -0.125f || fabsf(lx) > 0.14f)
+            continue;
+        if (lx < minX) minX = lx;
+        if (lx > maxX) maxX = lx;
+        if (ly < minY) minY = ly;
+        if (ly > maxY) maxY = ly;
+        if (lz < minZ) minZ = lz;
+        if (lz > maxZ) maxZ = lz;
+        count++;
+    }
+    if (count < 24 || (maxY - minY) < 0.10f)
+        return hb;
+
+    // Refine local chinY from front-center lower head vertices
+    float chinY = maxY;
+    float midZ = 0.5f * (minZ + maxZ);
+    for (int i = 0; i < vc; i++)
+    {
+        float lx = verts[i * 3 + 0] - hpos.x;
+        float ly = verts[i * 3 + 1] - hpos.y;
+        float lz = verts[i * 3 + 2] - hpos.z;
+        if (ly >= -0.115f && fabsf(lx) < 0.035f && lz > midZ + 0.03f && ly < chinY)
+            chinY = ly;
+    }
+    if (chinY >= maxY - 0.05f)
+        chinY = minY;
+
+    // Measure upper-cranium width & depth (above chin + 50% head height: excludes shoulders & jaw)
+    float uMinX = 1e9f, uMaxX = -1e9f, uMinZ = 1e9f, uMaxZ = -1e9f;
+    float upperCut = chinY + 0.50f * (maxY - chinY);
+    for (int i = 0; i < vc; i++)
+    {
+        float lx = verts[i * 3 + 0] - hpos.x;
+        float ly = verts[i * 3 + 1] - hpos.y;
+        float lz = verts[i * 3 + 2] - hpos.z;
+        if (ly < upperCut || fabsf(lx) > 0.14f)
+            continue;
+        if (lx < uMinX) uMinX = lx;
+        if (lx > uMaxX) uMaxX = lx;
+        if (lz < uMinZ) uMinZ = lz;
+        if (lz > uMaxZ) uMaxZ = lz;
+    }
+    if (uMaxX <= uMinX) { uMinX = minX; uMaxX = maxX; }
+    if (uMaxZ <= uMinZ) { uMinZ = minZ; uMaxZ = maxZ; }
+
+    hb.chinY = chinY;
+    hb.center = (Vector3){ 0.5f * (uMinX + uMaxX), 0.5f * (chinY + maxY), 0.5f * (uMinZ + uMaxZ) };
+    hb.halfExtents = (Vector3){
+        fmaxf(0.05f, 0.5f * (uMaxX - uMinX)),
+        fmaxf(0.08f, 0.5f * (maxY - chinY)),
+        fmaxf(0.06f, 0.5f * (uMaxZ - uMinZ)),
+    };
+    hb.valid = true;
+
+    // Measure ribcage/waist (Y in [1.00..1.32], |x|<=0.24) & legs (Y in [0.15..0.96], |x|<=0.24)
+    float tMinX = 1e9f, tMaxX = -1e9f, tMinZ = 1e9f, tMaxZ = -1e9f;
+    float lMinX = 1e9f, lMaxX = -1e9f, lMinZ = 1e9f, lMaxZ = -1e9f;
+    int tCnt = 0, lCnt = 0;
+    for (int i = 0; i < vc; i++)
+    {
+        float x = verts[i * 3 + 0];
+        float y = verts[i * 3 + 1];
+        float z = verts[i * 3 + 2];
+        if (fabsf(x) > 0.24f)
+            continue;
+        if (y >= 1.00f && y <= 1.32f)
+        {
+            if (x < tMinX) tMinX = x;
+            if (x > tMaxX) tMaxX = x;
+            if (z < tMinZ) tMinZ = z;
+            if (z > tMaxZ) tMaxZ = z;
+            tCnt++;
+        }
+        else if (y >= 0.15f && y <= 0.96f)
+        {
+            if (x < lMinX) lMinX = x;
+            if (x > lMaxX) lMaxX = x;
+            if (z < lMinZ) lMinZ = z;
+            if (z > lMaxZ) lMaxZ = z;
+            lCnt++;
+        }
+    }
+    if (tCnt >= 16 && lCnt >= 16)
+    {
+        hb.torsoHalfX = fmaxf(0.08f, 0.5f * (tMaxX - tMinX));
+        hb.torsoHalfZ = fmaxf(0.06f, 0.5f * (tMaxZ - tMinZ));
+        hb.torsoCenterZ = 0.5f * (tMinZ + tMaxZ);
+        hb.legHalfX = fmaxf(0.08f, 0.5f * (lMaxX - lMinX));
+        hb.legHalfZ = fmaxf(0.06f, 0.5f * (lMaxZ - lMinZ));
+        hb.legCenterZ = 0.5f * (lMinZ + lMaxZ);
+        hb.bodyValid = true;
+    }
+    return hb;
+}
+
+static Model ModularVboCache_GetSlotModel(const ModularInstance *inst, int slot, int itemIdx, Model srcModel);
+
+static Model GroomRefit_GetModel(const ModularInstance *inst, int slot, int itemIdx,
+                                 Model srcModel, int bodyIdx, Model bodyModel)
+{
+    int gi = GroomSlotToIdx(slot);
+    if (gi < 0 || !inst || srcModel.meshCount <= 0 || bodyModel.meshCount <= 0)
+        return ModularVboCache_GetSlotModel(inst, slot, itemIdx, srcModel);
+
+    // Exact canonical human_body.glb reference measurements
+    const Vector3 refCenter = { 0.0000f,  0.0107f, 0.0244f };
+    const Vector3 refHalf   = { 0.0800f,  0.1210f, 0.1036f };
+    const float   refChinY  = -0.1104f;
+    const float   refTorsoHalfX = 0.2225f, refTorsoHalfZ = 0.1353f, refTorsoCZ =  0.0170f;
+    const float   refLegHalfX   = 0.1940f, refLegHalfZ   = 0.1180f, refLegCZ   = -0.0102f;
+
+    bool isHeadSlot = (slot == MODULAR_SLOT_HAIR || slot == MODULAR_SLOT_EYEBROWS || slot == MODULAR_SLOT_BEARD);
+
+    HeadBoundsInfo tgt = MeasureBodyHeadBounds(bodyModel);
+    if (isHeadSlot ? !tgt.valid : !tgt.bodyValid)
+        return ModularVboCache_GetSlotModel(inst, slot, itemIdx, srcModel);
+
+    // Fast path: target body already matches canonical human_body.glb within 5 mm -> untouched!
+    if (isHeadSlot)
+    {
+        float dCenter = fabsf(tgt.center.x - refCenter.x) + fabsf(tgt.center.y - refCenter.y) + fabsf(tgt.center.z - refCenter.z);
+        float dHalf   = fabsf(tgt.halfExtents.x - refHalf.x) + fabsf(tgt.halfExtents.y - refHalf.y) + fabsf(tgt.halfExtents.z - refHalf.z);
+        if (dCenter < 0.005f && dHalf < 0.005f)
+            return ModularVboCache_GetSlotModel(inst, slot, itemIdx, srcModel);
+    }
+    else
+    {
+        float dBody = fabsf(tgt.torsoHalfX - refTorsoHalfX) + fabsf(tgt.torsoHalfZ - refTorsoHalfZ)
+                    + fabsf(tgt.torsoCenterZ - refTorsoCZ)  + fabsf(tgt.legHalfX - refLegHalfX)
+                    + fabsf(tgt.legHalfZ - refLegHalfZ)     + fabsf(tgt.legCenterZ - refLegCZ);
+        if (dBody < 0.008f)
+            return ModularVboCache_GetSlotModel(inst, slot, itemIdx, srcModel);
+    }
+
+    // Locate or allocate per-instance refit entry
+    int slotIdx = -1;
+    for (int i = 0; i < MODULAR_MAX_UNIQUE_INSTANCES; i++)
+    {
+        if (s_groomRefit[i].owner == inst) { slotIdx = i; break; }
+        if (s_groomRefit[i].owner == NULL && slotIdx < 0) slotIdx = i;
+    }
+    if (slotIdx < 0)
+        return ModularVboCache_GetSlotModel(inst, slot, itemIdx, srcModel);
+
+    GroomRefitEntry *e = &s_groomRefit[slotIdx];
+    if (e->owner != inst || e->bodyIdx != bodyIdx)
+    {
+        for (int g = 0; g < BODY_REFIT_SLOTS; g++)
+            GroomRefit_UnloadSlot(e, g);
+        e->owner = inst;
+        e->bodyIdx = bodyIdx;
+    }
+
+    if (e->itemIdx[gi] == itemIdx && e->fitted[gi].meshCount > 0)
+        return e->fitted[gi];
+
+    GroomRefit_UnloadSlot(e, gi);
+    Model clone = CharacterModel_CloneSkinnedModel(srcModel);
+    if (clone.meshCount <= 0 || !clone.meshes)
+        return ModularVboCache_GetSlotModel(inst, slot, itemIdx, srcModel);
+
+    // Body-clothing refit path (TORSO, LEGS, BOOTS, BRACERS, FULL_OUTFIT)
+    // Uses gentle non-destructive alignment + ONE-WAY OUTWARD anti-penetration push-out
+    // against the target body's actual mesh so shoulders/back/deltoids NEVER poke through!
+    if (!isHeadSlot)
+    {
+        // Only expand when target body is wider/deeper; keep slim reduction gentle (min 0.94)
+        // so shoulders/deltoids are never pulled inside the body!
+        float tsx = Clamp(tgt.torsoHalfX / refTorsoHalfX, 0.94f, 1.24f);
+        float tsz = Clamp(tgt.torsoHalfZ / refTorsoHalfZ, 0.94f, 1.24f);
+        float tdz = Clamp((tgt.torsoCenterZ - refTorsoCZ) * 0.5f, -0.020f, 0.020f);
+        float lsx = Clamp(tgt.legHalfX / refLegHalfX, 0.92f, 1.22f);
+        float lsz = Clamp(tgt.legHalfZ / refLegHalfZ, 0.92f, 1.22f);
+        float ldz = Clamp((tgt.legCenterZ - refLegCZ) * 0.5f, -0.020f, 0.020f);
+
+        // Collect target body surface points in the relevant vertical band for outward push-out
+        float bandYMin = (slot == MODULAR_SLOT_TORSO || slot == MODULAR_SLOT_BRACERS) ? 0.85f : 0.02f;
+        float bandYMax = (slot == MODULAR_SLOT_LEGS || slot == MODULAR_SLOT_BOOTS) ? 1.05f : 1.56f;
+        int bodySurfCnt = 0;
+        Vector3 *bPos = NULL;
+        Vector3 *bNrm = NULL;
+        if (bodyModel.meshes[0].vertices && bodyModel.meshes[0].normals)
+        {
+            Mesh *bm = &bodyModel.meshes[0];
+            int bvc = bm->vertexCount;
+            // Subsample slightly if body mesh is very dense (>6000 verts) to keep equip < 3 ms
+            int step = (bvc > 6000) ? (bvc / 4000) : 1;
+            if (step < 1) step = 1;
+            int cap = (bvc + step - 1) / step;
+            bPos = (Vector3 *)malloc((size_t)cap * sizeof(Vector3));
+            bNrm = (Vector3 *)malloc((size_t)cap * sizeof(Vector3));
+            if (bPos && bNrm)
+            {
+                for (int i = 0; i < bvc; i += step)
+                {
+                    float by = bm->vertices[i * 3 + 1];
+                    if (by < bandYMin || by > bandYMax)
+                        continue;
+                    bPos[bodySurfCnt] = (Vector3){ bm->vertices[i * 3 + 0], by, bm->vertices[i * 3 + 2] };
+                    bNrm[bodySurfCnt] = Vector3Normalize((Vector3){
+                        bm->normals[i * 3 + 0], bm->normals[i * 3 + 1], bm->normals[i * 3 + 2]
+                    });
+                    bodySurfCnt++;
+                }
+            }
+        }
+
+        const float minClr = (slot == MODULAR_SLOT_TORSO || slot == MODULAR_SLOT_FULL_OUTFIT) ? 0.012f : 0.008f;
+        const float maxSearchD2 = 0.0016f; // 4.0 cm search radius
+
+        bool allOwned = true;
+        int pushedCount = 0;
+        for (int m = 0; m < clone.meshCount; m++)
+        {
+            Mesh *mesh = &clone.meshes[m];
+            int vc = mesh->vertexCount;
+            if (vc <= 0 || !srcModel.meshes[m].vertices)
+                continue;
+            float *newV = (float *)malloc((size_t)vc * 3 * sizeof(float));
+            if (!newV) { allOwned = false; continue; }
+            const float *srcV = srcModel.meshes[m].vertices;
+            for (int i = 0; i < vc; i++)
+            {
+                float vx = srcV[i * 3 + 0];
+                float vy = srcV[i * 3 + 1];
+                float vz = srcV[i * 3 + 2];
+
+                if (slot == MODULAR_SLOT_TORSO || slot == MODULAR_SLOT_FULL_OUTFIT)
+                {
+                    float upW = Clamp((vy - 0.86f) / 0.14f, 0.0f, 1.0f);
+                    float trunkW = 1.0f - Clamp((fabsf(vx) - 0.22f) / 0.14f, 0.0f, 1.0f);
+                    float effSx = 1.0f + ((lsx * (1.0f - upW) + tsx * upW) - 1.0f) * trunkW;
+                    float effSz = lsz * (1.0f - upW) + tsz * upW;
+                    float refCz = refLegCZ * (1.0f - upW) + refTorsoCZ * upW;
+                    float effDz = ldz * (1.0f - upW) + tdz * upW;
+                    vx = vx * effSx;
+                    vz = refCz + (vz - refCz) * effSz + effDz;
+                }
+                else if (slot == MODULAR_SLOT_LEGS || slot == MODULAR_SLOT_BOOTS)
+                {
+                    vx = vx * lsx;
+                    vz = refLegCZ + (vz - refLegCZ) * lsz + ldz;
+                }
+                else if (slot == MODULAR_SLOT_BRACERS)
+                {
+                    vz = refTorsoCZ + (vz - refTorsoCZ) * tsz + tdz;
+                }
+
+                // One-way outward anti-penetration push-out against target body surface
+                if (bodySurfCnt > 0 && vy >= bandYMin && vy <= bandYMax)
+                {
+                    int best = -1;
+                    float bestD2 = maxSearchD2;
+                    for (int b = 0; b < bodySurfCnt; b++)
+                    {
+                        float dy = vy - bPos[b].y;
+                        if (dy * dy >= bestD2)
+                            continue;
+                        float dx = vx - bPos[b].x;
+                        float dz = vz - bPos[b].z;
+                        float d2 = dx * dx + dy * dy + dz * dz;
+                        if (d2 < bestD2) { bestD2 = d2; best = b; }
+                    }
+                    if (best >= 0)
+                    {
+                        Vector3 pn = bPos[best];
+                        Vector3 nn = bNrm[best];
+                        float signedD = (vx - pn.x) * nn.x + (vy - pn.y) * nn.y + (vz - pn.z) * nn.z;
+                        if (signedD < minClr)
+                        {
+                            float push = minClr - signedD;
+                            vx += nn.x * push;
+                            vy += nn.y * push;
+                            vz += nn.z * push;
+                            pushedCount++;
+                        }
+                    }
+                }
+
+                newV[i * 3 + 0] = vx;
+                newV[i * 3 + 1] = vy;
+                newV[i * 3 + 2] = vz;
+            }
+            mesh->vertices = newV;
+            if (mesh->animVertices)
+                memcpy(mesh->animVertices, newV, (size_t)vc * 3 * sizeof(float));
+            if (mesh->vboId && mesh->vboId[0] > 0)
+                rlUpdateVertexBuffer(mesh->vboId[0], newV, vc * 3 * (int)sizeof(float), 0);
+        }
+
+        free(bPos);
+        free(bNrm);
+
+        e->fitted[gi] = clone;
+        e->itemIdx[gi] = itemIdx;
+        e->hasOwnedVerts[gi] = allOwned;
+        TraceLog(LOG_INFO, "MODULAR: Auto-fitted clothing slot %d (item %d) to body %d (pushed %d verts out, minClr=%.1fmm)",
+                 slot, itemIdx, bodyIdx, pushedCount, minClr * 1000.0f);
+        return e->fitted[gi];
+    }
+
+    Vector3 groomHeadBone = FindHeadBoneBindPos(srcModel);
+
+    float sx = Clamp(tgt.halfExtents.x / refHalf.x, 0.72f, 1.32f);
+    float sy = Clamp(tgt.halfExtents.y / refHalf.y, 0.72f, 1.32f);
+    float sz = Clamp(tgt.halfExtents.z / refHalf.z, 0.72f, 1.32f);
+    float sUni = (sx + sy + sz) / 3.0f;
+
+    // Collect target front-face vertices in head-bone-LOCAL space for EYEBROWS / BEARD shrink-wrap
+    bool doShrinkWrap = (slot == MODULAR_SLOT_EYEBROWS || slot == MODULAR_SLOT_BEARD);
+    int faceCount = 0;
+    Vector3 *facePos = NULL;
+    Vector3 *faceNrm = NULL;
+    if (doShrinkWrap && bodyModel.meshes[0].vertices && bodyModel.meshes[0].normals)
+    {
+        Mesh *bm = &bodyModel.meshes[0];
+        int bvc = bm->vertexCount;
+        facePos = (Vector3 *)malloc((size_t)bvc * sizeof(Vector3));
+        faceNrm = (Vector3 *)malloc((size_t)bvc * sizeof(Vector3));
+        if (facePos && faceNrm)
+        {
+            for (int i = 0; i < bvc; i++)
+            {
+                float lx = bm->vertices[i * 3 + 0] - tgt.headBone.x;
+                float ly = bm->vertices[i * 3 + 1] - tgt.headBone.y;
+                float lz = bm->vertices[i * 3 + 2] - tgt.headBone.z;
+                float nz = bm->normals[i * 3 + 2];
+                if (fabsf(lx) <= 0.14f && ly >= tgt.chinY - 0.03f && lz >= tgt.center.z - 0.02f && nz > -0.20f)
+                {
+                    facePos[faceCount] = (Vector3){ lx, ly, lz };
+                    faceNrm[faceCount] = Vector3Normalize((Vector3){ bm->normals[i * 3 + 0], bm->normals[i * 3 + 1], nz });
+                    faceCount++;
+                }
+            }
+        }
+    }
+
+    // Clone independent bind-pose vertices[] per mesh and apply Stage 1 (head-local warp) + Stage 2 (shrink-wrap)
+    bool allOwned = true;
+    for (int m = 0; m < clone.meshCount; m++)
+    {
+        Mesh *mesh = &clone.meshes[m];
+        int vc = mesh->vertexCount;
+        if (vc <= 0 || !srcModel.meshes[m].vertices)
+            continue;
+        float *newV = (float *)malloc((size_t)vc * 3 * sizeof(float));
+        if (!newV)
+        {
+            allOwned = false;
+            continue;
+        }
+        const float *srcV = srcModel.meshes[m].vertices;
+        for (int i = 0; i < vc; i++)
+        {
+            // Express vertex in grooming head-bone-LOCAL coordinates
+            float lx = srcV[i * 3 + 0] - groomHeadBone.x;
+            float ly = srcV[i * 3 + 1] - groomHeadBone.y;
+            float lz = srcV[i * 3 + 2] - groomHeadBone.z;
+
+            // Stage 1: Proportions warp from canonical head-local box to target head-local box
+            float wx, wy, wz;
+            if (slot == MODULAR_SLOT_HAIR && ly < refChinY)
+            {
+                wx = tgt.center.x + (lx - refCenter.x) * sx;
+                wy = tgt.chinY + (ly - refChinY) * sUni;
+                wz = tgt.center.z + (lz - refCenter.z) * sz;
+            }
+            else
+            {
+                wx = tgt.center.x + (lx - refCenter.x) * sx;
+                wy = tgt.center.y + (ly - refCenter.y) * sy;
+                wz = tgt.center.z + (lz - refCenter.z) * sz;
+            }
+
+            // Stage 2: Conformal surface shrink-wrap in head-local space
+            if (doShrinkWrap && faceCount > 0)
+            {
+                bool freeHangingBeard = (slot == MODULAR_SLOT_BEARD && wy < tgt.chinY - 0.008f);
+                if (!freeHangingBeard)
+                {
+                    int best = -1;
+                    float bestD2 = 1e9f;
+                    for (int f = 0; f < faceCount; f++)
+                    {
+                        float dx = wx - facePos[f].x;
+                        float dy = wy - facePos[f].y;
+                        float dz = wz - facePos[f].z;
+                        float d2 = dx * dx + dy * dy + dz * dz;
+                        if (d2 < bestD2) { bestD2 = d2; best = f; }
+                    }
+                    if (best >= 0 && bestD2 < 0.000625f) // within 2.5 cm of target face surface
+                    {
+                        Vector3 pn = facePos[best];
+                        Vector3 nn = faceNrm[best];
+                        float signedD = (wx - pn.x) * nn.x + (wy - pn.y) * nn.y + (wz - pn.z) * nn.z;
+                        float minClr = (slot == MODULAR_SLOT_EYEBROWS) ? 0.0014f : 0.0008f;
+                        float maxClr = (slot == MODULAR_SLOT_EYEBROWS) ? 0.0046f : 0.0055f;
+                        if (signedD < minClr)
+                        {
+                            float push = minClr - signedD;
+                            wx += nn.x * push;
+                            wy += nn.y * push;
+                            wz += nn.z * push;
+                        }
+                        else if (signedD > maxClr)
+                        {
+                            float pull = signedD - maxClr;
+                            wx -= nn.x * pull;
+                            wy -= nn.y * pull;
+                            wz -= nn.z * pull;
+                        }
+                    }
+                }
+            }
+
+            // Convert back into grooming model's bind-pose space (so inv(bindPose[Head]) * pose[Head] aligns!)
+            newV[i * 3 + 0] = groomHeadBone.x + wx;
+            newV[i * 3 + 1] = groomHeadBone.y + wy;
+            newV[i * 3 + 2] = groomHeadBone.z + wz;
+        }
+        mesh->vertices = newV;
+        if (mesh->animVertices)
+            memcpy(mesh->animVertices, newV, (size_t)vc * 3 * sizeof(float));
+        if (mesh->vboId && mesh->vboId[0] > 0)
+            rlUpdateVertexBuffer(mesh->vboId[0], newV, vc * 3 * (int)sizeof(float), 0);
+    }
+
+    free(facePos);
+    free(faceNrm);
+
+    e->fitted[gi] = clone;
+    e->itemIdx[gi] = itemIdx;
+    e->hasOwnedVerts[gi] = allOwned;
+    TraceLog(LOG_INFO, "MODULAR: Auto-fitted slot %d (item %d) to body %d (scale %.2fx%.2fx%.2f, shift %+.3fY %+.3fZ)",
+             slot, itemIdx, bodyIdx, sx, sy, sz, tgt.center.y - refCenter.y, tgt.center.z - refCenter.z);
+    return e->fitted[gi];
+}
 
 static void ModularVboCache_ClearAll(void)
 {
@@ -98,6 +652,7 @@ void ModularSystem_Init(void)
 
 void ModularSystem_Shutdown(void)
 {
+    GroomRefit_ClearAll();
     ModularVboCache_ClearAll();
     s_itemCount = 0;
     memset(s_itemRegistry, 0, sizeof(s_itemRegistry));
@@ -361,6 +916,12 @@ static Matrix ComputeSocketModelMatrix(ModularSlot slot, const char *boneSocket,
         case MODULAR_SLOT_HAIR:
             anchorPos = (Vector3){0.0f, 1.72f, 0.0f};
             break;
+        case MODULAR_SLOT_EYEBROWS:
+            anchorPos = (Vector3){0.0f, 1.69f, 0.11f};
+            break;
+        case MODULAR_SLOT_BEARD:
+            anchorPos = (Vector3){0.0f, 1.60f, 0.11f};
+            break;
         case MODULAR_SLOT_WAIST:
             anchorPos = (Vector3){0.12f, 0.95f, 0.08f};
             break;
@@ -509,9 +1070,13 @@ void ModularInstance_Draw(ModularInstance *inst)
     const SpringBoneSystem *cloth = s_clothEnabled ? &inst->springBones : NULL;
 
     // 1. Draw base body with CPU skinning (only validate masterModel when body is visible)
+    int activeBodyIdx = inst->loadout.itemIndices[MODULAR_SLOT_BASE_BODY];
+    Model activeBodySrc = (activeBodyIdx >= 0 && activeBodyIdx < s_itemCount && s_itemRegistry[activeBodyIdx].loaded)
+                              ? s_itemRegistry[activeBodyIdx].model
+                              : CharacterModel_GetModel();
     if (!inst->hideBaseBody)
     {
-        int bodyIdx = inst->loadout.itemIndices[MODULAR_SLOT_BASE_BODY];
+        int bodyIdx = activeBodyIdx;
         Model masterModel;
         if (bodyIdx >= 0 && bodyIdx < s_itemCount && s_itemRegistry[bodyIdx].loaded)
         {
@@ -541,7 +1106,7 @@ void ModularInstance_Draw(ModularInstance *inst)
         ModularItemDef *foItem = &s_itemRegistry[fullOutfitIdx];
         if (foItem->model.meshCount > 0 && foItem->model.meshes != NULL)
         {
-            Model foModel = ModularVboCache_GetSlotModel(inst, MODULAR_SLOT_FULL_OUTFIT, fullOutfitIdx, foItem->model);
+            Model foModel = GroomRefit_GetModel(inst, MODULAR_SLOT_FULL_OUTFIT, fullOutfitIdx, foItem->model, activeBodyIdx, activeBodySrc);
             CharacterModel_DrawCustomCloth(foModel, &inst->animState,
                                            inst->position, inst->yaw, inst->scale, inst->tint,
                                            cloth);
@@ -574,15 +1139,40 @@ void ModularInstance_Draw(ModularInstance *inst)
             {
                 bool deflateUnderRobe = (s == MODULAR_SLOT_LEGS) &&
                                         ((inst->loadout.itemIndices[MODULAR_SLOT_TORSO] >= 0) || hasFullOutfit);
-                Model drawModel = ModularVboCache_GetSlotModel(inst, s, itemIdx, item->model);
+                Model drawModel = (GroomSlotToIdx(s) >= 0)
+                                      ? GroomRefit_GetModel(inst, s, itemIdx, item->model, activeBodyIdx, activeBodySrc)
+                                      : ModularVboCache_GetSlotModel(inst, s, itemIdx, item->model);
                 CharacterModel_DrawCustomClothEx(drawModel, &inst->animState,
                                                  inst->position, inst->yaw, inst->scale, inst->tint,
                                                  false, deflateUnderRobe, cloth);
             }
             else
             {
+                // Auto-fit rigid head/waist/back sockets to active body's measured head/torso bounds
+                Matrix fitLocalOffset = item->localOffset;
+                if (s == MODULAR_SLOT_HEADGEAR || s == MODULAR_SLOT_MASK ||
+                    s == MODULAR_SLOT_WAIST || s == MODULAR_SLOT_BACK)
+                {
+                    HeadBoundsInfo tb = MeasureBodyHeadBounds(activeBodySrc);
+                    if ((s == MODULAR_SLOT_HEADGEAR || s == MODULAR_SLOT_MASK) && tb.valid)
+                    {
+                        float sh = Clamp(tb.halfExtents.x / 0.0800f, 0.78f, 1.28f);
+                        Vector3 dh = { tb.center.x, tb.center.y - 0.0107f, tb.center.z - 0.0244f };
+                        if (fabsf(sh - 1.0f) > 0.02f || fabsf(dh.y) > 0.005f || fabsf(dh.z) > 0.005f)
+                        {
+                            Matrix adj = MatrixMultiply(MatrixScale(sh, sh, sh), MatrixTranslate(dh.x, dh.y, dh.z));
+                            fitLocalOffset = MatrixMultiply(fitLocalOffset, adj);
+                        }
+                    }
+                    else if ((s == MODULAR_SLOT_WAIST || s == MODULAR_SLOT_BACK) && tb.bodyValid)
+                    {
+                        float dz = Clamp(tb.torsoCenterZ - 0.0170f, -0.045f, 0.045f);
+                        if (fabsf(dz) > 0.005f)
+                            fitLocalOffset = MatrixMultiply(fitLocalOffset, MatrixTranslate(0.0f, 0.0f, dz));
+                    }
+                }
                 Matrix localToModel = ComputeSocketModelMatrix((ModularSlot)s, item->boneSocket,
-                                                               &inst->animState, item->localOffset);
+                                                               &inst->animState, fitLocalOffset);
                 Matrix finalMat = MatrixMultiply(localToModel, modelToWorld);
 
                 if (isShadow)

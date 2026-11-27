@@ -1,17 +1,19 @@
 {
   "player_id": "Player_1",
   "equipped": {
-    "base_body": "male_body_v5",
-    "torso": "",
+    "base_body": "human_body",
+    "torso": "ao_giao_linh",
     "legs": "",
     "boots": "chien_hai_van_du",
     "bracers": "",
     "headgear": "",
     "mask": "",
     "hair": "",
+    "eyebrows": "",
+    "beard": "",
     "waist": "",
     "back": "",
-    "weapon_r": "",
+    "weapon_r": "kiem_thuan_thien",
     "weapon_l": "",
     "full_outfit": ""
   },
@@ -33,6 +35,19 @@
     "ao_giao_linh_2",
     "ao_giao_linh_3",
     "ao_giao_linh_4",
-    "ao_nhat_binh"
+    "ao_nhat_binh",
+    "toc_co_trang_kiem_hiep",
+    "long_may_kiem_mi",
+    "rau_kiem_khach",
+    "long_may_tuong_quan",
+    "long_may_thu_sinh",
+    "long_may_dao_nhan",
+    "long_may_lieu_diep",
+    "long_may_phuong_vi",
+    "rau_lang_tu",
+    "rau_tam_chom",
+    "rau_quai_non",
+    "rau_tien_ong",
+    "rau_son_duong"
   ]
 }

@@ -59,9 +59,10 @@ void main() {
 
     // ── 1. World-Space Triplanar Projections (GPU Gems 3, Chapter 1) ──
     // Eliminates all UV stretching, seams, and distortion on sheer cliff walls.
-    vec3 absWN = abs(smoothWorldN);
-    vec3 triWeights = absWN * absWN * absWN * absWN; // Sharp N^4 power blend
-    triWeights /= max(triWeights.x + triWeights.y + triWeights.z, 1e-4);
+    vec3 triWeights = max(abs(smoothWorldN) - vec3(0.28), vec3(0.0));
+    triWeights *= triWeights;
+    triWeights *= triWeights;
+    triWeights /= dot(triWeights, vec3(1.0));
 
     // Compute continuous world derivatives in uniform control flow
     vec3 wpDx = dFdx(worldPosition);
@@ -77,15 +78,15 @@ void main() {
     vec2 dxZ = wpDx.xy * kMacroScale, dyZ = wpDy.xy * kMacroScale;
 
     // Triplanar albedo fetches
-    vec3 albX = (triWeights.x > 0.01) ? textureGrad(texture0, uvX, dxX, dyX).rgb : vec3(0.0);
-    vec3 albY = (triWeights.y > 0.01) ? textureGrad(texture0, uvY, dxY, dyY).rgb : vec3(0.0);
-    vec3 albZ = (triWeights.z > 0.01) ? textureGrad(texture0, uvZ, dxZ, dyZ).rgb : vec3(0.0);
+    vec3 albX = (triWeights.x > 0.0) ? textureGrad(texture0, uvX, dxX, dyX).rgb : vec3(0.0);
+    vec3 albY = (triWeights.y > 0.0) ? textureGrad(texture0, uvY, dxY, dyY).rgb : vec3(0.0);
+    vec3 albZ = (triWeights.z > 0.0) ? textureGrad(texture0, uvZ, dxZ, dyZ).rgb : vec3(0.0);
     vec3 triAlbedo = albX * triWeights.x + albY * triWeights.y + albZ * triWeights.z;
 
     // Triplanar normal map fetches & world-space swizzle (Ryan Geiss basis)
-    vec3 normX = (triWeights.x > 0.01) ? (textureGrad(texture2, uvX, dxX, dyX).rgb * 2.0 - 1.0) : vec3(0.0, 0.0, 1.0);
-    vec3 normY = (triWeights.y > 0.01) ? (textureGrad(texture2, uvY, dxY, dyY).rgb * 2.0 - 1.0) : vec3(0.0, 0.0, 1.0);
-    vec3 normZ = (triWeights.z > 0.01) ? (textureGrad(texture2, uvZ, dxZ, dyZ).rgb * 2.0 - 1.0) : vec3(0.0, 0.0, 1.0);
+    vec3 normX = (triWeights.x > 0.0) ? (textureGrad(texture2, uvX, dxX, dyX).rgb * 2.0 - 1.0) : vec3(0.0, 0.0, 1.0);
+    vec3 normY = (triWeights.y > 0.0) ? (textureGrad(texture2, uvY, dxY, dyY).rgb * 2.0 - 1.0) : vec3(0.0, 0.0, 1.0);
+    vec3 normZ = (triWeights.z > 0.0) ? (textureGrad(texture2, uvZ, dxZ, dyZ).rgb * 2.0 - 1.0) : vec3(0.0, 0.0, 1.0);
 
     normX.xy *= 1.65;
     normY.xy *= 1.65;
@@ -100,35 +101,37 @@ void main() {
         vec2 dDxY = dxY * kMicroScale, dDyY = dyY * kMicroScale;
         vec2 dDxZ = dxZ * kMicroScale, dDyZ = dyZ * kMicroScale;
 
-        vec3 dAlbX = (triWeights.x > 0.01) ? textureGrad(texture0, dUvX, dDxX, dDyX).rgb : vec3(0.0);
-        vec3 dAlbY = (triWeights.y > 0.01) ? textureGrad(texture0, dUvY, dDxY, dDyY).rgb : vec3(0.0);
-        vec3 dAlbZ = (triWeights.z > 0.01) ? textureGrad(texture0, dUvZ, dDxZ, dDyZ).rgb : vec3(0.0);
+        vec3 dAlbX = (triWeights.x > 0.0) ? textureGrad(texture0, dUvX, dDxX, dDyX).rgb : vec3(0.0);
+        vec3 dAlbY = (triWeights.y > 0.0) ? textureGrad(texture0, dUvY, dDxY, dDyY).rgb : vec3(0.0);
+        vec3 dAlbZ = (triWeights.z > 0.0) ? textureGrad(texture0, dUvZ, dDxZ, dDyZ).rgb : vec3(0.0);
         vec3 detailAlbedo = dAlbX * triWeights.x + dAlbY * triWeights.y + dAlbZ * triWeights.z;
 
         triAlbedo = mix(triAlbedo, clamp(triAlbedo * detailAlbedo * 1.35 + 0.08, 0.1, 1.25), detailWeight * 0.35);
 
-        vec3 dNormX = (triWeights.x > 0.01) ? (textureGrad(texture2, dUvX, dDxX, dDyX).rgb * 2.0 - 1.0) : vec3(0.0, 0.0, 1.0);
-        vec3 dNormY = (triWeights.y > 0.01) ? (textureGrad(texture2, dUvY, dDxY, dDyY).rgb * 2.0 - 1.0) : vec3(0.0, 0.0, 1.0);
-        vec3 dNormZ = (triWeights.z > 0.01) ? (textureGrad(texture2, dUvZ, dDxZ, dDyZ).rgb * 2.0 - 1.0) : vec3(0.0, 0.0, 1.0);
+        vec3 dNormX = (triWeights.x > 0.0) ? (textureGrad(texture2, dUvX, dDxX, dDyX).rgb * 2.0 - 1.0) : vec3(0.0, 0.0, 1.0);
+        vec3 dNormY = (triWeights.y > 0.0) ? (textureGrad(texture2, dUvY, dDxY, dDyY).rgb * 2.0 - 1.0) : vec3(0.0, 0.0, 1.0);
+        vec3 dNormZ = (triWeights.z > 0.0) ? (textureGrad(texture2, dUvZ, dDxZ, dDyZ).rgb * 2.0 - 1.0) : vec3(0.0, 0.0, 1.0);
 
         normX = mix(normX, dNormX * 1.5, detailWeight * 0.45);
         normY = mix(normY, dNormY * 1.5, detailWeight * 0.45);
         normZ = mix(normZ, dNormZ * 1.5, detailWeight * 0.45);
     }
 
-    vec3 sgnN = sign(smoothWorldN);
-    vec3 wNormX = vec3(normX.z * sgnN.x, normX.y, normX.x * sgnN.x);
-    vec3 wNormY = vec3(normY.x, normY.z * sgnN.y, normY.y);
-    vec3 wNormZ = vec3(normZ.x * sgnN.z, normZ.y, normZ.z * sgnN.z);
-    vec3 worldNormal = normalize(wNormX * triWeights.x + wNormY * triWeights.y + wNormZ * triWeights.z);
+    // Build relief in projection axes and preserve the actual mesh slope.
+    // A flat normal map then gives the same normal as the cliff geometry.
+    vec3 relief = vec3(0.0, normX.y, normX.x) * triWeights.x
+                + vec3(normY.x, 0.0, normY.y) * triWeights.y
+                + vec3(normZ.x, normZ.y, 0.0) * triWeights.z;
+    relief -= smoothWorldN * dot(smoothWorldN, relief);
+    vec3 worldNormal = normalize(smoothWorldN + relief);
 
     // Transform world normal into view space for lighting
     vec3 normal = normalize(transpose(worldRot) * worldNormal);
 
     // Triplanar roughness
-    float roughX = (triWeights.x > 0.01) ? textureGrad(texture3, uvX, dxX, dyX).r : 0.82;
-    float roughY = (triWeights.y > 0.01) ? textureGrad(texture3, uvY, dxY, dyY).r : 0.82;
-    float roughZ = (triWeights.z > 0.01) ? textureGrad(texture3, uvZ, dxZ, dyZ).r : 0.82;
+    float roughX = (triWeights.x > 0.0) ? textureGrad(texture3, uvX, dxX, dyX).r : 0.82;
+    float roughY = (triWeights.y > 0.0) ? textureGrad(texture3, uvY, dxY, dyY).r : 0.82;
+    float roughZ = (triWeights.z > 0.0) ? textureGrad(texture3, uvZ, dxZ, dyZ).r : 0.82;
     float roughness = clamp(roughX * triWeights.x + roughY * triWeights.y + roughZ * triWeights.z, 0.18, 0.94);
 
     // ── 2. Natural 3D Geological Strata & Mineral Suite ──
@@ -141,7 +144,8 @@ void main() {
     // 3D domain-warped turbulence
     float strataWarp = sin(worldPosition.x * 0.14 - worldPosition.z * 0.18) * 1.25;
     float strataMacro = sin(strataCoord * 2.40 + strataWarp) * 0.5 + 0.5;
-    float strataFine  = sin(strataCoord * 6.80 + strataWarp * 1.8) * 0.5 + 0.5;
+    float finePhase = strataCoord * 6.80 + strataWarp * 1.8;
+    float strataFine = 0.5 + 0.5 * sin(finePhase) * (1.0 - smoothstep(0.5, 2.5, fwidth(finePhase)));
     float combinedStrata = strataMacro * 0.65 + strataFine * 0.35;
     float strataContrast = (strataMacro - 0.5) * 1.55 + (strataFine - 0.5) * 0.78;
 

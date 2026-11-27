@@ -29,7 +29,7 @@ typedef struct {float x,y,z,w;} Vector4;
 typedef struct {float m0,m4,m8,m12,m1,m5,m9,m13,m2,m6,m10,m14,m3,m7,m11,m15;} Matrix;
 typedef struct {unsigned char r,g,b,a;} Color;
 typedef struct {unsigned int id;} Shader;
-enum {SHADER_UNIFORM_VEC3};
+enum {SHADER_UNIFORM_VEC3, SHADER_UNIFORM_FLOAT};
 static struct {Vector3 position;} camera;
 static Matrix shaderFromWorld,uploadedWorldFromShader;
 static Vector3 uploadedLight,uploadedCamera,uploadedSunColor,uploadedAmbient;
@@ -39,6 +39,13 @@ static int s_locLightDir = 1;
 static int s_locLightColor = 6;
 static int s_locAmbientColor = 7;
 static int s_locViewPos = 2;
+static int s_locRockAridMode = 8;
+static int s_locRockVolcanicMode = 9;
+static int s_locRockAlpineMode = 10;
+static int s_locRockMetallicMode = 11;
+static float s_rockAridMode = 0.25f, s_rockVolcanicMode = 0.5f;
+static float s_rockAlpineMode = 0.75f, s_rockMetallicMode = 1.0f;
+static float uploadedModes[4];
 static Vector3 Vector3Transform(Vector3 p,Matrix m) {
     return (Vector3){m.m0*p.x+m.m4*p.y+m.m8*p.z+m.m12,
                     m.m1*p.x+m.m5*p.y+m.m9*p.z+m.m13,
@@ -63,7 +70,13 @@ static void EndShaderMode(void) {assert(activeShader==17);activeShader=0;}
 static void Environment_BindCloudShadowShader(Shader s) {assert(activeShader==(int)s.id);cloudBindings++;}
 static void MapShadow_UpdateShader(Shader s) {assert(activeShader==(int)s.id);shadowBindings++;}
 static void SetShaderValue(Shader s,int location,const void *data,int type) {
-    assert(activeShader==(int)s.id && type==SHADER_UNIFORM_VEC3);
+    assert(activeShader==(int)s.id);
+    if (location >= 8 && location <= 11) {
+        assert(type==SHADER_UNIFORM_FLOAT);
+        uploadedModes[location-8]=*(const float *)data;
+        return;
+    }
+    assert(type==SHADER_UNIFORM_VEC3);
     if(location==1)uploadedLight=*(const Vector3 *)data;
     if(location==2)uploadedCamera=*(const Vector3 *)data;
     if(location==6)uploadedSunColor=*(const Vector3 *)data;
@@ -77,6 +90,7 @@ static float Environment_GetSunIntensity(void) {return 3.0f;}
 static Color Environment_GetSunColor(void) {return (Color){246,232,207,255};}
 static Color Environment_GetAmbientColor(void) {return (Color){142,157,170,255};}
 static Vector4 ColorNormalize(Color c) {return (Vector4){c.r/255.f,c.g/255.f,c.b/255.f,c.a/255.f};}
+static float mix(float a,float b,float t) {return a+(b-a)*t;}
 static float clamp(float value,float low,float high) {return fminf(high,fmaxf(low,value));}
 static void nearVector(Vector3 a,Vector3 b) {assert(Vector3Length(Vector3Subtract(a,b))<.00002f);}
 '''
@@ -95,6 +109,8 @@ int main(void) {
         Vector3 expectedLight=Vector3Normalize((Vector3){sign*sun.z,sun.y,-sign*sun.x});
         nearVector(uploadedLight,expectedLight);
         nearVector(uploadedCamera,(Vector3){0});
+        assert(uploadedModes[0]==s_rockAridMode && uploadedModes[1]==s_rockVolcanicMode);
+        assert(uploadedModes[2]==s_rockAlpineMode && uploadedModes[3]==s_rockMetallicMode);
         nearVector(uploadedSunColor,(Vector3){3*246/255.f,3*232/255.f,3*207/255.f});
         nearVector(uploadedAmbient,(Vector3){142/255.f,157/255.f,170/255.f});
         Vector3 shaderRock=Vector3Transform(rock,shaderFromWorld);
@@ -127,7 +143,7 @@ assert "Environment_CloudVisibility(u_cloudNoise, worldPosition)" in shader
 assert "vec3 worldPosition = vec3(u_cloudWorldFromShader * vec4(fragPosition, 1.0))" in shader
 ao = ("\nstatic float ProductionGroundAO(Vector3 fragPosition) {\n"
       "Vector3 worldPosition=Vector3Transform(fragPosition,uploadedWorldFromShader);\n"
-      "(void)worldPosition;return " + ground_ao + ";\n}\n")
+      "float highBounceMode=0.0f;return " + ground_ao + ";\n}\n")
 with tempfile.TemporaryDirectory(prefix="wuxing-prop-lighting-") as directory:
     work = pathlib.Path(directory)
     code = work / "prop.c"

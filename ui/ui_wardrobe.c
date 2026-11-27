@@ -82,6 +82,8 @@ static const char* GetSlotName(ModularSlot slot) {
         case MODULAR_SLOT_WEAPON_R:    return "BINH KHÍ (VŨ KHÍ)";
         case MODULAR_SLOT_WEAPON_L:    return "TẢ BINH KHÍ";
         case MODULAR_SLOT_HAIR:        return "MÁI TÓC";
+        case MODULAR_SLOT_EYEBROWS:    return "LÔNG MÀY / MI";
+        case MODULAR_SLOT_BEARD:       return "RÂU";
         default:                       return "TRANG BỊ";
     }
 }
@@ -209,6 +211,9 @@ void UI_Wardrobe_UpdateDraw(PlayerWardrobe *pw, ModularInstance *inst, float dt)
     ModularSlot slots[] = {
         MODULAR_SLOT_FULL_OUTFIT,
         MODULAR_SLOT_BASE_BODY,
+        MODULAR_SLOT_HAIR,
+        MODULAR_SLOT_EYEBROWS,
+        MODULAR_SLOT_BEARD,
         MODULAR_SLOT_TORSO,
         MODULAR_SLOT_LEGS,
         MODULAR_SLOT_BOOTS,

@@ -48,6 +48,7 @@
 - Non-persistent trails/fields (`life==0`) must `KillTrail` when done — no leaked slots.
 
 ## 6. Mesh / Geometry
+- Projected rock normal maps use the same world axes as their UVs. Preserve the geometric normal when sampled detail is neutral.
 - Index packing must preserve every authored attribute seam and triangle order; retain the original mesh when index limits or allocation fail.
 - Never `DrawCylinder/DrawCone/DrawCube/DrawSphere`(+wireframe) for real meshes — use `procedural_mesh_utils.h`, `DrawRibbonStrip`, `ProceduralMesh_DrawTube`.
 - Never hand-roll Bezier/Frenet/path-sampling in effects — use `path_spline.h` + `procedural_mesh_utils.h`; prescribed Motion routes use `motion_path_transport.h` and its shared GPU sampler.

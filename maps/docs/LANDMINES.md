@@ -140,6 +140,7 @@
 | Date | Editor (human/AI) | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
 | 2026-11-07 | Antigravity | PNG-loaded `MapEcology` shore sampling (`s_owner` guard) and interior terrace slope separation | `maps/toolkit/map_ecology.c`, `maps/worlds/song_quao/song_quao.c`, `maps/toolkit/shaders/ground_splat.fs`, matched 4-view captures | Ground-truth |
+| 2026-11-27 | Codex | Rock normal projection and lighting ownership | `prop_lit.fs`, `cliff_rock.fs`, `map_props_rocks.inl` | Ground-truth |
 | 2026-10-25 | Antigravity | Slope-gated scree rejection, reservoir-thinning guard, and focal-coupled LOD scaling | `maps/worlds/song_quao/song_quao.c`, `maps/toolkit/map_props_meadow_parametric.inl`, `maps/toolkit/shaders/ground_splat.fs`, `maps/toolkit/shaders/nature_surface.glsl` | Ground-truth |
 | 2026-10-22 | DeepSeek | Ground shader cost model, branch guards, whole-draw frame marginal | `maps/toolkit/shaders/ground_splat.fs` repeat-harness ablations; song_quao paired full-frame runs (base vs `WUXING_SONGQUAO_SKIP=ground`, 3 pairs) | Ground-truth |
 | 2026-10-22 | DeepSeek | Compact-by-default band batching and depth-only caster shader | `maps/toolkit/map_props_meadow.inl`, `maps/toolkit/map_props_meadow_parametric.inl`, `maps/toolkit/shaders/nature_parametric.glsl`, `maps/toolkit/shaders/nature_shadow_parametric.vs`; interleaved cold 170-frame runs (song_quao 1280x720, legacy vs compact) | Ground-truth |
@@ -239,7 +240,7 @@
 
 - **Symptom:** Procedural boulders, mountain crags, and river stones using `prop_lit` appear pitch-dark or flat grey on a map until another map or pass updates lighting.
 - **Cause:** `prop_lit.fs` reads `u_lightDir`, `u_lightColor`, `u_ambientColor`, and `u_viewPos`, which are only pushed when `PropLit_UpdateLighting()` is called once per frame before drawing rocks. `DrawSongQuaoMap` omitted `PropLit_UpdateLighting()`.
-- **Rule:** Every map `Draw*Map()` function that draws `MapRockSet` or `MapRockSystem` MUST call `PropLit_UpdateLighting()` before drawing rocks. `prop_lit.fs` also guards against zero-length light uniforms with a safe fallback.
+- **Rule:** Call `PropLit_UpdateLighting()` before drawing a legacy lit `MapRockSet`. `MapProp_DrawRockSystem()` handles the upload internally. `prop_lit.fs` also guards against zero-length light uniforms with a safe fallback.
 
 ### Boolean DEM lake step exposes low-poly triangle sawtooth under transparent water
 
@@ -419,3 +420,9 @@
 - **Cause** — The flower generator can fall back to the cluster center when all samples are excluded. The flora builder reads cluster counts to partition the placement array. Phú Quốc's original ground rock texture contained evenly spaced high-contrast strata.
 - **Rule** — Revalidate fallback flower placements and update each cluster's count when compacting. Inspect the source diffuse and normal maps and capture the ground with the skirt and water disabled to isolate coastal material bands.
 
+
+### World-projected rock relief breaks across diagonal faces
+
+- **Symptom:** Texture orientation changes abruptly where a flank turns from X-facing to Z-facing. Bump lighting can rotate away from the grain, and the cliff lighting can flatten the actual slope.
+- **Cause:** Hard side-axis selection changes the sampled UV abruptly. Mesh UV tangents describe a different projection. Weighting axis normals alone also biases the result toward the dominant axis.
+- **Rule:** Use continuous axis weights, compute explicit UV derivatives before per-pixel sampling branches, and blend relief in the same world axes as the texture projection. Project the blended relief onto the geometric tangent plane so a neutral normal sample preserves the mesh normal. See `prop_lit.fs` and `cliff_rock.fs`.

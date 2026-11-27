@@ -144,7 +144,7 @@ static Mesh Ore_BuildProceduralClusterMesh(MapOreType type)
     unsigned int rng = 0x91A4C2u + (unsigned int)type * 0x4F1BBCDCu;
 
     // 1. Basal host-rock collar (icosphere subdivision 1 = 80 tris = 240 verts)
-    Mesh baseRock = Nature_GenMeshIcoSphere(0.76f, 1);
+    Mesh baseRock = Nature_GenMeshIcoSphere(0.76f, 1, false);
     int rockVerts = baseRock.vertexCount;
     for (int i = 0; i < rockVerts; i++)
     {

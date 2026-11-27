@@ -97,7 +97,10 @@ void MapProp_UnloadStrip(MapStripSurface *strip);
 typedef enum {
     MAP_ROCK_BOULDER = 0,     // Weathered rounded boulder
     MAP_ROCK_CRAG,            // Jagged karst/granite mountain crag/spire with stepped cleavage
-    MAP_ROCK_RIVER_STONE      // Smooth, flattened water-polished riverbed/shoreline stone
+    MAP_ROCK_RIVER_STONE,     // Smooth, flattened water-polished riverbed/shoreline stone
+    MAP_ROCK_GRANITE, MAP_ROCK_BASALT, MAP_ROCK_SANDSTONE, MAP_ROCK_LIMESTONE,
+    MAP_ROCK_OBSIDIAN, MAP_ROCK_SLATE, MAP_ROCK_SCREE,
+    MAP_ROCK_ARCHETYPE_COUNT
 } MapRockArchetype;
 
 typedef struct {
@@ -106,12 +109,7 @@ typedef struct {
     MapRockArchetype archetype;
 } MapRockItem;
 
-typedef struct {
-    MapRockSet boulders, crags, riverStones;
-    MapRockItem *items;
-    int count, capacity;
-    bool ready;
-} MapRockSystem;
+// MapRockSystem owns placement storage and its archetype/variant meshes.
 
 MapRockSystem MapProp_CreateRockSystem(const char *diffusePath, const char *normalPath,
                                        const char *roughnessPath, int capacity);
@@ -123,13 +121,10 @@ void MapProp_DrawRockSystem(const MapRockSystem *sys, bool drawShadows);
 void MapProp_DrawRockSystemShadowCasters(MapRockSystem *sys, Shader depthShader);
 void MapProp_UnloadRockSystem(MapRockSystem *sys);
 
-// MapProp_DrawRockSystem submits one DrawModelEx per placement, so it frustum-culls each
-// placement first, against the sphere baked in MapRockSet (boundsCenter/boundsRadius)
-// published into world space with the placement's max scale. A placement is skipped only
-// when its whole sphere is outside the camera frustum, so the rendered image is unchanged.
-// With drawShadows the sphere is padded by the blob-shadow radius. The frustum comes from
-// rlGetMatrixTransform() + rlGetMatrixProjection() — rlGetMatrixModelview() is identity
-// inside BeginMode3D under rlvk (ENGINE_LANDMINES.md §28).
+// Draw inside the active 3D camera scope. The system prepares lighting on
+// the first visible rock, frustum-culls scaled mesh bounds, and chooses
+// the matching 320-triangle variant for small projected silhouettes.
+// Shadow casting and collision use the full-detail variant.
 
 // Legacy individual rock set (boulders only)
 typedef struct {
@@ -137,6 +132,7 @@ typedef struct {
     bool ready;
     Vector3 boundsCenter;   // model-space bounding sphere of the generated mesh,
     float boundsRadius;     // baked once at creation; used for frustum culling
+    float localRadiusXZ, localMinY, localMaxY;
 } MapRockSet;
 typedef struct { Vector3 position; float radiusScale, heightScale, rotationDeg; } MapRockPlacement;
 MapRockSet MapProp_CreateRocks(const char *diffusePath, const char *normalPath, const char *roughnessPath);
@@ -188,7 +184,7 @@ void MapProp_UnloadSkyDome(MapSkyDome *sky);
 * `MapProp_GenerateMountainRing` remains a deterministic placement helper. It is not used for the floating-plain boundary; keep ordinary biome rocks inside the playable map.
 * `MapProp_CreateCloudSea` (`map_props_cloud.inl`): cloud density is now sourced from a **texture**, `assets/textures/cloud_noise.png` (grayscale, tileable, generated with `python3 scripts/generate_cloud_noise.py`) — NOT computed via per-pixel FBM/`sin()` like the first version. Changed because this plane usually covers a very large screen area (fill-rate bound); 2-layer multi-octave FBM costs dozens of `sin()` calls per pixel and was measured (not theorized) to cause real FPS drops on weaker machines — 1-2 texture reads are much cheaper. Drawn with `maps/toolkit/shaders/cloud_sea.fs` — uses `discard` for low-density areas instead of alpha-blending, since `maps/CLAUDE.md` forbids alpha < 255 in the main scene (breaks particles). `width`/`depth` should be much larger than the map so it reads as an endless sea of clouds, not an obviously cut-off card. Only visible when standing near the cliff edge (`MapProp_CreateGroundHeightmap`) looking down through gaps between the border rocks — standing in the middle of the plateau, the ground itself blocks the view, matching real terrain.
 * Calling convention: `Create*` is called exactly once in `Init{Prefix}Map`, `Draw*` is called every frame in `Draw{Prefix}Map`, `Unload*` is called in `Unload{Prefix}Map` if the map declares an Unload function. `MapProp_GenerateMountainRing` is the exception — it doesn't load any resource, it only fills an array with numbers, so it can be called anywhere inside `Init`, even with no corresponding `Unload`.
-* Rocks using `prop_lit` (all 3 paths supplied) need `PropLit_UpdateLighting()` called **once per frame before drawing** (see the full example in section 6). Ground/strip/cloud sea each push their own lighting uniforms inside their own `Draw*`, no extra call needed.
+* `MapProp_DrawRockSystem()` uploads its own lighting. For a lit legacy `MapRockSet`, call `PropLit_UpdateLighting()` before `MapProp_DrawRocks()`.
 
 ### Generalized Flora, Debris, and Ground Systems (`map_props_flora.inl`, `map_props_debris.inl`, `map_props_ground.inl`)
 
@@ -386,14 +382,14 @@ still skipping distant field chunks.
 
 Use `MapProp_SetGroundTint` to grade the tiled terrain into the same palette as its 3D vegetation. This prevents the common failure where the ground reads as a bright photographic carpet while foliage reads as dark disconnected props.
 
-### `maps/toolkit/prop_lit.h` — real-lit material for rocks/paths
+### `maps/toolkit/prop_lit.h` — lit rock material
 
 ```c
 Shader   PropLit_GetShader(void);
 Material PropLit_MakeMaterial(Texture2D diffuse, Texture2D normal, Texture2D roughness);
 void     PropLit_UpdateLighting(void);
 ```
-`map_props.c` calls these automatically when you pass all 3 paths to `MapProp_CreateStrip`/`CreateRocks` — you usually don't need to call them directly, **except** `PropLit_UpdateLighting()` still must be called once per frame in `Draw{Prefix}Map` (it doesn't run automatically). Reads lighting via `Environment_Get{SunDirection,SunColor,AmbientColor}()`, adjust automatically for time-of-day if the map uses a day/night cycle. Never call `UnloadShader()`/`UnloadMaterial()` on the result — the shader is shared, cached via `ResourceManager_LoadShader`.
+The lit rock material projects diffuse, normal and roughness maps in world space. It reads the current sun and ambient lighting from Environment. `MapProp_DrawRockSystem()` manages lighting uploads. Direct material users and legacy rock sets upload lighting before drawing. ResourceManager owns the shared shader and textures.
 
 In `maps/toolkit/prop_lit.c`, call `PropLit_UpdateLighting()` inside the active 3D camera scope. It converts the sun direction without translation and camera position into the shader/view space emitted by `DrawMesh`; sun and ambient colors retain their Environment values. `maps/toolkit/shaders/prop_lit.fs` keeps view direction, shading normals, shadow sampling and VFX lighting in that space, while the existing inverse-view uniform recovers world position for cloud visibility and ground-contact AO. Material haze uses the physical camera-to-prop distance.
 
@@ -1149,6 +1145,7 @@ Cloud noise uses a separate ResourceManager mipmapped trilinear/repeat variant. 
 
 | Date | Editor (human/AI) | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-11-27 | Codex | Rock variant LOD and lighting setup | `map_props.h`, `map_props_rocks.inl`, `prop_lit.fs` | Ground-truth |
 | 2026-10-17 | Antigravity | AAA map visual upgrade based on WebGL meadow reference: botanical spindle seedheads & varieties (rye, wild clover bloom, silvergrass), warm golden sunlit tip shift, V-crease 3D fold, curved normal canopy blend (mix 0.30 w/ up), forward cubic SSS flare & waxy cuticle glint, 3-band botanical canopy palette (deep moss, lush clover, sunlit gold), distant terrain passing wind waves & SSS back-scatter, contact hardening shadow tuning | maps/toolkit/map_props_meadow.inl; maps/toolkit/map_props_meadow_parametric.inl; maps/toolkit/shaders/nature_parametric.glsl; maps/toolkit/shaders/nature_opaque.fs; maps/toolkit/shaders/nature_surface.glsl; maps/toolkit/meadow_palette.h; maps/toolkit/shaders/meadow_palette.glsl; maps/toolkit/shaders/ground_splat.fs; maps/toolkit/map_props_ground.inl; maps/toolkit/shaders/flower_shadow.fs | Ground-truth |
 | 2026-10-12 | Codex | DEM provenance, native terrain analysis, packed heightfield and terrain water APIs | maps/pipeline/dem_pipeline.py; maps/toolkit/map_props.h | Ground-truth |
 | 2026-10-09 | Codex | Explicit meadow growth form, visibility fade and shared HDR sunlight | maps/toolkit/map_props.h; map_props_meadow_parametric.inl; maps/worlds/verdant_path/verdant_path.c | Ground-truth |

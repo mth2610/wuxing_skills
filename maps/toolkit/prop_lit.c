@@ -38,12 +38,8 @@ Shader PropLit_GetShader(void)
   {
     shader.locs[SHADER_LOC_VERTEX_POSITION] =
         GetShaderLocationAttrib(shader, "vertexPosition");
-    shader.locs[SHADER_LOC_VERTEX_TEXCOORD01] =
-        GetShaderLocationAttrib(shader, "vertexTexCoord");
     shader.locs[SHADER_LOC_VERTEX_NORMAL] =
         GetShaderLocationAttrib(shader, "vertexNormal");
-    shader.locs[SHADER_LOC_VERTEX_TANGENT] =
-        GetShaderLocationAttrib(shader, "vertexTangent");
 
     shader.locs[SHADER_LOC_MATRIX_MVP] = GetShaderLocation(shader, "mvp");
     shader.locs[SHADER_LOC_MATRIX_MODEL] =

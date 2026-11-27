@@ -202,6 +202,7 @@ typedef struct
     Vector3 boundsCenter;
     float boundsRadius;
     float localRadiusXZ;
+    float localMinY;
     float localMaxY;
 } MapRockSet;
 
@@ -254,7 +255,7 @@ typedef struct
 {
     MapRockSet models[MAP_ROCK_ARCHETYPE_COUNT];
     MapRockSet variants[MAP_ROCK_ARCHETYPE_COUNT][MAP_ROCK_VARIANTS_PER_ARCHETYPE - 1];
-    MapRockSet farModels[MAP_ROCK_ARCHETYPE_COUNT];
+    MapRockSet farModels[MAP_ROCK_ARCHETYPE_COUNT][MAP_ROCK_VARIANTS_PER_ARCHETYPE];
     MapRockSet boulders;
     MapRockSet crags;
     MapRockSet riverStones;

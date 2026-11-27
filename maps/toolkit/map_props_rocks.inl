@@ -69,7 +69,7 @@ static int Rock_GetMidpoint(int v1, int v2, Vector3 *verts, int *vCount,
     return midIdx;
 }
 
-static Mesh Nature_GenMeshIcoSphere(float radius, int subdivisions)
+static Mesh Nature_GenMeshIcoSphere(float radius, int subdivisions, bool needsUV)
 {
     Mesh mesh = {0};
     float t = (1.0f + sqrtf(5.0f)) * 0.5f;
@@ -158,10 +158,10 @@ static Mesh Nature_GenMeshIcoSphere(float radius, int subdivisions)
     mesh.vertexCount = finalVCount;
     mesh.triangleCount = tCount;
     mesh.vertices = (float *)RL_MALLOC((size_t)finalVCount * 3u * sizeof(float));
-    mesh.texcoords = (float *)RL_MALLOC((size_t)finalVCount * 2u * sizeof(float));
+    mesh.texcoords = needsUV ? RL_MALLOC((size_t)finalVCount * 2u * sizeof(float)) : NULL;
     mesh.normals = (float *)RL_MALLOC((size_t)finalVCount * 3u * sizeof(float));
 
-    if (mesh.vertices && mesh.texcoords && mesh.normals)
+    if (mesh.vertices && mesh.normals && (!needsUV || mesh.texcoords))
     {
         for (int t = 0; t < tCount; t++)
         {
@@ -178,12 +178,21 @@ static Mesh Nature_GenMeshIcoSphere(float radius, int subdivisions)
                 mesh.normals[outIdx * 3 + 1] = p.y;
                 mesh.normals[outIdx * 3 + 2] = p.z;
 
-                float u = atan2f(p.z, p.x) * (0.5f / PI) + 0.5f;
-                float v = asinf(fmaxf(-1.0f, fminf(1.0f, p.y))) * (1.0f / PI) + 0.5f;
-                mesh.texcoords[outIdx * 2 + 0] = u;
-                mesh.texcoords[outIdx * 2 + 1] = v;
+                if (needsUV)
+                {
+                    mesh.texcoords[outIdx * 2 + 0] = atan2f(p.z, p.x) * (0.5f / PI) + 0.5f;
+                    mesh.texcoords[outIdx * 2 + 1] = asinf(fmaxf(-1.0f, fminf(1.0f, p.y))) * (1.0f / PI) + 0.5f;
+                }
             }
         }
+    }
+
+    else
+    {
+        RL_FREE(mesh.vertices);
+        RL_FREE(mesh.normals);
+        RL_FREE(mesh.texcoords);
+        mesh = (Mesh){0};
     }
 
     RL_FREE(edgeHash);
@@ -193,7 +202,7 @@ static Mesh Nature_GenMeshIcoSphere(float radius, int subdivisions)
     return mesh;
 }
 
-static Mesh Nature_BuildProceduralRockMeshVariantLod(int rockType, int variantSeed, int subdivisionsOverride)
+static Mesh Nature_BuildProceduralRockMeshVariantLod(int rockType, int variantSeed, int subdivisionsOverride, bool needsUV)
 {
     int subdivisions = 3; // 1280 triangles, 3840 vertices
     if (subdivisionsOverride > 0)
@@ -204,11 +213,9 @@ static Mesh Nature_BuildProceduralRockMeshVariantLod(int rockType, int variantSe
     {
         subdivisions = 2; // 320 triangles, 960 vertices
     }
-    Mesh mesh = Nature_GenMeshIcoSphere(1.0f, subdivisions);
-
-    float *origTexcoords = (float *)RL_MALLOC((size_t)mesh.vertexCount * 2u * sizeof(float));
-    if (origTexcoords)
-        memcpy(origTexcoords, mesh.texcoords, (size_t)mesh.vertexCount * 2u * sizeof(float));
+    Mesh mesh = Nature_GenMeshIcoSphere(1.0f, subdivisions, needsUV);
+    if (!mesh.vertices)
+        return mesh;
 
     const float vPhase = (float)(variantSeed & 3) * 1.5707963f; // 90 deg step per variant
     const float vAsymX = (variantSeed == 1) ? 1.16f : ((variantSeed == 2) ? 0.90f : ((variantSeed == 3) ? 1.08f : 1.0f));
@@ -251,7 +258,8 @@ static Mesh Nature_BuildProceduralRockMeshVariantLod(int rockType, int variantSe
                           0.15f * c2 - 0.10f * fabsf(c3);
 
             // Vertical fluting rain rills (rillenkarren)
-            float fluting = 0.14f * cosf(10.0f * angle) - 0.08f * fabsf(sinf(16.0f * angle));
+            float strike = angle + vPhase * 0.25f;
+            float fluting = 0.12f * cosf(10.0f * strike) - 0.08f * fabsf(sinf(16.0f * strike));
 
             // Sharp acute apex taper: radius scales with distance from summit
             float distFromTop = (1.05f - y) * 0.5f;
@@ -264,7 +272,8 @@ static Mesh Nature_BuildProceduralRockMeshVariantLod(int rockType, int variantSe
             float ridgeStrike = cosf(angle - 0.4f);
             float ridgeChisel = 1.0f - summitPinch * 0.65f * (1.0f - fabsf(ridgeStrike));
 
-            float newR = (0.35f + 0.65f * horizR) * (ridge + fluting) * taper * ridgeChisel;
+            float shoulder = Rock_Smoothstep(0.0f, 0.35f, horizR);
+            float newR = horizR * (ridge + fluting * shoulder) * taper * ridgeChisel;
             vx = cosA * newR * 1.25f;
             vz = sinA * newR * 0.85f;
 
@@ -282,12 +291,12 @@ static Mesh Nature_BuildProceduralRockMeshVariantLod(int rockType, int variantSe
             }
 
             // Towering vertical proportions with stepped karst dissolution terraces
-            float strataPhase = y * 16.0f + angle * 1.5f;
+            float strataPhase = y * 16.0f + 1.5f * (x - z) + vPhase;
             float terrace = 0.07f * (sinf(strataPhase) + 0.35f * sinf(strataPhase * 2.0f));
             float baseWiden = (y < -0.30f) ? (1.0f + (-0.30f - y) * 0.85f) : 1.0f;
             float hf2 = heightFactor * heightFactor;
-            float leanX = 0.22f * hf2;
-            float leanZ = -0.14f * hf2;
+            float leanX = (0.19f + 0.09f * cosf(vPhase)) * hf2;
+            float leanZ = (-0.14f + 0.12f * sinf(vPhase)) * hf2;
 
             vx = vx * baseWiden + leanX;
             vy = (y + 0.15f) * 2.65f + terrace;
@@ -295,55 +304,20 @@ static Mesh Nature_BuildProceduralRockMeshVariantLod(int rockType, int variantSe
         }
         else if (rockType == MAP_ROCK_BASALT)
         {
-            // Hexagonal Columnar Basalt jointing (Giant's Causeway / Gành Đá Đĩa style)
-            float hexAngle = angle + 0.52359877f; // PI/6
-            float modHex = fmodf(hexAngle + 20.0f * PI, PI / 3.0f) - (PI / 6.0f);
-            float hexPrism = 1.0f / cosf(modHex);
-            if (hexPrism > 1.155f)
-                hexPrism = 1.155f;
-
-            float colHeight = 1.15f;
-            float colShiftX = 0.0f, colShiftZ = 0.0f;
-            if (angle > -0.6f && angle < 1.5f)
-            {
-                colHeight = 1.25f;
-                colShiftX = 0.15f;
-                colShiftZ = 0.10f;
-            }
-            else if (angle >= 1.5f || angle < -2.3f)
-            {
-                colHeight = 0.95f;
-                colShiftX = -0.18f;
-                colShiftZ = 0.05f;
-            }
-            else
-            {
-                colHeight = 1.05f;
-                colShiftX = 0.05f;
-                colShiftZ = -0.15f;
-            }
-
-            if (y >= 0.65f)
-            {
-                float rCap = (1.0f - y) * (1.0f / 0.35f);
-                vx = cosA * hexPrism * rCap * 1.05f + colShiftX;
-                vz = sinA * hexPrism * rCap * 0.95f + colShiftZ;
-                vy = colHeight + 0.03f * cosf(6.0f * angle);
-            }
-            else
-            {
-                float wallY = (y - 0.65f) * (1.0f / 1.50f) * (colHeight + 0.90f) + colHeight;
-                float rWall = hexPrism;
-                if (y < -0.85f)
-                {
-                    float flare = (-0.85f - y) * (1.0f / 0.15f);
-                    rWall *= (1.0f + flare * 0.35f);
-                }
-                float coolingJoint = 0.035f * sinf(wallY * 16.0f);
-                vx = cosA * (rWall + coolingJoint) * 1.05f + colShiftX;
-                vz = sinA * (rWall + coolingJoint) * 0.95f + colShiftZ;
-                vy = wallY;
-            }
+            // A single cooling column with a broken, sloping cap and beveled
+            // shoulders. Continuous faces meet around a closed hexagonal section.
+            float strike = angle + vPhase * 0.15f;
+            float sector = fabsf(remainderf(strike, PI / 3.0f));
+            float hexPrism = 1.0f / cosf(sector);
+            float cap = sqrtf(fmaxf(0.0f, (1.0f - y * y) / (1.0f - 0.68f * 0.68f)));
+            float flank = fminf(cap, 1.0f) * (0.97f - 0.045f * y);
+            float joint = 0.035f * cosf(y * 11.0f + 1.8f * z + vPhase);
+            float lean = (y + 1.0f) * 0.075f * cosf(vPhase);
+            vx = cosA * hexPrism * flank * (1.06f + joint) * vAsymX + lean;
+            vz = sinA * hexPrism * flank * (0.92f + joint) * vAsymZ;
+            float capY = copysignf(1.0f - 0.10f * (1.0f - fabsf(y)), y);
+            float columnY = (fabsf(y) > 0.68f) ? capY * 0.68f / 0.968f : y;
+            vy = columnY * (1.50f + 0.12f * sinf(vPhase)) + 0.10f * vx - 0.08f * vz;
         }
         else if (rockType == MAP_ROCK_SANDSTONE)
         {
@@ -351,35 +325,13 @@ static Mesh Nature_BuildProceduralRockMeshVariantLod(int rockType, int variantSe
             float sqX = copysignf(powf(fabsf(cosA), 0.62f), cosA) * 1.30f;
             float sqZ = copysignf(powf(fabsf(sinA), 0.62f), sinA) * 0.95f;
 
-            if (y >= 0.50f)
-            {
-                float rCap = (1.0f - y) * 2.0f;
-                vx = sqX * (0.35f + 0.65f * rCap);
-                vz = sqZ * (0.35f + 0.65f * rCap);
-                vy = 0.55f + 0.04f * sinf(sqX * 3.5f);
-            }
-            else
-            {
-                float tY = (y + 0.85f) * (3.0f / 1.35f);
-                float tIdx = floorf(tY);
-                if (tIdx < 0.0f)
-                    tIdx = 0.0f;
-                if (tIdx > 2.0f)
-                    tIdx = 2.0f;
-                float tFrac = tY - tIdx;
-                float stepY = (tIdx + Rock_Smoothstep(0.12f, 0.88f, tFrac) * 0.88f) * (1.35f / 3.0f) - 0.85f;
-
-                float undercut = 1.0f - 0.12f * (1.0f - fabsf(tFrac - 0.5f) * 2.0f);
-                float rWall = undercut;
-                if (y < -0.85f)
-                {
-                    float flare = (-0.85f - y) * (1.0f / 0.15f);
-                    rWall *= (1.0f + flare * 0.45f);
-                }
-                vx = sqX * rWall;
-                vz = sqZ * rWall;
-                vy = stepY * 0.72f;
-            }
+            float bedding = y * 11.0f + 0.60f * x + 0.35f * z + vPhase;
+            float ledge = 0.12f * Rock_Smoothstep(-0.48f, 0.18f, sinf(bedding));
+            float cap = fminf(1.0f, horizR * 1.22f);
+            float flank = cap * (1.0f - ledge - 0.09f * y);
+            vx = sqX * flank * vAsymX + 0.10f * y * cosf(vPhase);
+            vz = sqZ * flank * vAsymZ;
+            vy = y * (0.55f - 0.08f * y * y) + 0.050f * vx - 0.06f * vz;
         }
         else if (rockType == MAP_ROCK_OBSIDIAN)
         {
@@ -393,9 +345,9 @@ static Mesh Nature_BuildProceduralRockMeshVariantLod(int rockType, int variantSe
                 distFromTop = 0.0f;
             float spireTaper = powf(distFromTop, 0.65f) * 1.28f;
 
-            vx = cosA * shard * spireTaper * 1.25f;
+            vx = cosA * horizR * shard * spireTaper * 1.25f * vAsymX + 0.14f * heightFactor;
             vy = y * 1.45f;
-            vz = sinA * shard * spireTaper * 0.85f;
+            vz = sinA * horizR * shard * spireTaper * 0.85f * vAsymZ;
 
             static const float kScallops[5][4] = {
                 {0.45f, 0.40f, 0.35f, 0.62f},
@@ -436,7 +388,8 @@ static Mesh Nature_BuildProceduralRockMeshVariantLod(int rockType, int variantSe
 
             vy = steppedY * cosD + rotZ * sinD;
             vz = -steppedY * sinD + rotZ * cosD;
-            vx = x * 1.35f + 0.15f * sinf(angle * 5.0f);
+            vx = x * 1.35f * vAsymX + 0.15f * horizR * sinf(angle * 5.0f + vPhase);
+            vz *= vAsymZ;
         }
         else if (rockType == MAP_ROCK_RIVER_STONE)
         {
@@ -447,8 +400,8 @@ static Mesh Nature_BuildProceduralRockMeshVariantLod(int rockType, int variantSe
             float pebble = 1.0f + 0.18f * c1 + 0.12f * c2 + 0.06f * c3;
 
             // Elongate along X (river flow axis), slightly compress along Z
-            vx = cosA * horizR * pebble * 1.28f;
-            vz = sinA * horizR * pebble * 0.92f;
+            vx = cosA * horizR * pebble * 1.28f * vAsymX;
+            vz = sinA * horizR * pebble * 0.92f * vAsymZ;
 
             // Distinctly flattened vertical profile (hydro-flattened river cobble)
             float topArch = 0.70f + 0.30f * (1.0f - fminf(1.0f, horizR * horizR));
@@ -508,10 +461,10 @@ static Mesh Nature_BuildProceduralRockMeshVariantLod(int rockType, int variantSe
             float rSph = sqrtf(x * x + y * y + z * z + 1e-6f);
             float sxN = x / rSph, syN = y / rSph, szN = z / rSph;
             float superMix = 0.22f * (powf(fabsf(sxN), 2.4f) + powf(fabsf(syN), 2.4f) + powf(fabsf(szN), 2.4f));
-            float rCore = 1.0f + lobe + superMix * 0.35f;
+            float rCore = 1.0f + lobe * horizR + superMix * 0.35f;
 
             vx = cosA * horizR * rCore * 1.18f * vAsymX;
-            vy = y * 0.86f * (1.0f + 0.08f * c1);
+            vy = y * 0.86f * (1.0f + 0.08f * c1 * horizR);
             vz = sinA * horizR * rCore * 0.92f * vAsymZ;
 
             // Variant 2: Pedestal / neck-pinch wind-scoured corestone (Nui Chua balanced boulder)
@@ -588,61 +541,36 @@ static Mesh Nature_BuildProceduralRockMeshVariantLod(int rockType, int variantSe
         mesh.vertices[i * 3 + 1] = vy;
         mesh.vertices[i * 3 + 2] = vz;
 
-        float uOrig = origTexcoords ? origTexcoords[i * 2 + 0] : mesh.texcoords[i * 2 + 0];
-        float vOrig = origTexcoords ? origTexcoords[i * 2 + 1] : mesh.texcoords[i * 2 + 1];
+    }
 
-        if (rockType == MAP_ROCK_SANDSTONE)
+    if (needsUV)
+    {
+        // Unwrap the longitude seam per triangle before repeating the texture.
+        for (int i = 0; i < mesh.vertexCount; i += 3)
         {
-            if (y >= 0.50f)
+            float *uv = &mesh.texcoords[i * 2];
+            float uMin = fminf(uv[0], fminf(uv[2], uv[4]));
+            float uMax = fmaxf(uv[0], fmaxf(uv[2], uv[4]));
+            for (int corner = 0; corner < 3; corner++, uv += 2)
             {
-                mesh.texcoords[i * 2 + 0] = vx * 0.85f + 0.5f;
-                mesh.texcoords[i * 2 + 1] = vz * 0.85f + 0.5f;
+                if (uMax - uMin > 0.5f && uv[0] < 0.5f)
+                    uv[0] += 1.0f;
+                uv[0] *= 3.0f;
+                uv[1] *= 2.0f;
             }
-            else
-            {
-                mesh.texcoords[i * 2 + 0] = uOrig * 3.2f;
-                mesh.texcoords[i * 2 + 1] = (vy + 0.85f) * 1.8f;
-            }
-        }
-        else if (rockType == MAP_ROCK_RIVER_STONE)
-        {
-            mesh.texcoords[i * 2 + 0] = uOrig * 2.2f;
-            mesh.texcoords[i * 2 + 1] = vOrig * 1.8f;
-        }
-        else if (rockType == MAP_ROCK_BASALT)
-        {
-            if (y >= 0.65f)
-            {
-                mesh.texcoords[i * 2 + 0] = vx * 0.85f + 0.5f;
-                mesh.texcoords[i * 2 + 1] = vz * 0.85f + 0.5f;
-            }
-            else
-            {
-                mesh.texcoords[i * 2 + 0] = uOrig * 6.0f;
-                mesh.texcoords[i * 2 + 1] = (vy + 0.85f) * 1.5f;
-            }
-        }
-        else if (rockType == MAP_ROCK_SCREE)
-        {
-            mesh.texcoords[i * 2 + 0] = uOrig * 1.5f;
-            mesh.texcoords[i * 2 + 1] = vOrig * 1.5f;
-        }
-        else
-        {
-            mesh.texcoords[i * 2 + 0] = uOrig * 2.8f;
-            mesh.texcoords[i * 2 + 1] = vOrig * 2.2f;
         }
     }
-    if (origTexcoords)
-        RL_FREE(origTexcoords);
 
     // Recompute normals from actual deformed triangle geometry (unindexed & indexed)
     memset(mesh.normals, 0, (size_t)mesh.vertexCount * 3u * sizeof(float));
-    bool flatFaceted = (rockType == MAP_ROCK_BASALT || rockType == MAP_ROCK_SANDSTONE ||
-                        rockType == MAP_ROCK_OBSIDIAN || rockType == MAP_ROCK_SLATE);
+    bool flatFaceted = (rockType == MAP_ROCK_OBSIDIAN || rockType == MAP_ROCK_SLATE);
 
     float cosCreaseThreshold = 0.819f; // ~35 deg for chiseled boulders
-    if (rockType == MAP_ROCK_GRANITE)
+    if (rockType == MAP_ROCK_BASALT || rockType == MAP_ROCK_SANDSTONE)
+    {
+        cosCreaseThreshold = 0.906f; // ~25 deg: smooth weathering within a face
+    }
+    else if (rockType == MAP_ROCK_GRANITE)
     {
         cosCreaseThreshold = 0.743f; // ~42 deg: keeps structural joint facets crisp while rounding shoulders
     }
@@ -813,95 +741,8 @@ static Mesh Nature_BuildProceduralRockMeshVariantLod(int rockType, int variantSe
     if (faceNormals)
         RL_FREE(faceNormals);
 
-    // Compute robust tangents so normal mapping functions seamlessly on unindexed meshes
-    if (mesh.tangents == NULL)
-    {
-        mesh.tangents = (float *)RL_MALLOC((size_t)mesh.vertexCount * 4u * sizeof(float));
-    }
-    if (mesh.tangents != NULL)
-    {
-        memset(mesh.tangents, 0, (size_t)mesh.vertexCount * 4u * sizeof(float));
-
-        for (int t = 0; t < mesh.triangleCount; t++)
-        {
-            int i0 = mesh.indices ? (int)mesh.indices[t * 3 + 0] : (t * 3 + 0);
-            int i1 = mesh.indices ? (int)mesh.indices[t * 3 + 1] : (t * 3 + 1);
-            int i2 = mesh.indices ? (int)mesh.indices[t * 3 + 2] : (t * 3 + 2);
-
-            Vector3 v0 = {mesh.vertices[i0 * 3 + 0], mesh.vertices[i0 * 3 + 1], mesh.vertices[i0 * 3 + 2]};
-            Vector3 v1 = {mesh.vertices[i1 * 3 + 0], mesh.vertices[i1 * 3 + 1], mesh.vertices[i1 * 3 + 2]};
-            Vector3 v2 = {mesh.vertices[i2 * 3 + 0], mesh.vertices[i2 * 3 + 1], mesh.vertices[i2 * 3 + 2]};
-            Vector2 uv0 = {mesh.texcoords[i0 * 2 + 0], mesh.texcoords[i0 * 2 + 1]};
-            Vector2 uv1 = {mesh.texcoords[i1 * 2 + 0], mesh.texcoords[i1 * 2 + 1]};
-            Vector2 uv2 = {mesh.texcoords[i2 * 2 + 0], mesh.texcoords[i2 * 2 + 1]};
-
-            Vector3 e1 = Vector3Subtract(v1, v0);
-            Vector3 e2 = Vector3Subtract(v2, v0);
-            float du1 = uv1.x - uv0.x, dv1 = uv1.y - uv0.y;
-            float du2 = uv2.x - uv0.x, dv2 = uv2.y - uv0.y;
-            float det = du1 * dv2 - du2 * dv1;
-            float invDet = (fabsf(det) > 1e-6f) ? (1.0f / det) : 0.0f;
-            Vector3 tangent = {
-                (dv2 * e1.x - dv1 * e2.x) * invDet,
-                (dv2 * e1.y - dv1 * e2.y) * invDet,
-                (dv2 * e1.z - dv1 * e2.z) * invDet};
-            int triVerts[3] = {i0, i1, i2};
-            for (int k = 0; k < 3; k++)
-            {
-                int vi = triVerts[k] * 4;
-                mesh.tangents[vi + 0] += tangent.x;
-                mesh.tangents[vi + 1] += tangent.y;
-                mesh.tangents[vi + 2] += tangent.z;
-                mesh.tangents[vi + 3] = 1.0f;
-            }
-        }
-
-        for (int i = 0; i < mesh.vertexCount; i++)
-        {
-            Vector3 n = {mesh.normals[i * 3 + 0], mesh.normals[i * 3 + 1], mesh.normals[i * 3 + 2]};
-            Vector3 t = {mesh.tangents[i * 4 + 0], mesh.tangents[i * 4 + 1], mesh.tangents[i * 4 + 2]};
-            float dotNT = Vector3DotProduct(n, t);
-            t.x -= n.x * dotNT;
-            t.y -= n.y * dotNT;
-            t.z -= n.z * dotNT;
-            float tLenSq = t.x * t.x + t.y * t.y + t.z * t.z;
-            if (tLenSq > 1e-10f)
-            {
-                float invTLen = 1.0f / sqrtf(tLenSq);
-                mesh.tangents[i * 4 + 0] = t.x * invTLen;
-                mesh.tangents[i * 4 + 1] = t.y * invTLen;
-                mesh.tangents[i * 4 + 2] = t.z * invTLen;
-            }
-            else
-            {
-                Vector3 refAxis = (fabsf(n.y) < 0.99f) ? (Vector3){0.0f, 1.0f, 0.0f} : (Vector3){1.0f, 0.0f, 0.0f};
-                Vector3 fallbackT = Vector3CrossProduct(refAxis, n);
-                float fLen = Vector3Length(fallbackT);
-                float invFLen = (fLen > 1e-6f) ? (1.0f / fLen) : 1.0f;
-                mesh.tangents[i * 4 + 0] = fallbackT.x * invFLen;
-                mesh.tangents[i * 4 + 1] = fallbackT.y * invFLen;
-                mesh.tangents[i * 4 + 2] = fallbackT.z * invFLen;
-            }
-            mesh.tangents[i * 4 + 3] = 1.0f;
-        }
-    }
-
-    // Re-upload deformed procedural mesh (with its new vertices, UVs, normals, and tangents) to GPU VRAM
-    if (mesh.vaoId > 0)
-    {
-        rlUnloadVertexArray(mesh.vaoId);
-        mesh.vaoId = 0;
-    }
-    if (mesh.vboId != NULL)
-    {
-        for (int i = 0; i < 7; i++)
-        {
-            if (mesh.vboId[i] > 0)
-                rlUnloadVertexBuffer(mesh.vboId[i]);
-        }
-        RL_FREE(mesh.vboId);
-        mesh.vboId = NULL;
-    }
+    // Preserve crease and UV seams while sharing identical vertex tuples.
+    MapProp_IndexStaticMesh(&mesh);
     UploadMesh(&mesh, false);
 
     return mesh;
@@ -911,37 +752,43 @@ static MapRockSet Rock_CreateTypedSetVariantLod(int rockType, int variantSeed, i
                                                 const char *diffusePath, const char *normalPath, const char *roughnessPath)
 {
     MapRockSet rocks = {0};
-    Mesh mesh = Nature_BuildProceduralRockMeshVariantLod(rockType, variantSeed, subdivisionsOverride);
-    MapProp_MeshBounds(&mesh, &rocks.boundsCenter, &rocks.boundsRadius);
-    float maxRXZ = 0.0f;
-    float maxY = 0.0f;
-    if (mesh.vertices && mesh.vertexCount > 0)
+    bool lit = false;
+    if (normalPath && roughnessPath)
     {
-        for (int v = 0; v < mesh.vertexCount; v++)
-        {
-            float vx = mesh.vertices[v * 3 + 0];
-            float vy = mesh.vertices[v * 3 + 1];
-            float vz = mesh.vertices[v * 3 + 2];
-            float rXZ = sqrtf(vx * vx + vz * vz);
-            if (rXZ > maxRXZ)
-                maxRXZ = rXZ;
-            if (vy > maxY)
-                maxY = vy;
-        }
+        Shader shader = PropLit_GetShader();
+        lit = shader.id != 0 && shader.id != rlGetShaderIdDefault();
     }
-    rocks.localRadiusXZ = (maxRXZ > 0.05f) ? maxRXZ : 0.85f;
-    rocks.localMaxY = (maxY > 0.05f) ? maxY : 0.90f;
+    Mesh mesh = Nature_BuildProceduralRockMeshVariantLod(rockType, variantSeed, subdivisionsOverride, !lit);
+    if (!mesh.vertices)
+        return rocks;
+    MapProp_MeshBounds(&mesh, &rocks.boundsCenter, &rocks.boundsRadius);
+    float maxRadiusSq = 0.0f;
+    float minY = mesh.vertices[1];
+    float maxY = minY;
+    for (int v = 0; v < mesh.vertexCount; v++)
+    {
+        float vx = mesh.vertices[v * 3 + 0];
+        float vy = mesh.vertices[v * 3 + 1];
+        float vz = mesh.vertices[v * 3 + 2];
+        maxRadiusSq = fmaxf(maxRadiusSq, vx * vx + vz * vz);
+        minY = fminf(minY, vy);
+        maxY = fmaxf(maxY, vy);
+    }
+    rocks.localRadiusXZ = sqrtf(maxRadiusSq);
+    rocks.localMinY = minY;
+    rocks.localMaxY = maxY;
     // Fold boundsCenter offset length into boundsRadius once at init so per-frame culling needs no sqrtf
     float centerLen = Vector3Length(rocks.boundsCenter);
     rocks.boundsRadius += centerLen;
     rocks.boundsCenter = (Vector3){0.0f, 0.0f, 0.0f};
 
     rocks.model = LoadModelFromMesh(mesh);
-    if (normalPath && roughnessPath)
+    if (lit)
     {
         Texture2D diffuse = MapLoadMippedTexture(diffusePath, TEXTURE_WRAP_REPEAT);
         Texture2D normal = MapLoadMippedTexture(normalPath, TEXTURE_WRAP_REPEAT);
         Texture2D roughness = MapLoadMippedTexture(roughnessPath, TEXTURE_WRAP_REPEAT);
+        MemFree(rocks.model.materials[0].maps);
         rocks.model.materials[0] = PropLit_MakeMaterial(diffuse, normal, roughness);
     }
     else
@@ -1197,7 +1044,9 @@ static void Rock_EnsureArchetypeLoaded(MapRockSystem *sys, MapRockArchetype arch
     }
     if (a != MAP_ROCK_SCREE && a != MAP_ROCK_RIVER_STONE)
     {
-        sys->farModels[a] = Rock_CreateTypedSetVariantLod(a, 0, 1, dPath, nPath, rPath);
+        // Use the same deformation seed and a full intermediate subdivision.
+        for (int v = 0; v < MAP_ROCK_VARIANTS_PER_ARCHETYPE; v++)
+            sys->farModels[a][v] = Rock_CreateTypedSetVariantLod(a, v, 2, dPath, nPath, rPath);
     }
 }
 
@@ -1276,8 +1125,8 @@ int MapProp_AddRockCluster(MapRockSystem *sys, Vector3 center, MapRockArchetype 
 static inline int Rock_HashVariant(int idx, float x, float z)
 {
     unsigned int h = (unsigned int)idx * 2654435761u ^
-                     (unsigned int)((int)(x * 13.0f) * 73856093) ^
-                     (unsigned int)((int)(z * 17.0f) * 19349663);
+                     (unsigned int)(int)(x * 13.0f) * 73856093u ^
+                     (unsigned int)(int)(z * 17.0f) * 19349663u;
     return (int)(h & 3u);
 }
 
@@ -1340,16 +1189,26 @@ void MapProp_DrawRockSystem(const MapRockSystem *sys, bool drawShadows)
     if (!sys || !sys->ready || !sys->items || sys->count <= 0)
         return;
 
-    PropLit_UpdateLighting();
+    bool lightingReady = false;
+    bool materialPrepared[MAP_ROCK_ARCHETYPE_COUNT][MAP_ROCK_VARIANTS_PER_ARCHETYPE][2] = {0};
     EnsureRockDrawOrder(sys);
     MapPropViewFrustum frustum;
     bool cull = MapProp_BuildViewFrustum(&frustum);
     Vector3 rotAxis = {0.0f, 1.0f, 0.0f};
+    Matrix view = rlGetMatrixTransform();
+    Matrix proj = rlGetMatrixProjection();
+    int renderHeight = SceneTargets_GetHeight();
+    if (renderHeight <= 0)
+        renderHeight = GetRenderHeight();
+    float focalPixels = 0.5f * (float)renderHeight * fabsf(proj.m5);
+    bool perspective = fabsf(proj.m11) > 0.5f;
     Vector3 camPos = camera.position;
     for (int idx = 0; idx < sys->count; idx++)
     {
         int i = (s_rockSortIdx && s_rockSortCount == sys->count) ? s_rockSortIdx[idx] : idx;
         const MapRockItem *p = &sys->items[i];
+        if ((int)p->archetype < 0 || p->archetype >= MAP_ROCK_ARCHETYPE_COUNT)
+            continue;
         int variant = Rock_HashVariant(i, p->position.x, p->position.z);
         const MapRockSet *set = Rock_ResolveArchetypeSet(sys, p->archetype, variant);
         if (!set->ready)
@@ -1365,31 +1224,34 @@ void MapProp_DrawRockSystem(const MapRockSystem *sys, bool drawShadows)
         float dyC = pos.y - camPos.y;
         float dzC = pos.z - camPos.z;
         float camDistSq = dxC * dxC + dyC * dyC + dzC * dzC;
-        float maxS = fmaxf(scale.x, fmaxf(scale.y, scale.z));
-        float approxR = maxS * set->boundsRadius;
-
-        // Distance & projected-size culling: skip sub-pixel scree & distant pebbles
-        if (p->archetype == MAP_ROCK_SCREE && camDistSq > 3025.0f) // > 55m
+        // Keep a tight, rotation-independent bound for tall and flat rocks.
+        // It encloses both LODs because the coarse mesh uses a subset of
+        // the same deformed geodesic vertices.
+        float halfHeight = 0.5f * (set->localMaxY - set->localMinY) * fabsf(scale.y);
+        float radiusXZ = set->localRadiusXZ * fabsf(scale.x);
+        float boundSq = radiusXZ * radiusXZ + halfHeight * halfHeight;
+        float centerY = pos.y + 0.5f * (set->localMaxY + set->localMinY) * scale.y;
+        Vector3 center = {pos.x, centerY, pos.z};
+        float radius = sqrtf(boundSq);
+        float shadowPad = canCastFakeShadow ? (2.0f * fabsf(scale.x)) : 0.0f;
+        if (cull && MapProp_FrustumCullsSphere(&frustum, center, radius + shadowPad))
             continue;
-        if (camDistSq > 100.0f && (approxR * approxR) < camDistSq * 0.000025f) // proj < 0.005 rad (~3px)
+
+        if (p->archetype == MAP_ROCK_SCREE && camDistSq > 3025.0f)
+            continue;
+        float footprint = focalPixels * radius;
+        if (perspective)
+        {
+            float depth = -(view.m2 * center.x + view.m6 * center.y + view.m10 * center.z + view.m14);
+            footprint /= fmaxf(depth - radius, 0.01f);
+        }
+        if (cull && focalPixels > 0.0f && !canCastFakeShadow && camDistSq > 100.0f && footprint < 1.8f)
             continue;
 
-        if (cull)
-        {
-            float shadowPad = canCastFakeShadow ? (2.0f * p->radiusScale) : 0.0f;
-            Vector3 bc;
-            float br;
-            Rock_PlacementBounds(set, pos, scale, shadowPad, &bc, &br);
-            if (MapProp_FrustumCullsSphere(&frustum, bc, br))
-                continue;
-        }
-
-        // Low-poly far LOD (80 tris vs 1280 tris) beyond 75m or small screen footprint
-        if (camDistSq > 5625.0f && (int)p->archetype >= 0 && (int)p->archetype < MAP_ROCK_ARCHETYPE_COUNT &&
-            sys->farModels[p->archetype].ready)
-        {
-            set = &sys->farModels[p->archetype];
-        }
+        bool useFar = cull && focalPixels > 0.0f && camDistSq > 256.0f &&
+                      footprint < 19.0f && sys->farModels[p->archetype][variant].ready;
+        if (useFar)
+            set = &sys->farModels[p->archetype][variant];
 
         if (canCastFakeShadow)
         {
@@ -1403,7 +1265,7 @@ void MapProp_DrawRockSystem(const MapRockSystem *sys, bool drawShadows)
         }
 
         // Deterministic per-placement mineral tint variation (keeps r >= b and a == 255 for non-river-stones)
-        unsigned int hTint = (unsigned int)i * 747796405u ^ (unsigned int)((int)(pos.x * 7.0f) * 19349663);
+        unsigned int hTint = (unsigned int)i * 747796405u ^ (unsigned int)(int)(pos.x * 7.0f) * 19349663u;
         int jitter = (int)((hTint >> 16) & 31u) - 16; // -16..+15
         Color rockTint = (Color){188, 178, 166, 255};
         if (p->archetype == MAP_ROCK_SANDSTONE)
@@ -1434,8 +1296,17 @@ void MapProp_DrawRockSystem(const MapRockSystem *sys, bool drawShadows)
                 rockTint.b = rockTint.r;
         }
 
-        if (set->model.materialCount > 0)
+        if (!lightingReady)
+        {
+            PropLit_UpdateLighting();
+            lightingReady = true;
+        }
+        bool *prepared = &materialPrepared[p->archetype][variant][useFar];
+        if (!*prepared && set->model.materialCount > 0)
+        {
             MapShadow_AttachMaterial(&set->model.materials[0]);
+            *prepared = true;
+        }
         DrawModelEx(set->model, pos, rotAxis, p->rotationDeg, scale, rockTint);
     }
 }
@@ -1525,9 +1396,9 @@ void MapProp_UnloadRockSystem(MapRockSystem *sys)
                 MapProp_UnloadRocks(&sys->variants[a][v]);
             }
         }
-        if (sys->farModels[a].ready)
+        for (int v = 0; v < MAP_ROCK_VARIANTS_PER_ARCHETYPE; v++)
         {
-            MapProp_UnloadRocks(&sys->farModels[a]);
+            MapProp_UnloadRocks(&sys->farModels[a][v]);
         }
     }
     if (s_rockSortSys == sys)

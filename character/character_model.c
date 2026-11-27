@@ -138,7 +138,7 @@ static const char *s_slotNames[CHAR_ANIM_COUNT] = {
 static const char *s_keywords[CHAR_ANIM_COUNT][6] = {
     [CHAR_ANIM_IDLE] = {"idle", "stand", NULL},
     [CHAR_ANIM_WALK] = {"walk", "jog", NULL},
-    [CHAR_ANIM_RUN] = {"run", "sprint", NULL},
+    [CHAR_ANIM_RUN] = {"run", "running", NULL},
     [CHAR_ANIM_JUMP] = {"jump", "leap", NULL},
     [CHAR_ANIM_JUMP_DOWN] = {"jumping_down", "jump_down", "jumpdown", "landing", NULL},
     [CHAR_ANIM_FALL] = {"fall_a_loop", "fall", "falling", NULL},
@@ -509,8 +509,7 @@ static CharacterAnimSlot InferSlotForAnimIndex(int animIdx, CharacterAnimSlot fa
         CHAR_ANIM_HIT, CHAR_ANIM_KNOCKDOWN, CHAR_ANIM_DEATH,
         CHAR_ANIM_CAST, CHAR_ANIM_MEDITATE,
         CHAR_ANIM_JUMP, CHAR_ANIM_JUMP_DOWN, CHAR_ANIM_FALL,
-        CHAR_ANIM_SWORD_IDLE, CHAR_ANIM_RUN, CHAR_ANIM_WALK, CHAR_ANIM_IDLE
-    };
+        CHAR_ANIM_SWORD_IDLE, CHAR_ANIM_RUN, CHAR_ANIM_WALK, CHAR_ANIM_IDLE};
     for (int i = 0; i < (int)(sizeof(kPriorityOrder) / sizeof(kPriorityOrder[0])); i++)
     {
         CharacterAnimSlot s = kPriorityOrder[i];
@@ -766,17 +765,21 @@ int CharacterModel_FindAnimIndex(const char *name)
     if (!name || s_animCount == 0)
         return -1;
 
-    static const struct { const char *alias; const char *target; } kAliases[] = {
-        { "sword_horizontal_cleave", "stable_sword_outward_slash" },
-        { "sword_diagonal_backhand", "sword_and_shield_slash_2" },
-        { "sword_lunge_thrust",      "thrust_slash" },
-        { "sword_heavy_cleave",      "great_sword_impact" },
-        { "sword_parry_guard",       "sword_and_shield_casting" },
-        { "sword_sheath",            "sheath_sword_1" },
-        { "palm_twin_thrust",        "two_hand_spell_casting" },
-        { "dodge_evade_step",        "dodging" },
-        { "dodge_roll",              "au_to_role" },
-        { "loco_idle_sword",         "withdrawing_sword" },
+    static const struct
+    {
+        const char *alias;
+        const char *target;
+    } kAliases[] = {
+        {"sword_horizontal_cleave", "stable_sword_outward_slash"},
+        {"sword_diagonal_backhand", "sword_and_shield_slash_2"},
+        {"sword_lunge_thrust", "thrust_slash"},
+        {"sword_heavy_cleave", "great_sword_impact"},
+        {"sword_parry_guard", "sword_and_shield_casting"},
+        {"sword_sheath", "sheath_sword_1"},
+        {"palm_twin_thrust", "two_hand_spell_casting"},
+        {"dodge_evade_step", "dodging"},
+        {"dodge_roll", "au_to_role"},
+        {"loco_idle_sword", "withdrawing_sword"},
     };
 
     char lowerTarget[64];
@@ -1030,7 +1033,7 @@ static void EvaluateBoneHierarchyRecursive(Model *model, int b, ModelAnimation a
             int pf = (prevFrame >= 0 && prevFrame < prevAnim->keyframeCount) ? prevFrame : 0;
             if (prevBoneIdx >= 0)
             {
-                tr  = Vector3Lerp(prevAnim->keyframePoses[pf][prevBoneIdx].translation, tr, crossAlpha);
+                tr = Vector3Lerp(prevAnim->keyframePoses[pf][prevBoneIdx].translation, tr, crossAlpha);
                 rot = QuaternionSlerp(prevAnim->keyframePoses[pf][prevBoneIdx].rotation, rot, crossAlpha);
                 scl = Vector3Lerp(prevAnim->keyframePoses[pf][prevBoneIdx].scale, scl, crossAlpha);
             }
