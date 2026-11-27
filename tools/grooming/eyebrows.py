@@ -81,7 +81,7 @@ def _add_brow_ribbon(mb: MeshBuilder, head: HeadSurfaceSampler, prof: FaceProfil
                 t = k / (n_pts - 1)
                 x = s * (x0 + t * dx)
                 y = y_base + arch_fn(t) * a_s + lm.m(dy_off) * (1.0 - 0.65 * t)
-                pt, nrm = head.sample_face_xy(x, y, z_offset=lm.m(z_ex), radius=lm.m(0.0055))
+                pt, nrm = head.sample_face_xy(x, y, z_offset=lm.m(z_ex + 0.0008), radius=lm.m(0.0080))
                 spine[k] = pt
                 out_h[k] = nrm
                 p = prof_fn(t)
@@ -140,7 +140,7 @@ def build_dao_nhan_mi(mb: MeshBuilder, head: HeadSurfaceSampler, prof: FaceProfi
         base_rx=0.0046, base_rz=0.0022,
         brow_tint=np.array([0.92, 0.90, 0.92]),
         layers=[(0.0, 1.00, 0.0046), (0.0014, 0.75, 0.0044)],
-        x_pad_in=-0.0010, x_pad_out=0.0055, n_pts=15,
+        x_pad_in=-0.0010, x_pad_out=0.0015, n_pts=12,
     )
     _add_lashes(mb, head, prof, bidx, length_mult=0.90, curl_boost=0.0, tint_scale=1.2)
 

@@ -2,7 +2,7 @@
   "catalog_version": "1.1",
   "items": [
     {
-      "id": "human_body",
+      "id": "male_body",
       "name": "Thân Thể Thiếu Hiệp",
       "description": "Thân thể thiếu hiệp sơ nhập giang hồ, vóc dáng cân đối, khí huyết dồi dào, thân pháp nhanh nhẹn.",
       "source": "Mặc định nhân vật khởi đầu",
@@ -13,7 +13,7 @@
       "element": "none",
       "rarity": "common",
       "is_skinned": true,
-      "model_path": "assets/characters/bodies/human_body.glb",
+      "model_path": "assets/characters/bodies/male_body.glb",
       "ui_color": [
         235,
         196,
@@ -28,64 +28,6 @@
         "elemental_resist": 0.0,
         "mana_regen_bonus": 0.0,
         "special_perk": "Căn cơ võ học sơ khai, kinh mạch thông suốt"
-      }
-    },
-    {
-      "id": "human_male_base",
-      "name": "Võ Giả Kim Thân",
-      "description": "Thân thể tôi luyện qua Kim Chung Tráo, da đồng xương sắt, tráng kiện uy dũng, định lực phi phàm.",
-      "source": "Căn cơ võ học võ giả",
-      "unlock_type": "achievement",
-      "unlock_hint": "Luyện thành Kim Chung Tráo tầng thứ 5",
-      "slot": "base_body",
-      "item_type": "modular",
-      "element": "metal",
-      "rarity": "uncommon",
-      "is_skinned": true,
-      "model_path": "assets/characters/bodies/human_male_base.glb",
-      "ui_color": [
-        220,
-        200,
-        180,
-        255
-      ],
-      "stats": {
-        "bonus_health": 160.0,
-        "bonus_mana": 60.0,
-        "speed_multiplier": 0.98,
-        "elemental_bonus": 0.05,
-        "elemental_resist": 0.12,
-        "mana_regen_bonus": 0.0,
-        "special_perk": "Kim Chung Hộ Thể: Giảm 12% sát thương ngoại lực phải chịu"
-      }
-    },
-    {
-      "id": "male_body_v5",
-      "name": "Thân Thể Nam Võ Hiệp V5",
-      "description": "Hình thể nam võ hiệp điêu khắc giải phẫu chuẩn tỷ lệ 1.80m, khung xương Mixamo 20 khớp T-Pose khớp hoàn toàn với bộ động tác võ học.",
-      "source": "Mặc định nhân vật khởi đầu",
-      "unlock_type": "default",
-      "unlock_hint": "Khởi đầu giang hồ",
-      "slot": "base_body",
-      "item_type": "modular",
-      "element": "none",
-      "rarity": "rare",
-      "is_skinned": true,
-      "model_path": "assets/characters/bodies/male_body_v5.glb",
-      "ui_color": [
-        228,
-        186,
-        156,
-        255
-      ],
-      "stats": {
-        "bonus_health": 120.0,
-        "bonus_mana": 60.0,
-        "speed_multiplier": 1.0,
-        "elemental_bonus": 0.02,
-        "elemental_resist": 0.02,
-        "mana_regen_bonus": 0.0,
-        "special_perk": "Cân Cốt Tinh Kiện: Hình thể cân đối, tương thích trọn vẹn ngoại trang"
       }
     },
     {
@@ -484,7 +426,7 @@
       "bone_socket": "mixamorig:RightHand",
       "socket_offset_pos": [
         -0.042,
-        0.130,
+        0.13,
         -0.024
       ],
       "socket_offset_rot": [
@@ -992,6 +934,64 @@
         "elemental_resist": 0.0,
         "mana_regen_bonus": 0.0,
         "special_perk": "Khí Phách Hiệp Sĩ"
+      }
+    },
+    {
+      "id": "female_body",
+      "name": "Thân Thể Nữ Hiệp",
+      "description": "Thân thể nữ hiệp thanh tú, vóc dáng uyển chuyển, thân pháp linh hoạt nhẹ nhàng tựa kinh hồng.",
+      "source": "Mặc định nhân vật khởi đầu",
+      "unlock_type": "default",
+      "unlock_hint": "Mặc định có sẵn",
+      "slot": "base_body",
+      "item_type": "modular",
+      "element": "none",
+      "rarity": "common",
+      "is_skinned": true,
+      "model_path": "assets/characters/bodies/female_body.glb",
+      "ui_color": [
+        242,
+        206,
+        186,
+        255
+      ],
+      "stats": {
+        "bonus_health": 95.0,
+        "bonus_mana": 60.0,
+        "speed_multiplier": 1.03,
+        "elemental_bonus": 0.02,
+        "elemental_resist": 0.0,
+        "mana_regen_bonus": 0.04,
+        "special_perk": "Kinh Hồng Bộ Pháp: Tăng 3% tốc độ di chuyển & hồi phục nội lực"
+      }
+    },
+    {
+      "id": "toc_nu_hiep_truong_phat",
+      "name": "Tóc Dài Nữ Hiệp Búi Ngọc Trâm",
+      "description": "Mái tóc dài mượt mà rẽ ngôi giữa cài trâm ngọc bích thanh tao, tung bay theo gió kiếm hiệp.",
+      "source": "Bộ sưu tập diện mạo giang hồ",
+      "unlock_type": "default",
+      "unlock_hint": "Mặc định có sẵn",
+      "slot": "hair",
+      "item_type": "modular",
+      "element": "none",
+      "rarity": "uncommon",
+      "is_skinned": true,
+      "model_path": "assets/characters/equipment/hair/toc_nu_hiep_truong_phat.glb",
+      "ui_color": [
+        34,
+        38,
+        50,
+        255
+      ],
+      "stats": {
+        "bonus_health": 10.0,
+        "bonus_mana": 15.0,
+        "speed_multiplier": 1.0,
+        "elemental_bonus": 0.02,
+        "elemental_resist": 0.0,
+        "mana_regen_bonus": 0.03,
+        "special_perk": "Thanh Nhã Tiên Tử: Tóc dài bay theo gió"
       }
     }
   ]

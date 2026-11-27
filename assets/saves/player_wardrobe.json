@@ -1,15 +1,15 @@
 {
   "player_id": "Player_1",
   "equipped": {
-    "base_body": "human_body",
+    "base_body": "female_body",
     "torso": "ao_giao_linh",
     "legs": "",
     "boots": "chien_hai_van_du",
     "bracers": "",
     "headgear": "",
     "mask": "",
-    "hair": "",
-    "eyebrows": "",
+    "hair": "toc_co_trang_kiem_hiep",
+    "eyebrows": "long_may_tuong_quan",
     "beard": "",
     "waist": "",
     "back": "",
@@ -18,7 +18,7 @@
     "full_outfit": ""
   },
   "unlocked": [
-    "human_body",
+    "male_body",
     "male_body_v5",
     "ao_giao_linh",
     "ao_tien_hiep",
@@ -48,6 +48,8 @@
     "rau_tam_chom",
     "rau_quai_non",
     "rau_tien_ong",
-    "rau_son_duong"
+    "rau_son_duong",
+    "female_body",
+    "toc_nu_hiep_truong_phat"
   ]
 }

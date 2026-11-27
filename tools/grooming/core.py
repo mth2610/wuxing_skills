@@ -326,7 +326,9 @@ class HeadSurfaceSampler:
         idx = np.argpartition(d2, min(14, len(d2) - 1))[:14]
         w = np.exp(-d2[idx] / max(radius * radius * 0.35, 1e-8))
         w /= max(float(w.sum()), 1e-12)
-        z = float(np.dot(w, self.f_pos[idx, 2]))
+        z_mean = float(np.dot(w, self.f_pos[idx, 2]))
+        z_max = float(self.f_pos[idx[:5], 2].max())
+        z = 0.35 * z_mean + 0.65 * z_max
         n = (w[:, None] * self.f_nrm[idx]).sum(axis=0)
         n /= max(float(np.linalg.norm(n)), 1e-12)
         return np.array([x, y, z], dtype=np.float64) + n * z_offset, n

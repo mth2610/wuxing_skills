@@ -988,11 +988,53 @@ def build_v6(D):
             achilles_trim = -0.024 * ga(t, 0.80, 0.11) * (1.0 - smooth(0.15, 0.75, c_fwd)) * (1.0 - smooth(0.55, 0.95, -c_fwd))
             out += radial * (cf_mask * cf_gate * (gastroc_med + gastroc_lat + tibialis_ant + achilles_trim))[:, None]
 
-        # 7. Eye-safe Masculine Facial Structure (jawline, zygomatic arch, chin, subtle brow)
-        out[:, 0] += sx * 0.0036 * ga(a, 0.046, 0.014) * ga(y, 1.466, 0.022) * smooth(0.028, 0.075, z) * eye_protect
-        out[:, 0] += sx * 0.0020 * ga(a, 0.048, 0.013) * ga(y, 1.518, 0.016) * smooth(0.045, 0.085, z) * eye_protect
-        out[:, 2] += 0.0022 * ga(x, 0.0, 0.016) * ga(y, 1.448, 0.013) * smooth(0.075, 0.105, z)
-        out[:, 2] += 0.0020 * ga(a, 0.026, 0.020) * ga(y, 1.560, 0.009) * smooth(0.078, 0.105, z) * eye_protect
+        # 7. Handsome Wuxia Hero Facial Structure (chiseled jaw, refined nose, slim masculine lips, hunter-eye brow)
+        #    All displacements are smooth diffeomorphisms (det(J) > 0) with strict eyeball protection.
+        face_front = smooth(0.060, 0.095, z)
+
+        # 7a. Lips (mat=2 sits at y in [1.461..1.485], |x|<=0.0258, center y_mouth=1.4745):
+        #     Slim bloated lip height (-26%), tuck protruding lower lip (-2.8mm Z), narrow corners (-8% X),
+        #     and subtly lift mouth corners (+1.4mm Y) for a poised, confident neutral expression.
+        y_mouth = 1.4745
+        lip_zone = ga(y, y_mouth, 0.0125) * ga(a, 0.0, 0.024) * smooth(0.092, 0.112, z)
+        lower_lip = ga(y, 1.4675, 0.0075) * ga(a, 0.0, 0.022) * smooth(0.095, 0.114, z)
+        upper_lip = ga(y, 1.4810, 0.0065) * ga(a, 0.0, 0.021) * smooth(0.098, 0.116, z)
+        mouth_corner = ga(a, 0.0235, 0.0075) * ga(y, 1.4730, 0.0085) * smooth(0.092, 0.112, z)
+        mentolabial = ga(y, 1.4565, 0.0075) * ga(a, 0.0, 0.022) * smooth(0.092, 0.112, z)
+        out[:, 1] += -0.24 * (y - y_mouth) * lip_zone + 0.0014 * mouth_corner
+        out[:, 0] -= 0.06 * x * lip_zone
+        out[:, 2] += -0.0024 * lower_lip - 0.0008 * upper_lip - 0.0016 * mentolabial
+
+        # 7b. High, Straight, Refined Heroic Nose (nasion y=1.545 -> tip y=1.505):
+        #     Narrow wide nostrils/alae (-18% X) and bulbous tip (-15% X), raise & straighten bridge (+2.8mm Z).
+        nose_alae = ga(y, 1.502, 0.011) * smooth(0.005, 0.014, a) * (1.0 - smooth(0.020, 0.032, a)) * smooth(0.100, 0.118, z)
+        nose_tip = ga(y, 1.505, 0.010) * ga(a, 0.0, 0.013) * smooth(0.110, 0.126, z)
+        nose_bridge = smooth(1.504, 1.514, y) * (1.0 - smooth(1.540, 1.552, y)) * ga(a, 0.0, 0.0095) * smooth(0.106, 0.122, z)
+        nose_sides = smooth(1.505, 1.516, y) * (1.0 - smooth(1.538, 1.550, y)) * ga(a, 0.011, 0.007) * smooth(0.104, 0.120, z)
+        out[:, 0] -= 0.18 * x * nose_alae + 0.14 * x * nose_tip + 0.12 * x * nose_sides
+        out[:, 2] += 0.0028 * nose_bridge + 0.0015 * nose_tip
+        out[:, 1] += 0.0012 * nose_tip
+
+        # 7c. Chiseled Masculine Jawline, High Cheekbones, Lean Buccal Hollows & Balanced Chin:
+        #     Trim chubby buccal lower cheeks, elevate sculpted zygomatic arches, define jaw angle & crisp chin.
+        buccal = ga(a, 0.048, 0.015) * ga(y, 1.484, 0.019) * smooth(0.048, 0.088, z) * eye_protect
+        zygo = ga(a, 0.056, 0.014) * ga(y, 1.524, 0.014) * smooth(0.046, 0.086, z) * eye_protect
+        jaw_angle = ga(a, 0.056, 0.014) * ga(y, 1.464, 0.018) * smooth(0.018, 0.058, z) * eye_protect
+        chin_body = ga(y, 1.445, 0.015) * ga(a, 0.0, 0.032) * smooth(0.072, 0.105, z)
+        chin_tip = ga(y, 1.444, 0.012) * ga(a, 0.0, 0.016) * smooth(0.085, 0.110, z)
+        out[:, 0] += sx * (0.0022 * zygo + 0.0024 * jaw_angle - 0.0032 * buccal) - 0.10 * x * chin_body
+        out[:, 2] += 0.0018 * zygo - 0.0022 * buccal + 0.0032 * chin_tip
+        out[:, 1] += 0.0020 * chin_body
+
+        # 7d. Deep-Set Hunter-Eye Brow Ridge, Positive Outer Orbital Lift, Smooth Under-Eye & Balanced Cranium:
+        brow_ridge = ga(y, 1.561, 0.009) * ga(a, 0.024, 0.022) * smooth(0.078, 0.108, z) * eye_protect
+        outer_orbit = ga(a, 0.046, 0.009) * ga(y, 1.543, 0.009) * smooth(0.075, 0.102, z) * eye_protect
+        under_eye_bag = ga(a, 0.028, 0.014) * ga(y, 1.527, 0.007) * smooth(0.085, 0.108, z) * eye_protect
+        temple_broad = ga(a, 0.068, 0.016) * ga(y, 1.584, 0.026) * smooth(0.010, 0.075, z)
+        skull_top = smooth(1.605, 1.638, y) * (1.0 - smooth(0.045, 0.080, a))
+        out[:, 2] += 0.0030 * brow_ridge - 0.0018 * under_eye_bag
+        out[:, 1] += 0.0014 * outer_orbit - 0.0028 * skull_top
+        out[:, 0] += sx * 0.0024 * temple_broad
         return out
 
     def colors(v):
@@ -1010,32 +1052,40 @@ def build_v6(D):
         col -= tip[:, None] * np.array([0.04, 0.065, 0.065])
         col -= navel[:, None] * np.array([0.13, 0.16, 0.18])
 
-        # Warm vascular skin variation (cheeks, nose bridge, ears, knees, elbows)
+        # Clean noble Wuxia complexion: subtle warm cheeks, nose bridge & cheekbones (no blotchy patches!)
         blush = (
-            ga(a, 0.042, 0.018) * ga(y, 1.512, 0.021) * smooth(0.068, 0.100, z)
-            + 0.40 * ga(a, 0.0, 0.015) * ga(y, 1.509, 0.020) * smooth(0.090, 0.120, z)
-            + 0.45 * ga(a, 0.078, 0.014) * ga(y, 1.518, 0.022) * (1.0 - smooth(0.02, 0.06, z))
-            + 0.30 * ga(a, 0.142, 0.028) * ga(y, 0.475, 0.032) * smooth(0.005, 0.045, z)
-            + 0.25 * ga(a, 0.345, 0.030) * ga(y, 1.130, 0.032) * (1.0 - smooth(-0.01, 0.03, z))
+            0.55 * ga(a, 0.046, 0.018) * ga(y, 1.518, 0.018) * smooth(0.068, 0.100, z)
+            + 0.25 * ga(a, 0.0, 0.012) * ga(y, 1.512, 0.018) * smooth(0.095, 0.122, z)
+            + 0.35 * ga(a, 0.078, 0.014) * ga(y, 1.518, 0.022) * (1.0 - smooth(0.02, 0.06, z))
+            + 0.28 * ga(a, 0.142, 0.028) * ga(y, 0.475, 0.032) * smooth(0.005, 0.045, z)
+            + 0.24 * ga(a, 0.345, 0.030) * ga(y, 1.130, 0.032) * (1.0 - smooth(-0.01, 0.03, z))
         )
-        col -= blush[:, None] * np.array([0.005, 0.044, 0.056])
+        col -= blush[:, None] * np.array([0.004, 0.034, 0.044])
 
-        # Layered masculine eyebrow (clean arch & tapered tail) + subtle upper lash crease
-        brow_y = 1.559 + 0.075 * (a - 0.028) - 4.8 * (a - 0.029) ** 2
-        brow_thick = 0.0029 * (1.0 - 0.26 * smooth(0.032, 0.049, a))
-        brow_core = np.exp(-0.5 * ((y - brow_y) / brow_thick) ** 2)
-        brow_env = smooth(0.008, 0.017, a) * (1.0 - smooth(0.040, 0.053, a)) * smooth(0.074, 0.097, z)
-        brow = brow_core * brow_env
-        col -= brow[:, None] * np.array([0.62, 0.70, 0.74])
+        # Clean brow-ridge skin (removed heavy painted brown brow smears so 3D modular eyebrows shine cleanly!)
+        # Keep only a subtle, ultra-soft natural supraorbital shadow + crisp lash-line definition.
+        brow_y = 1.560 + 0.08 * (a - 0.028) - 4.5 * (a - 0.029) ** 2
+        brow_soft = ga(y, brow_y, 0.0040) * smooth(0.009, 0.018, a) * (1.0 - smooth(0.040, 0.052, a)) * smooth(0.074, 0.098, z)
+        col -= brow_soft[:, None] * np.array([0.05, 0.06, 0.07])
 
-        lash_y = 1.547 - 1.5 * (a - 0.0285) ** 2
-        lash = ga(y, lash_y, 0.0023) * smooth(0.014, 0.020, a) * (1.0 - smooth(0.036, 0.043, a)) * smooth(0.080, 0.098, z)
-        col -= lash[:, None] * np.array([0.18, 0.22, 0.25])
+        # Deep-set upper eyelid crease & crisp dark lash-rim framing for sharp heroic eyes
+        lash_y = 1.547 - 1.4 * (a - 0.0285) ** 2
+        lash = ga(y, lash_y, 0.0020) * smooth(0.014, 0.020, a) * (1.0 - smooth(0.036, 0.044, a)) * smooth(0.080, 0.098, z)
+        col -= lash[:, None] * np.array([0.28, 0.32, 0.35])
+
+        # Subtle aristocratic facial plane sculpting (soft cheekbone hollow, nose-side shadow, clean nose-bridge light)
+        nose_hi = ga(a, 0.0, 0.0065) * smooth(1.504, 1.514, y) * (1.0 - smooth(1.542, 1.554, y)) * smooth(0.110, 0.125, z)
+        col += nose_hi[:, None] * np.array([0.035, 0.032, 0.028])
 
         # Subtle baked anatomical micro-AO (soft warm flesh shadow — never harsh dark stripes)
         ao = np.zeros(len(v), dtype=float)
+        # Soft buccal cheek hollow, orbital socket depth, nose-wing crease & mentolabial shadow
+        ao += 0.042 * ga(a, 0.048, 0.016) * ga(y, 1.484, 0.018) * smooth(0.045, 0.085, z)
+        ao += 0.055 * ga(a, 0.022, 0.013) * ga(y, 1.551, 0.009) * smooth(0.082, 0.105, z)
+        ao += 0.045 * ga(a, 0.016, 0.006) * ga(y, 1.500, 0.009) * smooth(0.100, 0.118, z)
+        ao += 0.048 * ga(a, 0.0, 0.020) * ga(y, 1.456, 0.007) * smooth(0.090, 0.112, z)
         # Under-chin / upper neck shadow
-        ao += 0.085 * ga(a, 0.0, 0.048) * ga(y, 1.430, 0.022) * smooth(0.015, 0.065, z)
+        ao += 0.095 * ga(a, 0.0, 0.048) * ga(y, 1.430, 0.022) * smooth(0.015, 0.065, z)
         # Suprasternal notch & medial supraclavicular hollow (stays cleanly medial of acromion)
         clav_y = 1.322 + 0.175 * np.clip(a - 0.018, 0.0, 0.16)
         ao += 0.042 * ga(x, 0.0, 0.016) * ga(y, 1.323, 0.014) * front
@@ -1064,11 +1114,11 @@ def build_v6(D):
         ('male_body_v6.glb', 'male_body_v6_shorts.glb'),
         'MaleBody_V6_Master40', 'Male Anatomy V6 directional anatomical sculpt',
         mat_overrides={
-            0: {'baseColorFactor': [0.58, 0.415, 0.315, 1], 'roughnessFactor': 0.76},
-            1: {'baseColorFactor': [0.58, 0.42, 0.35, 1], 'roughnessFactor': 0.44},
-            2: {'baseColorFactor': [0.50, 0.325, 0.275, 1], 'roughnessFactor': 0.58},
-            3: {'baseColorFactor': [0.56, 0.54, 0.51, 1], 'roughnessFactor': 0.24},
-            5: {'baseColorFactor': [0.062, 0.030, 0.017, 1], 'roughnessFactor': 0.18},
+            0: {'baseColorFactor': [0.62, 0.440, 0.325, 1], 'roughnessFactor': 0.78},
+            1: {'baseColorFactor': [0.60, 0.43, 0.35, 1], 'roughnessFactor': 0.44},
+            2: {'baseColorFactor': [0.55, 0.355, 0.285, 1], 'roughnessFactor': 0.62},
+            3: {'baseColorFactor': [0.68, 0.67, 0.65, 1], 'roughnessFactor': 0.22},
+            5: {'baseColorFactor': [0.095, 0.052, 0.028, 1], 'roughnessFactor': 0.16},
             6: {'baseColorFactor': [0.008, 0.008, 0.008, 1], 'roughnessFactor': 0.14},
         },
         skip_sculpt_materials={3, 5, 6},  # Never distort eyeballs (sclera/iris/pupil)
@@ -1750,9 +1800,9 @@ def main():
     root = Path(__file__).resolve().parent
     repo_root = root.parent.parent
     parser = argparse.ArgumentParser(description='Build game-ready 20-bone Mixamo T-Pose Male Body V6 GLBs.')
-    parser.add_argument('--out-dir', type=Path, default=root, help='Output directory for human_body.glb & human_body_shorts.glb')
-    parser.add_argument('--game-out', type=Path, default=None, help='Optional extra copy destination for human_body.glb')
-    parser.add_argument('--install', action='store_true', help='Copy human_body.glb directly to assets/characters/bodies/human_body.glb')
+    parser.add_argument('--out-dir', type=Path, default=root, help='Output directory for male_body.glb & male_body_nude.glb')
+    parser.add_argument('--game-out', type=Path, default=None, help='Optional extra copy destination for male_body.glb (with underwear)')
+    parser.add_argument('--install', action='store_true', help='Install clothed-underwear male_body.glb to assets/characters/bodies/male_body.glb')
     parser.add_argument('--keep-intermediates', action='store_true', help='Keep intermediate 40-joint A-pose GLBs and master_skeleton_40.json in out-dir')
     parser.add_argument('--version', choices=['anatomy', 'v4', 'v5', 'v6', 'all'], default='v6')
     parser.add_argument('--preview', action='store_true', help='Render 4-view PNGs (requires vtk, Pillow)')
@@ -1775,30 +1825,30 @@ def main():
             build_refined(work_dir)
         if args.version in ('v6', 'all'):
             build_v6(work_dir)
-            export_game_tpose_20(work_dir / 'male_body_v6.glb', out_dir / 'human_body.glb', source)
-            export_game_tpose_20(work_dir / 'male_body_v6_shorts.glb', out_dir / 'human_body_shorts.glb', source)
+            export_game_tpose_20(work_dir / 'male_body_v6.glb', out_dir / 'male_body_nude.glb', source)
+            export_game_tpose_20(work_dir / 'male_body_v6_shorts.glb', out_dir / 'male_body.glb', source)
         elif args.version == 'v5':
-            export_game_tpose_20(work_dir / 'male_body_refined.glb', out_dir / 'human_body.glb', source)
-            export_game_tpose_20(work_dir / 'male_body_refined_shorts.glb', out_dir / 'human_body_shorts.glb', source)
+            export_game_tpose_20(work_dir / 'male_body_refined.glb', out_dir / 'male_body_nude.glb', source)
+            export_game_tpose_20(work_dir / 'male_body_refined_shorts.glb', out_dir / 'male_body.glb', source)
 
         if args.install and args.version in ('v5', 'v6', 'all'):
-            dst = repo_root / 'assets/characters/bodies/human_body.glb'
+            dst = repo_root / 'assets/characters/bodies/male_body.glb'
             dst.parent.mkdir(parents=True, exist_ok=True)
-            dst.write_bytes((out_dir / 'human_body.glb').read_bytes())
-            print('Installed game-ready GLB ->', dst)
+            dst.write_bytes((out_dir / 'male_body.glb').read_bytes())
+            print('Installed game-ready GLB (with underwear) ->', dst)
 
         if args.game_out is not None and args.version in ('v5', 'v6', 'all'):
             args.game_out.parent.mkdir(parents=True, exist_ok=True)
-            args.game_out.write_bytes((out_dir / 'human_body.glb').read_bytes())
-            print('Copied game-ready GLB ->', args.game_out)
+            args.game_out.write_bytes((out_dir / 'male_body.glb').read_bytes())
+            print('Copied game-ready GLB (with underwear) ->', args.game_out)
 
         if args.preview:
             if args.version in ('v6', 'all'):
-                render_preview(out_dir, 'human_body_shorts.glb', 'male_body_game20_preview.png')
+                render_preview(out_dir, 'male_body.glb', 'male_body_game20_preview.png')
                 if args.keep_intermediates:
                     render_preview(work_dir, 'male_body_v6_shorts.glb', 'male_body_v6_preview.png')
             else:
-                render_preview(out_dir, 'human_body_shorts.glb', 'male_body_refined_preview.png')
+                render_preview(out_dir, 'male_body.glb', 'male_body_refined_preview.png')
 
     if args.keep_intermediates or args.version == 'anatomy':
         _run(out_dir)

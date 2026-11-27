@@ -15,7 +15,7 @@ static bool s_catalogInitialized = false;
 static void RegisterDefaultItems(void)
 {
     WardrobeCatalogItem items[] = {
-        {.id = "human_body",
+        {.id = "male_body",
          .name = "Thân Thể Thiếu Hiệp",
          .description = "Thân thể thiếu hiệp sơ nhập giang hồ, vóc dáng cân đối, khí huyết dồi dào, thân pháp nhanh nhẹn.",
          .source = "Mặc định nhân vật khởi đầu",
@@ -27,7 +27,7 @@ static void RegisterDefaultItems(void)
          .unlockHint = "Khởi đầu giang hồ",
          .stats = {100.0f, 50.0f, 1.0f, 0.0f, 0.0f, 0.0f, "Căn cơ võ học sơ khai, kinh mạch thông suốt"},
          .isSkinned = true,
-         .modelPath = "assets/characters/bodies/human_body.glb",
+         .modelPath = "assets/characters/bodies/male_body.glb",
          .uiColor = (Color){235, 196, 166, 255}},
         {.id = "human_male_base",
          .name = "Võ Giả Kim Thân",
@@ -952,7 +952,7 @@ void PlayerWardrobe_Init(PlayerWardrobe *pw, const char *playerId)
 
     Wardrobe_InitCatalog();
 
-    PlayerWardrobe_UnlockItem(pw, "human_body");
+    PlayerWardrobe_UnlockItem(pw, "male_body");
     PlayerWardrobe_UnlockItem(pw, "male_body_v5");
     PlayerWardrobe_UnlockItem(pw, "ao_giao_linh");
     PlayerWardrobe_UnlockItem(pw, "ao_tien_hiep");
@@ -1390,7 +1390,7 @@ bool PlayerWardrobe_LoadFromFile(PlayerWardrobe *pw, const char *filePath)
 
     if (pw->equippedIds[MODULAR_SLOT_BASE_BODY][0] == '\0')
     {
-        strncpy(pw->equippedIds[MODULAR_SLOT_BASE_BODY], "human_body", WARDROBE_ID_MAX_LEN - 1);
+        strncpy(pw->equippedIds[MODULAR_SLOT_BASE_BODY], "male_body", WARDROBE_ID_MAX_LEN - 1);
     }
 
     UnloadFileText(text);

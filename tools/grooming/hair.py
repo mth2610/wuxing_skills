@@ -315,8 +315,9 @@ def build_nu_hiep_long(mb: MeshBuilder, head: HeadSurfaceSampler, prof: FaceProf
     for sgn in (1.0, -1.0):
         sw_bone = "cloth_hair_bang_l" if sgn > 0 else "cloth_hair_bang_r"
         for xrf, xmf, xtf, ytf, hw, use_sw in [
-            (0.06, 0.42, 0.76, 0.48, 0.015, False),
-            (0.14, 0.68, 0.94, 0.20, 0.015, True),
+            (0.04, 0.22, 0.46, 0.62, 0.012, False),  # Soft inner wispy curtain bang (breaks up forehead edge!)
+            (0.08, 0.44, 0.78, 0.46, 0.015, False),
+            (0.16, 0.68, 0.94, 0.20, 0.015, True),
             (0.62, 0.96, 0.92, -0.35, 0.014, True),
         ]:
             xr, xm, xt = sgn * lm.x(xrf), sgn * lm.x(xmf), sgn * lm.x(xtf)
@@ -332,12 +333,14 @@ def build_nu_hiep_long(mb: MeshBuilder, head: HeadSurfaceSampler, prof: FaceProf
                 t = k / (n_b - 1)
                 x = (1 - t) ** 2 * xr + 2 * (1 - t) * t * xm + t ** 2 * xt
                 y = yr * (1.0 - t ** 0.90) + yt * (t ** 0.90)
-                if y >= cheek_y:
-                    d_v = np.array([x, y, lm.forehead_z - 0.50 * abs(x)], dtype=np.float64) - head.center
-                    pt, nrm = head.sample_skull_dir(d_v, offset=lm.m(0.010 + 0.010 * math.sin(t * math.pi * 0.85)))
-                else:
-                    pt = np.array([x + sgn * lm.m(0.008) * (t - 0.4), y, lm.center[2] + lm.m(0.048 - 0.010 * t)], dtype=np.float64)
-                    nrm = np.array([sgn * 0.65, 0.0, 0.76], dtype=np.float64)
+                d_v = np.array([x, y, lm.forehead_z - 0.50 * abs(x)], dtype=np.float64) - head.center
+                pt_top, nrm_top = head.sample_skull_dir(d_v, offset=lm.m(0.010 + 0.010 * math.sin(t * math.pi * 0.85)))
+                pt_bot = np.array([x + sgn * lm.m(0.008) * (t - 0.4), y, lm.center[2] + lm.m(0.048 - 0.010 * t)], dtype=np.float64)
+                nrm_bot = np.array([sgn * 0.65, 0.0, 0.76], dtype=np.float64)
+                bl = float(1.0 - smoothstep(cheek_y - lm.m(0.025), cheek_y + lm.m(0.025), y))
+                pt = pt_top * (1.0 - bl) + pt_bot * bl
+                nrm = nrm_top * (1.0 - bl) + nrm_bot * bl
+                nrm /= max(float(np.linalg.norm(nrm)), 1e-12)
                 spine[k] = pt
                 out_h[k] = nrm
                 taper = (0.45 + 0.55 * math.sin(t * math.pi * 0.78)) * (1.0 - 0.88 * (t ** 1.65))

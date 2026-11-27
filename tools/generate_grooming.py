@@ -80,7 +80,7 @@ def main():
     parser.add_argument("--collection", action="store_true", help="Generate the full eyebrows (6) + beard (6) collection")
     parser.add_argument("--profile", choices=list(FACE_PROFILES.keys()), default="male")
     parser.add_argument("--style", type=str, default=None, help="Style name for single-part generation")
-    parser.add_argument("--body", type=Path, default=repo / "assets/characters/bodies/human_body.glb")
+    parser.add_argument("--body", type=Path, default=repo / "assets/characters/bodies/male_body.glb")
     parser.add_argument("--out", type=Path, default=None, help="Custom output GLB path (single-part mode)")
     parser.add_argument("--install", action="store_true", help="Install into assets/characters/equipment/<slot>/")
     args = parser.parse_args()

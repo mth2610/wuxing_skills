@@ -1281,14 +1281,14 @@ static AutoTestResult AutoTest_UIWardrobeStep(int frameInCase, char *outReason, 
 
   if (frameInCase == 0) {
     if (!s_saveBackup) s_saveBackup = LoadFileData(kSavePath, &s_saveBackupSize);
-    PlayerWardrobe_UnlockItem(pw, "human_body");
+    PlayerWardrobe_UnlockItem(pw, "male_body");
     PlayerWardrobe_UnlockItem(pw, "ao_giao_linh");
     PlayerWardrobe_UnlockItem(pw, "quan_wuxia");
     PlayerWardrobe_UnlockItem(pw, "chien_hai_van_du");
     PlayerWardrobe_UnlockItem(pw, "kiem_thuan_thien");
     PlayerWardrobe_UnlockItem(pw, "vo_kiem_son_mai");
     PlayerWardrobe_UnlockItem(pw, "non_la_hiep_khach");
-    PlayerWardrobe_Equip(pw, "human_body");
+    PlayerWardrobe_Equip(pw, "male_body");
     PlayerWardrobe_Equip(pw, "ao_giao_linh");
     PlayerWardrobe_Equip(pw, "quan_wuxia");
     PlayerWardrobe_Equip(pw, "chien_hai_van_du");
@@ -1427,9 +1427,9 @@ static AutoTestResult AutoTest_ClothSecondaryMotionStep(int frameInCase, char *o
     bool ok = true;
     ModularSystem_Init();
 
-    int bodyIdx = ModularSystem_RegisterItem("human_body", MODULAR_SLOT_BASE_BODY, true, NULL,
+    int bodyIdx = ModularSystem_RegisterItem("male_body", MODULAR_SLOT_BASE_BODY, true, NULL,
                                              (Vector3){ 0 }, (Vector3){ 0 },
-                                             "assets/characters/bodies/human_body.glb");
+                                             "assets/characters/bodies/male_body.glb");
     int robeIdx = ModularSystem_RegisterItem("ao_giao_linh_2", MODULAR_SLOT_TORSO, true, NULL,
                                              (Vector3){ 0 }, (Vector3){ 0 },
                                              "assets/characters/equipment/torso/ao_giao_linh_2.glb");

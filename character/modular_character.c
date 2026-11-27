@@ -244,7 +244,7 @@ static Model GroomRefit_GetModel(const ModularInstance *inst, int slot, int item
     if (gi < 0 || !inst || srcModel.meshCount <= 0 || bodyModel.meshCount <= 0)
         return ModularVboCache_GetSlotModel(inst, slot, itemIdx, srcModel);
 
-    // Exact canonical human_body.glb reference measurements
+    // Exact canonical male_body.glb reference measurements
     const Vector3 refCenter = { 0.0000f,  0.0107f, 0.0244f };
     const Vector3 refHalf   = { 0.0800f,  0.1210f, 0.1036f };
     const float   refChinY  = -0.1104f;
@@ -257,7 +257,7 @@ static Model GroomRefit_GetModel(const ModularInstance *inst, int slot, int item
     if (isHeadSlot ? !tgt.valid : !tgt.bodyValid)
         return ModularVboCache_GetSlotModel(inst, slot, itemIdx, srcModel);
 
-    // Fast path: target body already matches canonical human_body.glb within 5 mm -> untouched!
+    // Fast path: target body already matches canonical male_body.glb within 5 mm -> untouched!
     if (isHeadSlot)
     {
         float dCenter = fabsf(tgt.center.x - refCenter.x) + fabsf(tgt.center.y - refCenter.y) + fabsf(tgt.center.z - refCenter.z);
@@ -306,13 +306,13 @@ static Model GroomRefit_GetModel(const ModularInstance *inst, int slot, int item
     // against the target body's actual mesh so shoulders/back/deltoids NEVER poke through!
     if (!isHeadSlot)
     {
-        // Only expand when target body is wider/deeper; keep slim reduction gentle (min 0.94)
-        // so shoulders/deltoids are never pulled inside the body!
-        float tsx = Clamp(tgt.torsoHalfX / refTorsoHalfX, 0.94f, 1.24f);
-        float tsz = Clamp(tgt.torsoHalfZ / refTorsoHalfZ, 0.94f, 1.24f);
+        // Allow slimmer tailoring (min 0.80) for slender female bodies — safe because
+        // one-way outward anti-penetration push-out right below prevents any poke-through!
+        float tsx = Clamp(tgt.torsoHalfX / refTorsoHalfX, 0.80f, 1.24f);
+        float tsz = Clamp(tgt.torsoHalfZ / refTorsoHalfZ, 0.84f, 1.24f);
         float tdz = Clamp((tgt.torsoCenterZ - refTorsoCZ) * 0.5f, -0.020f, 0.020f);
-        float lsx = Clamp(tgt.legHalfX / refLegHalfX, 0.92f, 1.22f);
-        float lsz = Clamp(tgt.legHalfZ / refLegHalfZ, 0.92f, 1.22f);
+        float lsx = Clamp(tgt.legHalfX / refLegHalfX, 0.84f, 1.22f);
+        float lsz = Clamp(tgt.legHalfZ / refLegHalfZ, 0.84f, 1.22f);
         float ldz = Clamp((tgt.legCenterZ - refLegCZ) * 0.5f, -0.020f, 0.020f);
 
         // Collect target body surface points in the relevant vertical band for outward push-out
