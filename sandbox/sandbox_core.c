@@ -354,7 +354,9 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
                     if (Skill_ConsumeAnimTrigger(player->agentId, animClip, sizeof(animClip), &animSecs)) {
                         CharacterModel_TriggerByName(&player->anim, animClip, animSecs);
                     } else {
-                        CharacterModel_TriggerAttackTimed(&player->anim, CHAR_ANIM_CAST,
+                        CombatStance st = PlayerWardrobe_GetCombatStance(Wardrobe_GetGlobalPlayer());
+                        CharacterModel_TriggerAttackTimed(&player->anim,
+                                                          (st == COMBAT_STANCE_SWORD) ? CHAR_ANIM_SWORD_CAST : CHAR_ANIM_CAST,
                                                           Skill_GetCastAnimSeconds(skillIdx));
                     }
                     Sandbox_FacePlayerToward(player, enemy->position); // quay về hướng đánh
@@ -373,9 +375,14 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
         BasicAttackType randomType = BASIC_ATTACK_PUNCH;
 
         if (stance == COMBAT_STANCE_SWORD) {
-            int swordType = GetRandomValue(0, 1);
-            CharacterAnimSlot animSlot = (swordType == 0) ? CHAR_ANIM_SWORD_SLASH : CHAR_ANIM_SWORD_THRUST;
-            CharacterModel_TriggerAttackTimed(&player->anim, animSlot, 0.82f);
+            static int s_sandboxSwordBeat = 0;
+            static const CharacterAnimSlot kSbSlots[8] = {
+                CHAR_ANIM_SWORD_SLASH, CHAR_ANIM_SWORD_SLASH, CHAR_ANIM_SWORD_THRUST, CHAR_ANIM_SWORD_SLASH,
+                CHAR_ANIM_SWORD_SLASH, CHAR_ANIM_SWORD_THRUST, CHAR_ANIM_SWORD_SLASH, CHAR_ANIM_SWORD_JUMP_SLASH
+            };
+            static const int kSbVars[8] = { 0, 1, 0, 3, 4, 1, 6, 0 };
+            int beat = (s_sandboxSwordBeat++) & 7;
+            CharacterModel_TriggerVariantTimed(&player->anim, kSbSlots[beat], kSbVars[beat], (beat == 3 || beat >= 6) ? 0.85f : 0.70f);
             SkillHelper_StartMeleeTrails(player->agentId, &player->anim, player->position,
                                          g_playerModelYaw, BASIC_ATTACK_PUNCH, 0.45f);
             gotWallBonus = Entity_ExecuteBasicAttack(player->agentId, BASIC_ATTACK_PUNCH, &targetPos, &wallPos, &wallElement);

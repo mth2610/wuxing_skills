@@ -89,7 +89,7 @@ void CastTcdkToaiGiapTramSkill(int agentId, Vector3 startPos, Vector3 target, Sk
     dir = (d < 0.01f) ? (Vector3){ 0.0f, 0.0f, 1.0f } : Vector3Scale(dir, 1.0f / d);
 
     /* Khởi: Bước chéo chân trụ, giơ cao trường kiếm tích thế trọng lực */
-    Skill_RequestAnim(agentId, "withdrawing_sword", 0.22f);
+    Skill_RequestAnim(agentId, "wuxia_sword_draw", 0.22f);
 
     ToaiGiapInst *inst = &s_inst[slot];
     inst->active       = true;
@@ -113,7 +113,7 @@ static void TriggerToaiGiapCleave(ToaiGiapInst *inst)
     float r = TGT_RANGE * inst->sizeScale;
 
     /* Phát & Thu: Bổ trọng lực 90° tầm 2.4m, đồng bộ mặt phẳng mũi kiếm */
-    Skill_RequestAnim(inst->ownerAgentId, "great_sword_impact", 0.36f);
+    Skill_RequestAnim(inst->ownerAgentId, "wuxia_sword_heavy_cleave", 0.55f);
     Vector3 pivot = { anchor.x, MapManager_GetGroundHeightAt(anchor.x, anchor.z) + 1.05f, anchor.z };
     Vector3 right = { -inst->dir.z, 0.0f, inst->dir.x };
     Vector3 planeNormal = Vector3Normalize(Vector3Add(right, (Vector3){ 0.0f, 0.12f, 0.0f }));

@@ -1,14 +1,14 @@
 {
   "player_id": "Player_1",
   "equipped": {
-    "base_body": "female_body",
-    "torso": "ao_giao_linh",
+    "base_body": "male_body",
+    "torso": "",
     "legs": "",
     "boots": "chien_hai_van_du",
     "bracers": "",
     "headgear": "",
     "mask": "",
-    "hair": "toc_co_trang_kiem_hiep",
+    "hair": "",
     "eyebrows": "long_may_tuong_quan",
     "beard": "",
     "waist": "",

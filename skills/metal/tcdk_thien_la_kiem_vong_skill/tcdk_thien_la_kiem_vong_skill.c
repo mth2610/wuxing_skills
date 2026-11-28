@@ -102,7 +102,7 @@ void CastTcdkThienLaKiemVongSkill(int agentId, Vector3 startPos, Vector3 target,
     dir = (d < 0.01f) ? (Vector3){ 0.0f, 0.0f, 1.0f } : Vector3Scale(dir, 1.0f / d);
 
     /* Khởi: Hạ trọng tâm, rút kiếm chuẩn bị chuỗi 3 nhát chém liên hoàn */
-    Skill_RequestAnim(agentId, "withdrawing_sword", 0.12f);
+    Skill_RequestAnim(agentId, "wuxia_sword_draw", 0.14f);
 
     ThienLaInst *inst = &s_inst[slot];
     *inst = (ThienLaInst){0};
@@ -139,15 +139,15 @@ static void FireSwordSwingBeat(ThienLaInst *inst, int beat)
 
     if (beat == 1) {
         /* Beat 1: Forehand Diagonal Slash (+32 deg, Left-to-Right) */
-        Skill_RequestAnim(inst->ownerAgentId, "sword_and_shield_slash", 0.18f);
+        Skill_RequestAnim(inst->ownerAgentId, "wuxia_sword_slash_l2r", 0.22f);
         VFX_MetalCrescentWave_Spawn(vfxOrigin, inst->dir, 32.0f, range * 0.92f, 65.0f, 0.40f, inst->sizeScale);
     } else if (beat == 2) {
         /* Beat 2: Backhand Counter-Diagonal Slash (-32 deg, Right-to-Left) */
-        Skill_RequestAnim(inst->ownerAgentId, "sword_and_shield_slash_2", 0.18f);
+        Skill_RequestAnim(inst->ownerAgentId, "wuxia_sword_slash_r2l", 0.22f);
         VFX_MetalCrescentWave_Spawn(vfxOrigin, inst->dir, -32.0f, range * 0.95f, 68.0f, 0.40f, inst->sizeScale);
     } else {
         /* Beat 3: Master Horizontal Wide Cleave (0 deg, 75 deg cone finisher) */
-        Skill_RequestAnim(inst->ownerAgentId, "stable_sword_outward_slash", 0.28f);
+        Skill_RequestAnim(inst->ownerAgentId, "wuxia_sword_cross_x_slash", 0.36f);
         VFX_MetalCrescentWave_Spawn(vfxOrigin, inst->dir, 0.0f, range, 75.0f, 0.44f, inst->sizeScale);
         Wind_SpawnGust(vfxOrigin, inst->dir, 2.2f * inst->sizeScale, 8.5f, 0.36f);
     }

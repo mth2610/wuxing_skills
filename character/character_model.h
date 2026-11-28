@@ -19,7 +19,7 @@
 #include "raylib.h"
 #include <stdbool.h>
 
-#define CHAR_ANIM_MAX_VARIANTS 8
+#define CHAR_ANIM_MAX_VARIANTS 16
 
 typedef enum {
     // Locomotion
@@ -42,10 +42,16 @@ typedef enum {
 
     // Sword Arts (Kiếm Pháp)
     CHAR_ANIM_SWORD_IDLE,
+    CHAR_ANIM_SWORD_WALK,
+    CHAR_ANIM_SWORD_RUN,
     CHAR_ANIM_SWORD_SLASH,
     CHAR_ANIM_SWORD_THRUST,
     CHAR_ANIM_SWORD_PARRY,
     CHAR_ANIM_SWORD_BLOCK,
+    CHAR_ANIM_SWORD_CAST,
+    CHAR_ANIM_SWORD_DODGE,
+    CHAR_ANIM_SWORD_HIT,
+    CHAR_ANIM_SWORD_JUMP_SLASH,
 
     // Qi / Skills (Nội Công & Chiêu Thức)
     CHAR_ANIM_CAST,     // skill-cast flourish — triggered on a successful CastSkill

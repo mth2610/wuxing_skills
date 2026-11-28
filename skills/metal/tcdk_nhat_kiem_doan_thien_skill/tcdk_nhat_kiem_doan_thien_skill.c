@@ -97,7 +97,7 @@ void CastTcdkNhatKiemDoanThienSkill(int agentId, Vector3 startPos, Vector3 targe
     dir = (d < 0.01f) ? (Vector3){ 0.0f, 0.0f, 1.0f } : Vector3Scale(dir, 1.0f / d);
 
     /* Khởi: Tra kiếm vào vỏ, nén lò xo cơ bắp hạ thấp trọng tâm */
-    Skill_RequestAnim(agentId, "sheath_sword_1", 0.25f);
+    Skill_RequestAnim(agentId, "wuxia_sword_iaido_charge", 0.25f);
 
     NhatKiemInst *inst = &s_inst[slot];
     *inst = (NhatKiemInst){0};
@@ -136,7 +136,7 @@ void UpdateTcdkNhatKiemDoanThienSkill(float dt, Vector3 enemyPos, float enemyRad
         float dashEnd = inst->windupSecs + inst->dashSecs;
         if (!inst->slashed) {
             inst->slashed = true;
-            Skill_RequestAnim(inst->ownerAgentId, "stable_sword_outward_slash", 0.35f);
+            Skill_RequestAnim(inst->ownerAgentId, "wuxia_sword_iaido_draw_slash", 0.45f);
             float dist = NKDT_DASH_DIST * inst->sizeScale;
             Vector3 pA = { inst->startPos.x, MapManager_GetGroundHeightAt(inst->startPos.x, inst->startPos.z) + 1.15f, inst->startPos.z };
             Vector3 midPos = Vector3Add(pA, Vector3Scale(inst->dir, dist * 0.45f));

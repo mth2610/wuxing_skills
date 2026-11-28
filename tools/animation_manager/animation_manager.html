@@ -151,7 +151,32 @@
       display: flex; justify-content: space-between; align-items: flex-start;
       pointer-events: none; gap: 10px;
     }
-    .vp-pill-group { display: flex; gap: 6px; flex-wrap: wrap; pointer-events: auto; }
+    .vp-pill-group { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; pointer-events: auto; }
+    .vp-weapon-group {
+      display: inline-flex; align-items: center; gap: 2px; padding: 2px;
+      border-radius: 7px; background: rgba(13,16,22,0.85); border: 1px solid var(--border);
+    }
+    .vp-weapon-group button {
+      border: 1px solid transparent; background: transparent; padding: 4px 8px; font-size: 11px;
+    }
+    .vp-weapon-group button.active {
+      background: #0284c7; border-color: #38bdf8; color: #fff;
+    }
+    .weapon-popover {
+      position: absolute; top: 48px; left: 10px; z-index: 20;
+      width: 268px; padding: 10px 12px; border-radius: var(--radius);
+      background: rgba(20, 25, 35, 0.95); border: 1px solid var(--border);
+      box-shadow: 0 12px 30px rgba(0,0,0,0.55);
+      display: flex; flex-direction: column; gap: 8px;
+      pointer-events: auto;
+    }
+    .weapon-popover[hidden] { display: none; }
+    .weapon-slider-row {
+      display: grid; grid-template-columns: 62px 1fr 40px; align-items: center; gap: 6px;
+      font-size: 11px; color: var(--text-1);
+    }
+    .weapon-slider-row input[type="range"] { width: 100%; accent-color: var(--accent); margin: 0; }
+    .weapon-slider-row span:last-child { font-family: var(--mono); text-align: right; color: var(--text-0); }
     .vp-stats {
       padding: 6px 10px; border-radius: 6px; background: rgba(13,16,22,0.82);
       border: 1px solid var(--border); font-family: var(--mono); font-size: 11px;
@@ -270,6 +295,12 @@
       <div id="canvas-container">
         <div class="vp-overlay-top">
           <div class="vp-pill-group">
+            <div class="vp-weapon-group" id="weapon-selector" title="Preview weapon attached to character hand">
+              <button class="sm weapon-btn active" data-weapon="unarmed">Tay không</button>
+              <button class="sm weapon-btn" data-weapon="sword">Kiếm</button>
+              <button class="sm weapon-btn" data-weapon="spear">Bổng / Thương</button>
+              <button id="btn-weapon-tune" class="sm" title="Adjust weapon grip, hand, rotation & scale">⚙</button>
+            </div>
             <button id="btn-toggle-skel" class="sm">Skeleton: ON</button>
             <button id="btn-toggle-mesh" class="sm">Mesh: ON</button>
             <button id="btn-rest-pose" class="sm">Rest Pose</button>
@@ -277,6 +308,50 @@
             <button id="btn-bg-cycle" class="sm">BG: Dark</button>
           </div>
           <div class="vp-stats" id="vp-stats">Clip: — | Bones: 0</div>
+        </div>
+
+        <div class="weapon-popover" id="weapon-popover" hidden>
+          <div class="field-row">
+            <label>Weapon Alignment</label>
+            <div style="display:flex;gap:4px;">
+              <button id="btn-weapon-flip" class="sm" title="Flip weapon direction 180°">Flip 180°</button>
+              <button id="btn-weapon-reset" class="sm">Reset</button>
+            </div>
+          </div>
+          <div class="field">
+            <label>Grip Mode</label>
+            <select id="sel-weapon-hand">
+              <option value="right">Right Hand</option>
+              <option value="left">Left Hand</option>
+              <option value="twohand">2-Hand Aim (R → L)</option>
+            </select>
+          </div>
+          <div class="weapon-slider-row">
+            <span>Grip Slide</span>
+            <input type="range" id="wpn-slide" min="-0.6" max="0.6" step="0.02" value="0" />
+            <span id="wpn-slide-val">0.00</span>
+          </div>
+          <div class="weapon-slider-row">
+            <span>Pitch X</span>
+            <input type="range" id="wpn-rx" min="-180" max="180" step="5" value="0" />
+            <span id="wpn-rx-val">0°</span>
+          </div>
+          <div class="weapon-slider-row">
+            <span>Yaw Y</span>
+            <input type="range" id="wpn-ry" min="-180" max="180" step="5" value="0" />
+            <span id="wpn-ry-val">0°</span>
+          </div>
+          <div class="weapon-slider-row">
+            <span>Roll Z</span>
+            <input type="range" id="wpn-rz" min="-180" max="180" step="5" value="0" />
+            <span id="wpn-rz-val">0°</span>
+          </div>
+          <div class="weapon-slider-row">
+            <span>Scale</span>
+            <input type="range" id="wpn-scale" min="0.5" max="1.8" step="0.05" value="1" />
+            <span id="wpn-scale-val">1.00x</span>
+          </div>
+          <div class="hint" id="wpn-bone-status">Socket: —</div>
         </div>
 
         <div class="vp-banner" id="vp-banner">
@@ -386,6 +461,7 @@
     { label: 'Agility / Mobility', slots: ['jump', 'jump_down', 'dodge'] },
     { label: 'Unarmed Martial Arts', slots: ['punch', 'kick', 'palm', 'block', 'parry'] },
     { label: 'Sword Arts', slots: ['sword_idle', 'sword_slash', 'sword_thrust', 'sword_parry', 'sword_block'] },
+    { label: 'Spear / Staff Arts', slots: ['spear_idle', 'spear_thrust', 'spear_sweep', 'spear_spin', 'spear_parry', 'staff_strike'] },
     { label: 'Qi / Skills', slots: ['cast', 'meditate'] },
     { label: 'Reactions', slots: ['hit', 'knockdown', 'death'] },
     { label: 'Special', slots: ['custom'] },
@@ -415,6 +491,12 @@
     bgIndex: 0,
     showSkeleton: true,
     showMesh: true,
+
+    weaponMode: 'unarmed', // 'unarmed' | 'sword' | 'spear'
+    weaponTuning: {
+      sword: { hand: 'right', slide: 0, rx: 0, ry: 0, rz: 0, scale: 1.0 },
+      spear: { hand: 'right', slide: 0, rx: 0, ry: 0, rz: 0, scale: 1.0 },
+    },
   };
 
   let uid = 1;
@@ -456,6 +538,339 @@
   let activeAction = null;
   let activeClipDuration = 0;
 
+  // ---------- Preview Weapon System (Unarmed / Sword / Spear-Staff) ----------
+  const weaponRoot = new THREE.Group();
+  weaponRoot.name = '__preview_weapon_root';
+  weaponRoot.visible = false;
+  scene.add(weaponRoot);
+
+  function buildSwordMesh() {
+    const g = new THREE.Group();
+    const steelMat = new THREE.MeshStandardMaterial({ color: 0xdbeafe, metalness: 0.88, roughness: 0.22 });
+    const ridgeMat = new THREE.MeshStandardMaterial({ color: 0x93c5fd, metalness: 0.92, roughness: 0.16 });
+    const goldMat = new THREE.MeshStandardMaterial({ color: 0xd4af37, metalness: 0.78, roughness: 0.28 });
+    const wrapMat = new THREE.MeshStandardMaterial({ color: 0x1e2430, metalness: 0.1, roughness: 0.85 });
+    const tasselMat = new THREE.MeshStandardMaterial({ color: 0xdc2626, metalness: 0.05, roughness: 0.7 });
+
+    // Grip (-0.19 .. +0.02), grip center at Y = 0
+    const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.016, 0.21, 12), wrapMat);
+    grip.position.y = -0.085;
+    g.add(grip);
+
+    // Pommel
+    const pommel = new THREE.Mesh(new THREE.SphereGeometry(0.024, 12, 10), goldMat);
+    pommel.scale.set(1, 0.85, 1);
+    pommel.position.y = -0.20;
+    g.add(pommel);
+
+    const tassel = new THREE.Mesh(new THREE.ConeGeometry(0.018, 0.09, 8), tasselMat);
+    tassel.rotation.x = Math.PI;
+    tassel.position.y = -0.265;
+    g.add(tassel);
+
+    // Crossguard (wide along Z so blade edge faces +Z/-Z)
+    const guard = new THREE.Mesh(new THREE.BoxGeometry(0.028, 0.028, 0.15), goldMat);
+    guard.position.y = 0.028;
+    g.add(guard);
+
+    const guardCore = new THREE.Mesh(new THREE.BoxGeometry(0.036, 0.042, 0.06), goldMat);
+    guardCore.position.y = 0.032;
+    g.add(guardCore);
+
+    // Tapered double-edged Jian blade (+0.04 .. +0.88)
+    const bladeLen = 0.74;
+    const bladeGeo = new THREE.CylinderGeometry(0.011, 0.025, bladeLen, 4);
+    bladeGeo.scale(0.32, 1, 1.0); // thin on X (flat), wide on Z (edge)
+    const blade = new THREE.Mesh(bladeGeo, steelMat);
+    blade.position.y = 0.04 + bladeLen * 0.5;
+    g.add(blade);
+
+    // Blade spine ridge
+    const ridge = new THREE.Mesh(new THREE.BoxGeometry(0.009, bladeLen * 0.96, 0.008), ridgeMat);
+    ridge.position.y = 0.04 + bladeLen * 0.48;
+    g.add(ridge);
+
+    // Sharp tip (+0.78 .. +0.90)
+    const tipGeo = new THREE.ConeGeometry(0.011, 0.12, 4);
+    tipGeo.scale(0.32, 1, 1.0);
+    const tip = new THREE.Mesh(tipGeo, steelMat);
+    tip.position.y = 0.04 + bladeLen + 0.06;
+    g.add(tip);
+
+    return g;
+  }
+
+  function buildSpearMesh() {
+    const g = new THREE.Group();
+    const woodMat = new THREE.MeshStandardMaterial({ color: 0x5c3a21, metalness: 0.08, roughness: 0.72 });
+    const goldMat = new THREE.MeshStandardMaterial({ color: 0xd4af37, metalness: 0.75, roughness: 0.3 });
+    const ironMat = new THREE.MeshStandardMaterial({ color: 0x64748b, metalness: 0.8, roughness: 0.35 });
+    const steelMat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, metalness: 0.9, roughness: 0.2 });
+    const tasselMat = new THREE.MeshStandardMaterial({ color: 0xdc2626, metalness: 0.05, roughness: 0.65 });
+
+    // Hardwood shaft (-0.82 .. +0.92), grip origin at Y = 0
+    const shaftLen = 1.74;
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.0155, 0.0165, shaftLen, 14), woodMat);
+    shaft.position.y = -0.82 + shaftLen * 0.5;
+    g.add(shaft);
+
+    // Grip bands for visual spin clarity
+    for (const bandY of [-0.45, 0.0, 0.45]) {
+      const band = new THREE.Mesh(new THREE.CylinderGeometry(0.0175, 0.0175, 0.035, 14), goldMat);
+      band.position.y = bandY;
+      g.add(band);
+    }
+
+    // Butt ferrule
+    const butt = new THREE.Mesh(new THREE.ConeGeometry(0.017, 0.08, 10), ironMat);
+    butt.rotation.x = Math.PI;
+    butt.position.y = -0.86;
+    g.add(butt);
+
+    // Collar + Red Spear Tassel (Hồng Anh Thương)
+    const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.018, 0.055, 12), goldMat);
+    collar.position.y = 0.93;
+    g.add(collar);
+
+    const tassel = new THREE.Mesh(new THREE.ConeGeometry(0.055, 0.16, 12, 1, true), tasselMat);
+    tassel.material.side = THREE.DoubleSide;
+    tassel.position.y = 0.85;
+    g.add(tassel);
+
+    // Leaf-shaped spearhead (+0.96 .. +1.28)
+    const headBase = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.016, 0.10, 4), steelMat);
+    headBase.scale.set(0.35, 1, 1.0);
+    headBase.position.y = 1.00;
+    g.add(headBase);
+
+    const headTip = new THREE.Mesh(new THREE.ConeGeometry(0.032, 0.24, 4), steelMat);
+    headTip.scale.set(0.35, 1, 1.0);
+    headTip.position.y = 1.17;
+    g.add(headTip);
+
+    return g;
+  }
+
+  const weaponMeshes = {
+    sword: buildSwordMesh(),
+    spear: buildSpearMesh(),
+  };
+  weaponMeshes.sword.visible = false;
+  weaponMeshes.spear.visible = false;
+  weaponRoot.add(weaponMeshes.sword);
+  weaponRoot.add(weaponMeshes.spear);
+
+  const weaponSockets = {
+    right: null,
+    left: null,
+    charScale: 1.0,
+    frames: { right: null, left: null },
+  };
+
+  function findHandBone(root, side) {
+    if (!root) return null;
+    const isRight = side === 'right';
+    const exactRx = isRight
+      ? /^(mixamorig\d*[:_]?)?(righthand|hand_r|r_hand|hand\.r|bip01[_\s]r[_\s]hand)$/i
+      : /^(mixamorig\d*[:_]?)?(lefthand|hand_l|l_hand|hand\.l|bip01[_\s]l[_\s]hand)$/i;
+    const looseRx = isRight
+      ? /(right.*hand|hand.*r$)/i
+      : /(left.*hand|hand.*l$)/i;
+    const fingerRx = /thumb|index|middle|ring|pinky|finger/i;
+
+    let fallback = null;
+    let found = null;
+    root.traverse((o) => {
+      if (found || !o.name) return;
+      const clean = stripBonePrefix(o.name);
+      if (fingerRx.test(clean)) return;
+      if (exactRx.test(o.name) || exactRx.test(clean)) {
+        found = o;
+      } else if (!fallback && looseRx.test(clean)) {
+        fallback = o;
+      }
+    });
+    return found || fallback;
+  }
+
+  function computeHandFrame(handBone, charScale) {
+    if (!handBone) return null;
+    let middle = null, index = null, ring = null, firstChild = null;
+    for (const c of handBone.children) {
+      if (!c.name) continue;
+      if (!firstChild && c.position.lengthSq() > 1e-6) firstChild = c;
+      const n = stripBonePrefix(c.name).toLowerCase();
+      if (/middle1$/.test(n)) middle = c;
+      else if (/index1$/.test(n)) index = c;
+      else if (/ring1$|pinky1$/.test(n)) ring = c;
+    }
+
+    // Finger direction in hand-local space
+    let fingerDir = new THREE.Vector3(0, 1, 0);
+    if (middle && middle.position.lengthSq() > 1e-6) {
+      fingerDir.copy(middle.position).normalize();
+    } else if (firstChild) {
+      fingerDir.copy(firstChild.position).normalize();
+    } else if (handBone.position.lengthSq() > 1e-6) {
+      fingerDir.copy(handBone.position).normalize();
+    }
+
+    // Grip axis (+Y of weapon = pommel -> tip) along pinky -> index/thumb across palm
+    let gripAxis = new THREE.Vector3(0, 0, 1);
+    if (index && ring) {
+      const diff = index.position.clone().sub(ring.position);
+      if (diff.lengthSq() > 1e-6) gripAxis.copy(diff).normalize();
+    } else if (Math.abs(fingerDir.dot(gripAxis)) > 0.9) {
+      gripAxis.set(1, 0, 0);
+    }
+
+    // Orthonormal basis: Y = gripAxis, Z = fingerDir (orthogonalized), X = Y x Z
+    const yAxis = gripAxis.clone().normalize();
+    const zAxis = fingerDir.clone().addScaledVector(yAxis, -fingerDir.dot(yAxis));
+    if (zAxis.lengthSq() < 1e-6) zAxis.set(1, 0, 0);
+    zAxis.normalize();
+    const xAxis = new THREE.Vector3().crossVectors(yAxis, zAxis).normalize();
+    zAxis.crossVectors(xAxis, yAxis).normalize();
+
+    const basisMat = new THREE.Matrix4().makeBasis(xAxis, yAxis, zAxis);
+    const localQuat = new THREE.Quaternion().setFromRotationMatrix(basisMat);
+
+    // Palm center offset in hand-local units
+    const worldScale = new THREE.Vector3();
+    handBone.getWorldScale(worldScale);
+    const avgScale = (Math.abs(worldScale.x) + Math.abs(worldScale.y) + Math.abs(worldScale.z)) / 3 || 1;
+    const palmDistLocal = (0.075 * charScale) / avgScale;
+    const palmOffset = fingerDir.clone().multiplyScalar(palmDistLocal);
+
+    return { palmOffset, localQuat };
+  }
+
+  function refreshWeaponSockets() {
+    weaponSockets.right = null;
+    weaponSockets.left = null;
+    weaponSockets.frames.right = null;
+    weaponSockets.frames.left = null;
+    weaponSockets.charScale = 1.0;
+
+    if (!modelRoot) {
+      document.getElementById('wpn-bone-status').textContent = 'Socket: —';
+      updateWeaponTransform();
+      return;
+    }
+
+    modelRoot.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(modelRoot);
+    const size = new THREE.Vector3();
+    box.getSize(size);
+    if (size.y > 0.2) weaponSockets.charScale = size.y / 1.75;
+
+    weaponSockets.right = findHandBone(modelRoot, 'right');
+    weaponSockets.left = findHandBone(modelRoot, 'left');
+    weaponSockets.frames.right = computeHandFrame(weaponSockets.right, weaponSockets.charScale);
+    weaponSockets.frames.left = computeHandFrame(weaponSockets.left, weaponSockets.charScale);
+
+    const rName = weaponSockets.right ? weaponSockets.right.name : 'none';
+    const lName = weaponSockets.left ? weaponSockets.left.name : 'none';
+    document.getElementById('wpn-bone-status').textContent = `R: ${rName} | L: ${lName}`;
+    updateWeaponTransform();
+  }
+
+  const _wpnWorldPos = new THREE.Vector3();
+  const _wpnWorldPosL = new THREE.Vector3();
+  const _wpnWorldQuat = new THREE.Quaternion();
+  const _wpnTuneQuat = new THREE.Quaternion();
+  const _wpnTuneEuler = new THREE.Euler(0, 0, 0, 'XYZ');
+  const _wpnDir = new THREE.Vector3();
+  const _wpnUp = new THREE.Vector3(0, 1, 0);
+  const _wpnSlideVec = new THREE.Vector3();
+
+  function updateWeaponTransform() {
+    const mode = state.weaponMode;
+    weaponMeshes.sword.visible = mode === 'sword';
+    weaponMeshes.spear.visible = mode === 'spear';
+
+    if (mode === 'unarmed' || !modelRoot) {
+      weaponRoot.visible = false;
+      return;
+    }
+
+    const tune = state.weaponTuning[mode];
+    const side = tune.hand === 'left' ? 'left' : 'right';
+    const bone = weaponSockets[side] || weaponSockets.right || weaponSockets.left;
+    const frame = weaponSockets.frames[side] || weaponSockets.frames.right || weaponSockets.frames.left;
+    if (!bone || !frame) {
+      weaponRoot.visible = false;
+      return;
+    }
+
+    weaponRoot.visible = true;
+    bone.updateWorldMatrix(true, false);
+
+    // Palm world position
+    _wpnWorldPos.copy(frame.palmOffset).applyMatrix4(bone.matrixWorld);
+    bone.getWorldQuaternion(_wpnWorldQuat);
+    _wpnWorldQuat.multiply(frame.localQuat);
+
+    if (tune.hand === 'twohand' && weaponSockets.right && weaponSockets.left && weaponSockets.frames.left) {
+      weaponSockets.left.updateWorldMatrix(true, false);
+      _wpnWorldPosL.copy(weaponSockets.frames.left.palmOffset).applyMatrix4(weaponSockets.left.matrixWorld);
+      _wpnDir.subVectors(_wpnWorldPosL, _wpnWorldPos);
+      if (_wpnDir.lengthSq() > 1e-5) {
+        _wpnDir.normalize();
+        _wpnWorldQuat.setFromUnitVectors(_wpnUp, _wpnDir);
+      }
+    }
+
+    // Apply user fine-tuning rotation & grip slide
+    _wpnTuneEuler.set(
+      THREE.MathUtils.degToRad(tune.rx || 0),
+      THREE.MathUtils.degToRad(tune.ry || 0),
+      THREE.MathUtils.degToRad(tune.rz || 0),
+      'XYZ'
+    );
+    _wpnTuneQuat.setFromEuler(_wpnTuneEuler);
+    _wpnWorldQuat.multiply(_wpnTuneQuat);
+
+    const s = weaponSockets.charScale * (tune.scale || 1.0);
+    if (tune.slide) {
+      _wpnSlideVec.set(0, tune.slide * s, 0).applyQuaternion(_wpnWorldQuat);
+      _wpnWorldPos.add(_wpnSlideVec);
+    }
+
+    weaponRoot.position.copy(_wpnWorldPos);
+    weaponRoot.quaternion.copy(_wpnWorldQuat);
+    weaponRoot.scale.setScalar(s);
+  }
+
+  function syncWeaponPopoverUI() {
+    const activeKey = state.weaponMode === 'spear' ? 'spear' : 'sword';
+    const tune = state.weaponTuning[activeKey];
+    document.getElementById('sel-weapon-hand').value = tune.hand;
+    document.getElementById('wpn-slide').value = tune.slide;
+    document.getElementById('wpn-slide-val').textContent = Number(tune.slide).toFixed(2);
+    document.getElementById('wpn-rx').value = tune.rx;
+    document.getElementById('wpn-rx-val').textContent = `${tune.rx}°`;
+    document.getElementById('wpn-ry').value = tune.ry;
+    document.getElementById('wpn-ry-val').textContent = `${tune.ry}°`;
+    document.getElementById('wpn-rz').value = tune.rz;
+    document.getElementById('wpn-rz-val').textContent = `${tune.rz}°`;
+    document.getElementById('wpn-scale').value = tune.scale;
+    document.getElementById('wpn-scale-val').textContent = `${Number(tune.scale).toFixed(2)}x`;
+  }
+
+  function setWeaponMode(mode) {
+    state.weaponMode = mode;
+    document.querySelectorAll('#weapon-selector .weapon-btn').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.weapon === mode);
+    });
+    if (mode === 'unarmed') {
+      document.getElementById('weapon-popover').hidden = true;
+    } else {
+      syncWeaponPopoverUI();
+    }
+    updateWeaponTransform();
+  }
+
   function resizeViewport() {
     const w = container.clientWidth || 1;
     const h = container.clientHeight || 1;
@@ -482,6 +897,10 @@
         state.playing = false;
         document.getElementById('btn-play').textContent = 'Play';
       }
+    }
+    if (modelRoot) {
+      modelRoot.updateMatrixWorld(true);
+      updateWeaponTransform();
     }
     renderer.render(scene, camera);
   }
@@ -739,6 +1158,12 @@
     if (n.includes('sword') && (n.includes('thrust') || n.includes('lunge'))) return 'sword_thrust';
     if (n.includes('sword') && n.includes('parry')) return 'sword_parry';
     if (n.includes('sword') && n.includes('block')) return 'sword_block';
+    if ((n.includes('spear') || n.includes('staff') || n.includes('polearm') || n.includes('thuong') || n.includes('bong')) && n.includes('idle')) return 'spear_idle';
+    if ((n.includes('spear') || n.includes('staff') || n.includes('polearm') || n.includes('thuong') || n.includes('bong')) && (n.includes('thrust') || n.includes('stab') || n.includes('lunge'))) return 'spear_thrust';
+    if ((n.includes('spear') || n.includes('staff') || n.includes('polearm') || n.includes('thuong') || n.includes('bong')) && (n.includes('spin') || n.includes('twirl') || n.includes('whirl'))) return 'spear_spin';
+    if ((n.includes('spear') || n.includes('staff') || n.includes('polearm') || n.includes('thuong') || n.includes('bong')) && (n.includes('sweep') || n.includes('slash') || n.includes('swing'))) return 'spear_sweep';
+    if ((n.includes('spear') || n.includes('staff') || n.includes('polearm') || n.includes('thuong') || n.includes('bong')) && (n.includes('parry') || n.includes('block'))) return 'spear_parry';
+    if (n.includes('spear') || n.includes('staff') || n.includes('polearm') || n.includes('thuong') || n.includes('bong')) return 'staff_strike';
     if (n.includes('meditat') || n.includes('thiendinh')) return 'meditate';
     if (n.includes('parry') || n.includes('deflect') || n.includes('taiji')) return 'parry';
     if (n.includes('block') || n.includes('guard')) return 'block';
@@ -890,6 +1315,7 @@
 
     mixer = new THREE.AnimationMixer(modelRoot);
     activeAction = null;
+    refreshWeaponSockets();
     frameCameraToObject(modelRoot);
   }
 
@@ -1736,6 +2162,56 @@
     state.bgIndex = (state.bgIndex + 1) % BG_COLORS.length;
     scene.background = new THREE.Color(BG_COLORS[state.bgIndex]);
     e.target.textContent = `BG: ${['Dark', 'Mid', 'Light'][state.bgIndex]}`;
+  });
+
+  // Weapon selector & alignment controls
+  document.querySelectorAll('#weapon-selector .weapon-btn').forEach((btn) => {
+    btn.addEventListener('click', () => setWeaponMode(btn.dataset.weapon));
+  });
+  document.getElementById('btn-weapon-tune').addEventListener('click', () => {
+    const pop = document.getElementById('weapon-popover');
+    if (state.weaponMode === 'unarmed') {
+      setWeaponMode('sword');
+      pop.hidden = false;
+    } else {
+      pop.hidden = !pop.hidden;
+      if (!pop.hidden) syncWeaponPopoverUI();
+    }
+  });
+  const updateWeaponTuneFromUI = () => {
+    const activeKey = state.weaponMode === 'spear' ? 'spear' : 'sword';
+    const tune = state.weaponTuning[activeKey];
+    tune.hand = document.getElementById('sel-weapon-hand').value;
+    tune.slide = parseFloat(document.getElementById('wpn-slide').value) || 0;
+    tune.rx = parseFloat(document.getElementById('wpn-rx').value) || 0;
+    tune.ry = parseFloat(document.getElementById('wpn-ry').value) || 0;
+    tune.rz = parseFloat(document.getElementById('wpn-rz').value) || 0;
+    tune.scale = parseFloat(document.getElementById('wpn-scale').value) || 1.0;
+    syncWeaponPopoverUI();
+    updateWeaponTransform();
+  };
+  ['sel-weapon-hand', 'wpn-slide', 'wpn-rx', 'wpn-ry', 'wpn-rz', 'wpn-scale'].forEach((id) => {
+    document.getElementById(id).addEventListener('input', updateWeaponTuneFromUI);
+    document.getElementById(id).addEventListener('change', updateWeaponTuneFromUI);
+  });
+  document.getElementById('btn-weapon-flip').addEventListener('click', () => {
+    const activeKey = state.weaponMode === 'spear' ? 'spear' : 'sword';
+    const tune = state.weaponTuning[activeKey];
+    tune.rx = ((tune.rx + 180 + 180) % 360) - 180;
+    syncWeaponPopoverUI();
+    updateWeaponTransform();
+  });
+  document.getElementById('btn-weapon-reset').addEventListener('click', () => {
+    const activeKey = state.weaponMode === 'spear' ? 'spear' : 'sword';
+    state.weaponTuning[activeKey] = { hand: 'right', slide: 0, rx: 0, ry: 0, rz: 0, scale: 1.0 };
+    syncWeaponPopoverUI();
+    updateWeaponTransform();
+  });
+  window.addEventListener('keydown', (e) => {
+    if (e.target.matches('input, textarea, select')) return;
+    if (e.key === '1') setWeaponMode('unarmed');
+    else if (e.key === '2') setWeaponMode('sword');
+    else if (e.key === '3') setWeaponMode('spear');
   });
 
   const helpDlg = document.getElementById('help-dialog');

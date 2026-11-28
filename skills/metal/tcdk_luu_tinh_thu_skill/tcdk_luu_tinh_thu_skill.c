@@ -117,7 +117,7 @@ void CastTcdkLuuTinhThuSkill(int agentId, Vector3 startPos, Vector3 target, Skil
     dir = (d < 0.01f) ? (Vector3){ 0.0f, 0.0f, 1.0f } : Vector3Scale(dir, 1.0f / d);
 
     /* Khởi: Thu kiếm ngang sườn, xoay cổ tay lấy trục */
-    Skill_RequestAnim(agentId, "withdrawing_sword", 0.15f);
+    Skill_RequestAnim(agentId, "wuxia_sword_dash_slash", 0.20f);
 
     LuuTinhInst *inst = &s_inst[slot];
     *inst = (LuuTinhInst){0};
@@ -153,7 +153,7 @@ void UpdateTcdkLuuTinhThuSkill(float dt, Vector3 enemyPos, float enemyRadius)
             if (inst->elapsed >= inst->castSecs) {
                 /* Phát: Đâm thẳng phóng luồng kiếm khí xuyên tuyến từ mũi kiếm (18 m/s) */
                 inst->launched = true;
-                Skill_RequestAnim(inst->ownerAgentId, "thrust_slash", 0.25f);
+                Skill_RequestAnim(inst->ownerAgentId, "wuxia_sword_thrust", 0.35f);
                 const Agent *owner = Entity_GetAgent(inst->ownerAgentId);
                 const struct CharacterAnimState *anim = SkillManager_GetAgentAnim(inst->ownerAgentId);
                 if (owner && anim) {

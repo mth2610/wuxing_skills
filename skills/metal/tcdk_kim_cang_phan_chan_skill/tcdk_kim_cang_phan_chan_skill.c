@@ -88,7 +88,7 @@ void CastTcdkKimCangPhanChanSkill(int agentId, Vector3 startPos, Vector3 target,
     float shieldAmt = 30.0f * pveMult;
 
     /* Khởi & Phát: Dựng dọc thanh kiếm trước ngực -> Giải CC, Khiên 30 HP (4s), Tăng tốc 25% (2.5s) */
-    Skill_RequestAnim(agentId, "sword_and_shield_casting", 0.35f);
+    Skill_RequestAnim(agentId, "wuxia_sword_block", 0.40f);
     Entity_Cleanse(agentId);
     Entity_AddShield(agentId, shieldAmt, 4.0f);
     Entity_AddModifier(agentId, 1.25f, 2.5f);
@@ -135,7 +135,7 @@ void UpdateTcdkKimCangPhanChanSkill(float dt, Vector3 enemyPos, float enemyRadiu
             int broken = Combat_DeflectProjectilesInRadiusEx(owner->position, inst->radius,
                                                              inst->ownerAgentId, inst->deflectsRemaining, defs, 4);
             if (broken > 0) {
-                Skill_RequestAnim(inst->ownerAgentId, "sword_and_shield_slash_2", 0.25f);
+                Skill_RequestAnim(inst->ownerAgentId, "wuxia_sword_riposte", 0.35f);
                 for (int d = 0; d < broken && inst->deflectsRemaining > 0; d++) {
                     inst->deflectsRemaining--;
                     Vector3 hitPt = defs[d].pos;

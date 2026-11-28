@@ -1202,7 +1202,9 @@ void ModularInstance_Draw(ModularInstance *inst)
                     bool isAttackAnim = (inst->animState.currentSlot == CHAR_ANIM_SWORD_SLASH ||
                                          inst->animState.currentSlot == CHAR_ANIM_SWORD_THRUST ||
                                          inst->animState.currentSlot == CHAR_ANIM_SWORD_PARRY ||
-                                         inst->animState.currentSlot == CHAR_ANIM_SWORD_BLOCK);
+                                         inst->animState.currentSlot == CHAR_ANIM_SWORD_BLOCK ||
+                                         inst->animState.currentSlot == CHAR_ANIM_SWORD_CAST ||
+                                         inst->animState.currentSlot == CHAR_ANIM_SWORD_JUMP_SLASH);
                     Vector3 bladeBase = (Vector3){0.0f, 0.10f, 0.0f};
                     Vector3 bladeTip = (Vector3){0.0f, 0.85f, 0.0f};
                     WeaponTrail_Sample(&inst->weaponTrail, finalMat, bladeBase, bladeTip, dt, isAttackAnim);

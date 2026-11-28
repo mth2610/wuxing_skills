@@ -1650,7 +1650,12 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
                         if (Skill_ConsumeAnimTrigger(player->agentId, animClip, sizeof(animClip), &animSecs))
                             CharacterModel_TriggerByName(&player->anim, animClip, animSecs);
                         else
-                            CharacterModel_TriggerAttackTimed(&player->anim, CHAR_ANIM_CAST, castSecs);
+                        {
+                            CombatStance castSt = PlayerWardrobe_GetCombatStance(Wardrobe_GetGlobalPlayer());
+                            CharacterModel_TriggerAttackTimed(&player->anim,
+                                                              (castSt == COMBAT_STANCE_SWORD) ? CHAR_ANIM_SWORD_CAST : CHAR_ANIM_CAST,
+                                                              castSecs);
+                        }
                         s_swingSlowTimer = castSecs * 0.6f;
                         int castElem = GameSkillElementByName(GetRegisteredSkillName(castIdx));
                         int sfxElem = (castElem >= 0) ? castElem : pc->currentElement;
@@ -1702,7 +1707,12 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
                 if (Skill_ConsumeAnimTrigger(player->agentId, animClip, sizeof(animClip), &animSecs))
                     CharacterModel_TriggerByName(&player->anim, animClip, animSecs);
                 else
-                    CharacterModel_TriggerAttackTimed(&player->anim, CHAR_ANIM_CAST, castSecs);
+                {
+                    CombatStance castSt = PlayerWardrobe_GetCombatStance(Wardrobe_GetGlobalPlayer());
+                    CharacterModel_TriggerAttackTimed(&player->anim,
+                                                      (castSt == COMBAT_STANCE_SWORD) ? CHAR_ANIM_SWORD_CAST : CHAR_ANIM_CAST,
+                                                      castSecs);
+                }
                 s_swingSlowTimer = castSecs * 0.6f; // free up before the anim tail
                 // Đợt A5: connected clients replay this cast as pure VFX.
                 Net_HostNotifyCast(player->agentId, castIdx, intent.aimPoint);
@@ -1757,20 +1767,33 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
 
     if (selfAgent)
     {
-        if (selfAgent->dashTimer > 0.12f && player->anim.currentSlot != CHAR_ANIM_DODGE)
+        CombatStance curStance = PlayerWardrobe_GetCombatStance(Wardrobe_GetGlobalPlayer());
+        if (selfAgent->dashTimer > 0.12f &&
+            player->anim.currentSlot != CHAR_ANIM_DODGE &&
+            player->anim.currentSlot != CHAR_ANIM_SWORD_DODGE)
         {
-            CharacterModel_TriggerTimed(&player->anim, CHAR_ANIM_DODGE, 0.30f);
+            if (curStance == COMBAT_STANCE_SWORD)
+            {
+                float yaw = Control_GetYaw();
+                float leftDot = intent.moveDir.x * cosf(yaw) - intent.moveDir.y * sinf(yaw);
+                int dVar = (leftDot > 0.35f) ? 1 : (leftDot < -0.35f) ? 2 : 0; // 0=back, 1=left, 2=right
+                CharacterModel_TriggerVariantTimed(&player->anim, CHAR_ANIM_SWORD_DODGE, dVar, 0.34f);
+            }
+            else
+            {
+                CharacterModel_TriggerTimed(&player->anim, CHAR_ANIM_DODGE, 0.30f);
+            }
         }
         else if (selfAgent->hitFlashTimer > 0.09f && !player->anim.oneShotActive)
         {
-            CharacterModel_TriggerTimed(&player->anim, CHAR_ANIM_HIT, 0.28f);
+            CharacterAnimSlot hSlot = (curStance == COMBAT_STANCE_SWORD) ? CHAR_ANIM_SWORD_HIT : CHAR_ANIM_HIT;
+            CharacterModel_TriggerTimed(&player->anim, hSlot, 0.30f);
         }
 
         if (intent.parry && selfAgent->parryWindowTimer > 0.40f)
         {
-            CombatStance st = PlayerWardrobe_GetCombatStance(Wardrobe_GetGlobalPlayer());
-            CharacterAnimSlot pSlot = (st == COMBAT_STANCE_SWORD) ? CHAR_ANIM_SWORD_PARRY : CHAR_ANIM_PARRY;
-            CharacterModel_TriggerTimed(&player->anim, pSlot, 0.45f);
+            CharacterAnimSlot pSlot = (curStance == COMBAT_STANCE_SWORD) ? CHAR_ANIM_SWORD_PARRY : CHAR_ANIM_PARRY;
+            CharacterModel_TriggerVariantTimed(&player->anim, pSlot, 0, 0.45f);
             s_swingSlowTimer = 0.28f;
         }
         if (selfAgent->parryWindowTimer > 0.23f && !Net_ClientDrivesWorld())
@@ -1779,6 +1802,8 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
             int broken = Combat_DeflectProjectilesInRadiusEx(player->position, 1.85f, player->agentId, 4, hits, 4);
             if (broken > 0)
             {
+                if (curStance == COMBAT_STANCE_SWORD)
+                    CharacterModel_TriggerVariantTimed(&player->anim, CHAR_ANIM_SWORD_PARRY, 1, 0.45f); // Riposte counter!
                 Entity_RestoreMana(player->agentId, 12.0f * (float)broken);
                 for (int b = 0; b < broken; b++) {
                     Vector3 n = Vector3Normalize(Vector3Subtract(hits[b].pos, player->position));
@@ -1814,7 +1839,11 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
     }
     else if (moveLen > 0.0001f)
     {
-        locoSlot = (selfAgent && !selfAgent->staminaExhausted) ? CHAR_ANIM_RUN : CHAR_ANIM_WALK;
+        bool isRunning = (selfAgent && !selfAgent->staminaExhausted);
+        if (localStance == COMBAT_STANCE_SWORD)
+            locoSlot = isRunning ? CHAR_ANIM_SWORD_RUN : CHAR_ANIM_SWORD_WALK;
+        else
+            locoSlot = isRunning ? CHAR_ANIM_RUN : CHAR_ANIM_WALK;
     }
     CharacterModel_UpdateLocomotion(&player->anim, dt, locoSlot);
     SkillHelper_UpdateMeleeTrails(player->agentId, dt, &player->anim, player->position, Control_GetYaw());
@@ -1837,14 +1866,36 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
 
             if (localStance == COMBAT_STANCE_SWORD)
             {
-                static const CharacterAnimSlot kSwordSlots[4] = {
-                    CHAR_ANIM_SWORD_SLASH, CHAR_ANIM_SWORD_SLASH,
-                    CHAR_ANIM_SWORD_THRUST, CHAR_ANIM_SWORD_SLASH
-                };
-                static const int kSwordVars[4] = { 0, 2, 0, 3 };
                 ModularInstance_SetWeaponTrailElement(Wardrobe_GetGlobalModularInstance(),
                                                       selfAgent ? selfAgent->currentElement : 4);
-                CharacterModel_TriggerVariantTimed(&player->anim, kSwordSlots[beat], kSwordVars[beat], swingSecs);
+                bool isAirborne = (selfAgent && selfAgent->vState == AGENT_JUMPING);
+                bool isDashing  = (selfAgent && selfAgent->dashTimer > 0.02f);
+                if (isAirborne)
+                {
+                    CharacterModel_TriggerVariantTimed(&player->anim, CHAR_ANIM_SWORD_JUMP_SLASH, 0, swingSecs * 1.15f);
+                }
+                else if (isDashing)
+                {
+                    CharacterModel_TriggerVariantTimed(&player->anim, CHAR_ANIM_SWORD_SLASH, 7, swingSecs); // dash_slash
+                }
+                else
+                {
+                    // Alternate 2 full Wuxia Sword Combo strings so consecutive combos stay rich & varied!
+                    static int s_swordComboSet = 0;
+                    if (beat == 0)
+                        s_swordComboSet = (s_swordComboSet + 1) & 1;
+                    static const CharacterAnimSlot kSwordSlots[2][4] = {
+                        { CHAR_ANIM_SWORD_SLASH, CHAR_ANIM_SWORD_SLASH, CHAR_ANIM_SWORD_THRUST, CHAR_ANIM_SWORD_SLASH },
+                        { CHAR_ANIM_SWORD_SLASH, CHAR_ANIM_SWORD_SLASH, CHAR_ANIM_SWORD_THRUST, CHAR_ANIM_SWORD_SLASH }
+                    };
+                    // Set 0: r2l -> l2r -> thrust -> heavy_cleave | Set 1: diag -> cross_x -> flurry_thrust -> whirlwind_360
+                    static const int kSwordVars[2][4] = {
+                        { 0, 1, 0, 3 },
+                        { 2, 4, 1, 6 }
+                    };
+                    CharacterModel_TriggerVariantTimed(&player->anim, kSwordSlots[s_swordComboSet][beat],
+                                                       kSwordVars[s_swordComboSet][beat], swingSecs);
+                }
             }
             else
             {

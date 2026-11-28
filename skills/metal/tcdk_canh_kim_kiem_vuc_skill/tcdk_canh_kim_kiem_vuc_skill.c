@@ -94,7 +94,7 @@ void CastTcdkCanhKimKiemVucSkill(int agentId, Vector3 startPos, Vector3 target, 
     center.y = MapManager_GetGroundHeightAt(center.x, center.z);
 
     /* Khởi: Cắm mũi kiếm xuống đất kích hoạt dòng từ trường */
-    Skill_RequestAnim(agentId, "great_sword_impact", 0.35f);
+    Skill_RequestAnim(agentId, "wuxia_sword_ground_plunge", 0.55f);
 
     CanhKimInst *inst = &s_inst[slot];
     inst->active       = true;

@@ -101,7 +101,7 @@ void CastTcdkChanAmKiemTranSkill(int agentId, Vector3 startPos, Vector3 target, 
     tgt.y = MapManager_GetGroundHeightAt(tgt.x, tgt.z);
 
     /* Khởi (C9 Telegraph 0.65s): Dựng kiếm bắt quyết truyền xung chấn âm */
-    Skill_RequestAnim(agentId, "sword_and_shield_casting", 0.45f);
+    Skill_RequestAnim(agentId, "wuxia_sword_cast", 0.55f);
 
     ChanAmInst *inst = &s_inst[slot];
     inst->active       = true;
@@ -119,7 +119,7 @@ void CastTcdkChanAmKiemTranSkill(int agentId, Vector3 startPos, Vector3 target, 
 static void TriggerChanAmEruption(ChanAmInst *inst)
 {
     inst->erupted = true;
-    Skill_RequestAnim(inst->ownerAgentId, "standing_1h_cast_spell_01", 0.35f);
+    Skill_RequestAnim(inst->ownerAgentId, "wuxia_sword_sky_summon", 0.50f);
     float r = CAKT_RADIUS * inst->sizeScale;
 
     /* Phát: Kiếm khí cộng hưởng bật trồi theo phương thẳng đứng (Launch 0.60s, Silence 0.80s, +2 Ấn) */

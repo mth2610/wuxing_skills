@@ -160,7 +160,7 @@ void CastMetalBladeStormSkill(int agentId, Vector3 startPos, Vector3 target, Ski
     inst->knockback      = 0.0f;
 
     // 1. Draw sword / Kiếm Quyết summon stance
-    Skill_RequestAnim(agentId, "withdrawing_sword", MBS_SUMMON_TIME);
+    Skill_RequestAnim(agentId, "wuxia_sword_sky_summon", MBS_SUMMON_TIME);
 
     // 2. Summon 5 Bát Diện Hán Kiếm in a crescent fan in front of caster
     VFX_MetalBladesConfig mcfg = VFX_MetalBlades_DefaultConfig();
@@ -203,7 +203,7 @@ void UpdateMetalBladeStormSkill(float dt, Vector3 enemyPos, float enemyRadius)
                 inst->state = MBS_LAUNCH;
                 inst->timer = 0.0f;
                 inst->launchTimer = MBS_LAUNCH_INTERVAL;
-                Skill_RequestAnim(inst->ownerAgentId, "thrust_slash", 0.55f);
+                Skill_RequestAnim(inst->ownerAgentId, "wuxia_sword_cast", 0.65f);
             }
         } else if (inst->state == MBS_LAUNCH) {
             inst->launchTimer += dt;

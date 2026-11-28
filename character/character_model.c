@@ -13,7 +13,7 @@
 #include <math.h>
 
 #define ANIM_FPS 60.0f
-#define CHAR_MAX_TOTAL_ANIMATIONS 64
+#define CHAR_MAX_TOTAL_ANIMATIONS 256
 #define CHAR_MAX_SKIN_BONES 128
 #define CHAR_SKIN_CACHE_SLOTS 32
 
@@ -124,10 +124,16 @@ static const char *s_slotNames[CHAR_ANIM_COUNT] = {
     [CHAR_ANIM_BLOCK] = "BLOCK",
     [CHAR_ANIM_PARRY] = "PARRY",
     [CHAR_ANIM_SWORD_IDLE] = "SWORD_IDLE",
+    [CHAR_ANIM_SWORD_WALK] = "SWORD_WALK",
+    [CHAR_ANIM_SWORD_RUN] = "SWORD_RUN",
     [CHAR_ANIM_SWORD_SLASH] = "SWORD_SLASH",
     [CHAR_ANIM_SWORD_THRUST] = "SWORD_THRUST",
     [CHAR_ANIM_SWORD_PARRY] = "SWORD_PARRY",
     [CHAR_ANIM_SWORD_BLOCK] = "SWORD_BLOCK",
+    [CHAR_ANIM_SWORD_CAST] = "SWORD_CAST",
+    [CHAR_ANIM_SWORD_DODGE] = "SWORD_DODGE",
+    [CHAR_ANIM_SWORD_HIT] = "SWORD_HIT",
+    [CHAR_ANIM_SWORD_JUMP_SLASH] = "SWORD_JUMP_SLASH",
     [CHAR_ANIM_CAST] = "CAST",
     [CHAR_ANIM_MEDITATE] = "MEDITATE",
     [CHAR_ANIM_HIT] = "HIT",
@@ -148,11 +154,17 @@ static const char *s_keywords[CHAR_ANIM_COUNT][6] = {
     [CHAR_ANIM_PALM] = {"palm", "push", "slap", NULL},
     [CHAR_ANIM_BLOCK] = {"unarmed_block", "block", "guard", NULL},
     [CHAR_ANIM_PARRY] = {"unarmed_parry", "parry", "deflect", "taiji", NULL},
-    [CHAR_ANIM_SWORD_IDLE] = {"loco_idle_sword", "sword_idle", "idle_sword", NULL},
-    [CHAR_ANIM_SWORD_SLASH] = {"sword_slash", "slash", "cleave", "whirlwind", NULL},
-    [CHAR_ANIM_SWORD_THRUST] = {"sword_thrust", "thrust", "lunge", NULL},
-    [CHAR_ANIM_SWORD_PARRY] = {"sword_parry", NULL},
-    [CHAR_ANIM_SWORD_BLOCK] = {"sword_block", NULL},
+    [CHAR_ANIM_SWORD_IDLE] = {"wuxia_sword_idle", "loco_idle_sword", "sword_idle", "idle_sword", NULL},
+    [CHAR_ANIM_SWORD_WALK] = {"wuxia_sword_walk", "sword_walk", "walk_sword", NULL},
+    [CHAR_ANIM_SWORD_RUN] = {"wuxia_sword_run", "sword_run", "run_sword", NULL},
+    [CHAR_ANIM_SWORD_SLASH] = {"wuxia_sword_slash", "sword_slash", "slash", "cleave", "whirlwind", NULL},
+    [CHAR_ANIM_SWORD_THRUST] = {"wuxia_sword_thrust", "sword_thrust", "thrust", "lunge", NULL},
+    [CHAR_ANIM_SWORD_PARRY] = {"wuxia_sword_parry", "sword_parry", NULL},
+    [CHAR_ANIM_SWORD_BLOCK] = {"wuxia_sword_block", "sword_block", NULL},
+    [CHAR_ANIM_SWORD_CAST] = {"wuxia_sword_cast", "sword_cast", NULL},
+    [CHAR_ANIM_SWORD_DODGE] = {"wuxia_sword_dodge", "sword_dodge", NULL},
+    [CHAR_ANIM_SWORD_HIT] = {"wuxia_sword_hit", "sword_hit", NULL},
+    [CHAR_ANIM_SWORD_JUMP_SLASH] = {"wuxia_sword_jump_slash", "sword_jump_slash", NULL},
     [CHAR_ANIM_CAST] = {"cast", "spell", "flourish", NULL},
     [CHAR_ANIM_MEDITATE] = {"meditate", "meditation", "thiendinh", "charge", NULL},
     [CHAR_ANIM_HIT] = {"hit", "hurt", "damage", NULL},
@@ -382,6 +394,14 @@ bool CharacterModel_LoadEx(const char *meshPath, const char *animBankPath)
     {
         AddSlotIndex(CHAR_ANIM_SWORD_IDLE, s_slots[CHAR_ANIM_IDLE].indices[0]);
     }
+    if (s_slots[CHAR_ANIM_SWORD_WALK].count == 0 && s_slots[CHAR_ANIM_WALK].count > 0)
+    {
+        AddSlotIndex(CHAR_ANIM_SWORD_WALK, s_slots[CHAR_ANIM_WALK].indices[0]);
+    }
+    if (s_slots[CHAR_ANIM_SWORD_RUN].count == 0 && s_slots[CHAR_ANIM_RUN].count > 0)
+    {
+        AddSlotIndex(CHAR_ANIM_SWORD_RUN, s_slots[CHAR_ANIM_RUN].indices[0]);
+    }
     if (s_slots[CHAR_ANIM_SWORD_SLASH].count == 0 && s_slots[CHAR_ANIM_PUNCH].count > 0)
     {
         AddSlotIndex(CHAR_ANIM_SWORD_SLASH, s_slots[CHAR_ANIM_PUNCH].indices[0]);
@@ -400,6 +420,22 @@ bool CharacterModel_LoadEx(const char *meshPath, const char *animBankPath)
             AddSlotIndex(CHAR_ANIM_SWORD_PARRY, s_slots[CHAR_ANIM_SWORD_BLOCK].indices[0]);
         else if (s_slots[CHAR_ANIM_PALM].count > 0)
             AddSlotIndex(CHAR_ANIM_SWORD_PARRY, s_slots[CHAR_ANIM_PALM].indices[0]);
+    }
+    if (s_slots[CHAR_ANIM_SWORD_CAST].count == 0 && s_slots[CHAR_ANIM_CAST].count > 0)
+    {
+        AddSlotIndex(CHAR_ANIM_SWORD_CAST, s_slots[CHAR_ANIM_CAST].indices[0]);
+    }
+    if (s_slots[CHAR_ANIM_SWORD_DODGE].count == 0 && s_slots[CHAR_ANIM_DODGE].count > 0)
+    {
+        AddSlotIndex(CHAR_ANIM_SWORD_DODGE, s_slots[CHAR_ANIM_DODGE].indices[0]);
+    }
+    if (s_slots[CHAR_ANIM_SWORD_HIT].count == 0 && s_slots[CHAR_ANIM_HIT].count > 0)
+    {
+        AddSlotIndex(CHAR_ANIM_SWORD_HIT, s_slots[CHAR_ANIM_HIT].indices[0]);
+    }
+    if (s_slots[CHAR_ANIM_SWORD_JUMP_SLASH].count == 0 && s_slots[CHAR_ANIM_SWORD_SLASH].count > 0)
+    {
+        AddSlotIndex(CHAR_ANIM_SWORD_JUMP_SLASH, s_slots[CHAR_ANIM_SWORD_SLASH].indices[0]);
     }
     if (s_slots[CHAR_ANIM_JUMP_DOWN].count == 0 && s_slots[CHAR_ANIM_JUMP].count > 0)
     {
@@ -503,13 +539,15 @@ static void CharacterModel_BeginBlend(CharacterAnimState *state, int oldAnimIdx,
 static CharacterAnimSlot InferSlotForAnimIndex(int animIdx, CharacterAnimSlot fallback)
 {
     static const CharacterAnimSlot kPriorityOrder[] = {
-        CHAR_ANIM_SWORD_SLASH, CHAR_ANIM_SWORD_THRUST, CHAR_ANIM_SWORD_PARRY, CHAR_ANIM_SWORD_BLOCK,
+        CHAR_ANIM_SWORD_JUMP_SLASH, CHAR_ANIM_SWORD_SLASH, CHAR_ANIM_SWORD_THRUST,
+        CHAR_ANIM_SWORD_PARRY, CHAR_ANIM_SWORD_BLOCK, CHAR_ANIM_SWORD_CAST,
+        CHAR_ANIM_SWORD_DODGE, CHAR_ANIM_SWORD_HIT,
         CHAR_ANIM_PUNCH, CHAR_ANIM_KICK, CHAR_ANIM_PALM,
         CHAR_ANIM_PARRY, CHAR_ANIM_BLOCK, CHAR_ANIM_DODGE,
         CHAR_ANIM_HIT, CHAR_ANIM_KNOCKDOWN, CHAR_ANIM_DEATH,
         CHAR_ANIM_CAST, CHAR_ANIM_MEDITATE,
         CHAR_ANIM_JUMP, CHAR_ANIM_JUMP_DOWN, CHAR_ANIM_FALL,
-        CHAR_ANIM_SWORD_IDLE, CHAR_ANIM_RUN, CHAR_ANIM_WALK, CHAR_ANIM_IDLE};
+        CHAR_ANIM_SWORD_RUN, CHAR_ANIM_SWORD_WALK, CHAR_ANIM_SWORD_IDLE, CHAR_ANIM_RUN, CHAR_ANIM_WALK, CHAR_ANIM_IDLE};
     for (int i = 0; i < (int)(sizeof(kPriorityOrder) / sizeof(kPriorityOrder[0])); i++)
     {
         CharacterAnimSlot s = kPriorityOrder[i];
