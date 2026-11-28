@@ -121,6 +121,7 @@
 - Distant volumetric fog starts beyond the camera focus across zoom levels, fades in spatially, and scales beam haze with god-ray intensity; a fixed near-plane cutoff can wash out the player.
 - Before changing a public function's behavior: `grep -r` across `skills/` for callers. Breaking changes must be documented (`core/docs/API.md` etc.) BEFORE landing, per `CLAUDE.md` cross-module rule.
 - No dynamic allocation in core runtime paths — static pools matching existing patterns (`MAX_DECALS`, `MAX_VFX_LIGHTS`, `MAX_DISTORTION_SOURCES`).
+- Place fixed-rate gas fronts at their scheduled event times so catch-up rings keep distinct positions.
 - Skip texture uploads only when quantized bytes and resource identity match; keep simulation running and allocate/release upload snapshots at initialization/unload.
 - Reset GPU timestamp queries outside render passes; report independent windows of available, ordered samples and reject zero spans or host-drained command splits.
 - New modules follow existing Init/Update/Draw/Unload lifecycle shape (see `decal_system.h`, `vfx_light.h`).
@@ -212,3 +213,4 @@
 | 2026-10-03 | Codex | §10.1 Prop lighting spaces | maps/toolkit/prop_lit.c; maps/toolkit/shaders/prop_lit.fs; maps/tests/test_prop_lighting_space.py | Ground-truth |
 | 2026-10-06 | Codex | §10.1 Guide/Wind snapshot ownership | core/motion/motion_fields.c; core/wind/wind_system.h | Ground-truth |
 | 2026-10-06 | Codex | §10.1 Vegetation airflow sampling height | maps/toolkit/map_props_nature.inl; maps/tests/test_nature_local_wind.py | Ground-truth |
+| 2026-11-28 | Codex | §10.1 Gas front scheduling | `vc_gas_shockwave.inl` | Ground-truth |

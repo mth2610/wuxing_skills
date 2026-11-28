@@ -29,10 +29,12 @@ import numpy as np
 
 
 # ==============================================================================
-# 1. EXACT GAME_MIXAMO_20 SKELETON (Matches male_body.glb & humanoid_anims.glb)
+# 1. EXACT GAME_MIXAMO_52 SKELETON (Matches male_body.glb, female_body.glb & humanoid_anims.glb)
+#    Bones 0..19 = GAME_MIXAMO_20 base; 20..34 = LeftHand 5x3 fingers;
+#    35..49 = RightHand 5x3 fingers; 50..51 = Left/Right ToeBase.
 # ==============================================================================
 
-GAME_MIXAMO_20: List[Tuple[int, str, int, Tuple[float, float, float], Tuple[float, float, float, float]]] = [
+GAME_MIXAMO_52: List[Tuple[int, str, int, Tuple[float, float, float], Tuple[float, float, float, float]]] = [
     ( 0, "mixamorig:Hips",           -1, ( 0.00,  0.95, 0.00), ( 0.0,  0.0,  0.0, 1.0)),
     ( 1, "mixamorig:Spine",           0, ( 0.00,  0.13, 0.00), ( 0.0,  0.0,  0.0, 1.0)),
     ( 2, "mixamorig:Spine1",          1, ( 0.00,  0.14, 0.00), ( 0.0,  0.0,  0.0, 1.0)),
@@ -53,11 +55,44 @@ GAME_MIXAMO_20: List[Tuple[int, str, int, Tuple[float, float, float], Tuple[floa
     (17, "mixamorig:RightUpLeg",      0, (-0.10, -0.05, 0.00), (-1.0,  0.0,  0.0, 0.0)),
     (18, "mixamorig:RightLeg",       17, ( 0.00,  0.42, 0.00), ( 0.0,  0.0,  0.0, 1.0)),
     (19, "mixamorig:RightFoot",      18, ( 0.00,  0.40, 0.00), ( 0.0,  0.0,  0.0, 1.0)),
+    (20, "mixamorig:LeftHandThumb1",  9, ( 0.02740,  0.04222,  0.00157), (0.0, 0.0, 0.0, 1.0)),
+    (21, "mixamorig:LeftHandThumb2", 20, ( 0.02201,  0.01280, -0.02331), (0.0, 0.0, 0.0, 1.0)),
+    (22, "mixamorig:LeftHandThumb3", 21, ( 0.02162,  0.02848, -0.02013), (0.0, 0.0, 0.0, 1.0)),
+    (23, "mixamorig:LeftHandIndex1",  9, ( 0.02926,  0.11621,  0.00064), (0.0, 0.0, 0.0, 1.0)),
+    (24, "mixamorig:LeftHandIndex2", 23, ( 0.00220,  0.02796, -0.00791), (0.0, 0.0, 0.0, 1.0)),
+    (25, "mixamorig:LeftHandIndex3", 24, ( 0.00076,  0.02311, -0.01214), (0.0, 0.0, 0.0, 1.0)),
+    (26, "mixamorig:LeftHandMiddle1", 9, ( 0.00000,  0.11551,  0.00567), (0.0, 0.0, 0.0, 1.0)),
+    (27, "mixamorig:LeftHandMiddle2",26, (-0.00509,  0.03546, -0.01246), (0.0, 0.0, 0.0, 1.0)),
+    (28, "mixamorig:LeftHandMiddle3",27, (-0.00218,  0.02782, -0.01312), (0.0, 0.0, 0.0, 1.0)),
+    (29, "mixamorig:LeftHandRing1",   9, (-0.02187,  0.10883,  0.00624), (0.0, 0.0, 0.0, 1.0)),
+    (30, "mixamorig:LeftHandRing2",  29, (-0.00877,  0.03070, -0.00986), (0.0, 0.0, 0.0, 1.0)),
+    (31, "mixamorig:LeftHandRing3",  30, (-0.00498,  0.02495, -0.01151), (0.0, 0.0, 0.0, 1.0)),
+    (32, "mixamorig:LeftHandPinky1",  9, (-0.04268,  0.09797,  0.00064), (0.0, 0.0, 0.0, 1.0)),
+    (33, "mixamorig:LeftHandPinky2", 32, (-0.00796,  0.02083, -0.00892), (0.0, 0.0, 0.0, 1.0)),
+    (34, "mixamorig:LeftHandPinky3", 33, (-0.00464,  0.01424, -0.00908), (0.0, 0.0, 0.0, 1.0)),
+    (35, "mixamorig:RightHandThumb1",13, (-0.02740,  0.04222,  0.00157), (0.0, 0.0, 0.0, 1.0)),
+    (36, "mixamorig:RightHandThumb2",35, (-0.02201,  0.01280, -0.02331), (0.0, 0.0, 0.0, 1.0)),
+    (37, "mixamorig:RightHandThumb3",36, (-0.02162,  0.02848, -0.02013), (0.0, 0.0, 0.0, 1.0)),
+    (38, "mixamorig:RightHandIndex1",13, (-0.02926,  0.11621,  0.00064), (0.0, 0.0, 0.0, 1.0)),
+    (39, "mixamorig:RightHandIndex2",38, (-0.00220,  0.02796, -0.00791), (0.0, 0.0, 0.0, 1.0)),
+    (40, "mixamorig:RightHandIndex3",39, (-0.00076,  0.02311, -0.01214), (0.0, 0.0, 0.0, 1.0)),
+    (41, "mixamorig:RightHandMiddle1",13,( 0.00000,  0.11551,  0.00567), (0.0, 0.0, 0.0, 1.0)),
+    (42, "mixamorig:RightHandMiddle2",41,( 0.00509,  0.03546, -0.01246), (0.0, 0.0, 0.0, 1.0)),
+    (43, "mixamorig:RightHandMiddle3",42,( 0.00218,  0.02782, -0.01312), (0.0, 0.0, 0.0, 1.0)),
+    (44, "mixamorig:RightHandRing1", 13, ( 0.02187,  0.10883,  0.00624), (0.0, 0.0, 0.0, 1.0)),
+    (45, "mixamorig:RightHandRing2", 44, ( 0.00877,  0.03070, -0.00986), (0.0, 0.0, 0.0, 1.0)),
+    (46, "mixamorig:RightHandRing3", 45, ( 0.00498,  0.02495, -0.01151), (0.0, 0.0, 0.0, 1.0)),
+    (47, "mixamorig:RightHandPinky1",13, ( 0.04268,  0.09797,  0.00064), (0.0, 0.0, 0.0, 1.0)),
+    (48, "mixamorig:RightHandPinky2",47, ( 0.00796,  0.02083, -0.00892), (0.0, 0.0, 0.0, 1.0)),
+    (49, "mixamorig:RightHandPinky3",48, ( 0.00464,  0.01424, -0.00908), (0.0, 0.0, 0.0, 1.0)),
+    (50, "mixamorig:LeftToeBase",    16, ( 0.01209,  0.05215, -0.14154), (-0.707107, 0.0, 0.0, 0.707107)),
+    (51, "mixamorig:RightToeBase",   19, (-0.01209,  0.05215, -0.14154), (-0.707107, 0.0, 0.0, 0.707107)),
 ]
 
-BONE_NAMES = [b[1] for b in GAME_MIXAMO_20]
-BONE_IDX = {b[1]: b[0] for b in GAME_MIXAMO_20}
-NUM_BONES = len(GAME_MIXAMO_20)
+GAME_MIXAMO_20 = GAME_MIXAMO_52[:20]
+BONE_NAMES = [b[1] for b in GAME_MIXAMO_52]
+BONE_IDX = {b[1]: b[0] for b in GAME_MIXAMO_52}
+NUM_BONES = len(GAME_MIXAMO_52)
 ANKLE_GROUND_Y = 0.080
 
 # Exact kiem_thuan_thien right-hand socket transform from assets/characters/item_catalog.json
@@ -463,10 +498,18 @@ def solve_pose(spec: PoseSpec, state: Optional[dict] = None) -> Tuple[np.ndarray
         world_R[i_leg] = build_leg_frame(u_sh, k_axis)
         world_R[i_ft] = build_foot_frame(fy_w, ft_pitch, ft_roll)
 
-    # 7. World -> exact GAME_MIXAMO_20 local channel quaternions
+    # 6b. Finger (20..49) & ToeBase (50..51) rest-pose propagation from Hand/Foot
+    for bi in range(20, NUM_BONES):
+        parent = GAME_MIXAMO_52[bi][2]
+        t_loc = np.array(GAME_MIXAMO_52[bi][3], dtype=np.float64)
+        r_loc = quat_to_mat(GAME_MIXAMO_52[bi][4])
+        world_P[bi] = world_P[parent] + world_R[parent] @ t_loc
+        world_R[bi] = world_R[parent] @ r_loc
+
+    # 7. World -> exact GAME_MIXAMO_52 local channel quaternions
     local_quats = np.zeros((NUM_BONES, 4), dtype=np.float64)
     for bi in range(NUM_BONES):
-        parent = GAME_MIXAMO_20[bi][2]
+        parent = GAME_MIXAMO_52[bi][2]
         R_loc = world_R[bi] if parent < 0 else (world_R[parent].T @ world_R[bi])
         local_quats[bi] = mat_to_quat(R_loc)
 
@@ -479,8 +522,8 @@ def fk_from_channels(hips_pos: np.ndarray, local_quats: np.ndarray) -> Tuple[np.
     wP[0] = hips_pos
     wR[0] = quat_to_mat(local_quats[0])
     for bi in range(1, NUM_BONES):
-        p = GAME_MIXAMO_20[bi][2]
-        wP[bi] = wP[p] + wR[p] @ np.array(GAME_MIXAMO_20[bi][3], dtype=np.float64)
+        p = GAME_MIXAMO_52[bi][2]
+        wP[bi] = wP[p] + wR[p] @ np.array(GAME_MIXAMO_52[bi][3], dtype=np.float64)
         wR[bi] = wR[p] @ quat_to_mat(local_quats[bi])
     return wP, wR
 
@@ -873,12 +916,12 @@ def _encode_clip_into_gltf(d: dict, data: bytearray, clip: AnimationClip, name_t
 
 def export_standalone_glb(clips: Sequence[AnimationClip], out_path: Path) -> None:
     children_map: Dict[int, List[int]] = {i: [] for i in range(NUM_BONES)}
-    for idx, _nm, parent, _t, _r in GAME_MIXAMO_20:
+    for idx, _nm, parent, _t, _r in GAME_MIXAMO_52:
         if parent >= 0:
             children_map[parent].append(idx)
 
     nodes = []
-    for idx, nm, _p, t, r in GAME_MIXAMO_20:
+    for idx, nm, _p, t, r in GAME_MIXAMO_52:
         nd = {"name": nm, "translation": list(t), "rotation": list(r)}
         if children_map[idx]:
             nd["children"] = children_map[idx]
@@ -886,23 +929,48 @@ def export_standalone_glb(clips: Sequence[AnimationClip], out_path: Path) -> Non
     nodes.append({"name": "Humanoid_Armature", "children": [0]})
 
     d = {
-        "asset": {"version": "2.0", "generator": "WuxingSkills rig_core.py (C2-Spline GAME_MIXAMO_20)"},
+        "asset": {"version": "2.0", "generator": "WuxingSkills rig_core.py (C2-Spline GAME_MIXAMO_52)"},
         "scene": 0,
         "scenes": [{"name": "Scene", "nodes": [NUM_BONES]}],
         "nodes": nodes,
-        "skins": [{"name": "GAME_MIXAMO_20", "joints": list(range(NUM_BONES)), "skeleton": 0}],
+        "skins": [{"name": "GAME_MIXAMO_52", "joints": list(range(NUM_BONES)), "skeleton": 0}],
         "animations": [],
         "accessors": [],
         "bufferViews": [],
         "buffers": [{"byteLength": 0}],
     }
     data = bytearray()
-    name_to_node = {b[1]: b[0] for b in GAME_MIXAMO_20}
+    name_to_node = {b[1]: b[0] for b in GAME_MIXAMO_52}
     for clip in clips:
         d["animations"].append(_encode_clip_into_gltf(d, data, clip, name_to_node))
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_bytes(_pack_glb(d, data))
+
+
+def upgrade_bank_skeleton_52(d: dict) -> dict:
+    """Ensure a glTF animation bank contains all 52 GAME_MIXAMO_52 joint nodes and skin entries."""
+    name_to_node = {n.get("name", ""): i for i, n in enumerate(d["nodes"])}
+    added_nodes = []
+    for _idx, nm, par_idx, t, r in GAME_MIXAMO_52:
+        if nm in name_to_node:
+            continue
+        par_name = GAME_MIXAMO_52[par_idx][1]
+        par_node_idx = name_to_node[par_name]
+        new_node_idx = len(d["nodes"])
+        nd = {"name": nm, "translation": list(t)}
+        if list(r) != [0.0, 0.0, 0.0, 1.0]:
+            nd["rotation"] = list(r)
+        d["nodes"].append(nd)
+        d["nodes"][par_node_idx].setdefault("children", []).append(new_node_idx)
+        name_to_node[nm] = new_node_idx
+        added_nodes.append(new_node_idx)
+    if added_nodes and d.get("skins"):
+        joints = d["skins"][0].setdefault("joints", [])
+        for ni in added_nodes:
+            if ni not in joints:
+                joints.append(ni)
+    return name_to_node
 
 
 def merge_clips_into_bank(bank_path: Path, clips: Sequence[AnimationClip]) -> Tuple[int, int, int]:
@@ -913,7 +981,7 @@ def merge_clips_into_bank(bank_path: Path, clips: Sequence[AnimationClip]) -> Tu
     bin_len = struct.unpack_from("<I", raw, 20 + jl)[0]
     data = bytearray(raw[bin_off:bin_off + bin_len])
 
-    name_to_node = {n.get("name", ""): i for i, n in enumerate(d["nodes"])}
+    name_to_node = upgrade_bank_skeleton_52(d)
     missing = [bn for bn in BONE_NAMES if bn not in name_to_node]
     if missing:
         raise RuntimeError(f"Animation bank {bank_path} is missing bones: {missing}")

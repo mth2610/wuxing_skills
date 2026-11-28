@@ -43,6 +43,8 @@ typedef struct GasVolumeDesc {
     float detailStrength;
     float shadowStrength;
     float backgroundAdapt;
+    /* 0..1 non-emissive body retained as fire or energy cools. */
+    float residualSmoke;
 } GasVolumeDesc;
 
 typedef struct GasInjection {
@@ -84,6 +86,8 @@ GasVolumeHandle GasVolume_Create(const GasVolumeDesc *desc);
 void GasVolume_Destroy(GasVolumeHandle handle);
 bool GasVolume_IsAlive(GasVolumeHandle handle);
 void GasVolume_Inject(GasVolumeHandle handle, const GasInjection *injection);
+/* Fade optical depth without changing the simulated field or its lifetime. */
+void GasVolume_SetVisibility(GasVolumeHandle handle, float visibility);
 
 /* Engine lifecycle and screen-space compositor hooks. */
 void GasSystem_Init(int width, int height);

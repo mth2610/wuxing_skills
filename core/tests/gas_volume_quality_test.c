@@ -381,6 +381,13 @@ static int TestBackgroundAdaptiveOptics(void) {
     CHECK(AdaptEmission(2, 0.0f, bright) <= 0.43f);
     CHECK(AdaptEmission(1, 1.0f, bright) <= 0.50f);
     CHECK(AdaptEmission(2, 1.0f, bright) <= 0.68f);
+
+    const float residualSmoke = 0.52f;
+    float wakeEmissionScale = 1.0f - 0.92f * SmoothStep(0.0f, 0.56f, residualSmoke);
+    float wakeExtinction = 1.0f + 0.85f * residualSmoke;
+    CHECK(wakeEmissionScale > 0.0f && wakeEmissionScale < 0.15f);
+    CHECK(wakeExtinction > 1.4f);
+    CHECK(1.0f - 0.92f * SmoothStep(0.0f, 0.56f, 0.0f) == 1.0f);
     return 0;
 }
 
@@ -425,7 +432,8 @@ static int TestShaderContract(void) {
     CHECK(strstr(shader, "smoothstep(0.22, 0.88, backgroundLuma)") != NULL);
     CHECK(strstr(shader, "mix(0.78, 1.38, smoothstep(0.08, 0.52, density))") != NULL);
     CHECK(strstr(shader, "const vec3 GAS_BRIGHT_EXTINCTION_GAIN = vec3(1.85, 1.15, 1.00)") != NULL);
-    CHECK(strstr(shader, "density *= mix(1.0, brightExtinctionGain, backgroundAdapt)") != NULL);
+    CHECK(strstr(shader, "brightExtinctionGain = mix(1.0, wakeExtinction, backgroundAdapt)") != NULL);
+    CHECK(strstr(shader, "density *= brightExtinctionGain") != NULL);
     CHECK(strstr(shader, "const vec3 GAS_BRIGHT_BODY_GAIN = vec3(0.72, 0.78, 0.66)") != NULL);
     CHECK(strstr(shader, "float broadEmissionGain") != NULL);
     CHECK(strstr(shader, "float energyCoreWeight") != NULL);
@@ -434,6 +442,11 @@ static int TestShaderContract(void) {
     CHECK(strstr(shader, "accumulatedCoreRadiance += transmittance * densityAlpha * energyCoreWeight") != NULL);
     CHECK(strstr(shader, "energyBloomColor * resolvedCoreRadiance * 5.00") != NULL);
     CHECK(strstr(shader, "bodyLight = max(softLight, 0.62)") != NULL);
+    CHECK(strstr(shader, "if (rawDensity == 0.0) continue") != NULL);
+    CHECK(strstr(shader, "bodyOpacity = max(bodyOpacity, coolSmoke)") != NULL);
+    CHECK(strstr(shader, "wakeExtinction = materialExtinction * (1.0 + 0.85 * u_residualSmoke)") != NULL);
+    CHECK(strstr(shader, "wakeEmissionScale = 1.0 - 0.92 * smoothstep(0.0, 0.56, u_residualSmoke)") != NULL);
+    CHECK(strstr(shader, "brightEmissionScale * wakeEmissionScale") != NULL);
     CHECK(CountSubstring(shader, "texture(u_bgLuma") == 1);
     CHECK(strstr(shader, "if (u_kind == 1)") != NULL);
     free(shader);
@@ -446,6 +459,8 @@ static int TestShaderContract(void) {
     CHECK(strstr(host, "SceneTargets_GetBackgroundLuma()") != NULL);
     CHECK(strstr(host, "Tuning_RegisterFloat(\"gas_bg_adapt\"") != NULL);
     CHECK(strstr(host, "GasOpticalControls_Resolve") != NULL);
+    CHECK(strstr(host, "s_locations.residualSmoke,") != NULL);
+    CHECK(strstr(host, "float densityScale = s_desc.densityScale * s_visibility") != NULL);
     CHECK(strstr(host, "desc.reactionDissipation = 0.95f") != NULL);
     CHECK(strstr(host, "desc.bodyColor = (Color){214, 218, 224, 255}") != NULL);
     free(host);

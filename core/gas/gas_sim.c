@@ -20,68 +20,24 @@ static float GasSim_Clamp01(float value) {
     return value;
 }
 
-static float GasSim_Sample(const GasSim *sim, const float *field,
-                           float x, float y, float z) {
-    x = fmaxf(0.0f, fminf(x, (float)(sim->width - 1)));
-    y = fmaxf(0.0f, fminf(y, (float)(sim->height - 1)));
-    z = fmaxf(0.0f, fminf(z, (float)(sim->depth - 1)));
-
-    int x0 = (int)floorf(x);
-    int y0 = (int)floorf(y);
-    int z0 = (int)floorf(z);
-    int x1 = GasSim_ClampInt(x0 + 1, 0, sim->width - 1);
-    int y1 = GasSim_ClampInt(y0 + 1, 0, sim->height - 1);
-    int z1 = GasSim_ClampInt(z0 + 1, 0, sim->depth - 1);
-    float tx = x - (float)x0;
-    float ty = y - (float)y0;
-    float tz = z - (float)z0;
-
-    float c000 = field[GasSim_Index(sim, x0, y0, z0)];
-    float c100 = field[GasSim_Index(sim, x1, y0, z0)];
-    float c010 = field[GasSim_Index(sim, x0, y1, z0)];
-    float c110 = field[GasSim_Index(sim, x1, y1, z0)];
-    float c001 = field[GasSim_Index(sim, x0, y0, z1)];
-    float c101 = field[GasSim_Index(sim, x1, y0, z1)];
-    float c011 = field[GasSim_Index(sim, x0, y1, z1)];
-    float c111 = field[GasSim_Index(sim, x1, y1, z1)];
-    float c00 = c000 + (c100 - c000) * tx;
-    float c10 = c010 + (c110 - c010) * tx;
-    float c01 = c001 + (c101 - c001) * tx;
-    float c11 = c011 + (c111 - c011) * tx;
-    float c0 = c00 + (c10 - c00) * ty;
-    float c1 = c01 + (c11 - c01) * ty;
-    return c0 + (c1 - c0) * tz;
-}
-
 static void GasSim_ClearBoundary(const GasSim *sim, float *field) {
-    for (int z = 0; z < sim->depth; ++z) {
-        for (int y = 0; y < sim->height; ++y) {
-            for (int x = 0; x < sim->width; ++x) {
-                if (x == 0 || y == 0 || z == 0 ||
-                    x == sim->width - 1 || y == sim->height - 1 ||
-                    z == sim->depth - 1) {
-                    field[GasSim_Index(sim, x, y, z)] = 0.0f;
-                }
-            }
+    int width = sim->width;
+    int height = sim->height;
+    int strideZ = width * height;
+    size_t rowBytes = (size_t)width * sizeof(float);
+    size_t planeBytes = (size_t)strideZ * sizeof(float);
+    memset(field, 0, planeBytes);
+    memset(field + sim->cellCount - strideZ, 0, planeBytes);
+    for (int z = 1; z < sim->depth - 1; ++z) {
+        float *plane = field + z * strideZ;
+        memset(plane, 0, rowBytes);
+        memset(plane + strideZ - width, 0, rowBytes);
+        for (int y = 1; y < height - 1; ++y) {
+            float *row = plane + y * width;
+            row[0] = 0.0f;
+            row[width - 1] = 0.0f;
         }
     }
-}
-
-static void GasSim_Advect(const GasSim *sim, const float *source, float *target,
-                          float dt, float dissipation) {
-    float decay = expf(-fmaxf(0.0f, dissipation) * dt);
-    for (int z = 0; z < sim->depth; ++z) {
-        for (int y = 0; y < sim->height; ++y) {
-            for (int x = 0; x < sim->width; ++x) {
-                int i = GasSim_Index(sim, x, y, z);
-                float px = (float)x - sim->velocityX[i] * dt;
-                float py = (float)y - sim->velocityY[i] * dt;
-                float pz = (float)z - sim->velocityZ[i] * dt;
-                target[i] = GasSim_Sample(sim, source, px, py, pz) * decay;
-            }
-        }
-    }
-    GasSim_ClearBoundary(sim, target);
 }
 
 static void GasSim_Advect3(const GasSim *sim,
@@ -98,12 +54,12 @@ static void GasSim_Advect3(const GasSim *sim,
     int strideY = sim->width;
     int strideZ = sim->width * sim->height;
 
-    for (int z = 0; z < sim->depth; ++z) {
+    for (int z = 1; z < sim->depth - 1; ++z) {
         int zOffset = z * strideZ;
-        for (int y = 0; y < sim->height; ++y) {
+        for (int y = 1; y < sim->height - 1; ++y) {
             int rowOffset = zOffset + y * strideY;
-            int i = rowOffset;
-            for (int x = 0; x < sim->width; ++x, ++i) {
+            int i = rowOffset + 1;
+            for (int x = 1; x < sim->width - 1; ++x, ++i) {
                 float px = (float)x - sim->velocityX[i] * dt;
                 float py = (float)y - sim->velocityY[i] * dt;
                 float pz = (float)z - sim->velocityZ[i] * dt;
@@ -112,9 +68,10 @@ static void GasSim_Advect3(const GasSim *sim,
                 py = fmaxf(0.0f, fminf(py, maxY));
                 pz = fmaxf(0.0f, fminf(pz, maxZ));
 
-                int x0 = (int)floorf(px);
-                int y0 = (int)floorf(py);
-                int z0 = (int)floorf(pz);
+                /* Coordinates are nonnegative after clamping. */
+                int x0 = (int)px;
+                int y0 = (int)py;
+                int z0 = (int)pz;
                 int x1 = GasSim_ClampInt(x0 + 1, 0, sim->width - 1);
                 int y1 = GasSim_ClampInt(y0 + 1, 0, sim->height - 1);
                 int z1 = GasSim_ClampInt(z0 + 1, 0, sim->depth - 1);

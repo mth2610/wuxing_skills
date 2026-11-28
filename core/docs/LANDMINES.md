@@ -4503,3 +4503,12 @@ a silhouette that has no thin edge.
 - The cost is in the noise on the orb fixture (28 blobs, min-of-3 pairs: 9.84/9.81/7.76 ms before vs
   9.79/8.41/8.71 ms after), because `activeCount` per pixel is only the handful of blobs the ray crosses.
   Verify with an interleaved A/B before assuming the extra loop needs a lower quality tier.
+
+## A gas front must be placed at its scheduled ring time (28/11/2026)
+
+- **Symptom.** Catch-up rings pile onto one radius after a slow frame.
+- **Cause.** The rate accumulator emits multiple rings using the same
+  frame-end position and intensity envelope.
+- **Rule.** Place each ring using its own scheduled timestamp. Cap catch-up
+  work and discard the oldest overdue rings when needed.
+  Source `core/composition/common/vc_gas_shockwave.inl`.

@@ -133,7 +133,7 @@
       "lifecycle": "event",
       "_auto": true,
       "type": "oneshot",
-      "trigger_call": "VFX_ComposeGasShockwave($POS, VC_MAT_VOID, NULL)"
+      "trigger_call": "VFXTest_FireGasShockwave($POS)"
     },
     {
       "source": "common/vc_gas_vortex.inl",

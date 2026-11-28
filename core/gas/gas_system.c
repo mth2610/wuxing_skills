@@ -11,6 +11,7 @@
 #include "raymath.h"
 #include "rlgl.h"
 
+#include <limits.h>
 #include <math.h>
 #include <stddef.h>
 #include <stdlib.h>
@@ -45,6 +46,7 @@ typedef struct GasShaderLocations {
     int bgAdapt;
     int detailStrength;
     int shadowStrength;
+    int residualSmoke;
 } GasShaderLocations;
 
 static GasSim s_sim;
@@ -56,6 +58,9 @@ static float s_lifetime;
 static float s_accumulator;
 static bool s_initialized;
 static bool s_atlasDirty;
+static bool s_densityDirty;
+static float s_totalDensity;
+static float s_visibility;
 static bool s_prepared;
 static unsigned char s_atlasPixels[GAS_ATLAS_MAX_WIDTH * GAS_ATLAS_MAX_HEIGHT * 4];
 static Texture2D s_atlas;
@@ -142,6 +147,7 @@ static void GasSystem_CacheLocations(void) {
     s_locations.bgAdapt = GetShaderLocation(s_raymarchShader, "u_bgAdapt");
     s_locations.detailStrength = GetShaderLocation(s_raymarchShader, "u_detailStrength");
     s_locations.shadowStrength = GetShaderLocation(s_raymarchShader, "u_shadowStrength");
+    s_locations.residualSmoke = GetShaderLocation(s_raymarchShader, "u_residualSmoke");
 }
 
 static void GasSystem_RebuildProfile(int requestedTier) {
@@ -173,6 +179,8 @@ static void GasSystem_RebuildProfile(int requestedTier) {
     s_denoiseTarget = GasSystem_LoadColorTarget(s_profile.targetWidth,
                                                 s_profile.targetHeight, format);
     s_atlasDirty = false;
+    s_densityDirty = false;
+    s_totalDensity = 0.0f;
     s_prepared = false;
     s_accumulator = 0.0f;
     GasSystem_ResetPerfStats();
@@ -208,7 +216,7 @@ static void GasSystem_ReconfigureIfIdle(void) {
 
 static unsigned int GasSystem_UploadAtlas(void) {
     if (!s_atlasDirty || !s_atlas.id) return 0;
-    memset(s_atlasPixels, 0, s_profile.atlasBytes);
+    /* Populated tiles are overwritten here. Unused tiles stay zeroed by RebuildProfile. */
     for (int z = 0; z < s_sim.depth; ++z) {
         int tileX = z % s_profile.atlasTilesX;
         int tileY = z / s_profile.atlasTilesX;
@@ -332,9 +340,12 @@ GasVolumeHandle GasVolume_Create(const GasVolumeDesc *desc) {
     s_config.temperatureDissipation = s_desc.temperatureDissipation;
     s_config.reactionDissipation = s_desc.reactionDissipation;
     GasSim_Clear(&s_sim);
-    s_handle = s_nextHandle++;
-    if (s_nextHandle <= 0) s_nextHandle = 1;
+    s_handle = s_nextHandle;
+    s_nextHandle = s_nextHandle < INT_MAX ? s_nextHandle + 1 : 1;
     s_atlasDirty = true;
+    s_densityDirty = false;
+    s_totalDensity = 0.0f;
+    s_visibility = 1.0f;
     s_prepared = false;
     return s_handle;
 }
@@ -344,7 +355,9 @@ void GasVolume_Destroy(GasVolumeHandle handle) {
     s_handle = GAS_VOLUME_INVALID;
     s_lifetime = 0.0f;
     s_prepared = false;
-    GasSim_Clear(&s_sim);
+    s_densityDirty = false;
+    s_totalDensity = 0.0f;
+    /* The next admitted volume clears the grid before injection. */
 }
 
 static void GasSystem_DenoiseRaymarch(Texture2D sceneDepth, int hasDepth,
@@ -384,6 +397,11 @@ bool GasVolume_IsAlive(GasVolumeHandle handle) {
     return handle != GAS_VOLUME_INVALID && handle == s_handle && s_lifetime > 0.0f;
 }
 
+void GasVolume_SetVisibility(GasVolumeHandle handle, float visibility) {
+    if (GasVolume_IsAlive(handle))
+        s_visibility = fminf(1.0f, fmaxf(0.0f, visibility));
+}
+
 void GasVolume_Inject(GasVolumeHandle handle, const GasInjection *injection) {
     if (!GasVolume_IsAlive(handle) || injection == NULL || injection->radius <= 0.0f)
         return;
@@ -402,6 +420,15 @@ void GasVolume_Inject(GasVolumeHandle handle, const GasInjection *injection) {
     source.reaction = injection->reaction;
     GasSim_InjectSphere(&s_sim, source);
     s_atlasDirty = true;
+    s_densityDirty = true;
+}
+
+static float GasSystem_TotalDensity(void) {
+    if (s_densityDirty) {
+        s_totalDensity = GasSim_GetTotalDensity(&s_sim);
+        s_densityDirty = false;
+    }
+    return s_totalDensity;
 }
 
 void GasSystem_Update(float dt) {
@@ -425,10 +452,11 @@ void GasSystem_Update(float dt) {
         s_accumulator -= s_profile.fixedStep;
         ++substeps;
         s_atlasDirty = true;
+        s_densityDirty = true;
     }
     if (substeps == GAS_MAX_SUBSTEPS && s_accumulator > s_profile.fixedStep)
         s_accumulator = s_profile.fixedStep;
-    if (GasSim_GetTotalDensity(&s_sim) < 0.001f && s_lifetime < s_desc.lifetime * 0.5f)
+    if (s_lifetime < s_desc.lifetime * 0.5f && GasSystem_TotalDensity() < 0.001f)
         GasVolume_Destroy(s_handle);
     s_perfFrame.simSubsteps = substeps;
     s_perfFrame.updateCpuMs = (float)((GetTime() - updateStart) * 1000.0);
@@ -436,7 +464,7 @@ void GasSystem_Update(float dt) {
 
 bool GasSystem_HasPending(void) {
     return s_initialized && s_handle != GAS_VOLUME_INVALID &&
-           GasSim_GetTotalDensity(&s_sim) > 0.001f;
+           s_visibility > 0.0f && GasSystem_TotalDensity() > 0.001f;
 }
 
 void GasSystem_Prepare(Camera3D camera) {
@@ -479,6 +507,8 @@ void GasSystem_Prepare(Camera3D camera) {
     float bgAdapt = fmaxf(0.0f, fminf(s_bgAdapt, 1.0f)) *
                     s_optics.backgroundAdapt;
     int steps = s_profile.raymarchSteps;
+    float densityScale = s_desc.densityScale * s_visibility;
+    float residualSmoke = fminf(1.0f, fmaxf(0.0f, s_desc.residualSmoke));
 
     BeginTextureMode(s_raymarchTarget);
     ClearBackground(BLANK);
@@ -495,7 +525,7 @@ void GasSystem_Prepare(Camera3D camera) {
     SetShaderValue(s_raymarchShader, s_locations.volumeMin, &volumeMin, SHADER_UNIFORM_VEC3);
     SetShaderValue(s_raymarchShader, s_locations.volumeMax, &volumeMax, SHADER_UNIFORM_VEC3);
     SetShaderValue(s_raymarchShader, s_locations.steps, &steps, SHADER_UNIFORM_INT);
-    SetShaderValue(s_raymarchShader, s_locations.densityScale, &s_desc.densityScale, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(s_raymarchShader, s_locations.densityScale, &densityScale, SHADER_UNIFORM_FLOAT);
     SetShaderValue(s_raymarchShader, s_locations.bodyColor, &bodyColor, SHADER_UNIFORM_VEC3);
     SetShaderValue(s_raymarchShader, s_locations.emissionColor, &emissionColor, SHADER_UNIFORM_VEC3);
     SetShaderValue(s_raymarchShader, s_locations.emissionGain, &s_desc.emissionGain, SHADER_UNIFORM_FLOAT);
@@ -507,6 +537,8 @@ void GasSystem_Prepare(Camera3D camera) {
                    &s_optics.detailStrength, SHADER_UNIFORM_FLOAT);
     SetShaderValue(s_raymarchShader, s_locations.shadowStrength,
                    &s_optics.shadowStrength, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(s_raymarchShader, s_locations.residualSmoke,
+                   &residualSmoke, SHADER_UNIFORM_FLOAT);
     if (hasBgLuma)
         SetShaderValueTexture(s_raymarchShader, s_locations.bgLuma, bgLuma);
     if (hasDepth)

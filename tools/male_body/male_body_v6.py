@@ -216,14 +216,13 @@ def _build_relaxed_hand_deltas(src):
     S = lambda k: src.matrix(sn[k])[:3, 3].copy()
     deltas = np.tile(np.eye(4, dtype=float), (len(ss['joints']), 1, 1))
 
-    # Default closed martial-arts / sword-grip fist: (adduct_deg_toward_pinky, mcp_curl, pip_curl, dip_curl)
-    # Uses a consistent planar hinge axis (flex1_ax) across MCP/PIP/DIP so fingers curl cleanly into
-    # the palm without gimbal-collapse, and opposes the thumb directly toward the middle-finger knuckle.
+    # Standard Mixamo flat/open T-pose hand: gentle adduction to align fingers parallel, 0 deg curl
+    # so 52-bone Mixamo animations control fists, sword grips, and open palms without double-curling.
     finger_specs = {
-        2: ( +5.0, 76.0, 88.0, 56.0),  # Index: tight planar fist curl
-        3: (  0.0, 80.0, 92.0, 58.0),  # Middle: tight planar fist curl
-        4: ( -3.0, 84.0, 94.0, 60.0),  # Ring: tight planar fist curl
-        5: ( -5.5, 86.0, 96.0, 62.0),  # Pinky: tightest planar fist curl
+        2: ( +4.0,  0.0,  0.0,  0.0),  # Index: open straight
+        3: (  0.0,  0.0,  0.0,  0.0),  # Middle: open straight
+        4: ( -2.5,  0.0,  0.0,  0.0),  # Ring: open straight
+        5: ( -4.5,  0.0,  0.0,  0.0),  # Pinky: open straight
     }
 
     for side, s in (('L', 1.0), ('R', -1.0)):
@@ -270,37 +269,7 @@ def _build_relaxed_hand_deltas(src):
             deltas[joint_idx[b2]] = D2
             deltas[joint_idx[b3]] = D3
 
-        # Thumb (k=1): oppose cleanly inward across the curled index/middle knuckles!
-        b1, b2, b3 = f'finger1-1.{side}', f'finger1-2.{side}', f'finger1-3.{side}'
-        if b1 in joint_idx and b2 in joint_idx and b3 in joint_idx:
-            p1, p2, p3 = S(b1), S(b2), S(b3)
-            u1 = p2 - p1
-            u1 /= max(np.linalg.norm(u1), 1e-12)
-            # Target direction: toward curled middle-finger PIP area (in front of f3 along palm_n)
-            target_dir = (f3 + palm_n * 0.032 + d3 * 0.018) - p1
-            target_dir /= max(np.linalg.norm(target_dir), 1e-12)
-            opp_ax = np.cross(u1, target_dir)
-            if np.linalg.norm(opp_ax) > 1e-6:
-                opp_ax /= np.linalg.norm(opp_ax)
-                ang_opp = float(np.arccos(np.clip(np.dot(u1, target_dir), -1.0, 1.0))) * 0.68
-            else:
-                opp_ax = flex_ax
-                ang_opp = 0.0
-            R1 = _rot_axis_angle(opp_ax, ang_opp)
-            D1 = _rigid_delta(R1, p1, p1)
-
-            # Bend thumb MCP/IP snugly around the curled index finger
-            p2_new = (D1[:3, :3] @ p2) + D1[:3, 3]
-            R2 = _rot_axis_angle(opp_ax, np.radians(34.0)) @ R1
-            D2 = _rigid_delta(R2, p2, p2_new)
-
-            p3_new = (D2[:3, :3] @ p3) + D2[:3, 3]
-            R3 = _rot_axis_angle(opp_ax, np.radians(38.0)) @ R2
-            D3 = _rigid_delta(R3, p3, p3_new)
-
-            deltas[joint_idx[b1]] = D1
-            deltas[joint_idx[b2]] = D2
-            deltas[joint_idx[b3]] = D3
+        # Thumb (k=1): keep natural open Mixamo T-pose (0 deg curl; animations drive grip/opposition)
     return deltas
 
 
@@ -1493,9 +1462,70 @@ def export_game_tpose_20(sculpted_glb_path, dst_glb_path, source_bytes):
     name_to_new = {name: i for i, (name, _, _, _) in enumerate(GAME_MIXAMO_20)}
     old_to_new = np.array([name_to_new.get(g.d['nodes'][j]['name'], 0) for j in old_joints], dtype=int)
 
+    # ---------- 52-Bone Standard Mixamo Extension (30 Fingers + 2 ToeBases) ----------
+    # Bones 0..19: exact GAME_MIXAMO_20; 20..34: LeftHand 5x3 fingers; 35..49: RightHand 5x3 fingers; 50..51: ToeBases
+    FINGER_ORDER = [
+        ('1', 'Thumb'),
+        ('2', 'Index'),
+        ('3', 'Middle'),
+        ('4', 'Ring'),
+        ('5', 'Pinky'),
+    ]
+    EXTRA_BONES = []  # list of (name, parent_idx, src_bone_names_list, parent_base20_idx, side_sign)
+    for side_s, side_name, hand_idx, s_sign in [('L', 'Left', 9, 1.0), ('R', 'Right', 13, -1.0)]:
+        for f_num, f_name in FINGER_ORDER:
+            par_i = hand_idx
+            for phal in (1, 2, 3):
+                idx_52 = 20 + len(EXTRA_BONES)
+                EXTRA_BONES.append((
+                    f'mixamorig:{side_name}Hand{f_name}{phal}',
+                    par_i,
+                    [f'finger{f_num}-{phal}.{side_s}'],
+                    hand_idx,
+                    s_sign,
+                ))
+                par_i = idx_52
+    for side_s, side_name, foot_idx, s_sign in [('L', 'Left', 16, 1.0), ('R', 'Right', 19, -1.0)]:
+        toe_src_names = [
+            f'toe{t}-{p}.{side_s}'
+            for t in range(1, 6)
+            for p in range(1, 4 if t > 1 else 3)
+        ]
+        EXTRA_BONES.append((
+            f'mixamorig:{side_name}ToeBase',
+            foot_idx,
+            toe_src_names,
+            foot_idx,
+            s_sign,
+        ))
+    NUM_BONES_52 = 20 + len(EXTRA_BONES)  # 52
+
+    # Build source 163-joint -> 52-bone mapping for fingers and toes
+    src_skin_joints = src_raw.d['skins'][0]['joints']
+    src_name_to_52 = {}
+    for eb_off, (_, _, src_list, _, _) in enumerate(EXTRA_BONES):
+        for s_nm in src_list:
+            src_name_to_52[s_nm] = 20 + eb_off
+    # Palm / wrist / metacarpals stay on Hand (9 or 13); foot stays on Foot (16 or 19)
+    for side_s, hand_idx, foot_idx in [('L', 9, 16), ('R', 13, 19)]:
+        src_name_to_52[f'wrist.{side_s}'] = hand_idx
+        for m_i in range(1, 5):
+            src_name_to_52[f'metacarpal{m_i}.{side_s}'] = hand_idx
+        src_name_to_52[f'foot.{side_s}'] = foot_idx
+
+    src_joint_to_52 = np.full(len(src_skin_joints), -1, dtype=int)
+    for sj_i, node_idx in enumerate(src_skin_joints):
+        nm = src_raw.d['nodes'][node_idx].get('name', '')
+        if nm in src_name_to_52:
+            src_joint_to_52[sj_i] = src_name_to_52[nm]
+
+    # Collect per-primitive source weights for prim 0..5 (1-to-1 vertex correspondence with src_raw mesh 0)
+    src_mesh0_prims = src_raw.d['meshes'][0]['primitives']
+    src_finger_deltas = _build_relaxed_hand_deltas(src_raw)
+
     deformed_prims = []
     min_y = 1e9
-    for p in g.d['meshes'][0]['primitives']:
+    for pi, p in enumerate(g.d['meshes'][0]['primitives']):
         at = p['attributes']
         v_unscaled = (g.read(at['POSITION']).astype(float) - np.array([0.0, 0.0, -0.025])) / 0.92
         n_orig = g.read(at['NORMAL']).astype(float)
@@ -1622,11 +1652,66 @@ def export_game_tpose_20(sculpted_glb_path, dst_glb_path, source_bytes):
         if p['material'] not in (3, 5, 6):
             n_tpose = _recompute_normals_split_safe(v_tpose, v_unscaled, n_orig, faces)
 
+        # Expand W20 -> W52 by splitting Hand (9,13) and Foot (16,19) weights using exact source MakeHuman finger/toe weights
+        W52 = np.zeros((len(v_unscaled), NUM_BONES_52), dtype=float)
+        W52[:, :20] = W20
+        v_src_tpose_ref = None
+        if pi < len(src_mesh0_prims):
+            sp = src_mesh0_prims[pi]
+            sv_raw = src_raw.read(sp['attributes']['POSITION']).astype(float)
+            if len(sv_raw) == len(v_unscaled):
+                sj_raw = src_raw.read(sp['attributes']['JOINTS_0']).astype(int)
+                sw_raw = src_raw.read(sp['attributes']['WEIGHTS_0'], True).astype(float)
+                sw_raw /= np.maximum(sw_raw.sum(axis=1, keepdims=True), 1e-12)
+                W_src_hf = np.zeros((len(v_unscaled), NUM_BONES_52), dtype=float)
+                for c in range(4):
+                    mapped = src_joint_to_52[sj_raw[:, c]]
+                    valid = mapped >= 0
+                    if np.any(valid):
+                        np.add.at(W_src_hf, (rows[valid], mapped[valid]), sw_raw[valid, c])
+
+                # Split LeftHand(9), RightHand(13), LeftFoot(16), RightFoot(19) proportionally
+                split_groups = [
+                    (9,  [9]  + list(range(20, 35))),
+                    (13, [13] + list(range(35, 50))),
+                    (16, [16, 50]),
+                    (19, [19, 51]),
+                ]
+                for base_b, grp in split_groups:
+                    grp_sum = W_src_hf[:, grp].sum(axis=1)
+                    mask = (W20[:, base_b] > 1e-6) & (grp_sum > 1e-6)
+                    if np.any(mask):
+                        scale_f = W20[mask, base_b] / grp_sum[mask]
+                        W52[mask, base_b] = 0.0
+                        for gb in grp:
+                            W52[mask, gb] += W_src_hf[mask, gb] * scale_f
+                W52 /= np.maximum(W52.sum(axis=1, keepdims=True), 1e-12)
+
+                if pi == 0:
+                    # Reference un-sculpted T-pose vertex positions (for exact male/female finger & toe pivot tracking)
+                    sn_raw = src_raw.read(sp['attributes']['NORMAL']).astype(float)
+                    sv_rel, _ = _dqs_skin(sv_raw, sn_raw, sj_raw, sw_raw, src_finger_deltas)
+                    sv_pre = sv_rel.copy()
+                    for _, s_f, fa_src_f, _, fa_ax_f, len_s_f, len_d_f in forearm_fits:
+                        b_fa_f = 8 if s_f > 0 else 12
+                        b_ha_f = 9 if s_f > 0 else 13
+                        w_df = W20[:, b_fa_f] + W20[:, b_ha_f]
+                        t_faf = ((sv_rel - fa_src_f) @ fa_ax_f) / max(len_s_f, 1e-12)
+                        sv_pre += ((len_d_f - len_s_f) * _smooth(0.06, 0.94, t_faf) * w_df)[:, None] * fa_ax_f[None, :]
+                    v_src_tpose_ref, _ = _dqs_skin(sv_pre, sn_raw, j_new, w_new, delta_mats)
+
+        j52 = np.argsort(-W52, axis=1)[:, :4]
+        w52 = np.take_along_axis(W52, j52, axis=1)
+        w52 /= np.maximum(w52.sum(axis=1, keepdims=True), 1e-12)
+        j52[w52 <= 1e-7] = 0
+
         min_y = min(min_y, float(v_tpose[:, 1].min()))
         deformed_prims.append(dict(
             v=v_tpose, n=n_tpose, v_ref=v_unscaled, n_ref=n_orig, uv=uv,
-            j=j_new.astype(np.uint8), w=w_new.astype(np.float32), idx=idx,
+            j=j52.astype(np.uint8), w=w52.astype(np.float32), idx=idx,
             mat=p['material'], col=col,
+            W52=W52 if pi == 0 else None,
+            v_src_tpose=v_src_tpose_ref if pi == 0 else None,
         ))
 
     # Cross-primitive normal weld across shared skin seams (body / areola / ears)
@@ -1650,22 +1735,102 @@ def export_game_tpose_20(sculpted_glb_path, dst_glb_path, source_bytes):
     for dp in deformed_prims:
         dp['v'][:, 1] -= min_y
 
+    # Build full 52-bone bind skeleton (0..19 exact GAME_MIXAMO_20 + 20..49 fingers + 50..51 ToeBases)
+    M_tpose_52 = np.zeros((NUM_BONES_52, 4, 4), dtype=float)
+    M_tpose_52[:20] = M_tpose
+
+    src_name_to_skin_idx = {
+        src_raw.d['nodes'][nid].get('name', ''): sj_i
+        for sj_i, nid in enumerate(src_skin_joints)
+    }
+    forearm_fit_by_hand = {}
+    for _, s_f, fa_src_f, wr_src_f, fa_ax_f, len_s_f, len_d_f in forearm_fits:
+        forearm_fit_by_hand[9 if s_f > 0 else 13] = (len_d_f - len_s_f) * fa_ax_f
+
+    skin0 = deformed_prims[0]
+    skin0_W52 = skin0['W52']
+    skin0_v_tpose = skin0['v']
+    skin0_v_src_tpose = skin0['v_src_tpose'] - np.array([0.0, min_y, 0.0]) if skin0['v_src_tpose'] is not None else None
+
+    extra_node_specs = []  # (name, par_idx, local_tr, local_rot)
+    for eb_off, (b_name, par_idx, src_list, base20_idx, _) in enumerate(EXTRA_BONES):
+        idx_52 = 20 + eb_off
+        # Compute world bind position of this extra joint from relaxed source joint + A->T delta + sculpt residual
+        pts = []
+        for s_nm in src_list:
+            if s_nm not in sn:
+                continue
+            p_raw = S(s_nm)
+            sj_i = src_name_to_skin_idx.get(s_nm, -1)
+            if sj_i >= 0:
+                D_rel = src_finger_deltas[sj_i]
+                p_rel = D_rel[:3, :3] @ p_raw + D_rel[:3, 3]
+            else:
+                p_rel = p_raw
+            if base20_idx in forearm_fit_by_hand:
+                p_rel = p_rel + forearm_fit_by_hand[base20_idx]
+            D_at = delta_mats[base20_idx]
+            p_tpose = D_at[:3, :3] @ p_rel + D_at[:3, 3]
+            p_tpose[1] -= min_y
+            pts.append(p_tpose)
+        # For ToeBase, use only proximal toe1-1..toe5-1 (ball of foot) for anatomical pivot
+        if 'ToeBase' in b_name:
+            prox_pts = []
+            side_ch = 'L' if 'Left' in b_name else 'R'
+            for t_i in range(1, 6):
+                tn = f'toe{t_i}-1.{side_ch}'
+                if tn in sn:
+                    D_at = delta_mats[base20_idx]
+                    pt = D_at[:3, :3] @ S(tn) + D_at[:3, 3]
+                    pt[1] -= min_y
+                    prox_pts.append(pt)
+            if prox_pts:
+                pts = prox_pts
+        world_pos = np.mean(pts, axis=0) if pts else M_tpose_52[par_idx, :3, 3].copy()
+
+        # Track any body sculpt (e.g., female petite hands/feet -16%) via weighted vertex displacement residual
+        if skin0_W52 is not None and skin0_v_src_tpose is not None:
+            wb = skin0_W52[:, idx_52]
+            wsum = float(wb.sum())
+            if wsum > 1e-4:
+                resid = ((skin0_v_tpose - skin0_v_src_tpose) * wb[:, None]).sum(axis=0) / wsum
+                world_pos = world_pos + resid
+
+        # Orientation: fingers inherit Hand axes (identity); ToeBase points +Y forward (+Z world)
+        if 'ToeBase' in b_name:
+            loc_rot = [-0.70710678, 0.0, 0.0, 0.70710678]
+        else:
+            loc_rot = [0.0, 0.0, 0.0, 1.0]
+
+        par_M = M_tpose_52[par_idx]
+        par_inv = np.linalg.inv(par_M)
+        loc_tr = (par_inv[:3, :3] @ world_pos + par_inv[:3, 3]).tolist()
+
+        loc_M = np.eye(4, dtype=float)
+        loc_M[:3, :3] = _quat_to_mat(loc_rot)
+        loc_M[:3, 3] = loc_tr
+        M_tpose_52[idx_52] = par_M @ loc_M
+        extra_node_specs.append((b_name, par_idx, loc_tr, loc_rot))
+
+    all_bones_52 = list(GAME_MIXAMO_20) + extra_node_specs
     nodes = []
-    children_map = {i: [] for i in range(20)}
-    for i, (_, par, _, _) in enumerate(GAME_MIXAMO_20):
+    children_map = {i: [] for i in range(NUM_BONES_52)}
+    for i, (_, par, _, _) in enumerate(all_bones_52):
         if par >= 0:
             children_map[par].append(i)
-    for i, (name, _, tr, rot) in enumerate(GAME_MIXAMO_20):
+    for i, (name, _, tr, rot) in enumerate(all_bones_52):
         nd = {'name': name, 'translation': [float(x) for x in tr]}
         if rot != [0.0, 0.0, 0.0, 1.0]:
             nd['rotation'] = [float(x) for x in rot]
         if children_map[i]:
             nd['children'] = children_map[i]
         nodes.append(nd)
-    nodes.append({'name': 'MaleBody_Game20_Mesh', 'mesh': 0, 'skin': 0})
-    nodes.append({'name': 'MaleBody_Armature', 'children': [20, 0]})
+    mesh_node_idx = NUM_BONES_52
+    arm_node_idx = NUM_BONES_52 + 1
+    nodes.append({'name': 'MaleBody_Game52_Mesh', 'mesh': 0, 'skin': 0})
+    nodes.append({'name': 'MaleBody_Armature', 'children': [mesh_node_idx, 0]})
 
-    ibm = np.linalg.inv(M_tpose).transpose(0, 2, 1).reshape(-1, 16).astype('<f4')
+    ibm = np.linalg.inv(M_tpose_52).transpose(0, 2, 1).reshape(-1, 16).astype('<f4')
     data = bytearray()
     buffer_views = []
     accessors = []
@@ -1715,14 +1880,14 @@ def export_game_tpose_20(sculpted_glb_path, dst_glb_path, source_bytes):
     out_doc = {
         'asset': {
             'version': '2.0',
-            'generator': 'Male Body V6 Game-Ready 20-Bone Mixamo T-Pose',
+            'generator': 'Male Body V6 Game-Ready 52-Bone Mixamo T-Pose',
         },
         'scene': 0,
-        'scenes': [{'name': 'Scene', 'nodes': [21]}],
+        'scenes': [{'name': 'Scene', 'nodes': [arm_node_idx]}],
         'nodes': nodes,
-        'skins': [{'name': 'MaleBody_Armature', 'joints': list(range(20)), 'inverseBindMatrices': ibm_acc}],
+        'skins': [{'name': 'MaleBody_Armature', 'joints': list(range(NUM_BONES_52)), 'inverseBindMatrices': ibm_acc}],
         'materials': copy.deepcopy(g.d['materials']),
-        'meshes': [{'name': 'MaleBody_Game20', 'primitives': prims_out}],
+        'meshes': [{'name': 'MaleBody_Game52', 'primitives': prims_out}],
         'accessors': accessors,
         'bufferViews': buffer_views,
         'buffers': [{'byteLength': len(data)}],
@@ -1738,7 +1903,7 @@ def export_game_tpose_20(sculpted_glb_path, dst_glb_path, source_bytes):
     )
 
     chk = GLB(dst_glb_path)
-    assert len(chk.d['skins'][0]['joints']) == 20
+    assert len(chk.d['skins'][0]['joints']) == NUM_BONES_52
     for idx_j, nid in enumerate(chk.d['skins'][0]['joints']):
         p_nid = chk.parents.get(nid, -1)
         if p_nid in chk.d['skins'][0]['joints']:
@@ -1749,7 +1914,7 @@ def export_game_tpose_20(sculpted_glb_path, dst_glb_path, source_bytes):
         assert err < 1e-5, f'IBM mismatch on joint {idx_j}: {err}'
     all_v = np.concatenate([chk.read(pr['attributes']['POSITION']) for pr in chk.d['meshes'][0]['primitives']])
     print(
-        f'Game20 T-Pose GLB: {dst_glb_path} | verts={total_v} tris={total_t} '
+        f'Game52 T-Pose GLB: {dst_glb_path} | joints={NUM_BONES_52} verts={total_v} tris={total_t} '
         f'| ground_shift={-min_y:+.4f}m | bounds={np.round(all_v.min(0), 4).tolist()}..{np.round(all_v.max(0), 4).tolist()}'
     )
 

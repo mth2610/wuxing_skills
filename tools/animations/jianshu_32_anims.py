@@ -15,19 +15,20 @@ choreographed across all 4 canonical sections (32 distinct forms, zero duplicate
                      (Liên Hoàn Tam Thích, Tả Hữu Quải, Hồi Phong Vân 360°, Bối Kiếm Phản Thích,
                       Tiến Bộ Trảm Kiếm, Hành Bộ Xuyên Quải Tiêu Kiếm, Độc Lập Giá Kiếm Lượng Tướng, Thu Thức Bão Kiếm)
 
-Biomechanical Joint-Safety Architecture:
-  - Swing-twist zero-flip shoulder & elbow pole solver (eliminates 180° shoulder/forearm snaps)
-  - Rosetta-Stone double-edged Jian socket alignment (keeps wrist swing <= 52° and twist <= 35°)
-  - Constant-up dorsal Kiếm Quyết left-wrist solver (prevents segment-boundary roll discontinuities)
-  - 2-branch continuous YXZ Euler ankle solver + forward kneecap constraint (eliminates ankle & knee flips
-    even on >90° high slap-kicks, Swallow Scale, Moon-Gazing Scorpion fold, and Butterfly spins)
-  - Automatic torso-clearance semicircular arc waypoints & C2 Catmull-Rom polish
+V3 — Contact-aware kinematic animation compiler (see implementation below):
+  - Nonuniform time-aware cubic interpolation, spherical blade paths, one constraint pass per sample.
+  - Continuous pole transport, wrist swing/twist limits and approximate capsule clearance.
+  - Ground contact / swing-foot trajectories, continuous ankle orientation and jump timing.
+  - In-place animation: no horizontal pelvis translation is available in this PoseSpec.
+  - Direct FK-verified bake with temporal bend-plane filtering and actual sword socket offset.
+  - Requires the original rig_core; geometric limits are approximate, not mesh collision guarantees.
 """
 
 from __future__ import annotations
 
 import math
-from dataclasses import replace
+import bisect
+from dataclasses import replace, fields
 from typing import List, Optional, Sequence, Tuple
 import numpy as np
 
@@ -36,6 +37,14 @@ from .rig_core import (
     SWORD_BLADE_BASE_Y,
     SWORD_BLADE_TIP_Y,
     SWORD_SOCKET_R,
+    SWORD_SOCKET_POS,
+    solve_pose,
+    fk_from_channels,
+    sword_kinematics_from_pose,
+    axis_angle_mat,
+    build_foot_frame,
+    decompose_swing_twist_y,
+    NUM_BONES,
     AnimationClip,
     Keyframe,
     PoseSpec,
@@ -101,30 +110,89 @@ def _clamp_cone(vec: np.ndarray, axis: np.ndarray, max_deg: float) -> np.ndarray
     return v_norm(math.cos(rad) * a + math.sin(rad) * perp)
 
 
-def _foot_euler_two_branch(
-    R_ft: np.ndarray, ref_yaw: float, ref_pitch: float, ref_roll: float
-) -> Tuple[float, float, float]:
-    """Invert rot_y(yaw) @ rot_x(-pitch) @ rot_z(roll) @ R_FOOT_REST across both Euler branches.
-
-    Eliminates ±90° pitch gimbal-lock 180° yaw/roll flips during high kicks & aerial scales.
-    """
+def _foot_euler_two_branch(R_ft, ref_yaw, ref_pitch, ref_roll):
+    """Invert Ry(yaw) Rx(-pitch) Rz(roll), including the coupled gimbal solution."""
     M = R_ft @ _R_FOOT_REST.T
-    sin_a = max(-1.0, min(1.0, -float(M[1, 2])))
-    cos_a = math.sqrt(max(0.0, 1.0 - sin_a * sin_a))
-    p1 = -math.degrees(math.asin(sin_a))
-    if cos_a > 1e-4:
-        y1 = math.degrees(math.atan2(float(M[0, 2]), float(M[2, 2])))
-        r1 = math.degrees(math.atan2(float(M[1, 0]), float(M[1, 1])))
-        p2 = (180.0 - p1) if p1 >= 0.0 else (-180.0 - p1)
-        cands = [
-            (_unwrap_deg(y1, ref_yaw), _unwrap_deg(p1, ref_pitch), _unwrap_deg(r1, ref_roll)),
-            (_unwrap_deg(y1 + 180.0, ref_yaw), _unwrap_deg(p2, ref_pitch), _unwrap_deg(r1 + 180.0, ref_roll)),
-        ]
-        return min(
-            cands,
-            key=lambda c: (c[0] - ref_yaw) ** 2 + (c[1] - ref_pitch) ** 2 + (c[2] - ref_roll) ** 2,
-        )
-    return ref_yaw, _unwrap_deg(p1, ref_pitch), ref_roll
+    p = math.degrees(math.asin(float(np.clip(M[1, 2], -1, 1))))
+    if abs(math.cos(math.radians(p))) > 1e-7:
+        y = math.degrees(math.atan2(M[0, 2], M[2, 2]))
+        r = math.degrees(math.atan2(M[1, 0], M[1, 1]))
+        p2 = 180-p if p >= 0 else -180-p
+        candidates = [(y,p,r),(y+180,p2,r+180)]
+    else:
+        # At pitch +90, only yaw+roll is observable; at -90, yaw-roll.
+        sign = 1.0 if p >= 0 else -1.0
+        coupled = math.degrees(math.atan2(-M[2,0], M[0,0]))
+        delta = _unwrap_deg(coupled, ref_yaw + sign*ref_roll) - (ref_yaw + sign*ref_roll)
+        candidates = [(ref_yaw + delta/2, p, ref_roll + sign*delta/2)]
+    ref = (ref_yaw, ref_pitch, ref_roll)
+    candidates = [tuple(_unwrap_deg(x, r) for x,r in zip(c,ref)) for c in candidates]
+    return min(candidates, key=lambda c: sum((x-r)**2 for x,r in zip(c,ref)))
+
+
+def _unit(v, fallback=(0.,0.,1.)):
+    v = np.asarray(v, dtype=float)
+    n = float(np.linalg.norm(v))
+    return v/n if n > 1e-9 else np.asarray(fallback,dtype=float)/max(1e-9,np.linalg.norm(fallback))
+
+
+def _project(v, axis):
+    return v - np.dot(v, axis)*axis
+
+
+def _perp(axis):
+    return _unit(_project(np.eye(3)[int(np.argmin(np.abs(axis)))],axis))
+
+
+def _slerp_dir(a,b,u, hint=None):
+    a,b = _unit(a),_unit(b)
+    c = float(np.clip(np.dot(a,b),-1,1))
+    v = b-c*a
+    n = np.linalg.norm(v)
+    if n < 1e-8:
+        if c > 0: return a
+        v = _project(np.asarray(hint),a) if hint is not None else _perp(a)
+        v = _unit(v,_perp(a))
+    else: v /= n
+    theta = math.acos(c)*u
+    return _unit(a*math.cos(theta)+v*math.sin(theta),a)
+
+
+def _smooth(u):
+    u = float(np.clip(u,0,1))
+    return u*u*(3-2*u)
+
+
+def _soft_pole(axis, authored, anatomical, previous=None):
+    """Use authored bend plane; transport previous plane through singularities."""
+    aa = _project(anatomical,axis)
+    au = _project(authored,axis)
+    base = _unit(aa,_perp(axis))
+    if np.linalg.norm(au)>1e-8:
+        weight = 0.60*_smooth(np.linalg.norm(au)/0.16)
+        base = _slerp_dir(base,_unit(au),weight,previous)
+    if previous is not None:
+        pp = _project(previous,axis)
+        if np.linalg.norm(pp)>1e-6:
+            pp = _unit(pp)
+            angle = math.acos(float(np.clip(np.dot(pp,base),-1,1)))
+            # Restrict change of the pole plane, not the limb itself.
+            base = _slerp_dir(pp,base,min(1., math.radians(16)/max(angle,1e-9)))
+    return _unit(_project(base,axis),_perp(axis))
+
+
+def _segment_distance(a,b,c,d):
+    """Exact finite-segment distance including parallel and point segments."""
+    u,v,w=b-a,d-c,a-c
+    A,B,C,D,E=map(float,(u@u,u@v,v@v,u@w,v@w))
+    def pt_seg(p,x,y):
+        q=y-x; return np.linalg.norm(p-x-q*np.clip((p-x)@q/max(1e-15,q@q),0.,1.))
+    vals=[pt_seg(a,c,d),pt_seg(b,c,d),pt_seg(c,a,b),pt_seg(d,a,b)]
+    den=A*C-B*B
+    if den>1e-15:
+        ss=(B*E-C*D)/den; tt=(A*E-B*D)/den
+        if 0<=ss<=1 and 0<=tt<=1: vals.append(np.linalg.norm(w+ss*u-tt*v))
+    return min(vals)
 
 
 def _torso_frames(p: PoseSpec) -> Tuple[np.ndarray, np.ndarray]:
@@ -166,6 +234,26 @@ def _stabilize_pose(
     r_air_flex: float = 26.0,
 ) -> Tuple[PoseSpec, np.ndarray]:
     """Project any authored PoseSpec onto strict human joint-angle, pole, wrist & ankle manifolds."""
+    # Preserve ground anchors by lowering pelvis BEFORE the leg IK solve.
+    rootR = euler_yxz(p.hips_yaw,p.hips_pitch,p.hips_roll)
+    bodyR = rot_y(p.hips_yaw)
+    max_y = p.hips_y
+    for idx, ft in ((14,p.l_foot_pos),(17,p.r_foot_pos)):
+        f = np.array(ft,dtype=float)
+        if p.feet_in_body_space: f = bodyR @ f
+        if f[1] < 0.19:
+            off = rootR @ np.asarray(GAME_MIXAMO_20[idx][3],dtype=float)
+            horizontal = np.linalg.norm((f-off)[[0,2]])
+            limit = f[1]-off[1]+math.sqrt(max(0.,0.808**2-horizontal**2))
+            weight = 1.-_smooth((f[1]-.095)/.095)
+            max_y = min(max_y, p.hips_y + weight*min(0.,limit-p.hips_y))
+    dy = max_y-p.hips_y
+    if dy < 0:
+        p = replace(p, hips_y=max_y,
+                    l_hand_pos=tuple(np.asarray(p.l_hand_pos)+[0,dy,0]),
+                    r_hand_pos=tuple(np.asarray(p.r_hand_pos)+[0,dy,0]),
+                    l_elbow_pole=tuple(np.asarray(p.l_elbow_pole)+[0,dy,0]) if p.l_elbow_pole is not None else None,
+                    r_elbow_pole=tuple(np.asarray(p.r_elbow_pole)+[0,dy,0]) if p.r_elbow_pole is not None else None)
     wP, wR = _torso_frames(p)
     R_by = rot_y(p.hips_yaw)
     R_by_inv = R_by.T
@@ -176,7 +264,7 @@ def _stabilize_pose(
 
     def from_w_hand(pt_w: np.ndarray) -> Tuple[float, float, float]:
         v = (R_by_inv @ np.array([pt_w[0], 0.0, pt_w[2]]) + np.array([0.0, pt_w[1], 0.0])) if p.local_body_space else pt_w
-        return (round(float(v[0]), 4), round(float(v[1]), 4), round(float(v[2]), 4))
+        return tuple(map(float,v))
 
     def to_w_dir(d: Sequence[float]) -> np.ndarray:
         v = np.array(d, dtype=np.float64)
@@ -184,7 +272,7 @@ def _stabilize_pose(
 
     def from_w_dir(d_w: np.ndarray) -> Tuple[float, float, float]:
         v = (R_by_inv @ d_w) if p.local_body_space else d_w
-        return (round(float(v[0]), 4), round(float(v[1]), 4), round(float(v[2]), 4))
+        return tuple(map(float,v))
 
     def to_w_foot(pt: Sequence[float]) -> np.ndarray:
         v = np.array(pt, dtype=np.float64)
@@ -192,18 +280,34 @@ def _stabilize_pose(
 
     def from_w_foot(pt_w: np.ndarray) -> Tuple[float, float, float]:
         v = (R_by_inv @ np.array([pt_w[0], 0.0, pt_w[2]]) + np.array([0.0, pt_w[1], 0.0])) if p.feet_in_body_space else pt_w
-        return (round(float(v[0]), 4), round(float(v[1]), 4), round(float(v[2]), 4))
+        return tuple(map(float,v))
 
-    # 1. Left Arm: reach [0.325, 0.455] (elbow bend 36°..100°) + zero-flip swing-only shoulder pole
-    lh_w = to_w_hand(p.l_hand_pos)
+    def clear_hand(hand, side):
+        # Keep hand targets out of the approximate torso cylinder, before IK.
+        a,b=wP[0],wP[4]; ab=b-a
+        q=a+float(np.clip((hand-a)@ab/max(1e-9,ab@ab),0,1))*ab
+        d=hand-q; dist=np.linalg.norm(d)
+        if dist < .185:
+            return q+_unit(d,R_by@np.array([side,0.,.4]))*.185
+        return hand
+
+    # 1. Left arm: retain folded salutes and near-extended sword fingers.
+    lh_w = clear_hand(to_w_hand(p.l_hand_pos),1.)
     d_l_vec = lh_w - wP[7]
-    dist_l = max(0.325, min(0.455, float(np.linalg.norm(d_l_vec))))
+    dist_l = max(0.19, min(0.489, float(np.linalg.norm(d_l_vec))))
     dir_l = v_norm(d_l_vec, wR[6][:, 1])
     lh_w = wP[7] + dir_l * dist_l
 
     R_sw_l = _shortest_arc_rot(wR[6][:, 1], dir_l)
     R_la_ideal = (R_sw_l @ wR[6]) @ rot_y(-18.0)
-    p_perp_l = v_norm(np.cross(R_la_ideal[:, 2], dir_l), np.array([1.0, -0.3, 0.0]))
+    anatomical_l = np.cross(R_la_ideal[:, 2], dir_l)
+    authored_l = to_w_hand(p.l_elbow_pole)-wP[7] if p.l_elbow_pole is not None else anatomical_l
+    previous_l = None
+    if prev_pose is not None:
+        pp,_ = _torso_frames(prev_pose)
+        previous_l = (rot_y(prev_pose.hips_yaw) @ np.asarray(prev_pose.l_elbow_pole) if prev_pose.local_body_space else np.asarray(prev_pose.l_elbow_pole))-pp[7]
+        previous_l = R_by @ rot_y(prev_pose.hips_yaw).T @ previous_l
+    p_perp_l = _soft_pole(dir_l,authored_l,anatomical_l,previous_l)
     l_pole_w = wP[7] + dir_l * (dist_l * 0.50) + p_perp_l * 0.38
 
     l_elbow_w, l_hand_w = solve_two_bone_ik(wP[7], lh_w, 0.26, 0.24, l_pole_w, min_bend_deg=8.0)
@@ -215,26 +319,51 @@ def _stabilize_pose(
     # Constant l_hand_up=(0,1,0) avoids discrete jump in rig_core._vec_to_pose across segments
     lh_up_const = (0.0, 1.0, 0.0)
     lh_up_w = v_norm(to_w_dir(lh_up_const))
-    raw_lh_d = to_w_dir(p.l_hand_dir if p.l_hand_dir is not None else u_lfa)
+    raw_lh_d = to_w_dir(p.l_hand_dir) if p.l_hand_dir is not None else u_lfa
     graceful_kq = v_norm(u_lfa * 0.90 + R_lfa[:, 2] * 0.30)
     lh_dir_w = _clamp_cone(v_norm(0.50 * v_norm(raw_lh_d) + 0.50 * graceful_kq), u_lfa, 30.0)
     if abs(float(np.dot(lh_dir_w, lh_up_w))) > 0.86:
         horiz = v_norm(np.array([lh_dir_w[0], 0.0, lh_dir_w[2]]), np.array([-0.3, 0.0, 0.95]))
         lh_dir_w = _clamp_cone(v_norm(lh_dir_w * 0.72 + horiz * 0.55), u_lfa, 34.0)
 
-    # 2. Right Arm + Sword Socket: steer shoulder twist gently toward blade, clamp wrist <= 50°
-    rh_w = to_w_hand(p.r_hand_pos)
+    # 2. Right arm + sword socket: optimize elbow plane, then limit wrist swing.
+    rh_w = clear_hand(to_w_hand(p.r_hand_pos),-1.)
     d_r_vec = rh_w - wP[11]
-    dist_r = max(0.300, min(0.455, float(np.linalg.norm(d_r_vec))))
+    dist_r = max(0.18, min(0.489, float(np.linalg.norm(d_r_vec))))
     dir_r = v_norm(d_r_vec, wR[10][:, 1])
     rh_w = wP[11] + dir_r * dist_r
 
     raw_b_dir = v_norm(to_w_dir(p.blade_dir if p.blade_dir is not None else (0.20, 0.42, 0.88)))
 
-    # Smooth, continuous shoulder twist (16.0 deg) — zero discrete pole-selection jumps!
+    # Nominal shoulder twist (16 degrees); the continuous pole solver refines it.
     R_sw_r = _shortest_arc_rot(wR[10][:, 1], dir_r)
     R_ra_ideal = (R_sw_r @ wR[10]) @ rot_y(16.0)
-    pp_r = v_norm(np.cross(dir_r, R_ra_ideal[:, 2]), np.array([-1.0, -0.3, 0.0]))
+    anatomical_r = np.cross(dir_r,R_ra_ideal[:,2])
+    authored_r = to_w_hand(p.r_elbow_pole)-wP[11] if p.r_elbow_pole is not None else anatomical_r
+    previous_r = None
+    if prev_pose is not None:
+        pp,_ = _torso_frames(prev_pose)
+        previous_r = (rot_y(prev_pose.hips_yaw) @ np.asarray(prev_pose.r_elbow_pole) if prev_pose.local_body_space else np.asarray(prev_pose.r_elbow_pole))-pp[11]
+        previous_r = R_by @ rot_y(prev_pose.hips_yaw).T @ previous_r
+    pp_r = _soft_pole(dir_r,authored_r,anatomical_r,previous_r)
+    # Steer the elbow plane toward the desired blade instead of erasing the sword gesture.
+    # The grip frame is rig-specific, so evaluate candidate planes using the real socket.
+    candidates = []
+    for ang in (-50,-25,0,25,50):
+        ar = math.radians(ang)
+        pole = pp_r*math.cos(ar)+np.cross(dir_r,pp_r)*math.sin(ar)
+        if previous_r is not None:
+            prev_proj = _unit(_project(previous_r,dir_r),pp_r)
+            pole = _slerp_dir(prev_proj,pole,min(1., math.radians(16)/max(1e-8,math.acos(float(np.clip(prev_proj@pole,-1,1))))))
+        ep,hp = solve_two_bone_ik(wP[11],rh_w,0.26,0.24,wP[11]+dir_r*dist_r*.5+pole*.38,min_bend_deg=8.)
+        ua,uf = _unit(ep-wP[11]),_unit(hp-ep)
+        rf = build_arm_frame(uf,_unit(np.cross(ua,uf),(0,1,0)),is_right=True)
+        bn = _unit(rf @ SWORD_SOCKET_R[:,1])
+        angle = math.acos(float(np.clip(bn@raw_b_dir,-1,1)))
+        cost = max(0.,angle-math.radians(42))**2+0.18*angle**2+0.20*ar**2
+        candidates.append((cost,pole))
+    costs=np.array([c[0] for c in candidates]); weights=np.exp(-(costs-costs.min())/0.075)
+    pp_r=_unit(_project(sum(w*c[1] for w,c in zip(weights,candidates)),dir_r),pp_r)
     r_pole_w = wP[11] + dir_r * (dist_r * 0.50) + pp_r * 0.38
     r_elbow_w, r_hand_w = solve_two_bone_ik(wP[11], rh_w, 0.26, 0.24, r_pole_w, min_bend_deg=8.0)
     u_ra = v_norm(r_elbow_w - wP[11])
@@ -245,111 +374,95 @@ def _stabilize_pose(
     b_neutral = v_norm(R_rfa @ SWORD_SOCKET_R[:, 1])
     b_y = _clamp_cone(raw_b_dir, b_neutral, 40.0)
 
-    # Guarantee strict head & floor clearance on sword blade
-    head_c = wP[5] + np.array([0.0, 0.06, 0.02], dtype=np.float64)
-    for _ in range(5):
-        b_base = r_hand_w + b_y * SWORD_BLADE_BASE_Y
-        b_tip = r_hand_w + b_y * SWORD_BLADE_TIP_Y
-        seg = b_tip - b_base
-        u_h = max(0.0, min(1.0, float(np.dot(head_c - b_base, seg)) / max(1e-8, float(np.dot(seg, seg)))))
-        diff_h = (b_base + u_h * seg) - head_c
-        d_h = float(np.linalg.norm(diff_h))
-        if d_h < 0.175:
-            push = v_norm(diff_h, np.array([-0.8, 0.3, 0.5]))
-            b_y = _clamp_cone(v_norm(b_y + push * (0.22 - d_h) * 2.4), b_neutral, 44.0)
-        if r_hand_w[1] + b_y[1] * SWORD_BLADE_TIP_Y < 0.22:
-            b_y = _clamp_cone(v_norm(b_y + np.array([0.0, 0.35, 0.0])), b_neutral, 44.0)
+    # Approximate capsule clearance: head, spine, left arm. Soft gradient correction
+    # remains inside the wrist cone; a mesh-level collision guarantee needs rig geometry.
+    head_c = wP[5] + wR[5] @ np.array([0.,0.06,0.02])
+    capsules = [(head_c,head_c,0.165),(wP[0],wP[4],0.15),
+                (wP[7],l_elbow_w,0.075),(l_elbow_w,l_hand_w,0.065)]
+    def clearance_cost(d):
+        # Real hilt offset in the hand socket, with neutral transported edge.
+        ex=_unit(_shortest_arc_rot(b_neutral,d) @ (R_rfa @ SWORD_SOCKET_R[:,0]))
+        ex=_unit(_project(ex,d),_perp(d))
+        Rsw=np.column_stack((ex,d,np.cross(ex,d)))
+        hilt=r_hand_w+Rsw@SWORD_SOCKET_R.T@SWORD_SOCKET_POS
+        base=hilt+d*SWORD_BLADE_BASE_Y; tip=hilt+d*SWORD_BLADE_TIP_Y
+        return sum(max(0.,rad-_segment_distance(base,tip,c,e))**2 for c,e,rad in capsules)+max(0.,0.035-min(base[1],tip[1]))**2
+    for _ in range(4):
+        if clearance_cost(b_y)<1e-8: break
+        t1=_perp(b_y); t2=np.cross(b_y,t1); eps=0.025
+        grad=np.array([(clearance_cost(_unit(b_y+eps*t))-clearance_cost(_unit(b_y-eps*t)))/(2*eps) for t in (t1,t2)])
+        delta=grad[0]*t1+grad[1]*t2
+        cand=_clamp_cone(_unit(b_y-2.0*delta),b_neutral,44.)
+        if clearance_cost(cand)>=clearance_cost(b_y): break
+        b_y=cand
+    # Swing the complete neutral socket, not just its projected edge. This measures
+    # real axial twist after swing and preserves a right-handed orthonormal blade frame.
+    e_0=_unit(_shortest_arc_rot(b_neutral,b_y) @ (R_rfa @ SWORD_SOCKET_R[:,0]))
+    e_0=_unit(_project(e_0,b_y),_perp(b_y))
+    raw_e=to_w_dir(p.blade_edge) if p.blade_edge is not None else e_0
+    ec=_unit(_project(raw_e,b_y),e_0)
+    def roll_of(e): return math.degrees(math.atan2(b_y @ np.cross(e_0,e),e_0@e))
+    prev_roll=0.
+    if prev_edge_w is not None and prev_pose is not None:
+        prev_b=rot_y(prev_pose.hips_yaw) @ np.asarray(prev_pose.blade_dir) if prev_pose.local_body_space else np.asarray(prev_pose.blade_dir)
+        transported=_shortest_arc_rot(prev_b,b_y) @ prev_edge_w
+        prev_roll=roll_of(_unit(_project(transported,b_y),e_0))
+        prev_roll=float(np.clip(prev_roll,-35.,35.))
+    roll=roll_of(ec)+float(p.blade_spin_deg)
+    # A double-edged blade has 180-degree symmetry, but the wrist does not.
+    roll=min((roll+180*k for k in range(-3,4)),key=lambda x: abs(x-prev_roll))
+    roll=float(np.clip(roll,-35.,35.))
+    if prev_edge_w is not None: roll=float(np.clip(roll,prev_roll-12.,prev_roll+12.))
+    rr=math.radians(roll)
+    e_x=_unit(e_0*math.cos(rr)+np.cross(b_y,e_0)*math.sin(rr))
 
-    # Symmetric double-edged Jian edge alignment (prevents ±180° wrist candy-wrapper twist)
-    e_neutral = R_rfa @ SWORD_SOCKET_R[:, 0]
-    e_0 = e_neutral - np.dot(e_neutral, b_y) * b_y
-    if float(np.linalg.norm(e_0)) < 1e-5:
-        alt = R_rfa[:, 2]
-        e_0 = alt - np.dot(alt, b_y) * b_y
-    e_0 = v_norm(e_0)
-
-    raw_e = to_w_dir(p.blade_edge if p.blade_edge is not None else e_0)
-    e_cand = raw_e - np.dot(raw_e, b_y) * b_y
-    if float(np.linalg.norm(e_cand)) < 1e-5:
-        e_cand = e_0.copy()
-    else:
-        e_cand = v_norm(e_cand)
-        if float(np.dot(e_cand, e_0)) < 0.0:
-            e_cand = -e_cand
-
-    e_x = _clamp_cone(e_cand, e_0, 42.0)
-    e_x = v_norm(e_x - np.dot(e_x, b_y) * b_y)
-
-    # 3. Legs, Knees & 2-Branch Continuous Ankles
-    leg_out = []
-    for side_idx, (i_up, ft_pos, ft_yaw, ft_pitch, turnout, air_flex) in enumerate([
-        (14, p.l_foot_pos, p.l_foot_yaw, p.l_foot_pitch, 10.0, l_air_flex),
-        (17, p.r_foot_pos, p.r_foot_yaw, p.r_foot_pitch, -12.0, r_air_flex),
-    ]):
-        hip_p = wP[0] + wR[0] @ np.array(GAME_MIXAMO_20[i_up][3], dtype=np.float64)
-        fp_w = to_w_foot(ft_pos)
-        if fp_w[1] < 0.080:
-            fp_w[1] = 0.080
-        d_leg_vec = fp_w - hip_p
-        dist_leg = max(0.36, min(0.792, float(np.linalg.norm(d_leg_vec))))
-        dir_leg = v_norm(d_leg_vec, np.array([0.0, -1.0, 0.0]))
-        fp_w = hip_p + dir_leg * dist_leg
-        if fp_w[1] < 0.080:
-            fp_w[1] = 0.080
-            d_leg_vec = fp_w - hip_p
-            dir_leg = v_norm(d_leg_vec)
-            dist_leg = float(np.linalg.norm(d_leg_vec))
-
-        R_ul_base = wR[0] @ _REST_LOC_R[i_up]
-        R_sw_leg = _shortest_arc_rot(R_ul_base[:, 1], dir_leg)
-        R_ul_ideal = (R_sw_leg @ R_ul_base) @ rot_y(-turnout)
-        k_ideal = R_ul_ideal[:, 0]
-        p_perp_leg = v_norm(np.cross(dir_leg, k_ideal), np.array([0.0, 0.0, 1.0]))
-        kp_w = hip_p + dir_leg * (dist_leg * 0.50) + p_perp_leg * 0.38
-
-        knee_w, ankle_w = solve_two_bone_ik(hip_p, fp_w, 0.42, 0.40, kp_w, min_bend_deg=6.0)
-        u_th = v_norm(knee_w - hip_p)
-        u_sh = v_norm(ankle_w - knee_w)
-        k_ax = v_norm(np.cross(u_th, u_sh), k_ideal)
-        R_shin = build_leg_frame(u_sh, k_ax)
-
-        ref_fy_w = (prev_pose.l_foot_yaw if side_idx == 0 else prev_pose.r_foot_yaw) if prev_pose else ft_yaw
-        ref_fp = (prev_pose.l_foot_pitch if side_idx == 0 else prev_pose.r_foot_pitch) if prev_pose else 0.0
-        ref_fr = (prev_pose.l_foot_roll if side_idx == 0 else prev_pose.r_foot_roll) if prev_pose else 0.0
-        if prev_pose and prev_pose.feet_in_body_space:
-            ref_fy_w += prev_pose.hips_yaw
-
-        if ankle_w[1] <= 0.090:
-            shin_fwd = v_norm(np.cross(k_ax, np.array([0.0, 1.0, 0.0])), np.array([0.0, 0.0, 1.0]))
-            nat_yaw = math.degrees(math.atan2(float(shin_fwd[0]), float(shin_fwd[2])))
-            want_yaw = _unwrap_deg(ft_yaw + (p.hips_yaw if p.feet_in_body_space else 0.0), nat_yaw)
-            fy_w = _unwrap_deg(nat_yaw + max(-18.0, min(18.0, want_yaw - nat_yaw)), ref_fy_w)
-            # Automatically ease heel pitch when shin is steeply inclined in deep stances (Pūbù / Điệt Bộ)
-            shin_tilt_deg = math.degrees(math.acos(max(-1.0, min(1.0, float(-u_sh[1])))))
-            if shin_tilt_deg > 46.0 and u_sh[2] < -0.20:
-                ankle_w_lift = min(0.102, 0.080 + (shin_tilt_deg - 46.0) * 0.0011)
-                fp_w[1] = max(fp_w[1], ankle_w_lift)
-                fpitch_out = -min(20.0, (shin_tilt_deg - 42.0) * 0.70)
-            else:
-                fpitch_out = max(-16.0, min(12.0, ft_pitch))
-            froll_out = 0.0
-        elif ankle_w[1] <= 0.135:
-            R_ft_air = R_shin @ rot_x(-18.0)
-            fy_w, fpitch_out, froll_out = _foot_euler_two_branch(R_ft_air, ref_fy_w, ref_fp, ref_fr)
-            fpitch_out = max(-32.0, min(24.0, fpitch_out))
-            froll_out *= 0.35
-        else:
-            R_ft_air = R_shin @ rot_x(-air_flex)
-            fy_w, fpitch_out, froll_out = _foot_euler_two_branch(R_ft_air, ref_fy_w, ref_fp, ref_fr)
-
-        fy_spec = fy_w - (p.hips_yaw if p.feet_in_body_space else 0.0)
-        leg_out.append((
-            from_w_foot(fp_w),
-            from_w_foot(kp_w),
-            round(fy_spec, 3),
-            round(fpitch_out, 3),
-            round(froll_out, 3),
-        ))
+    # 3. Contact-aware leg IK. Preserve authored foot heading and toe poses.
+    leg_out=[]
+    for side_idx,(i_up,ft_pos,ft_yaw,ft_pitch,turnout,air_flex) in enumerate([
+        (14,p.l_foot_pos,p.l_foot_yaw,p.l_foot_pitch,10.,l_air_flex),
+        (17,p.r_foot_pos,p.r_foot_yaw,p.r_foot_pitch,-12.,r_air_flex)]):
+        side='l' if side_idx==0 else 'r'
+        hip_p=wP[0]+wR[0] @ np.asarray(GAME_MIXAMO_20[i_up][3],dtype=float)
+        fp_w=to_w_foot(ft_pos); fp_w[1]=max(.080,fp_w[1])
+        contact=1.-_smooth((fp_w[1]-.095)/.10)
+        d=fp_w-hip_p; dist=float(np.linalg.norm(d)); direction=_unit(d,(0,-1,0))
+        if dist>.811:
+            if contact>.5 and abs(d[1])<.811:
+                # Keep ankle height; clamp horizontal reach only if pelvis correction cannot help.
+                max_xz=math.sqrt(max(0.,.811**2-d[1]**2)); xz=d[[0,2]]
+                fp_w[[0,2]]=hip_p[[0,2]]+xz*min(1.,max_xz/max(1e-9,np.linalg.norm(xz)))
+            else: fp_w=hip_p+direction*.811
+        elif dist<.16: fp_w=hip_p+direction*.16
+        fp_w[1]=max(.080,fp_w[1]); d=fp_w-hip_p; dist=np.linalg.norm(d); direction=_unit(d,(0,-1,0))
+        fy=ft_yaw+(p.hips_yaw if p.feet_in_body_space else 0.)
+        fwd=rot_y(fy) @ np.array([0.,0.,1.])
+        body_fwd=R_by @ np.array([0.,0.,1.])
+        anatomy=(.7*contact)*fwd+(1.-.7*contact)*body_fwd
+        raw_pole=getattr(p,side+'_knee_pole')
+        authored=to_w_foot(raw_pole)-hip_p if raw_pole is not None else anatomy
+        previous=None
+        if prev_pose is not None:
+            prev_hip=np.array([0.,prev_pose.hips_y,0.])+euler_yxz(prev_pose.hips_yaw,prev_pose.hips_pitch,prev_pose.hips_roll)@np.asarray(GAME_MIXAMO_20[i_up][3])
+            previous=np.asarray(getattr(prev_pose,side+'_knee_pole'))
+            if prev_pose.feet_in_body_space: previous=rot_y(prev_pose.hips_yaw)@previous
+            previous=previous-prev_hip
+            if contact<.5: previous=R_by@rot_y(prev_pose.hips_yaw).T@previous
+        pole=_soft_pole(direction,authored,anatomy,previous)
+        kp_w=hip_p+direction*(dist*.5)+pole*.38
+        knee_w,ankle_w=solve_two_bone_ik(hip_p,fp_w,.42,.40,kp_w,min_bend_deg=6.)
+        u_th=_unit(knee_w-hip_p); u_sh=_unit(ankle_w-knee_w)
+        k_ax=_unit(np.cross(u_th,u_sh),np.cross(direction,pole))
+        R_shin=build_leg_frame(u_sh,k_ax)
+        ref_y,ref_p,ref_r=fy,ft_pitch,getattr(p,side+'_foot_roll')
+        if prev_pose is not None:
+            ref_y=getattr(prev_pose,side+'_foot_yaw')+(prev_pose.hips_yaw if prev_pose.feet_in_body_space else 0.)
+            ref_p=getattr(prev_pose,side+'_foot_pitch'); ref_r=getattr(prev_pose,side+'_foot_roll')
+        R_ground=rot_y(fy)@rot_x(-float(np.clip(ft_pitch,-25,18)))@rot_z(float(np.clip(getattr(p,side+'_foot_roll'),-10,10)))@_R_FOOT_REST
+        R_air=R_shin@rot_x(-air_flex)
+        # Blend actual rotations (not Euler components) through toe-off and touchdown.
+        R_ft=quat_to_mat(quat_slerp(mat_to_quat(R_air),mat_to_quat(R_ground),contact))
+        fy_w,fpitch,froll=_foot_euler_two_branch(R_ft,ref_y,ref_p,ref_r)
+        leg_out.append((from_w_foot(ankle_w),from_w_foot(kp_w),fy_w-(p.hips_yaw if p.feet_in_body_space else 0.),fpitch,froll))
 
     out_p = replace(
         p,
@@ -376,170 +489,225 @@ def _stabilize_pose(
     return out_p, e_x
 
 
-def _lerp_pose_arc(a: PoseSpec, b: PoseSpec, u: float = 0.5) -> PoseSpec:
-    """Interpolate two PoseSpecs while pushing hand chords outward into natural semicircular arcs."""
-    def lp(x: float, y: float) -> float:
-        return x + (y - x) * u
-
-    def lv(va: Sequence[float], vb: Sequence[float]) -> np.ndarray:
-        return np.array(va, dtype=np.float64) * (1.0 - u) + np.array(vb, dtype=np.float64) * u
-
-    mid = PoseSpec(
-        hips_y=lp(a.hips_y, b.hips_y),
-        hips_yaw=lp(a.hips_yaw, b.hips_yaw),
-        hips_pitch=lp(a.hips_pitch, b.hips_pitch),
-        hips_roll=lp(a.hips_roll, b.hips_roll),
-        torso_yaw=lp(a.torso_yaw, b.torso_yaw),
-        torso_pitch=lp(a.torso_pitch, b.torso_pitch),
-        torso_roll=lp(a.torso_roll, b.torso_roll),
-        head_yaw=lp(a.head_yaw, b.head_yaw),
-        head_pitch=lp(a.head_pitch, b.head_pitch),
-        head_roll=lp(a.head_roll, b.head_roll),
-        head_world_space=a.head_world_space,
-        l_shoulder_lift=lp(a.l_shoulder_lift, b.l_shoulder_lift),
-        l_shoulder_fwd=lp(a.l_shoulder_fwd, b.l_shoulder_fwd),
-        r_shoulder_lift=lp(a.r_shoulder_lift, b.r_shoulder_lift),
-        r_shoulder_fwd=lp(a.r_shoulder_fwd, b.r_shoulder_fwd),
-        r_hand_pos=tuple(lv(a.r_hand_pos, b.r_hand_pos).tolist()),
-        r_elbow_pole=tuple(lv(a.r_elbow_pole, b.r_elbow_pole).tolist()),
-        blade_dir=tuple(v_norm(lv(a.blade_dir or (0, 0.4, 0.9), b.blade_dir or (0, 0.4, 0.9))).tolist()),
-        blade_edge=tuple(v_norm(lv(a.blade_edge or (0, -0.9, 0.4), b.blade_edge or (0, -0.9, 0.4))).tolist()),
-        l_hand_pos=tuple(lv(a.l_hand_pos, b.l_hand_pos).tolist()),
-        l_elbow_pole=tuple(lv(a.l_elbow_pole, b.l_elbow_pole).tolist()),
-        l_hand_dir=tuple(v_norm(lv(a.l_hand_dir or (-0.2, 0.3, 0.9), b.l_hand_dir or (-0.2, 0.3, 0.9))).tolist()),
-        l_foot_pos=tuple(lv(a.l_foot_pos, b.l_foot_pos).tolist()),
-        l_knee_pole=tuple(lv(a.l_knee_pole, b.l_knee_pole).tolist()),
-        l_foot_yaw=lp(a.l_foot_yaw, b.l_foot_yaw),
-        l_foot_pitch=lp(a.l_foot_pitch, b.l_foot_pitch),
-        r_foot_pos=tuple(lv(a.r_foot_pos, b.r_foot_pos).tolist()),
-        r_knee_pole=tuple(lv(a.r_knee_pole, b.r_knee_pole).tolist()),
-        r_foot_yaw=lp(a.r_foot_yaw, b.r_foot_yaw),
-        r_foot_pitch=lp(a.r_foot_pitch, b.r_foot_pitch),
-        local_body_space=a.local_body_space,
-        feet_in_body_space=a.feet_in_body_space,
-    )
-
-    # Smooth radial shoulder-clearance push (C1 continuous, zero direction jump!)
-    wP, _ = _torso_frames(mid)
-    R_by = rot_y(mid.hips_yaw)
-    R_by_inv = R_by.T
-
-    lh_w = (R_by @ np.array([mid.l_hand_pos[0], 0.0, mid.l_hand_pos[2]]) + np.array([0.0, mid.l_hand_pos[1], 0.0])) if mid.local_body_space else np.array(mid.l_hand_pos)
-    dl = float(np.linalg.norm(lh_w - wP[7]))
-    if dl < 0.340:
-        lh_w = wP[7] + v_norm(lh_w - wP[7], np.array([0.8, -0.2, 0.5])) * 0.340
-        lh_loc = (R_by_inv @ np.array([lh_w[0], 0.0, lh_w[2]]) + np.array([0.0, lh_w[1], 0.0])) if mid.local_body_space else lh_w
-        mid = replace(mid, l_hand_pos=tuple(lh_loc.tolist()))
-
-    rh_w = (R_by @ np.array([mid.r_hand_pos[0], 0.0, mid.r_hand_pos[2]]) + np.array([0.0, mid.r_hand_pos[1], 0.0])) if mid.local_body_space else np.array(mid.r_hand_pos)
-    dr = float(np.linalg.norm(rh_w - wP[11]))
-    if dr < 0.330:
-        rh_w = wP[11] + v_norm(rh_w - wP[11], np.array([-0.8, -0.2, 0.5])) * 0.330
-        rh_loc = (R_by_inv @ np.array([rh_w[0], 0.0, rh_w[2]]) + np.array([0.0, rh_w[1], 0.0])) if mid.local_body_space else rh_w
-        mid = replace(mid, r_hand_pos=tuple(rh_loc.tolist()))
-
-    return mid
+# Time-aware monotone cubic interpolation. Unlike uniform Catmull-Rom, short
+# attack phases cannot inherit an oversized tangent from a long hold.
+def _curve_slopes(t, x):
+    x=np.asarray(x,dtype=float); t=np.asarray(t,dtype=float)
+    h=np.diff(t); d=np.diff(x,axis=0)/h.reshape((-1,)+(1,)*(x.ndim-1))
+    m=np.zeros_like(x)
+    for i in range(1,len(t)-1):
+        a,b=d[i-1],d[i]; good=(a*b)>0
+        w1=2*h[i]+h[i-1]; w2=h[i]+2*h[i-1]
+        denom=w1/np.where(good,a,1.)+w2/np.where(good,b,1.)
+        m[i]=np.where(good,(w1+w2)/np.where(good,denom,1.),0.)
+    return m
 
 
-def _compile_clip(
-    name: str,
-    slot: str,
-    duration: float,
-    description: str,
-    keyframes: List[Keyframe],
-    tags: List[str],
-    hit_window: Optional[Tuple[float, float]] = None,
-    l_air_flex: float = 24.0,
-    r_air_flex: float = 26.0,
-    smooth_passes: int = 4,
-) -> AnimationClip:
-    """Subdivide wide arcs for torso/head clearance and stabilize every keyframe anatomically."""
-    kfs_sorted = sorted(keyframes, key=lambda k: k.t)
-    expanded: List[Keyframe] = [kfs_sorted[0]]
+def _hermite(a,b,ma,mb,h,u):
+    return (2*u**3-3*u*u+1)*a+(u**3-2*u*u+u)*h*ma+(-2*u**3+3*u*u)*b+(u**3-u*u)*h*mb
 
-    for i in range(1, len(kfs_sorted)):
-        ka, kb = expanded[-1], kfs_sorted[i]
-        dt = kb.t - ka.t
-        dyaw = abs(kb.pose.hips_yaw - ka.pose.hips_yaw)
-        dlh = float(np.linalg.norm(np.array(kb.pose.l_hand_pos) - np.array(ka.pose.l_hand_pos)))
-        drh = float(np.linalg.norm(np.array(kb.pose.r_hand_pos) - np.array(ka.pose.r_hand_pos)))
-        ba = v_norm(np.array(ka.pose.blade_dir or (0.0, 0.4, 0.9)))
-        bb = v_norm(np.array(kb.pose.blade_dir or (0.0, 0.4, 0.9)))
-        db_deg = math.degrees(math.acos(max(-1.0, min(1.0, float(np.dot(ba, bb))))))
 
-        if dt >= 0.17 and (dyaw > 68.0 or dlh > 0.44 or drh > 0.44 or db_deg > 72.0):
-            p_mid = _lerp_pose_arc(ka.pose, kb.pose, 0.5)
-            expanded.append(Keyframe(round((ka.t + kb.t) * 0.5, 4), p_mid, "flow", tension=0.0))
-        expanded.append(kb)
+def _sphere_log(a,b):
+    c=float(np.clip(a@b,-1,1)); v=_project(b,a)
+    return _unit(v,_perp(a))*math.acos(c)
 
-    def _stabilize_list(kf_list: List[Keyframe]) -> List[Keyframe]:
-        out: List[Keyframe] = []
-        prev_p: Optional[PoseSpec] = None
-        prev_e: Optional[np.ndarray] = None
-        for idx, kf in enumerate(kf_list):
-            sp, prev_e = _stabilize_pose(
-                kf.pose,
-                prev_pose=prev_p,
-                prev_edge_w=prev_e,
-                l_air_flex=l_air_flex,
-                r_air_flex=r_air_flex,
-            )
-            is_guard_yaw = abs(((sp.hips_yaw - (-24.0) + 180.0) % 360.0) - 180.0) < 1e-3
-            if idx == 0 and is_guard_yaw:
-                sp = _spin_guard(sp.hips_yaw) if sp.local_body_space else _CANONICAL_GUARD
-                prev_e = np.array(_CANONICAL_GUARD.blade_edge, dtype=np.float64)
-            elif idx == len(kf_list) - 1 and is_guard_yaw:
-                base_g = _spin_guard(sp.hips_yaw) if sp.local_body_space else _CANONICAL_GUARD
-                sp = replace(
-                    base_g,
-                    l_foot_yaw=_unwrap_deg(base_g.l_foot_yaw, prev_p.l_foot_yaw if prev_p else base_g.l_foot_yaw),
-                    r_foot_yaw=_unwrap_deg(base_g.r_foot_yaw, prev_p.r_foot_yaw if prev_p else base_g.r_foot_yaw),
-                )
-            prev_p = sp
-            ease = "whip" if kf.ease == "snap" else ("ease_out" if kf.ease == "heavy_drop" else kf.ease)
-            out.append(Keyframe(kf.t, sp, ease, tension=min(0.22, kf.tension)))
-        return out
 
-    stabilized = _stabilize_list(expanded)
+def _sphere_exp(a,v):
+    n=np.linalg.norm(v)
+    return _unit(a*math.cos(n)+v*(math.sin(n)/max(n,1e-12)),a)
 
-    # Prevent S^2 parallel-transport holonomy flips in rig_core.sample_clip:
-    # subdivide any segment where stabilized blade_edge or blade_dir rotates >= 65°!
-    for _ in range(3):
-        need_sub = False
-        rebuilt: List[Keyframe] = [stabilized[0]]
-        for i in range(1, len(stabilized)):
-            ka, kb = rebuilt[-1], stabilized[i]
-            ea = np.array(ka.pose.blade_edge, dtype=np.float64)
-            eb = np.array(kb.pose.blade_edge, dtype=np.float64)
-            ba = np.array(ka.pose.blade_dir, dtype=np.float64)
-            bb = np.array(kb.pose.blade_dir, dtype=np.float64)
-            # Also check world-space edge continuity for local_body_space spins!
-            ea_w = (rot_y(ka.pose.hips_yaw) @ ea) if ka.pose.local_body_space else ea
-            eb_w = (rot_y(kb.pose.hips_yaw) @ eb) if kb.pose.local_body_space else eb
-            if (kb.t - ka.t) > 0.05 and (
-                float(np.dot(ea, eb)) < 0.42
-                or float(np.dot(ea_w, eb_w)) < 0.35
-                or float(np.dot(ba, bb)) < 0.42
-            ):
-                p_mid = _lerp_pose_arc(ka.pose, kb.pose, 0.5)
-                rebuilt.append(Keyframe(round((ka.t + kb.t) * 0.5, 4), p_mid, "flow", tension=0.0))
-                need_sub = True
-            rebuilt.append(kb)
-        if not need_sub:
-            break
-        stabilized = _stabilize_list(rebuilt)
 
-    return AnimationClip(
-        name=name,
-        slot=slot,
-        duration=duration,
-        loop=False,
-        description=description,
-        keyframes=stabilized,
-        tags=tags,
-        hit_window=hit_window,
-        smooth_passes=smooth_passes,
-    )
+def _sphere_tangents(t, vs):
+    out=np.zeros_like(vs)
+    for i in range(1,len(t)-1):
+        a=-_sphere_log(vs[i],vs[i-1])/(t[i]-t[i-1]); b=_sphere_log(vs[i],vs[i+1])/(t[i+1]-t[i])
+        if a@b>0:
+            out[i]=(a*(t[i+1]-t[i])+b*(t[i]-t[i-1]))/(t[i+1]-t[i-1])
+            limit=2*min(np.linalg.norm(a),np.linalg.norm(b)); out[i]*=min(1.,limit/max(1e-9,np.linalg.norm(out[i])))
+    return out
+
+
+def _sphere_cubic(a,b,ma,mb,h,u):
+    c=_sphere_exp(a,ma*h/3); d=_sphere_exp(b,-mb*h/3)
+    ab=_slerp_dir(a,c,u,b); bc=_slerp_dir(c,d,u,b); cd=_slerp_dir(d,b,u,a)
+    return _slerp_dir(_slerp_dir(ab,bc,u,b),_slerp_dir(bc,cd,u,a),u,b)
+
+
+def _world_feet(p):
+    if not p.feet_in_body_space: return p
+    R=rot_y(p.hips_yaw); kw={'feet_in_body_space':False}
+    for side in ('l','r'):
+        for suffix in ('_foot_pos','_knee_pole'):
+            value=getattr(p,side+suffix)
+            if value is not None: kw[side+suffix]=tuple(R@np.asarray(value))
+        kw[side+'_foot_yaw']=getattr(p,side+'_foot_yaw')+p.hips_yaw
+    return replace(p,**kw)
+
+
+def _compile_clip(name,slot,duration,description,keyframes,tags,hit_window=None,
+                  l_air_flex=24.,r_air_flex=26.,smooth_passes=4):
+    """Bake authored poses on a fine time grid; apply constraints exactly once.
+
+    Original names, duration and hit windows are deliberately preserved. The
+    sampler still belongs to rig_core; disable its optional extra smoothing to
+    avoid filtering planted feet and impact timing a second time.
+    """
+    ks=sorted(keyframes,key=lambda k:k.t); times=np.array([k.t for k in ks],dtype=float)
+    if len(ks)<2 or np.any(np.diff(times)<=0) or abs(times[0])>1e-8 or abs(times[-1]-duration)>1e-6:
+        raise ValueError(f'{name}: invalid keyframe times')
+    raw=[k.pose for k in ks]
+    if any(p.local_body_space!=raw[0].local_body_space or p.feet_in_body_space!=raw[0].feet_in_body_space or p.head_world_space!=raw[0].head_world_space for p in raw):
+        raise ValueError(f'{name}: mixed coordinate spaces; convert authored keys first')
+    # Airborne spins retain local foot coordinates; grounded spins use world
+    # contacts so a rotating pelvis does not drag both feet around the origin.
+    grounded_spin=name.startswith(('js22_','js27_'))
+    if grounded_spin: raw=[_world_feet(p) for p in raw]
+    # Single-leg balance: position the supporting ankle under an approximate
+    # projected mass center at the authored hold. Keep the same anchor from
+    # preparation through hold (not a frame-by-frame moving foot target).
+    if 'balance' in tags:
+        raised=[j for j,p in enumerate(raw) if min(p.l_foot_pos[1],p.r_foot_pos[1])<=.105 and max(p.l_foot_pos[1],p.r_foot_pos[1])>.30]
+        if raised:
+            peak=raw[raised[len(raised)//2]]
+            side='l' if peak.l_foot_pos[1]<peak.r_foot_pos[1] else 'r'
+            other='r' if side=='l' else 'l'
+            wp,_=_torso_frames(peak)
+            # Rough segment-mass proxy: pelvis/trunk/head/arms/raised leg.
+            com=.24*wp[0]+.38*(wp[1]+wp[3])*.5+.08*wp[5]+.05*np.asarray(peak.l_hand_pos)+.05*np.asarray(peak.r_hand_pos)+.20*(wp[0]+np.asarray(getattr(peak,other+'_foot_pos')))*.5
+            anchor=np.array(getattr(peak,side+'_foot_pos'),dtype=float)
+            delta=(com-anchor)[[0,2]]; length=np.linalg.norm(delta)
+            anchor[[0,2]]+=delta*min(.70,.085/max(1e-9,length))
+            for j in range(max(1,raised[0]-1),raised[-1]+1):
+                old=np.array(getattr(raw[j],side+'_foot_pos'),dtype=float)
+                if old[1]<=.105:
+                    old[[0,2]]=anchor[[0,2]]
+                    raw[j]=replace(raw[j],**{side+'_foot_pos':tuple(old)})
+    ts=times; h=np.diff(ts)
+    # Keep all dataclass fields, including foot roll, blade spin, and hand up.
+    dirs={'blade_dir':(0,.4,.9),'blade_edge':(0,-.9,.4),'l_hand_dir':(-.2,.3,.9),'l_hand_up':(0,1,0)}
+    curves={}; spherical={}
+    for field in fields(raw[0]):
+        f=field.name; vals=[getattr(p,f) for p in raw]
+        if isinstance(vals[0],(bool,np.bool_)): continue
+        if f in dirs:
+            # Unspecified edge requests use the previous authored edge (or neutral default).
+            if f=='blade_edge' and all(v is None for v in vals): continue
+            vs=[]
+            for v in vals:
+                vv=_unit(v if v is not None else (vs[-1] if vs else dirs[f]))
+                if f=='blade_edge' and vs and vv@vs[-1]<0: vv=-vv
+                vs.append(vv)
+            vs=np.array(vs); spherical[f]=(vs,_sphere_tangents(ts,vs)); continue
+        if any(v is None for v in vals): continue
+        try: x=np.asarray(vals,dtype=float)
+        except (TypeError,ValueError): continue
+        if x.ndim not in (1,2): continue
+        # Pelvis yaw is authored unwrapped (full +/-360 spins). Never shortest-path it.
+        if f.endswith('_foot_yaw') and not grounded_spin:
+            for i in range(1,len(x)): x[i]=_unwrap_deg(x[i],x[i-1])
+        curves[f]=(x,_curve_slopes(ts,x))
+    # Identify authored planted-to-planted steps. Lift a moving foot instead of
+    # sliding it along the floor; when both move, stagger their swing phases.
+    footplans={}
+    for i in range(len(raw)-1):
+        moving=[]
+        for side in ('l','r'):
+            a=np.asarray(getattr(raw[i],side+'_foot_pos')); b=np.asarray(getattr(raw[i+1],side+'_foot_pos'))
+            distance=np.linalg.norm((b-a)[[0,2]])
+            if max(a[1],b[1])<=.105 and distance>.025:
+                moving.append((side,a,b,distance))
+        if len(moving)==2:
+            # Start with the smaller adjustment, unless the other leg already rises next.
+            moving.sort(key=lambda item:item[3])
+        for j,(side,a,b,distance) in enumerate(moving):
+            start,end=(.08,.92) if len(moving)==1 else ((.03,.49) if j==0 else (.51,.97))
+            footplans[i,side]=(a,b,start,end,min(.15,max(.035,.30*distance)))
+    # Approximate ballistic pelvis arc for the six authored airborne techniques.
+    # Keep authored apex silhouette via a height offset; change all airborne
+    # limb targets by the same vertical amount. Flight phases use a symmetric
+    # constant-acceleration reference blended into the authored curve.
+    flight=None
+    if 'jump' in tags or 'butterfly' in tags or 'nandu' in tags:
+        air=[j for j,p in enumerate(raw) if min(p.l_foot_pos[1],p.r_foot_pos[1])>.15]
+        if air:
+            j0,j1=air[0],air[-1]
+            if j0>0 and j1<len(raw)-1:
+                t0,t1=ts[j0-1],ts[j1+1]
+                # Lift-off occurs after the crouch; touchdown precedes the landing compression.
+                take=t0+.10*(ts[j0]-t0); land=t1-.10*(t1-ts[j1]);
+                y0=max(.90,raw[j0-1].hips_y); y1=max(.90,raw[j1+1].hips_y)
+                flight=(take,land,y0,y1)
+    # Each authored interval has its own uniform subgrid, keeping original
+    # accents exactly while avoiding almost coincident inserted samples.
+    grid=np.concatenate([np.linspace(ts[i],ts[i+1],max(1,int(math.ceil(h[i]*90)))+1)[:-1] for i in range(len(h))]+[ts[-1:]])
+    out=[]; prev=None; prev_edge=None
+    for t in grid:
+        i=min(len(ts)-2,max(0,bisect.bisect_right(ts,t)-1)); u=float(np.clip((t-ts[i])/h[i],0,1))
+        kw={}
+        for f,(x,m) in curves.items():
+            v=_hermite(x[i],x[i+1],m[i],m[i+1],h[i],u)
+            kw[f]=float(v) if np.ndim(v)==0 else tuple(map(float,v))
+        for f,(x,m) in spherical.items(): kw[f]=tuple(_sphere_cubic(x[i],x[i+1],m[i],m[i+1],h[i],u))
+        for side in ('l','r'):
+            plan=footplans.get((i,side))
+            if plan is None: continue
+            a,b,start,end,lift=plan; z=float(np.clip((u-start)/(end-start),0,1)); q=_smooth(z)
+            pos=(1-q)*a+q*b
+            # sin^2 lift gives zero vertical speed at both contact boundaries.
+            pos[1]+=lift*math.sin(math.pi*z)**2
+            kw[side+'_foot_pos']=tuple(pos)
+            # Foot pivot is intentional; otherwise swing heading follows the foot.
+            if not grounded_spin:
+                va=getattr(raw[i],side+'_foot_yaw'); vb=_unwrap_deg(getattr(raw[i+1],side+'_foot_yaw'),va)
+                kw[side+'_foot_yaw']=va+(vb-va)*q
+        p=replace(raw[i],**kw)
+        if flight is not None and flight[0]<t<flight[1]:
+            take,land,y0,y1=flight; T=land-take; tau=t-take
+            ballistic=y0+(y1-y0)*tau/T+4.905*tau*(T-tau)
+            blend=.70*_smooth(tau/.085)*_smooth((T-tau)/.085)
+            dy=(ballistic-p.hips_y)*blend
+            updates={'hips_y':p.hips_y+dy}
+            for side in ('l','r'):
+                for suffix in ('_hand_pos','_elbow_pole','_foot_pos','_knee_pole'):
+                    f=side+suffix; value=getattr(p,f)
+                    if value is not None:
+                        v=np.array(value,dtype=float); v[1]+=dy if suffix in ('_hand_pos','_elbow_pole') else dy*_smooth((v[1]-.08)/.18)
+                        if suffix=='_foot_pos': v[1]=max(.08,v[1])
+                        updates[f]=tuple(v)
+            p=replace(p,**updates)
+        sp,edge=_stabilize_pose(p,prev_pose=prev,prev_edge_w=prev_edge,l_air_flex=l_air_flex,r_air_flex=r_air_flex)
+        prev,prev_edge=sp,edge
+        out.append(Keyframe(float(t),sp,'flow',tension=0.0))
+    # Align terminal guard exactly with initial guard when the authored movement
+    # returns to it. Keep unwrapped yaw (and feet heading for grounded spins).
+    a,b=out[0].pose,out[-1].pose
+    if abs(((raw[-1].hips_yaw-raw[0].hips_yaw+180)%360)-180)<1e-5 and abs(raw[-1].hips_y-raw[0].hips_y)<1e-5:
+        if not grounded_spin and raw[0].feet_in_body_space:
+            target=replace(a,hips_yaw=b.hips_yaw)
+        else:
+            target=replace(a,hips_yaw=b.hips_yaw,
+                           l_foot_yaw=_unwrap_deg(a.l_foot_yaw,b.l_foot_yaw),r_foot_yaw=_unwrap_deg(a.r_foot_yaw,b.r_foot_yaw))
+        # Only blend rotation/pole corrections; keep the final contact trajectory.
+        # Endpoint is exactly the same world-space guard (up to full turns).
+        tail=min(.24,duration*.22)
+        for j in range(len(out)-2,0,-1):
+            k=out[j]; remain=duration-k.t
+            if remain>=tail: break
+            w=_smooth(1-remain/tail); changes={}
+            for f in ('blade_dir','blade_edge','l_hand_dir','l_hand_up'):
+                av,bv=getattr(k.pose,f),getattr(target,f)
+                if av is not None and bv is not None: changes[f]=tuple(_slerp_dir(av,bv,w))
+            if 'blade_dir' in changes and 'blade_edge' in changes:
+                bb=np.asarray(changes['blade_dir']); changes['blade_edge']=tuple(_unit(_project(np.asarray(changes['blade_edge']),bb),_perp(bb)))
+            for f in ('l_elbow_pole','r_elbow_pole','l_knee_pole','r_knee_pole'):
+                av,bv=getattr(k.pose,f),getattr(target,f)
+                if av is not None and bv is not None: changes[f]=tuple((1-w)*np.asarray(av)+w*np.asarray(bv))
+            for f in ('l_foot_roll','r_foot_roll','l_foot_pitch','r_foot_pitch','l_foot_yaw','r_foot_yaw'):
+                av,bv=getattr(k.pose,f),getattr(target,f); changes[f]=av+w*(_unwrap_deg(bv,av)-av)
+            out[j]=Keyframe(k.t,replace(k.pose,**changes),'flow',tension=0.)
+        out[-1]=Keyframe(duration,target,'flow',tension=0.)
+    return AnimationClip(name=name,slot=slot,duration=duration,loop=False,description=description,
+                         keyframes=out,tags=tags,hit_window=hit_window,smooth_passes=0)
 
 
 # ==============================================================================
@@ -588,12 +756,12 @@ _CANONICAL_GUARD, _ = _stabilize_pose(_RAW_GUARD)
 
 def _guard(**overrides) -> PoseSpec:
     """Crisp, proud Competition Jianshu guard: upright spine, taut sword line, alert Kiếm Quyết."""
-    return replace(_CANONICAL_GUARD, **overrides) if overrides else _CANONICAL_GUARD
+    return replace(_RAW_GUARD, **overrides) if overrides else _RAW_GUARD
 
 
 def _spin_guard(yaw_deg: float) -> PoseSpec:
-    """Body-space equivalent of _CANONICAL_GUARD at any 360-degree multiple (e.g. -24, 336, -384)."""
-    # Convert _CANONICAL_GUARD world coordinates into pelvis-yaw body space at -24.0 deg
+    """Body-space equivalent of the raw guard, projected only during compilation."""
+    # Convert authored world coordinates into pelvis-yaw body space at -24 degrees.
     R_inv = rot_y(24.0)
     def bw_pt(pt: Tuple[float, float, float]) -> Tuple[float, float, float]:
         v = R_inv @ np.array([pt[0], 0.0, pt[2]], dtype=np.float64)
@@ -602,7 +770,7 @@ def _spin_guard(yaw_deg: float) -> PoseSpec:
         v = R_inv @ np.array(d, dtype=np.float64)
         return (float(v[0]), float(v[1]), float(v[2]))
 
-    g = _CANONICAL_GUARD
+    g = _RAW_GUARD
     return PoseSpec(
         hips_y=g.hips_y,
         hips_yaw=yaw_deg,
@@ -631,10 +799,12 @@ def _spin_guard(yaw_deg: float) -> PoseSpec:
         l_knee_pole=bw_pt(g.l_knee_pole),
         l_foot_yaw=g.l_foot_yaw + 24.0,
         l_foot_pitch=g.l_foot_pitch,
+        l_foot_roll=g.l_foot_roll,
         r_foot_pos=bw_pt(g.r_foot_pos),
         r_knee_pole=bw_pt(g.r_knee_pole),
         r_foot_yaw=g.r_foot_yaw + 24.0,
         r_foot_pitch=g.r_foot_pitch,
+        r_foot_roll=g.r_foot_roll,
         local_body_space=True,
         feet_in_body_space=True,
     )
@@ -2143,6 +2313,118 @@ JIANSHU_32_BUILDERS = [
 ]
 
 
+# ==============================================================================
+# V3: DIRECT KINEMATIC BAKE — only affects Jianshu, not other animation libraries.
+# ==============================================================================
+
+def _temporal_filter(t, x, sigma, endpoint=True):
+    """Gaussian low-pass in real seconds, exact endpoint and smooth edge taper."""
+    x=np.asarray(x,dtype=float); out=x.copy()
+    for i,ti in enumerate(t):
+        ids=np.flatnonzero(np.abs(t-ti)<=3.0*sigma)
+        w=np.exp(-.5*((t[ids]-ti)/sigma)**2); w/=w.sum()
+        filtered=np.tensordot(w,x[ids],axes=(0,0))
+        blend=_smooth(min(ti-t[0],t[-1]-ti)/max(.001,2*sigma)) if endpoint else 1.
+        out[i]=x[i]+blend*(filtered-x[i])
+    return out
+
+
+def _filter_bend_planes(poses, t, worlds):
+    """Smooth signed bend-plane angle in parallel-transported tangent frames.
+
+    No averaging of local joint quaternions: hand and ankle endpoints stay fixed.
+    Angles are measured in pelvis-yaw space, so full body spins are retained.
+    """
+    updates=[{} for _ in poses]
+    for root,mid,end,field,bodyflag,sigma in (
+        (7,8,9,'l_elbow_pole','local_body_space',.052),
+        (11,12,13,'r_elbow_pole','local_body_space',.035),
+        (14,15,16,'l_knee_pole','feet_in_body_space',.036),
+        (17,18,19,'r_knee_pole','feet_in_body_space',.036)):
+        dirs=[]; bases=[]; ang=[]; prev_axis=prev_base=None
+        for p,wp in zip(poses,worlds):
+            inv=rot_y(p.hips_yaw).T
+            a=_unit(inv@(wp[end]-wp[root])); v=_unit(_project(inv@(wp[mid]-wp[root]),a),_perp(a))
+            base=v if prev_base is None else _unit(_project(_shortest_arc_rot(prev_axis,a)@prev_base,a),v)
+            dirs.append(a); bases.append(base)
+            ang.append(math.atan2(a@np.cross(base,v),base@v)); prev_axis,prev_base=a,base
+        ang=np.unwrap(ang); filt=_temporal_filter(t,ang,sigma)
+        for i,(p,wp,a,b,theta) in enumerate(zip(poses,worlds,dirs,bases,filt)):
+            pole_dir=b*math.cos(theta)+np.cross(a,b)*math.sin(theta)
+            world_pole=wp[root]+rot_y(p.hips_yaw)@(a*.20+pole_dir*.38)
+            if getattr(p,bodyflag): world_pole=rot_y(p.hips_yaw).T@world_pole
+            updates[i][field]=tuple(world_pole)
+    return [replace(p,**u) for p,u in zip(poses,updates)]
+
+
+def _smooth_world_orientations(t, mats, yaw, sigma):
+    """Filter rotations in rotating pelvis coordinates, using unit quaternions."""
+    q=np.array([mat_to_quat(rot_y(y).T@R) for y,R in zip(yaw,mats)])
+    for i in range(1,len(q)):
+        if q[i]@q[i-1]<0: q[i]*=-1
+    out=[]
+    for i,ti in enumerate(t):
+        ids=np.flatnonzero(np.abs(t-ti)<=3*sigma); w=np.exp(-.5*((t[ids]-ti)/sigma)**2); w/=w.sum()
+        local=q[ids].copy(); local[(local@q[i])<0]*=-1
+        avg=np.sum(local*w[:,None],axis=0); avg/=max(1e-12,np.linalg.norm(avg))
+        blend=_smooth(min(ti-t[0],t[-1]-ti)/(2*sigma))
+        out.append(rot_y(yaw[i])@quat_to_mat(quat_slerp(q[i],avg,blend)))
+    return out
+
+
+def _channels_from_world(wR):
+    return np.array([mat_to_quat(wR[i] if b[2]<0 else wR[b[2]].T@wR[i]) for i,b in enumerate(GAME_MIXAMO_20)])
+
+
+def _sample_jianshu(clip, fps=60):
+    """Bake dense solved channels directly; no second cubic interpolation of IK targets."""
+    if not isinstance(fps,(int,float)) or not math.isfinite(fps) or fps<=0: raise ValueError('fps must be positive')
+    ks=clip.keyframes; t=np.array([k.t for k in ks]); poses=[k.pose for k in ks]
+    first=[solve_pose(p) for p in poses]
+    poses=_filter_bend_planes(poses,t,[v[2] for v in first])
+    # Smooth ankle and left-hand world orientations separately without moving wrists/ankles.
+    yaw=[p.hips_yaw for p in poses]
+    rotations={i:_smooth_world_orientations(t,[v[3][i] for v in first],yaw,sigma) for i,sigma in ((9,.030),(16,.022),(19,.022))}
+    hs=[]; qs=[]; state={}
+    for i,p in enumerate(poses):
+        # Use correct ankle orientation to prevent toe/heel penetration of an approximate foot sole.
+        # Raised sole corners are a proxy, not a shoe mesh. Do not alter XZ foot anchors.
+        kw={}
+        for side,bi in (('l',16),('r',19)):
+            R=rotations[bi][i]
+            f=np.array(getattr(p,side+'_foot_pos'),dtype=float)
+            corners=np.array([[x,.08,z] for x in (-.045,.045) for z in (-.16,.05)])
+            need=max(0.,-float(np.min(f[1]+(corners@R.T)[:,1])))
+            f[1]+=need
+            kw[side+'_foot_pos']=tuple(f)
+        p=replace(p,**kw)
+        hp,lq,wp,wr=solve_pose(p,state=state)
+        # Replace only terminal frames; these joints have no children in the 20-bone rig.
+        for bi in (9,16,19): wr[bi]=rotations[bi][i]
+        lq=_channels_from_world(wr)
+        if qs: lq[np.sum(qs[-1]*lq,axis=1)<0]*=-1
+        hs.append(hp); qs.append(lq)
+    hs=np.asarray(hs); qs=np.asarray(qs)
+    n=max(2,int(round(clip.duration*fps))+1); times=np.linspace(0,clip.duration,n)
+    h_out=[]; q_out=[]
+    for tt in times:
+        j=min(len(t)-2,max(0,int(np.searchsorted(t,tt,side='right')-1)))
+        u=float(np.clip((tt-t[j])/(t[j+1]-t[j]),0,1))
+        hp=(1-u)*hs[j]+u*hs[j+1]
+        q=np.array([quat_slerp(a,b,u) for a,b in zip(qs[j],qs[j+1])])
+        wp,wr=fk_from_channels(hp,q)
+        # Sub-millimeter numerical floor protection; preserves in-place root contract.
+        min_y=min(wp[16,1],wp[19,1]); hp[1]+=max(0.,.08-min_y)
+        if q_out: q[np.sum(q_out[-1]*q,axis=1)<0]*=-1
+        h_out.append(hp); q_out.append(q)
+    clip.times=times.astype(np.float32); clip.hips_trans=np.asarray(h_out,dtype=np.float32)
+    clip.rot_tracks=np.asarray(q_out,dtype=np.float32).transpose(1,0,2).copy()
+    return clip
+
+
 def build_all_jianshu_clips(fps: int = 60) -> List[AnimationClip]:
-    """Build and sample all 32 Competition Wushu Jianshu clips at target FPS."""
-    return [sample_clip(fn(), fps=fps) for fn in JIANSHU_32_BUILDERS]
+    """Build and sample all 32 clips on the exact GAME_MIXAMO_20 skeleton."""
+    return [_sample_jianshu(fn(), fps=fps) for fn in JIANSHU_32_BUILDERS]
+
+# Explicit alias for callers that sample individual Jianshu builders.
+sample_clip = _sample_jianshu

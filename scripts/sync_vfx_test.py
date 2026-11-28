@@ -271,10 +271,9 @@ FIXTURE_EVENT_OVERRIDES = {
     # long enough to judge nozzle taper, flame-front width and hot-smoke wake.
     "VFX_ComposeFlameJet":
         "VFX_ComposeFlameJet($SOURCE, $TARGET, VC_MAT_FIRE, NULL)",
-    # A purple emissive smoke ring is easier to distinguish from both the
-    # orange plume and the cyan vortex. NULL selects the authored wave timing.
+    # The selected preset and inspector edits apply on every fixture cast.
     "VFX_ComposeGasShockwave":
-        "VFX_ComposeGasShockwave($POS, VC_MAT_VOID, NULL)",
+        "VFXTest_FireGasShockwave($POS)",
     # The panel preview uses a generic line; direct world clicks use the real
     # player socket and click target in sandbox/vfx_test.c.
     "VFX_ComposeLightningArc":
@@ -1370,6 +1369,7 @@ def gen_fire_function(entries):
             # Selector-driven burst fixtures must remain active after their
             # first emission so UpdateAndHandleInput can receive > / , keys.
             keep_active = e["fn"] in ("VFX_ComposeDecal", "VFX_ComposeImpactDust",
+                                       "VFX_ComposeGasShockwave",
                                        "VFX_ComposeSurfaceImpact",
                                        "VFX_ComposeSurfaceParticleRing")
             lines.append(f"    case {idx}: {rexpand(e['trigger_call'])}; return {'false' if keep_active else 'true'};")

@@ -314,6 +314,7 @@
           <div class="field-row">
             <label>Weapon Alignment</label>
             <div style="display:flex;gap:4px;">
+              <button id="btn-weapon-perp" class="sm" title="Rotate 90° across fist (for perpendicular pole/sword grips)">90° Fist</button>
               <button id="btn-weapon-flip" class="sm" title="Flip weapon direction 180°">Flip 180°</button>
               <button id="btn-weapon-reset" class="sm">Reset</button>
             </div>
@@ -568,31 +569,31 @@
     tassel.position.y = -0.265;
     g.add(tassel);
 
-    // Crossguard (wide along Z so blade edge faces +Z/-Z)
-    const guard = new THREE.Mesh(new THREE.BoxGeometry(0.028, 0.028, 0.15), goldMat);
+    // Crossguard (wide along X, thin along Z — matches kiem_thuan_thien.glb)
+    const guard = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.028, 0.028), goldMat);
     guard.position.y = 0.028;
     g.add(guard);
 
-    const guardCore = new THREE.Mesh(new THREE.BoxGeometry(0.036, 0.042, 0.06), goldMat);
+    const guardCore = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.042, 0.036), goldMat);
     guardCore.position.y = 0.032;
     g.add(guardCore);
 
     // Tapered double-edged Jian blade (+0.04 .. +0.88)
     const bladeLen = 0.74;
     const bladeGeo = new THREE.CylinderGeometry(0.011, 0.025, bladeLen, 4);
-    bladeGeo.scale(0.32, 1, 1.0); // thin on X (flat), wide on Z (edge)
+    bladeGeo.scale(1.0, 1, 0.32); // wide on X (cutting edge), thin on Z (flat)
     const blade = new THREE.Mesh(bladeGeo, steelMat);
     blade.position.y = 0.04 + bladeLen * 0.5;
     g.add(blade);
 
     // Blade spine ridge
-    const ridge = new THREE.Mesh(new THREE.BoxGeometry(0.009, bladeLen * 0.96, 0.008), ridgeMat);
+    const ridge = new THREE.Mesh(new THREE.BoxGeometry(0.008, bladeLen * 0.96, 0.009), ridgeMat);
     ridge.position.y = 0.04 + bladeLen * 0.48;
     g.add(ridge);
 
     // Sharp tip (+0.78 .. +0.90)
     const tipGeo = new THREE.ConeGeometry(0.011, 0.12, 4);
-    tipGeo.scale(0.32, 1, 1.0);
+    tipGeo.scale(1.0, 1, 0.32);
     const tip = new THREE.Mesh(tipGeo, steelMat);
     tip.position.y = 0.04 + bladeLen + 0.06;
     g.add(tip);
@@ -639,12 +640,12 @@
 
     // Leaf-shaped spearhead (+0.96 .. +1.28)
     const headBase = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.016, 0.10, 4), steelMat);
-    headBase.scale.set(0.35, 1, 1.0);
+    headBase.scale.set(1.0, 1, 0.35);
     headBase.position.y = 1.00;
     g.add(headBase);
 
     const headTip = new THREE.Mesh(new THREE.ConeGeometry(0.032, 0.24, 4), steelMat);
-    headTip.scale.set(0.35, 1, 1.0);
+    headTip.scale.set(1.0, 1, 0.35);
     headTip.position.y = 1.17;
     g.add(headTip);
 
@@ -695,52 +696,37 @@
 
   function computeHandFrame(handBone, charScale) {
     if (!handBone) return null;
-    let middle = null, index = null, ring = null, firstChild = null;
+    let middle = null, firstChild = null;
     for (const c of handBone.children) {
       if (!c.name) continue;
       if (!firstChild && c.position.lengthSq() > 1e-6) firstChild = c;
       const n = stripBonePrefix(c.name).toLowerCase();
       if (/middle1$/.test(n)) middle = c;
-      else if (/index1$/.test(n)) index = c;
-      else if (/ring1$|pinky1$/.test(n)) ring = c;
     }
 
-    // Finger direction in hand-local space
-    let fingerDir = new THREE.Vector3(0, 1, 0);
+    // Bone/finger axis in hand-local space (for Wuxing humanoid / Mixamo Y-up bones, this is +Y,
+    // matching wardrobe_system.c + kiem_thuan_thien.glb where blade +Y aligns directly with RightHand +Y).
+    let boneAxis = new THREE.Vector3(0, 1, 0);
     if (middle && middle.position.lengthSq() > 1e-6) {
-      fingerDir.copy(middle.position).normalize();
+      boneAxis.copy(middle.position).normalize();
     } else if (firstChild) {
-      fingerDir.copy(firstChild.position).normalize();
+      boneAxis.copy(firstChild.position).normalize();
     } else if (handBone.position.lengthSq() > 1e-6) {
-      fingerDir.copy(handBone.position).normalize();
+      boneAxis.copy(handBone.position).normalize();
     }
 
-    // Grip axis (+Y of weapon = pommel -> tip) along pinky -> index/thumb across palm
-    let gripAxis = new THREE.Vector3(0, 0, 1);
-    if (index && ring) {
-      const diff = index.position.clone().sub(ring.position);
-      if (diff.lengthSq() > 1e-6) gripAxis.copy(diff).normalize();
-    } else if (Math.abs(fingerDir.dot(gripAxis)) > 0.9) {
-      gripAxis.set(1, 0, 0);
+    const upY = new THREE.Vector3(0, 1, 0);
+    const localQuat = new THREE.Quaternion();
+    if (boneAxis.dot(upY) < 0.999) {
+      localQuat.setFromUnitVectors(upY, boneAxis);
     }
 
-    // Orthonormal basis: Y = gripAxis, Z = fingerDir (orthogonalized), X = Y x Z
-    const yAxis = gripAxis.clone().normalize();
-    const zAxis = fingerDir.clone().addScaledVector(yAxis, -fingerDir.dot(yAxis));
-    if (zAxis.lengthSq() < 1e-6) zAxis.set(1, 0, 0);
-    zAxis.normalize();
-    const xAxis = new THREE.Vector3().crossVectors(yAxis, zAxis).normalize();
-    zAxis.crossVectors(xAxis, yAxis).normalize();
-
-    const basisMat = new THREE.Matrix4().makeBasis(xAxis, yAxis, zAxis);
-    const localQuat = new THREE.Quaternion().setFromRotationMatrix(basisMat);
-
-    // Palm center offset in hand-local units
+    // Palm center offset along boneAxis in hand-local units
     const worldScale = new THREE.Vector3();
     handBone.getWorldScale(worldScale);
     const avgScale = (Math.abs(worldScale.x) + Math.abs(worldScale.y) + Math.abs(worldScale.z)) / 3 || 1;
-    const palmDistLocal = (0.075 * charScale) / avgScale;
-    const palmOffset = fingerDir.clone().multiplyScalar(palmDistLocal);
+    const palmDistLocal = (0.055 * charScale) / avgScale;
+    const palmOffset = boneAxis.clone().multiplyScalar(palmDistLocal);
 
     return { palmOffset, localQuat };
   }
@@ -1108,6 +1094,33 @@
       }
       keptTracks.push(track);
     }
+
+    // Auto-fill missing Ring/Pinky tracks from Middle (for 3-finger Mixamo FBX rigs that only export Thumb/Index/Middle)
+    const quatByStripped = new Map();
+    for (const t of keptTracks) {
+      const dot = t.name.indexOf('.');
+      if (dot !== -1 && t.name.slice(dot) === '.quaternion') {
+        quatByStripped.set(stripBonePrefix(t.name.slice(0, dot)).toLowerCase(), t);
+      }
+    }
+    for (const side of ['left', 'right']) {
+      for (const phal of ['1', '2', '3']) {
+        const srcTrack = quatByStripped.get(`${side}handmiddle${phal}`) || quatByStripped.get(`${side}handindex${phal}`);
+        if (!srcTrack) continue;
+        for (const finger of ['ring', 'pinky']) {
+          const key = `${side}hand${finger}${phal}`;
+          if (quatByStripped.has(key)) continue;
+          const targetBone = lookup.get(key);
+          if (!targetBone) continue;
+          const clonedTrack = srcTrack.clone();
+          clonedTrack.name = `${targetBone}.quaternion`;
+          keptTracks.push(clonedTrack);
+          quatByStripped.set(key, clonedTrack);
+          matched++;
+        }
+      }
+    }
+
     cloned.tracks = keptTracks;
     cloned._matchedTracks = matched;
     cloned._totalTracks = clip.tracks.length;
@@ -1223,7 +1236,22 @@
           if (Array.isArray(ch)) ch.forEach(addSubtree);
         };
         if (hipsIdx >= 0) {
-          addSubtree(hipsIdx);
+          // BFS order keeps base 20 bones ahead of finger/toe leaves and guarantees parent-before-child
+          const queue = [hipsIdx];
+          visited.add(hipsIdx);
+          while (queue.length > 0) {
+            const idx = queue.shift();
+            jointIndices.push(idx);
+            const ch = gltf.nodes[idx].children;
+            if (Array.isArray(ch)) {
+              for (const c of ch) {
+                if (c != null && c >= 0 && c < gltf.nodes.length && !visited.has(c)) {
+                  visited.add(c);
+                  queue.push(c);
+                }
+              }
+            }
+          }
         } else {
           gltf.nodes.forEach((n, idx) => {
             if (n.name && !/^(auxscene|scene|rootnode)$/i.test(n.name)) jointIndices.push(idx);
@@ -2193,6 +2221,13 @@
   ['sel-weapon-hand', 'wpn-slide', 'wpn-rx', 'wpn-ry', 'wpn-rz', 'wpn-scale'].forEach((id) => {
     document.getElementById(id).addEventListener('input', updateWeaponTuneFromUI);
     document.getElementById(id).addEventListener('change', updateWeaponTuneFromUI);
+  });
+  document.getElementById('btn-weapon-perp').addEventListener('click', () => {
+    const activeKey = state.weaponMode === 'spear' ? 'spear' : 'sword';
+    const tune = state.weaponTuning[activeKey];
+    tune.rz = (tune.rz === 90) ? 0 : 90;
+    syncWeaponPopoverUI();
+    updateWeaponTransform();
   });
   document.getElementById('btn-weapon-flip').addEventListener('click', () => {
     const activeKey = state.weaponMode === 'spear' ? 'spear' : 'sword';

@@ -186,12 +186,16 @@ Automatically assign shader, texture, material, and manage the appropriate blend
   carried across frames; `VFX_GasVortex_Stop` preserves the dissipating coil
   and `VFX_KillGasVortex` removes it immediately. It shares Gas v1's single
   admitted volume, so a zero handle is a normal admission failure.
-- `VFX_ComposeGasShockwave(pos, material, config)`: fires a one-shot expanding
-  ring of simulated energy smoke. Each fixed-rate ring event injects sixteen
-  outward-moving sources around the full circumference; the gas solver owns
-  their roll-up and fading wake. Gameplay that needs cancellation can use
-  `VFX_GasShockwave_Spawn`, then `VFX_GasShockwave_Stop` or
-  `VFX_KillGasShockwave`. It shares Gas v1's single admitted volume.
+- `VFX_GasShockwave_ApplyPreset` fills a config with the authored geometry,
+  timing and motion for Pressure Front, Dust Surge, Thermal Bloom, Vortex Wake
+  or Double Pulse. Edit the returned config before casting with
+  `VFX_ComposeGasShockwave` or `VFX_GasShockwave_Spawn`. Passing NULL selects
+  Pressure Front. The material argument supplies the body and emission tints.
+  The active wave snapshots its config. `VFX_GasShockwave_Stop` ends
+  injection and fades the simulated wake. `VFX_KillGasShockwave` removes it
+  immediately. Spawn returns zero for zero intensity or failed admission.
+  Gas Shockwave shares the gas system's single admitted volume. Source
+  `core/composition/common/vc_gas_shockwave.inl`.
 - `VFX_ComposeFlameJet(start, end, material, config)`: fires a directed primary
   cone of simulated flame. Every fixed-rate pulse lays four overlapping lobes
   from the narrow nozzle to the broad flame front, while velocity and mild
@@ -456,3 +460,4 @@ The preset profiles live in `core/shaders/shock_ring.fs`. Soft coverage and shor
 |---|---|---|---|---|
 | 2026-11-26 | Codex | Shock Ring Variants | `vc_shock_ring.inl`, `shock_ring.fs` | Ground-truth |
 | 2026-11-26 | Codex | Remove Shatter from Shock Ring Variants | `visual_composer.h` | Ground-truth |
+| 2026-11-28 | Codex | Gas Shockwave presets and lifecycle | `vc_gas_shockwave.inl` | Ground-truth |

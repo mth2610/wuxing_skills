@@ -165,6 +165,7 @@ static Matrix s_vfxFixtureXf[VFXTEST_FIXTURE_SLOTS];
 static int s_vfxFixtureHandle[VFXTEST_FIXTURE_SLOTS];
 static float s_vfxFixtureLastTime[VFXTEST_FIXTURE_SLOTS];
 static bool s_vfxFixturesReady = false;
+static int s_gasShockwaveFixtureHandle;
 // The tester supplies its current player model as a target only. The core mesh
 // APIs take arbitrary Mesh/Model + Matrix and never query this state.
 static Model s_meshParticleFixtureModel = {0};
@@ -808,6 +809,11 @@ static void VFXTest_RefreshInspectorParams(bool force)
     {
         s_inspectorParamCount = VFX_Fire_GetParams(VFX_Fire_GetLiveConfig(), s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
     }
+    else if (VFXTest_IsNewFxNamed("GAS SHOCKWAVE"))
+    {
+        s_inspectorParamCount = VFX_GasShockwave_GetParams(VFX_GasShockwave_GetLiveConfig(),
+                                                         s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
+    }
     else if (VFXTest_IsNewFxNamed("SHOCK RING"))
     {
         s_inspectorParamCount = VFX_ShockRing_GetParams(VFXTest_GetShockRingDesc(), s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
@@ -1381,6 +1387,8 @@ static void VFXTest_StopFixtures(void)
 {
     VFXTest_ClearGuidedFrames();
     VFX_KillFire(0);
+    VFX_KillGasShockwave(s_gasShockwaveFixtureHandle);
+    s_gasShockwaveFixtureHandle = 0;
     VFXTest_InitFixtures();
     // @gen:newfx_stop begin
     if (s_vfxFixtureHandle[6] >= 0)
@@ -1440,6 +1448,15 @@ static void VFXTest_StopFixtures(void)
 // @gen:newfx_stop end
 }
 
+static void VFXTest_FireGasShockwave(Vector3 pos)
+{
+    VFX_GasShockwaveConfig config = *VFX_GasShockwave_GetLiveConfig();
+    // Keep the isolated preview available when a slow frame gates gameplay casts.
+    config.priority = GAS_PRIORITY_ULTIMATE;
+    int handle = VFX_GasShockwave_Spawn(pos, VC_MAT_VOID, &config);
+    if (handle > 0) s_gasShockwaveFixtureHandle = handle;
+}
+
 // All burst fixtures live here. UI clicks and automated render warm-up both
 // call this single dispatcher, so each source .inl owns one compose call.
 static bool VFXTest_FireNewFx(int newfxIndex, Vector3 pos)
@@ -1453,7 +1470,7 @@ static bool VFXTest_FireNewFx(int newfxIndex, Vector3 pos)
     case 2: VFX_ComposeDecalVariant(pos, VC_MAT_FIRE, 1.5f, 0.65f, 1.5f, s_decalFixtureVariant); return false;
     case 4: VFX_ComposeEmberBurst(pos, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.0f, 1.0f); return true;
     case 5: VFX_ComposeFlameJet(Vector3Add(pos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(pos, (Vector3){2.5f, 1.8f, 0.8f}), VC_MAT_FIRE, NULL); return true;
-    case 8: VFX_ComposeGasShockwave(pos, VC_MAT_VOID, NULL); return true;
+    case 8: VFXTest_FireGasShockwave(pos); return false;
     case 10: VFXTest_FireGuidedMotion(Vector3Add(pos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(pos, (Vector3){2.5f, 1.8f, 0.8f})); return true;
     case 12: VFX_ComposeImpactDustVariant(pos, s_impactDustFixtureVariant == VFX_IMPACT_DUST_VARIANT_ENERGY_WISP ? VC_MAT_LIGHTNING : VC_MAT_EARTH, 1.5f, 1.0f, s_impactDustFixtureVariant); return false;
     case 14: VFX_ComposeLightningArc(Vector3Add(pos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(pos, (Vector3){2.5f, 1.8f, 0.8f}), VC_MAT_LIGHTNING, 0.055f); return true;
@@ -2231,6 +2248,16 @@ static void VFXTest_UIDrawButton(Rectangle rect, const char *text, bool active)
     VFXTest_UIText(text, rect, 12, active ? SKYBLUE : RAYWHITE);
 }
 
+static bool VFXTest_UIVariantUsesShift(void)
+{
+    return VFXTest_IsNewFxNamed("GUIDED MOTION") ||
+           VFXTest_IsNewFxNamed("GUIDED FIRE") ||
+           VFXTest_IsNewFxNamed("GUIDED EARTH") ||
+           VFXTest_IsNewFxNamed("SEISMIC WAVE") ||
+           VFXTest_IsNewFxNamed("GUIDED LIQUID") ||
+           VFXTest_IsNewFxNamed("GAS SHOCKWAVE");
+}
+
 static const char *VFXTest_UIActiveVariant(void)
 {
     if (VFXTest_IsNewFxNamed("GUIDED MOTION")) return s_guidedFixturePresetNames[s_guidedFixturePreset];
@@ -2242,6 +2269,7 @@ static const char *VFXTest_UIActiveVariant(void)
     if (VFXTest_IsNewFxNamed("SURFACE PARTICLE RING")) return VFX_SurfaceParticleRingVariant_Name(s_surfaceParticleRingFixtureVariant);
     if (VFXTest_IsNewFxNamed("IMPACT DUST")) return VFX_ImpactDustVariant_Name(s_impactDustFixtureVariant);
     if (VFXTest_IsNewFxNamed("GUIDED FIRE")) return VFX_FirePreset_Name(VFX_Fire_GetLiveConfig()->preset);
+    if (VFXTest_IsNewFxNamed("GAS SHOCKWAVE")) return VFX_GasShockwavePreset_Name(VFX_GasShockwave_GetLiveConfig()->preset);
     if (VFXTest_IsNewFxNamed("SHOCK RING")) return VFX_ShockRingVariant_Name(VFXTest_GetShockRingDesc()->variant);
     if (VFXTest_IsNewFxNamed("RUNE CIRCLE")) return VFX_RuneCircleVariant_Name(VFX_RuneCircle_GetLiveConfig()->variant);
     if (VFXTest_IsNewFxNamed("SHIELD SHELL")) return VFX_ShieldPreset_Name(VFXTest_GetShieldDesc()->preset);
@@ -2312,7 +2340,7 @@ static void VFXTest_UIDraw(void)
 
     const char *variant = VFXTest_UIActiveVariant();
     if (variant) VFXTest_UIText(TextFormat("%s   |   %s", variant,
-                             VFXTest_IsNewFxNamed("GUIDED MOTION") ? "Shift+, / Shift+. preset" : "< / > preset"),
+                             VFXTest_UIVariantUsesShift() ? "Shift+, / Shift+. preset" : "< / > preset"),
                              (Rectangle){12.0f, ui.header.y + ui.header.height + 6.0f, fmaxf(180.0f, GetScreenWidth() - 340.0f), 24.0f}, 12, SKYBLUE);
     VFXTest_UIText(TextFormat("%.0f FPS", s_vfxTelemetryFps), ui.metrics[0], 12, RAYWHITE);
     VFXTest_UIText(TextFormat("%.1f ms", s_vfxTelemetryFrameMs), ui.metrics[1], 12, LIGHTGRAY);
@@ -2323,7 +2351,8 @@ static void VFXTest_UIDraw(void)
     VFXTest_UIDrawButton(VFXTest_UITiltButton(ui, 1), "+", false);
     if (!s_isPanelOpen && !s_vfxHelpOpen && s_inspectorParamCount > 0) {
         DrawRectangleRounded(ui.inspector, 0.035f, 4, (Color){15, 20, 27, 235});
-        VFXTest_UIText(VFXTest_IsNewFxNamed("GUIDED MOTION") ? "Parameters - next cast" : "Parameters", (Rectangle){ui.inspector.x + 8, ui.inspector.y + 6, ui.inspector.width - 16, 28}, 14, RAYWHITE);
+        bool nextCast = VFXTest_IsNewFxNamed("GUIDED MOTION") || VFXTest_IsNewFxNamed("GAS SHOCKWAVE");
+        VFXTest_UIText(nextCast ? "Parameters - next cast" : "Parameters", (Rectangle){ui.inspector.x + 8, ui.inspector.y + 6, ui.inspector.width - 16, 28}, 14, RAYWHITE);
         for (int row = 0; row < ui.inspectorRows && row + s_vfxInspectorScroll < s_inspectorParamCount; ++row) {
             int index = row + s_vfxInspectorScroll;
             Rectangle rect = VFXTest_UIInspectorRow(ui, row);
@@ -3072,10 +3101,12 @@ void VFXTest_Draw3D(void)
 
         if (s_inspectorParamCount > 0)
         {
+            bool shiftHeld = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
+            bool presetKey = shiftHeld && VFXTest_UIVariantUsesShift();
             // CapsLock (or Tab) cycles through variables [c1 -> c2 -> ... -> a1 -> ... -> b1 ...]
             if (IsKeyPressed(KEY_CAPS_LOCK) || IsKeyPressed(KEY_TAB))
             {
-                if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))
+                if (shiftHeld)
                     s_inspectorSelectedParam = (s_inspectorSelectedParam - 1 + s_inspectorParamCount) % s_inspectorParamCount;
                 else
                     s_inspectorSelectedParam = (s_inspectorSelectedParam + 1) % s_inspectorParamCount;
@@ -3089,10 +3120,9 @@ void VFXTest_Draw3D(void)
             }
 
             // Slash '/' (and '>' or '.') cycles the value of the selected variable
-            if ((IsKeyPressed(KEY_SLASH) || (IsKeyPressed(KEY_PERIOD) && ((!VFXTest_IsNewFxNamed("GUIDED MOTION") && !VFXTest_IsNewFxNamed("GUIDED FIRE") && !VFXTest_IsNewFxNamed("GUIDED EARTH") && !VFXTest_IsNewFxNamed("SEISMIC WAVE") && !VFXTest_IsNewFxNamed("GUIDED LIQUID")) ||
-                !(IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))))))
+            if (IsKeyPressed(KEY_SLASH) || (!presetKey && IsKeyPressed(KEY_PERIOD)))
             {
-                if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))
+                if (shiftHeld)
                     VFXTest_UIEditParameter(s_inspectorSelectedParam, -1);
                 else
                     VFXTest_UIEditParameter(s_inspectorSelectedParam, 1);
@@ -3102,8 +3132,7 @@ void VFXTest_Draw3D(void)
                 TraceLog(LOG_INFO, "[Inspector] Param '%s' = %s",
                          s_inspectorParams[s_inspectorSelectedParam].name, valBuf);
             }
-            else if (IsKeyPressed(KEY_COMMA) && ((!VFXTest_IsNewFxNamed("GUIDED MOTION") && !VFXTest_IsNewFxNamed("GUIDED FIRE") && !VFXTest_IsNewFxNamed("GUIDED EARTH") && !VFXTest_IsNewFxNamed("SEISMIC WAVE") && !VFXTest_IsNewFxNamed("GUIDED LIQUID")) ||
-                     !(IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))))
+            else if (!presetKey && IsKeyPressed(KEY_COMMA))
             {
                 VFXTest_UIEditParameter(s_inspectorSelectedParam, -1);
                 char valBuf[64];
@@ -3320,6 +3349,23 @@ void VFXTest_Draw3D(void)
                     VFXTest_RefreshInspectorParams(true);
                     TraceLog(LOG_INFO, "GUIDED FIRE preset: %s (Shift+> next; Shift+< previous)", VFX_FirePreset_Name(fcfg->preset));
                 }
+            }
+        }
+        else if (VFXTest_IsNewFxNamed("GAS SHOCKWAVE") &&
+                 (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT)))
+        {
+            int direction = IsKeyPressed(KEY_PERIOD) ? 1 : (IsKeyPressed(KEY_COMMA) ? -1 : 0);
+            if (direction != 0)
+            {
+                VFX_GasShockwaveConfig *config = VFX_GasShockwave_GetLiveConfig();
+                VFX_GasShockwavePreset preset = (VFX_GasShockwavePreset)(
+                    ((int)config->preset + direction + VFX_GAS_SHOCKWAVE_PRESET_COUNT) % VFX_GAS_SHOCKWAVE_PRESET_COUNT);
+                VFX_GasShockwave_ApplyPreset(config, preset);
+                VFXTest_RefreshInspectorParams(true);
+                s_vfxInspectorScroll = 0;
+                VFXTest_FireGasShockwave(s_prefabStartPos);
+                TraceLog(LOG_INFO, "GAS SHOCKWAVE preset: %s (Shift+. next; Shift+, previous)",
+                         VFX_GasShockwavePreset_Name(preset));
             }
         }
         else if (VFXTest_IsNewFxNamed("GUIDED EARTH"))
@@ -3862,6 +3908,14 @@ void VFXTest_SetRenderTarget(int newfxIndex, Vector3 spawnPos)
     s_prefabStartPos = spawnPos;
     s_isPlayingMesh = true;
     s_meshTime = 0.0f;
+
+    const char *gasShockwavePreset = getenv("WUXING_GAS_SHOCKWAVE_PRESET");
+    if (VFXTest_IsNewFxNamed("GAS SHOCKWAVE") && gasShockwavePreset && *gasShockwavePreset) {
+        char *end = NULL;
+        long selected = strtol(gasShockwavePreset, &end, 10);
+        if (end != gasShockwavePreset && !*end && selected >= 0 && selected < VFX_GAS_SHOCKWAVE_PRESET_COUNT)
+            VFX_GasShockwave_ApplyPreset(VFX_GasShockwave_GetLiveConfig(), (VFX_GasShockwavePreset)selected);
+    }
 
     const char *ribbonPreset = getenv("WUXING_MOTION_RIBBON_PRESET");
     if (ribbonPreset && *ribbonPreset) {

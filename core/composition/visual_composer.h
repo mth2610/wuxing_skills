@@ -1247,9 +1247,18 @@ void VFX_GasVortex_Stop(int handle);
 void VFX_KillGasVortex(int handle);
 
 // ── Volumetric gas shockwave ───────────────────────────────────────────────
-// A one-shot expanding ring of simulated energy smoke. Sixteen sources cover
-// each ring event and push the gas radially outward; the volume remains alive
-// after expansion so its luminous wake rolls up and dissipates naturally.
+// One-shot gas fronts and wakes. Start from a preset and edit the config
+// before spawning. The active instance snapshots it and shares Gas v1's
+// single admitted volume with the other gas compositions.
+typedef enum {
+    VFX_GAS_SHOCKWAVE_PRESET_PRESSURE_FRONT = 0,
+    VFX_GAS_SHOCKWAVE_PRESET_DUST_SURGE,
+    VFX_GAS_SHOCKWAVE_PRESET_THERMAL_BLOOM,
+    VFX_GAS_SHOCKWAVE_PRESET_VORTEX_WAKE,
+    VFX_GAS_SHOCKWAVE_PRESET_DOUBLE_PULSE,
+    VFX_GAS_SHOCKWAVE_PRESET_COUNT
+} VFX_GasShockwavePreset;
+
 typedef struct {
     GasPriority priority;
     float radius;           // final wave radius in metres; default 2.8
@@ -1260,9 +1269,18 @@ typedef struct {
     float ringsPerSecond;   // complete injection rings per second; default 18
     float outwardSpeed;     // residual radial gas velocity in m/s; default 1.0
     float lift;             // upward gas velocity in m/s; default 0.42
+    VFX_GasShockwavePreset preset; // selects the source profile and gas material
 } VFX_GasShockwaveConfig;
 
 VFX_GasShockwaveConfig VFX_GasShockwave_DefaultConfig(void);
+void VFX_GasShockwave_ApplyPreset(VFX_GasShockwaveConfig *config,
+                                 VFX_GasShockwavePreset preset);
+const char *VFX_GasShockwavePreset_Name(VFX_GasShockwavePreset preset);
+VFX_GasShockwaveConfig *VFX_GasShockwave_GetLiveConfig(void);
+int VFX_GasShockwave_GetParams(VFX_GasShockwaveConfig *config,
+                              VFX_ParamDef *out, int max);
+// NULL selects Pressure Front. Spawn returns 0 when admission fails or
+// intensity is zero. Stop ends injection and fades the existing wake.
 void VFX_ComposeGasShockwave(Vector3 pos, VC_MaterialId mat,
                              const VFX_GasShockwaveConfig *config);
 int  VFX_GasShockwave_Spawn(Vector3 pos, VC_MaterialId mat,

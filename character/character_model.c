@@ -287,6 +287,182 @@ static void LoadAnimManifest(const char *manifestPath)
     UnloadFileText(text);
 }
 
+static char s_bankBoneNames[CHAR_MAX_SKIN_BONES][32];
+static int s_bankBoneCount = 0;
+
+// Reads skins[0].joints -> nodes[j].name directly from a .glb file's JSON chunk.
+// Works on desktop & Android APK assets via LoadFileData, and keeps FindAnimBoneIndexByName
+// immune to joint-order differences between player.glb, body GLBs, and humanoid_anims.glb.
+static int LoadGlbSkinBoneNames(const char *glbPath, char outNames[CHAR_MAX_SKIN_BONES][32])
+{
+    if (!glbPath || glbPath[0] == '\0')
+        return 0;
+
+    int fileSize = 0;
+    unsigned char *raw = LoadFileData(glbPath, &fileSize);
+    if (!raw || fileSize < 28)
+    {
+        if (raw)
+            UnloadFileData(raw);
+        return 0;
+    }
+
+    unsigned int magic = (unsigned int)raw[0] | ((unsigned int)raw[1] << 8) |
+                         ((unsigned int)raw[2] << 16) | ((unsigned int)raw[3] << 24);
+    unsigned int jsonLen = (unsigned int)raw[12] | ((unsigned int)raw[13] << 8) |
+                           ((unsigned int)raw[14] << 16) | ((unsigned int)raw[15] << 24);
+    unsigned int chunkType = (unsigned int)raw[16] | ((unsigned int)raw[17] << 8) |
+                             ((unsigned int)raw[18] << 16) | ((unsigned int)raw[19] << 24);
+    if (magic != 0x46546C67u || chunkType != 0x4E4F534Au || (int)(20u + jsonLen) > fileSize)
+    {
+        UnloadFileData(raw);
+        return 0;
+    }
+
+    const char *js = (const char *)(raw + 20);
+    const char *jsEnd = js + jsonLen;
+
+    static char nodeNames[256][32];
+    int nodeCount = 0;
+    const char *pNodes = NULL;
+    for (const char *p = js; p + 8 < jsEnd; p++)
+    {
+        if (memcmp(p, "\"nodes\"", 7) == 0)
+        {
+            const char *q = p + 7;
+            while (q < jsEnd && (*q == ' ' || *q == '\t' || *q == '\r' || *q == '\n' || *q == ':'))
+                q++;
+            if (q < jsEnd && *q == '[')
+            {
+                // Skip scenes[i].nodes ([0, ...]) — top-level glTF "nodes" array starts with '{'
+                const char *r = q + 1;
+                while (r < jsEnd && (*r == ' ' || *r == '\t' || *r == '\r' || *r == '\n'))
+                    r++;
+                if (r < jsEnd && *r == '{')
+                {
+                    pNodes = r;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (pNodes)
+    {
+        const char *p = pNodes;
+        while (p < jsEnd && *p != ']' && nodeCount < 256)
+        {
+            while (p < jsEnd && *p != '{' && *p != ']')
+                p++;
+            if (p >= jsEnd || *p == ']')
+                break;
+            const char *objStart = p;
+            int depth = 0;
+            bool inStr = false;
+            while (p < jsEnd)
+            {
+                char ch = *p++;
+                if (ch == '"' && (p - 2 < objStart || *(p - 2) != '\\'))
+                    inStr = !inStr;
+                else if (!inStr)
+                {
+                    if (ch == '{')
+                        depth++;
+                    else if (ch == '}' && --depth == 0)
+                        break;
+                }
+            }
+            const char *objEnd = p;
+            nodeNames[nodeCount][0] = '\0';
+            int d2 = 0;
+            bool s2 = false;
+            for (const char *k = objStart; k + 6 < objEnd; k++)
+            {
+                char ch = *k;
+                if (ch == '"' && (k == objStart || *(k - 1) != '\\'))
+                {
+                    if (!s2 && d2 == 1 && memcmp(k, "\"name\"", 6) == 0)
+                    {
+                        const char *v = k + 6;
+                        while (v < objEnd && (*v == ' ' || *v == '\t' || *v == ':'))
+                            v++;
+                        if (v < objEnd && *v == '"')
+                        {
+                            v++;
+                            int n = 0;
+                            while (v < objEnd && *v != '"' && n < 31)
+                                nodeNames[nodeCount][n++] = *v++;
+                            nodeNames[nodeCount][n] = '\0';
+                            break;
+                        }
+                    }
+                    s2 = !s2;
+                }
+                else if (!s2)
+                {
+                    if (ch == '{')
+                        d2++;
+                    else if (ch == '}')
+                        d2--;
+                }
+            }
+            nodeCount++;
+        }
+    }
+
+    int count = 0;
+    const char *pSkins = NULL;
+    for (const char *p = js; p + 8 < jsEnd; p++)
+    {
+        if (memcmp(p, "\"skins\"", 7) == 0)
+        {
+            pSkins = p + 7;
+            break;
+        }
+    }
+    if (pSkins)
+    {
+        const char *pJoints = NULL;
+        for (const char *p = pSkins; p + 9 < jsEnd; p++)
+        {
+            if (memcmp(p, "\"joints\"", 8) == 0)
+            {
+                const char *q = p + 8;
+                while (q < jsEnd && (*q == ' ' || *q == '\t' || *q == '\r' || *q == '\n' || *q == ':'))
+                    q++;
+                if (q < jsEnd && *q == '[')
+                {
+                    pJoints = q + 1;
+                    break;
+                }
+            }
+        }
+        if (pJoints)
+        {
+            const char *p = pJoints;
+            while (p < jsEnd && *p != ']' && count < CHAR_MAX_SKIN_BONES)
+            {
+                while (p < jsEnd && (*p < '0' || *p > '9') && *p != ']')
+                    p++;
+                if (p >= jsEnd || *p == ']')
+                    break;
+                int nid = 0;
+                while (p < jsEnd && *p >= '0' && *p <= '9')
+                    nid = nid * 10 + (*p++ - '0');
+                if (nid >= 0 && nid < nodeCount)
+                    strncpy(outNames[count], nodeNames[nid], 31);
+                else
+                    outNames[count][0] = '\0';
+                outNames[count][31] = '\0';
+                count++;
+            }
+        }
+    }
+
+    UnloadFileData(raw);
+    return count;
+}
+
 bool CharacterModel_LoadEx(const char *meshPath, const char *animBankPath)
 {
     s_loaded = false;
@@ -323,8 +499,18 @@ bool CharacterModel_LoadEx(const char *meshPath, const char *animBankPath)
     }
 
     // 2. Check external animation bank path
+    s_bankBoneCount = 0;
     if (animBankPath && animBankPath[0] != '\0' && strcmp(meshPath, animBankPath) != 0)
     {
+        s_bankBoneCount = LoadGlbSkinBoneNames(animBankPath, s_bankBoneNames);
+        if (s_bankBoneCount > 0)
+        {
+            TraceLog(LOG_INFO, "CHARACTER_MODEL: Parsed %d joint names from animation bank %s ([0]=%s, [1]=%s, [2]=%s)",
+                     s_bankBoneCount, animBankPath,
+                     s_bankBoneNames[0],
+                     (s_bankBoneCount > 1) ? s_bankBoneNames[1] : "-",
+                     (s_bankBoneCount > 2) ? s_bankBoneNames[2] : "-");
+        }
         int bankCount = 0;
         ModelAnimation *bankAnims = ResourceManager_LoadModelAnimations(animBankPath, &bankCount);
         if (bankAnims && bankCount > 0)
@@ -921,11 +1107,29 @@ static Matrix BindPoseMatrixOf(const Model *model, int boneIndex)
                           MatrixTranslate(bp->translation.x, bp->translation.y, bp->translation.z));
 }
 
-// Lookup bone index by name via master skeleton (never blind index fallback for cloth bones)
+// Lookup bone index by name in the animation bank's own skins[0].joints table first
+// (immune to joint-order differences between player.glb, body GLBs, and humanoid_anims.glb).
 static int FindAnimBoneIndexByName(ModelAnimation anim, const char *boneName, int hintIdx)
 {
     if (!boneName || anim.boneCount <= 0)
         return -1;
+
+    if (s_bankBoneCount > 0 && anim.boneCount == s_bankBoneCount)
+    {
+        if (hintIdx >= 0 && hintIdx < s_bankBoneCount &&
+            strcmp(boneName, s_bankBoneNames[hintIdx]) == 0)
+        {
+            return hintIdx;
+        }
+        for (int a = 0; a < s_bankBoneCount; a++)
+        {
+            if (strcmp(boneName, s_bankBoneNames[a]) == 0)
+            {
+                return a;
+            }
+        }
+        return -1;
+    }
 
     if (s_model.skeleton.bones != NULL)
     {
@@ -1093,12 +1297,9 @@ static void EvaluateBoneHierarchyRecursive(Model *model, int b, ModelAnimation a
     {
         if (parentIdx >= 0 && parentIdx < model->skeleton.boneCount)
         {
-            Matrix bindParent = BindPoseMatrixOf(model, parentIdx);
-            Matrix invBindParent = MatrixInvert(bindParent);
-            Matrix skin = MatrixMultiply(MatrixMultiply(MatrixInvert(bindPoseMatrix), bindParent),
-                                         model->boneMatrices[parentIdx]);
-            skin = MatrixMultiply(skin, invBindParent);
-            model->boneMatrices[b] = MatrixMultiply(skin, bindPoseMatrix);
+            // Rigidly inherit parent skinning transform so un-animated child bones
+            // (e.g. 5-finger / toe bones during legacy 20-bone clips) stay glued to Hand/Foot.
+            model->boneMatrices[b] = model->boneMatrices[parentIdx];
         }
         else
         {
@@ -1479,20 +1680,16 @@ static void CharacterModel_DrawCustomInternal(Model customModel, const Character
         unsigned int clothStamp = (spring != NULL) ? (spring->stamp | 0x80000000u) : 0u;
         if (isBlending || !SkinCache_IsHit(customModel.meshes, animIndex, state->frame, deflateMask, clothStamp))
         {
-            if (!isBlending && spring == NULL && deflateMask == 0u &&
-                customModel.skeleton.boneCount == s_animations[animIndex].boneCount)
-            {
-                UpdateModelAnimation(customModel, s_animations[animIndex], state->frame);
-            }
-            else
-            {
-                float frameSample = (spring != NULL)
-                                        ? ((float)state->frame + Clamp(state->frameTimer, 0.0f, 1.0f))
-                                        : (float)state->frame;
-                CharacterModel_UpdateSkinnedMeshWithCloth(customModel, s_animations[animIndex], frameSample,
-                                                          prevAnim, state->prevFrame, crossAlpha,
-                                                          deflateTorso, deflateLegs, spring);
-            }
+            // Always skin via name-mapped CharacterModel_UpdateSkinnedMeshWithCloth:
+            // Raylib's UpdateModelAnimation() indexes bones blindly by [0..N-1], which scrambles
+            // the mesh whenever a model (e.g. male_body.glb) and animation bank (humanoid_anims.glb)
+            // have the same boneCount (52 == 52) in different joint orders (e.g. canonical vs BFS/DFS).
+            float frameSample = (spring != NULL)
+                                    ? ((float)state->frame + Clamp(state->frameTimer, 0.0f, 1.0f))
+                                    : (float)state->frame;
+            CharacterModel_UpdateSkinnedMeshWithCloth(customModel, s_animations[animIndex], frameSample,
+                                                      prevAnim, state->prevFrame, crossAlpha,
+                                                      deflateTorso, deflateLegs, spring);
             if (!isBlending)
                 SkinCache_Store(customModel.meshes, animIndex, state->frame, deflateMask, clothStamp);
         }

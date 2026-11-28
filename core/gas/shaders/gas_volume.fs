@@ -30,6 +30,7 @@ uniform int u_hasBgLuma;
 uniform float u_bgAdapt;
 uniform float u_detailStrength;
 uniform float u_shadowStrength;
+uniform float u_residualSmoke;
 
 const vec3 GAS_BRIGHT_BODY_GAIN = vec3(0.72, 0.78, 0.66);
 const vec3 GAS_BRIGHT_EXTINCTION_GAIN = vec3(1.85, 1.15, 1.00);
@@ -119,13 +120,27 @@ void main() {
                             clamp(u_bgAdapt, 0.0, 1.0);
     vec3 lightDirection = normalize(vec3(0.45, 0.78, 0.32));
     float forwardScatter = pow(max(dot(rayDirection, -lightDirection), 0.0), 2.0);
+    vec3 lightProbeOffset = lightDirection / max(u_gridSize - 1.0, vec3(1.0));
+    float detailStrength = clamp(u_detailStrength, 0.0, 2.0);
+    float shadowGain = 2.1 * clamp(u_shadowStrength, 0.0, 2.0);
+    float materialExtinction = u_kind == 0 ? GAS_BRIGHT_EXTINCTION_GAIN.x :
+                               (u_kind == 1 ? GAS_BRIGHT_EXTINCTION_GAIN.y :
+                                              GAS_BRIGHT_EXTINCTION_GAIN.z);
+    float wakeExtinction = materialExtinction * (1.0 + 0.85 * u_residualSmoke);
+    float brightExtinctionGain = mix(1.0, wakeExtinction, backgroundAdapt);
+    float brightEmissionScale = u_kind == 1 ? 0.50 : (u_kind == 2 ? 0.68 : 1.0);
+    float wakeEmissionScale = 1.0 - 0.92 * smoothstep(0.0, 0.56, u_residualSmoke);
+    float daylightCarrier = mix(1.0, brightEmissionScale * wakeEmissionScale, backgroundAdapt);
 
     for (int i = 0; i < 48; ++i) {
         if (i >= stepCount || coverage > 0.985) break;
         vec3 worldPosition = rayOrigin + rayDirection * travel;
         vec3 localPosition = (worldPosition - u_volumeMin) / volumeSize;
         vec4 gas = Gas_SampleVolume(localPosition);
+        travel += stepLength;
         float rawDensity = max(gas.r, 0.0);
+        // With no density, neither absorption nor emission can accumulate.
+        if (rawDensity == 0.0) continue;
         float density = rawDensity;
         /* World-space 3D noise breaks voxel-soft blobs without introducing the
          * plane-wave stripes caused by sin(dot(position, k)). Multiplication
@@ -158,7 +173,6 @@ void main() {
             shapedDensity = max(density - (1.0 - breakup) * 0.06, 0.0) *
                             mix(0.72, 1.24, breakup);
         }
-        float detailStrength = clamp(u_detailStrength, 0.0, 2.0);
         density = mix(rawDensity, shapedDensity, min(detailStrength, 1.0));
         density *= mix(1.0, mix(0.86, 1.14, breakup),
                        max(detailStrength - 1.0, 0.0));
@@ -169,10 +183,7 @@ void main() {
          * a scalar Beer-Lambert adjustment on the already sampled density, so
          * it costs no extra texture fetches or ray steps. Fire gets only a
          * small shoulder lift; energy remains emission-led. */
-        float brightExtinctionGain = u_kind == 0 ? GAS_BRIGHT_EXTINCTION_GAIN.x :
-                                     (u_kind == 1 ? GAS_BRIGHT_EXTINCTION_GAIN.y :
-                                                    GAS_BRIGHT_EXTINCTION_GAIN.z);
-        density *= mix(1.0, brightExtinctionGain, backgroundAdapt);
+        density *= brightExtinctionGain;
         float densityAlpha = 1.0 - exp(-density * u_densityScale * stepLength);
         float heat = max(gas.g * 0.35 + gas.b, 0.0);
         float flameBody = smoothstep(0.05, 0.55, heat);
@@ -183,6 +194,10 @@ void main() {
         float bodyOpacity = 1.0;
         if (u_kind == 1) bodyOpacity = 0.26 * fireActivity;
         else if (u_kind == 2) bodyOpacity = 0.28 * energyActivity;
+        float activity = u_kind == 1 ? fireActivity : energyActivity;
+        float coolSmoke = min(1.0, u_residualSmoke * (1.0 - 0.72 * activity) *
+                              mix(1.0, 1.25, backgroundAdapt));
+        if (u_kind != 0) bodyOpacity = max(bodyOpacity, coolSmoke);
         float sampleAlpha = densityAlpha * bodyOpacity;
         /* Extinction and radiance are different signals. Reaction-rich gas
          * emits through the full density footprint; inactive FIRE/ENERGY
@@ -192,13 +207,13 @@ void main() {
         float emissionAlpha = mix(sampleAlpha, densityAlpha, flameTransport);
         float transmittance = 1.0 - coverage;
 
-        vec3 gradientStep = 1.0 / max(u_gridSize - 1.0, vec3(1.0));
-        vec3 lightProbeOffset = lightDirection * gradientStep;
-        float densityTowardLight = Gas_SampleVolume(localPosition + lightProbeOffset).r;
-        float softLight = clamp(0.38 + (density - densityTowardLight) *
-                                (2.1 * clamp(u_shadowStrength, 0.0, 2.0)) +
+        float softLight = 1.0;
+        if (u_kind != 2 || u_residualSmoke > 0.0) {
+            float densityTowardLight = Gas_SampleVolume(localPosition + lightProbeOffset).r;
+            softLight = clamp(0.38 + (density - densityTowardLight) * shadowGain +
                                 localPosition.y * 0.16 + forwardScatter * 0.12,
                                 0.2, 1.0);
+        }
         float bodyLight = softLight;
         vec3 bodyTone = u_bodyColor * mix(0.72, 1.18, coarseNoise);
         if (u_kind == 0) {
@@ -224,6 +239,13 @@ void main() {
             bodyTone = mix(u_emissionColor * 0.28,
                            u_emissionColor * 0.62, energyActivity);
             bodyLight = mix(0.72, 1.0, energyActivity);
+        }
+        if (u_kind != 0 && u_residualSmoke > 0.0) {
+            // An absorptive wake preserves the silhouette over bright scenery.
+            float wakeWeight = coolSmoke * (1.0 - 0.6 * activity);
+            vec3 smokeTone = u_bodyColor * mix(0.70, 1.12, coarseNoise);
+            bodyTone = mix(bodyTone, smokeTone, wakeWeight);
+            bodyLight = mix(bodyLight, max(0.44, softLight), wakeWeight);
         }
         float brightBodyGain = u_kind == 0 ? GAS_BRIGHT_BODY_GAIN.x :
                                (u_kind == 1 ? GAS_BRIGHT_BODY_GAIN.y :
@@ -282,15 +304,11 @@ void main() {
          * scenes also turn every hot voxel into one uniformly blooming mass. */
         float emissionFloor = u_kind == 1 ? 0.48 :
                               (u_kind == 2 ? 0.62 : 1.0);
-        float brightEmissionScale = u_kind == 1 ? 0.50 :
-                                    (u_kind == 2 ? 0.68 : 1.0);
-        float broadEmissionGain = mix(emissionFloor, 1.0, visibleCoreWeight) *
-                                  mix(1.0, brightEmissionScale, backgroundAdapt);
+        float broadEmissionGain = mix(emissionFloor, 1.0, visibleCoreWeight) * daylightCarrier;
         emittedHeat *= broadEmissionGain;
         accumulatedEmission += transmittance * emissionAlpha * emittedColor *
                                emittedHeat * u_emissionGain;
         coverage += transmittance * sampleAlpha;
-        travel += stepLength;
     }
     /* Squaring the bounded front-to-back integral is a coverage selector:
      * weak neighbouring rays collapse, while coherent hot filaments retain
